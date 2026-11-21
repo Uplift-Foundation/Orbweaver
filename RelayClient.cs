@@ -303,6 +303,12 @@ namespace Orbweaver
         bool IPromptSender.Prompt(string requestId, string sessionId, string prompt, string? pushPlaintext) =>
             Dispatch(() => _link.SendPrompt(requestId, sessionId, prompt, pushPlaintext));
 
+        bool IPromptSender.PromptQuiet(string requestId, string sessionId, string prompt) =>
+            Dispatch(() => _link.SendPrompt(requestId, sessionId, prompt, null, quiet: true));
+
+        void IPromptSender.ResolvedQuiet(string requestId, string sessionId, string by) =>
+            Dispatch(() => _link.SendResolved(requestId, sessionId, by, null, quiet: true));
+
         // CB-321 addendum 2: the persona an amber for this session speaks as,
         // read off the link's book under the lock like everything else there.
         PushPersona? IPromptSender.PersonaFor(string sessionId) { lock (_gate) return _link.PersonaFor(sessionId); }

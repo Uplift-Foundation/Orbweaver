@@ -506,6 +506,10 @@ public class RelayClientTests : IAsyncLifetime
 
         await client.OnStatuses([("s1", new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode, Title = "proj" })]);
         var amber = await _stub.Next(IsEnvelope);
+        // Quiet: an ordinary action frame, push none and no e, so the relay queues it
+        // and the app shows it without ever raising a notification.
+        Assert.Equal(("action", "none"), (amber.GetProperty("class").GetString(), amber.GetProperty("push").GetString()));
+        Assert.False(amber.TryGetProperty("e", out var sealedPush) && sealedPush.ValueKind == JsonValueKind.String);
         var prompt = OpenAsPhone(amber, phone, identity);
         Assert.Equal("question", prompt.GetProperty("kind").GetString());
         var option = Assert.Single(prompt.GetProperty("options").EnumerateArray());
@@ -536,8 +540,8 @@ public class RelayClientTests : IAsyncLifetime
 
         screen = PaneFixtures.MobileOverlay80x50;
         await SendAnswer("option:Escape");
-        var resolve = await _stub.Next(e => IsEnvelope(e) && e.GetProperty("push").GetString() == "resolve");
-        Assert.Equal("phone:" + phone.Id, OpenAsPhone(resolve, phone, identity).GetProperty("by").GetString());
+        var resolve = await _stub.Next(e => IsEnvelope(e) && OpenAsPhone(e, phone, identity).TryGetProperty("t", out var t) && t.GetString() == "resolved");
+        Assert.Equal(("none", "phone:" + phone.Id), (resolve.GetProperty("push").GetString(), OpenAsPhone(resolve, phone, identity).GetProperty("by").GetString()));
         lock (keys) Assert.Equal(["Escape"], keys);
     }
 

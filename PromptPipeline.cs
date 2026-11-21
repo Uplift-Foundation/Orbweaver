@@ -24,6 +24,13 @@ namespace Orbweaver
         // CB-321 addendum 2: the persona this session's amber speaks as (its
         // roster row's), or null. A sender that knows no roster names none.
         PushPersona? PersonaFor(string sessionId) => null;
+
+        // CB-400: a prompt that goes to phones as a pending prompt only, with no
+        // push class (so no notification), and the resolve that closes it, also
+        // quiet. The defaults fall back to the alerting calls with no sealed push,
+        // so a sender that predates them still compiles; RelayClient overrides both.
+        bool PromptQuiet(string requestId, string sessionId, string prompt) => Prompt(requestId, sessionId, prompt, null);
+        void ResolvedQuiet(string requestId, string sessionId, string by) => Resolved(requestId, sessionId, by, null);
     }
 
     // CB-315 surface B, the desktop half of the amber loop:
@@ -97,6 +104,9 @@ namespace Orbweaver
             internal required string Prompt;
             internal required string? Push;
             internal required string Label;
+            // CB-400: an overlay is a screen someone opened on purpose at the desk, so
+            // it never buzzes a phone, going out and resolving with no push.
+            internal bool Quiet;
         }
 
         private readonly Seams _seams;
@@ -202,8 +212,14 @@ namespace Orbweaver
         {
             Drop(sid);
             if (live.Pending.Answered) return;
-            _send.Resolved(live.Pending.RequestId, sid, by, PromptFrames.ResolvedPush(live.Pending.RequestId, sid, by, live.Label));
+            SendResolved(live, live.Pending.RequestId, sid, by);
             _seams.Log($"resolved {live.Pending.RequestId} {by}");
+        }
+
+        private void SendResolved(Live live, string requestId, string sid, string by)
+        {
+            if (live.Quiet) _send.ResolvedQuiet(requestId, sid, by);
+            else _send.Resolved(requestId, sid, by, PromptFrames.ResolvedPush(requestId, sid, by, live.Label));
         }
 
         private void Mint(string sid, SessionStatus status, PromptFingerprint fp, string screen, AskForm? form = null)
@@ -240,19 +256,20 @@ namespace Orbweaver
             var prompt = PromptFrames.Prompt(requestId, sid, kind, cli, tool, preview, options, fp.Hash, expires, multi, text);
             var label = string.IsNullOrWhiteSpace(status.Title) ? _machine : $"{status.Title} on {_machine}";
             var persona = _send.PersonaFor(sid);
-            var push = PromptFrames.FitPush(requestId, sid, label, tool, form is null && !fp.Overlay ? SummaryOf(tool) : AsksAQuestion, preview, expires, options, fp.Hash, persona);
+            var push = fp.Overlay ? null : PromptFrames.FitPush(requestId, sid, label, tool, form is null && !fp.Overlay ? SummaryOf(tool) : AsksAQuestion, preview, expires, options, fp.Hash, persona);
 
             // A question presses only what it offered (the gate's rule 7).
             var keys = form is null && !fp.Overlay ? null : options.Select(o => o.Key).ToList();
-            var live = new Live { Pending = new PendingPrompt(requestId, sid, kind, fp.Hash, expires, deskOnly, keys, multi, text), Status = status, Prompt = prompt, Push = push?.Plaintext, Label = label };
+            var live = new Live { Pending = new PendingPrompt(requestId, sid, kind, fp.Hash, expires, deskOnly, keys, multi, text), Status = status, Prompt = prompt, Push = push?.Plaintext, Label = label, Quiet = fp.Overlay };
             _live[sid] = live;
             // Before the send, so the activity frame that goes ahead of this
             // prompt's push already names it.
             // A question's line on the island is the question itself; its
             // preview's first line is the form's tab bar ("☐ Colour").
             lock (_activityGate) _activity[sid] = new ActivityPrompt(requestId, tool, form is null ? (fp.Overlay ? fp.Prompt.Title : RelayActivity.CommandOf(fp.Preview)) : form.Prompt.Title);
-            _send.Prompt(requestId, sid, prompt, push?.Plaintext);
-            _seams.Log($"prompt {requestId} {fp.Hash}{(deskOnly ? " desk-only" : "")}{(push is null ? " no-e" : "")} "
+            if (fp.Overlay) _send.PromptQuiet(requestId, sid, prompt);
+            else _send.Prompt(requestId, sid, prompt, push?.Plaintext);
+            _seams.Log($"prompt {requestId} {fp.Hash}{(deskOnly ? " desk-only" : "")}{(fp.Overlay ? " quiet" : push is null ? " no-e" : "")} "
                 + PushPersona.LogTagFor(persona, push is { PersonaDropped: false } && persona is not null));
         }
 
@@ -332,7 +349,9 @@ namespace Orbweaver
                 foreach (var live in _live.Values)
                 {
                     if (live.Pending.Answered || now >= live.Pending.ExpiresAt) continue;
-                    var sent = _send.Prompt(live.Pending.RequestId, live.Pending.SessionId, live.Prompt, live.Push);
+                    var sent = live.Quiet
+                        ? _send.PromptQuiet(live.Pending.RequestId, live.Pending.SessionId, live.Prompt)
+                        : _send.Prompt(live.Pending.RequestId, live.Pending.SessionId, live.Prompt, live.Push);
                     _seams.Log($"prompt-resent {live.Pending.RequestId}{(sent ? "" : " (still not sent)")}");
                 }
             }
@@ -379,7 +398,7 @@ namespace Orbweaver
                     // settled for everyone, by an actor nobody can name.
                     _seams.Log($"warning press-landed-elsewhere {answer.RequestId} {d.Key}");
                     Drop(answer.SessionId);
-                    _send.Resolved(answer.RequestId, answer.SessionId, "unknown", PromptFrames.ResolvedPush(answer.RequestId, answer.SessionId, "unknown", live.Label));
+                    SendResolved(live, answer.RequestId, answer.SessionId, "unknown");
                     _seams.Log($"resolved {answer.RequestId} unknown");
                     return;
                 }
@@ -406,7 +425,7 @@ namespace Orbweaver
                 }
 
                 Drop(answer.SessionId);
-                _send.Resolved(answer.RequestId, answer.SessionId, "phone:" + phoneId, PromptFrames.ResolvedPush(answer.RequestId, answer.SessionId, "phone:" + phoneId, live.Label));
+                SendResolved(live, answer.RequestId, answer.SessionId, "phone:" + phoneId);
                 _seams.Log($"resolved {answer.RequestId} phone:{phoneId}");
             }
             // The caller fires this and forgets it, so an exception here would

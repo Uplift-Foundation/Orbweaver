@@ -56,6 +56,10 @@ public class PromptPipelineTests
         public bool Online = true;   // false: the relay is down and no frame is produced
         bool IPromptSender.Prompt(string r, string s, string p, string? push) { Prompts.Add((r, s, p, push)); return Online; }
         public readonly List<string?> ResolvedPushes = new();
+        public readonly List<string> QuietPrompts = new(), QuietResolved = new();
+        // CB-400: the quiet calls record a prompt with no push, and which were quiet.
+        bool IPromptSender.PromptQuiet(string r, string s, string p) { QuietPrompts.Add(r); Prompts.Add((r, s, p, null)); return Online; }
+        void IPromptSender.ResolvedQuiet(string r, string s, string by) { QuietResolved.Add(r); Resolved.Add((r, s, by)); ResolvedPushes.Add(null); }
         void IPromptSender.Resolved(string r, string s, string by, string? push) { Resolved.Add((r, s, by)); ResolvedPushes.Add(push); }
         void IPromptSender.Refusal(string ph, string r, string s, string code) => Refusals.Add((ph, r, code));
     }
@@ -1258,8 +1262,6 @@ public class PromptPipelineTests
         var option = Assert.Single(j.GetProperty("options").EnumerateArray());
         Assert.Equal(("Escape", "Close", "option"),
             (option.GetProperty("key").GetString(), option.GetProperty("label").GetString(), option.GetProperty("kind").GetString()));
-        var push = JsonDocument.Parse(_sent.Prompts[0].Push!).RootElement;
-        Assert.Equal(PromptPipeline.AsksAQuestion, push.GetProperty("summary").GetString());
         Assert.Equal("Get the Claude app on your phone", _p.ActivityFor("s1")!.Command);
     }
 
@@ -1358,5 +1360,43 @@ public class PromptPipelineTests
 
         Assert.Empty(_pane.Keys);
         Assert.Equal(AnswerGate.ForbiddenOption, Assert.Single(_sent.Refusals).Code);
+    }
+
+    // The lead's rule: a screen someone opened on purpose at the desk never
+    // buzzes a phone. It is a pending prompt with Close in the app and resolves when
+    // closed at the desk, both without a push. A dialog's push is untouched.
+    [Fact]
+    public async Task An_overlay_goes_out_and_resolves_with_no_push_while_a_dialog_keeps_its_push()
+    {
+        await ScanOverlay();
+        var rid = _sent.Prompts[0].Rid;
+        Assert.Equal([rid], _sent.QuietPrompts);
+        Assert.Null(_sent.Prompts[0].Push);
+        Assert.Contains($"prompt {rid} {PromptFingerprint.Of(PaneFixtures.MobileOverlay80x50)!.Hash} quiet ", _log.Single(l => l.StartsWith("prompt ")) + " ");
+
+        await _p.OnScannedAsync(Snap("idle"));          // closed at the desk
+        Assert.Equal([rid], _sent.QuietResolved);
+        Assert.Null(_sent.ResolvedPushes[0]);
+
+        // the control: a numbered dialog, same pipeline, push and resolve push as before
+        var dialog = new Sender();
+        var p = new PromptPipeline(new PromptPipeline.Seams(_pane.Capture, _pane.Press, _pane.Type, () => _now, _ => Task.CompletedTask, _log.Add), dialog, "Test Mac");
+        _pane.Screen = Dialog;
+        await p.OnScannedAsync(Snap());
+        Assert.NotNull(Assert.Single(dialog.Prompts).Push);
+        Assert.Empty(dialog.QuietPrompts);
+        await p.OnScannedAsync(Snap("idle"));
+        Assert.Empty(dialog.QuietResolved);
+        Assert.NotNull(Assert.Single(dialog.ResolvedPushes));
+    }
+
+    [Fact]
+    public async Task A_resent_overlay_and_a_phones_close_stay_quiet()
+    {
+        await ScanOverlay();
+        await _p.ResendPendingAsync();
+        Assert.Equal(2, _sent.QuietPrompts.Count);
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo(action: "option:Escape"));
+        Assert.Single(_sent.QuietResolved);
     }
 }

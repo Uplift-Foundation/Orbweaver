@@ -932,14 +932,16 @@ namespace Orbweaver
         // The envelope id is the request_id (frames-v3), and each phone gets
         // its own e, sealed to its own agreement key; the e is left off when
         // the plaintext cannot fit the relay's 3600-character cap.
-        internal IReadOnlyList<string> SendPrompt(string requestId, string sessionId, string prompt, string? pushPlaintext)
+        // CB-400: quiet sends the prompt as an ordinary action frame with push none, which
+        // the relay queues and forwards like an answer's but never turns into an alert.
+        internal IReadOnlyList<string> SendPrompt(string requestId, string sessionId, string prompt, string? pushPlaintext, bool quiet = false)
         {
             if (!Welcomed) return [];
             var frames = new List<string>();
             foreach (var c in _channels.Values)
             {
                 var e = pushPlaintext is null ? null : PushSeal.Seal(c.Phone.KaPublic, System.Text.Encoding.UTF8.GetBytes(pushPlaintext));
-                if (SealTo(c, "action", RelayCrypto.Ck(c.CkKey, sessionId), System.Text.Encoding.UTF8.GetBytes(prompt), requestId, "amber", e) is { } frame)
+                if (SealTo(c, "action", RelayCrypto.Ck(c.CkKey, sessionId), System.Text.Encoding.UTF8.GetBytes(prompt), requestId, quiet ? "none" : "amber", e) is { } frame)
                     frames.Add(frame);
             }
             return WithActivity(frames);
@@ -950,7 +952,7 @@ namespace Orbweaver
         // amber's own (the same session's Ck) so the passive "Answered at the
         // desk" alert replaces the amber in its thread. e, when the pipeline
         // gives a plaintext, is the sealed resolve, per phone, for that alert.
-        internal IReadOnlyList<string> SendResolved(string requestId, string sessionId, string by, string? pushPlaintext = null)
+        internal IReadOnlyList<string> SendResolved(string requestId, string sessionId, string by, string? pushPlaintext = null, bool quiet = false)
         {
             if (!Welcomed) return [];
             var plain = System.Text.Encoding.UTF8.GetBytes(PromptFrames.Resolved(requestId, sessionId, by));
@@ -958,7 +960,7 @@ namespace Orbweaver
             foreach (var c in _channels.Values)
             {
                 var e = pushPlaintext is null ? null : PushSeal.Seal(c.Phone.KaPublic, System.Text.Encoding.UTF8.GetBytes(pushPlaintext));
-                if (SealTo(c, "action", RelayCrypto.Ck(c.CkKey, sessionId), plain, requestId, "resolve", e) is { } frame)
+                if (SealTo(c, "action", RelayCrypto.Ck(c.CkKey, sessionId), plain, requestId, quiet ? "none" : "resolve", e) is { } frame)
                     frames.Add(frame);
             }
             return WithActivity(frames);
