@@ -27,6 +27,7 @@ public class NewChatWindowMachineTests : IDisposable
         NewChatWindow.AccountDirectoryExistsForTests = null;
         NewChatWindow.PeerLauncherForTests = null;
         NewChatWindow.PeerLinkOnForTests = null;
+        NewChatWindow.TrustWaitForTests = null;
     }
 
     internal sealed class FakeLauncher : IPeerLauncher
@@ -39,6 +40,19 @@ public class NewChatWindowMachineTests : IDisposable
         public Exception? ThrowInfo, ThrowLaunch;
         public bool IgnoreInfoToken;
         public List<(string machine, PeerLaunchSpec spec)> Launches = new();
+
+        // CB-397: the far desk's question and what the window answers it with.
+        public List<(string machine, PeerLaunchTrust trust, bool trusted)> Trusts = new();
+        public PeerLaunchResult TrustResult = new(true, "launched", "s1", null);
+        public TaskCompletionSource<PeerLaunchResult>? PendingTrust;
+        public Exception? ThrowTrust;
+
+        public Task<PeerLaunchResult> TrustAsync(string machine, PeerLaunchTrust trust, bool trusted, CancellationToken ct)
+        {
+            Trusts.Add((machine, trust, trusted));
+            if (ThrowTrust is { } boom) throw boom;
+            return PendingTrust?.Task ?? Task.FromResult(TrustResult);
+        }
 
         public IReadOnlyList<PeerMachine> Machines() => Peers;
 
@@ -643,5 +657,221 @@ public class NewChatWindowMachineTests : IDisposable
         var with = Height(Make(Ready()));
         var without = Height(Make(null));
         Assert.True(with > without); // the row is the only difference, and it costs its own height
+    }
+
+    // ---- CB-397: the far machine's trust question --------------------------------------
+
+    private static readonly PeerLaunchTrust Asked = new("TOKEN", "claude", "/srv/lib", 1_800_000_000);
+
+    private static FakeLauncher Asking()
+    {
+        var f = Ready();
+        f.Result = new PeerLaunchResult(false, PeerLaunchCodes.TrustNeeded, null, null, Asked);
+        return f;
+    }
+
+    // Opens on mini, picks /srv/lib and starts: the far desk answers with the question.
+    private static NewChatWindow StartAsked(FakeLauncher f)
+    {
+        var w = Make(f);
+        Pick(w, 1);
+        w.FolderCombo.SelectedIndex = 1;
+        Click(w.StartButton);
+        return w;
+    }
+
+    [AvaloniaFact]
+    public void A_trust_question_is_asked_inline_and_locks_the_form_without_moving_the_height()
+    {
+        var w = Make(Asking());
+        var opened = Height(w);
+        Pick(w, 1);
+        w.FolderCombo.SelectedIndex = 1;
+        Assert.False(w.TrustPanel.IsVisible);
+        Click(w.StartButton);
+
+        Assert.True(w.TrustPanel.IsVisible);
+        Assert.Equal("Trust this folder on mini?", w.TrustTitle.Text);
+        Assert.Equal("/srv/lib", w.TrustFolder.Text);
+        Assert.Equal("Claude Code will be able to read, edit and run files there, and the folder's own hooks will run on mini.", w.TrustWarning.Text);
+        Assert.Equal("Claude Code on mini is asking whether to trust this folder.", w.StatusLine.Text);
+        Assert.True(w.TrustYes.IsEnabled);
+        Assert.True(w.TrustNo.IsEnabled);
+        Assert.False(w.StartButton.IsEnabled);
+        Assert.False(w.MachineCombo.IsEnabled);
+        Assert.Equal(opened, Height(w));
+        Assert.True(w.TrustGhost.IsVisible);
+    }
+
+    [AvaloniaFact]
+    public void A_local_window_reserves_no_trust_space()
+    {
+        Assert.False(Make(null).TrustGhost.IsVisible);
+    }
+
+    [AvaloniaFact]
+    public void Trust_is_sent_once_even_if_clicked_twice_and_a_launch_ends_the_question()
+    {
+        var f = Asking();
+        var pending = f.PendingTrust = new();
+        var w = StartAsked(f);
+
+        Click(w.TrustYes);
+        Assert.Equal("Trusting it on mini…", w.StatusLine.Text);
+        Assert.False(w.TrustYes.IsEnabled);
+        Assert.False(w.TrustNo.IsEnabled);
+        Click(w.TrustYes);
+        Click(w.TrustNo);
+        Assert.Equal([("mini", Asked, true)], f.Trusts);
+        Assert.False(w.StartButton.IsEnabled);
+
+        pending.SetResult(new PeerLaunchResult(true, "launched", "x", null));
+        Flush();
+        Assert.False(w.TrustPanel.IsVisible);
+        Assert.Equal("Claude Code is starting on mini. Its orb appears when mini next reports its sessions.", w.StatusLine.Text);
+        Assert.True(w.StartButton.IsEnabled);
+        Assert.True(w.MachineCombo.IsEnabled);
+    }
+
+    [AvaloniaTheory]
+    [InlineData("trust_cancelled", "Cancelled. Nothing was trusted, and mini closed the session.")]
+    [InlineData("no_answer", "Cancelled here. mini didn't confirm, and closes the session itself within two minutes.")]
+    [InlineData("link_lost", "Cancelled here. mini didn't confirm, and closes the session itself within two minutes.")]
+    [InlineData("trust_gone", "Nobody answered in time, so mini closed the session. Nothing was trusted.")]
+    public void Cancel_says_what_the_far_desk_confirmed(string code, string expected)
+    {
+        var f = Asking();
+        f.TrustResult = new PeerLaunchResult(false, code, null, null);
+        var w = StartAsked(f);
+
+        Click(w.TrustNo);
+
+        Assert.Equal([("mini", Asked, false)], f.Trusts);
+        Assert.Equal(expected, w.StatusLine.Text);
+        Assert.False(w.TrustPanel.IsVisible);
+        Assert.True(w.StartButton.IsEnabled);
+        Assert.True(w.MachineCombo.IsEnabled);
+    }
+
+    [AvaloniaTheory]
+    [InlineData("trust_gone")]
+    [InlineData("expired")]
+    public void A_trust_click_that_finds_no_question_says_nobody_answered_in_time(string code)
+    {
+        var f = Asking();
+        f.TrustResult = new PeerLaunchResult(false, code, null, null);
+        var w = StartAsked(f);
+        Click(w.TrustYes);
+        Assert.Equal("Nobody answered in time, so mini closed the session. Nothing was trusted.", w.StatusLine.Text);
+    }
+
+    [AvaloniaFact]
+    public void An_answer_the_far_desk_could_not_apply_is_its_launch_failed_sentence()
+    {
+        var f = Asking();
+        f.TrustResult = new PeerLaunchResult(false, "launch_failed", null, "The trust question was no longer on screen.");
+        var w = StartAsked(f);
+        Click(w.TrustYes);
+        Assert.Equal("mini could not start it (The trust question was no longer on screen.).", w.StatusLine.Text);
+    }
+
+    [AvaloniaFact]
+    public void A_launcher_that_throws_on_the_answer_is_launch_failed_not_a_crash()
+    {
+        var f = Asking();
+        f.ThrowTrust = new InvalidOperationException();
+        var w = StartAsked(f);
+        Click(w.TrustYes);
+        Assert.Equal("mini could not start it (InvalidOperationException).", w.StatusLine.Text);
+        Assert.False(w.TrustPanel.IsVisible);
+    }
+
+    [AvaloniaFact]
+    public void Nobody_answering_for_the_far_desks_two_minutes_lapses_the_question()
+    {
+        var wait = new TaskCompletionSource();
+        NewChatWindow.TrustWaitForTests = d => { Assert.Equal(TimeSpan.FromSeconds(120), d); return wait.Task; };
+        var f = Asking();
+        var w = StartAsked(f);
+        Assert.True(w.TrustPanel.IsVisible);
+
+        wait.SetResult();
+        Flush();
+
+        Assert.False(w.TrustPanel.IsVisible);
+        Assert.Equal("Nobody answered in time, so mini closed the session. Nothing was trusted.", w.StatusLine.Text);
+        Assert.True(w.StartButton.IsEnabled);
+        Assert.True(w.MachineCombo.IsEnabled);
+        // A click after the lapse does nothing.
+        Click(w.TrustYes);
+        Assert.Empty(f.Trusts);
+    }
+
+    [AvaloniaFact]
+    public void The_lapse_leaves_an_answer_in_flight_and_an_answered_question_alone()
+    {
+        var wait = new TaskCompletionSource();
+        NewChatWindow.TrustWaitForTests = _ => wait.Task;
+        var f = Asking();
+        var pending = f.PendingTrust = new();
+        var w = StartAsked(f);
+        Click(w.TrustYes);
+
+        wait.SetResult();
+        Flush();
+        Assert.Equal("Trusting it on mini…", w.StatusLine.Text);
+
+        pending.SetResult(new PeerLaunchResult(true, "launched", "x", null));
+        Flush();
+        Assert.Contains("is starting on mini", w.StatusLine.Text);
+
+        // An old timer after the question was answered: nothing changes.
+        var again = new TaskCompletionSource();
+        var f2 = Asking();
+        NewChatWindow.TrustWaitForTests = _ => again.Task;
+        var w2 = StartAsked(f2);
+        Click(w2.TrustYes);
+        again.SetResult();
+        Flush();
+        Assert.Contains("is starting on mini", w2.StatusLine.Text);
+    }
+
+    [AvaloniaFact]
+    public void Closing_the_window_while_it_asks_sends_cancel_once()
+    {
+        var f = Asking();
+        var w = StartAsked(f);
+
+        w.CancelPendingTrustOnClose();
+        w.CancelPendingTrustOnClose();
+
+        Assert.Equal([("mini", Asked, false)], f.Trusts);
+    }
+
+    [AvaloniaFact]
+    public void Closing_with_no_question_or_an_answer_already_in_flight_sends_nothing()
+    {
+        var f = Asking();
+        var w = Make(f);
+        w.CancelPendingTrustOnClose();
+        Assert.Empty(f.Trusts);
+
+        var f2 = Asking();
+        f2.PendingTrust = new();
+        var w2 = StartAsked(f2);
+        Click(w2.TrustYes);
+        w2.CancelPendingTrustOnClose();
+        Assert.Single(f2.Trusts);
+    }
+
+    [AvaloniaFact]
+    public void A_trust_needed_with_no_question_is_just_a_refusal()
+    {
+        var f = Ready();
+        f.Result = new PeerLaunchResult(false, PeerLaunchCodes.TrustNeeded, null, null);
+        var w = StartAsked(f);
+        Assert.False(w.TrustPanel.IsVisible);
+        Assert.Equal("mini refused it (trust_needed).", w.StatusLine.Text);
+        Assert.True(w.StartButton.IsEnabled);
     }
 }

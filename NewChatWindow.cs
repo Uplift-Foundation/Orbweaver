@@ -267,6 +267,25 @@ namespace Orbweaver
             Opacity = 0.8
         };
         private readonly Button _startButton = new() { Content = "Start" };
+
+        // CB-397: the far machine's "trust this folder?" question, asked inline
+        // under the status line. The panel's space is reserved (CB-207, see
+        // ReservedSlot), so showing it never changes the window's height.
+        private readonly TextBlock _trustTitle = new() { FontWeight = FontWeight.SemiBold };
+        private readonly TextBlock _trustFolder = new() { TextTrimming = TextTrimming.CharacterEllipsis, Opacity = 0.8 };
+        private readonly TextBlock _trustWarning = new() { TextWrapping = TextWrapping.Wrap, MaxLines = 3 };
+        private readonly Button _trustYes = new() { Content = "Trust" };
+        private readonly Button _trustNo = new() { Content = "Cancel" };
+        private readonly StackPanel _trustPanel = new() { Spacing = 6, IsVisible = false };
+        private readonly StackPanel _trustGhost = new() { Spacing = 6, Opacity = 0, IsHitTestVisible = false, IsEnabled = false, IsVisible = false };
+        private PeerLaunchTrust? _trustAsked;
+        private string? _trustMachine;
+        private string? _trustCli;
+        private bool _trustAnswering;
+
+        // What the window waits on for the 120 s the far desk holds the question.
+        // A test releases it instead of waiting.
+        internal static Func<TimeSpan, Task>? TrustWaitForTests;
         private readonly Button _browseButton = new() { Content = "Browse…" };
         // CB-207's space-holders, one per slot whose occupant changes after
         // show. See ReservedSlot for why they exist and Ghost for what they
@@ -502,6 +521,9 @@ namespace Orbweaver
 
             root.Children.Add(_statusLine);
 
+            BuildTrustPanel();
+            root.Children.Add(ReservedSlot(_trustGhost, _trustPanel));
+
             return root;
         }
 
@@ -630,6 +652,13 @@ namespace Orbweaver
         internal StackPanel AgentSection => _agentSection;
         internal TextBlock StatusLine => _statusLine;
         internal Button StartButton => _startButton;
+        internal StackPanel TrustPanel => _trustPanel;
+        internal StackPanel TrustGhost => _trustGhost;
+        internal TextBlock TrustTitle => _trustTitle;
+        internal TextBlock TrustFolder => _trustFolder;
+        internal TextBlock TrustWarning => _trustWarning;
+        internal Button TrustYes => _trustYes;
+        internal Button TrustNo => _trustNo;
         internal Button BrowseButton => _browseButton;
         internal NewChatCli? SelectedCli => _selectedCli;
         internal bool OpenClawSelected => _openClawSelected;
@@ -718,6 +747,7 @@ namespace Orbweaver
             {
                 _accountGhost.IsVisible = true;
                 _folderGhost.IsVisible = true;
+                _trustGhost.IsVisible = true;
             }
             _agentGhost.IsVisible = openClawUsable;
             _existingGhost.IsVisible = openClawUsable;
@@ -1674,6 +1704,14 @@ namespace Orbweaver
                 result = new PeerLaunchResult(false, RelayReplies.LaunchFailed, null, ex.GetType().Name);
             }
 
+            // The far desk is holding a question: the form stays locked until
+            // it is answered, cancelled or lapses.
+            if (result.Code == PeerLaunchCodes.TrustNeeded && result.Trust is { } question)
+            {
+                ShowTrustQuestion(machine, wire, question);
+                return;
+            }
+
             _machineCombo.IsEnabled = true;
             _startButton.IsEnabled = true;
 
@@ -1683,6 +1721,114 @@ namespace Orbweaver
             _statusLine.Text = result.Ok
                 ? PeerLaunchCopy.Launched(wire, machine)
                 : PeerLaunchCopy.Explain(result.Code, result.Why, wire, machine);
+        }
+
+        // ---- CB-397: the far machine's trust question ---------------------------------
+
+        private void BuildTrustPanel()
+        {
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            buttons.Children.Add(_trustYes);
+            buttons.Children.Add(_trustNo);
+            _trustPanel.Children.Add(_trustTitle);
+            _trustPanel.Children.Add(_trustFolder);
+            _trustPanel.Children.Add(_trustWarning);
+            _trustPanel.Children.Add(buttons);
+            _trustYes.Click += async (_, _) => await AnswerTrustAsync(true);
+            _trustNo.Click += async (_, _) => await AnswerTrustAsync(false);
+
+            // The same shape, invisible, holding the tallest text the panel can
+            // show so the slot is always as tall as it: three warning lines and
+            // two button rows' worth. Raw, so Tab and screen readers never meet it.
+            _trustGhost.Children.Add(new TextBlock { Text = "Trust this folder?", FontWeight = FontWeight.SemiBold });
+            _trustGhost.Children.Add(new TextBlock { Text = "/folder", Opacity = 0.8 });
+            _trustGhost.Children.Add(new TextBlock
+            {
+                Text = "Claude Code will be able to read, edit and run files there, and the folder's own hooks will run there.",
+                TextWrapping = TextWrapping.Wrap,
+                MaxLines = 3,
+                MinHeight = 3 * 18,
+            });
+            _trustGhost.Children.Add(new Button { Content = "Trust", IsEnabled = false, Focusable = false });
+            AutomationProperties.SetAccessibilityView(_trustGhost, AccessibilityView.Raw);
+        }
+
+        // Asks, and arms the clock: the far desk gives the question up after
+        // its own 120 s, so this window stops offering it then too.
+        private void ShowTrustQuestion(string machine, string cli, PeerLaunchTrust question)
+        {
+            _trustAsked = question;
+            _trustMachine = machine;
+            _trustCli = cli;
+            _trustAnswering = false;
+            _trustTitle.Text = PeerLaunchCopy.TrustTitle(machine);
+            _trustFolder.Text = question.Cwd;
+            ToolTip.SetTip(_trustFolder, question.Cwd);
+            _trustWarning.Text = PeerLaunchCopy.TrustWarning(cli, machine);
+            _trustYes.IsEnabled = true;
+            _trustNo.IsEnabled = true;
+            _trustPanel.IsVisible = true;
+            _statusLine.Text = PeerLaunchCopy.TrustAsking(cli, machine);
+            _ = ExpireTrustAsync(question);
+        }
+
+        private async Task ExpireTrustAsync(PeerLaunchTrust question)
+        {
+            await (TrustWaitForTests ?? Task.Delay)(PeerLaunchServer.TrustLifetime).ConfigureAwait(true);
+            if (!ReferenceEquals(_trustAsked, question) || _trustAnswering) return;
+            var machine = _trustMachine!;
+            EndTrustQuestion();
+            _statusLine.Text = PeerLaunchCopy.TrustExpired(machine);
+        }
+
+        private void EndTrustQuestion()
+        {
+            _trustAsked = null;
+            _trustPanel.IsVisible = false;
+            _machineCombo.IsEnabled = true;
+            _startButton.IsEnabled = true;
+        }
+
+        // Trust or Cancel, once: a second click while the first is in flight
+        // does nothing, and the buttons are off until the answer is shown.
+        private async Task AnswerTrustAsync(bool trusted)
+        {
+            if (_trustAsked is not { } question || _trustAnswering) return;
+            _trustAnswering = true;
+            var machine = _trustMachine!;
+            var cli = _trustCli!;
+            _trustYes.IsEnabled = false;
+            _trustNo.IsEnabled = false;
+            if (trusted) _statusLine.Text = PeerLaunchCopy.Trusting(machine);
+
+            PeerLaunchResult result;
+            try
+            {
+                result = await _peers!.TrustAsync(machine, question, trusted, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                result = new PeerLaunchResult(false, RelayReplies.LaunchFailed, null, ex.GetType().Name);
+            }
+
+            EndTrustQuestion();
+            _statusLine.Text = PeerLaunchCopy.AfterAnswer(result, trusted, cli, machine);
+        }
+
+        // Closing the window while it asks answers Cancel, so the far desk does
+        // not leave a session waiting for two minutes. Not awaited: the window
+        // is going.
+        internal void CancelPendingTrustOnClose()
+        {
+            if (_trustAsked is not { } question || _trustAnswering || _peers is null) return;
+            _trustAnswering = true;
+            _ = _peers.TrustAsync(_trustMachine!, question, false, CancellationToken.None);
+        }
+
+        protected override void OnClosed(EventArgs e)
+        {
+            CancelPendingTrustOnClose();
+            base.OnClosed(e);
         }
 
         // OpenClaw's Start: no launch-and-wait-for-a-hook the way a local
