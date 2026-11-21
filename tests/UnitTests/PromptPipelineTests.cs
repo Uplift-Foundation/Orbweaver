@@ -57,12 +57,13 @@ public class PromptPipelineTests
         bool IPromptSender.Prompt(string r, string s, string p, string? push) { Prompts.Add((r, s, p, push)); return Online; }
         public readonly List<string?> ResolvedPushes = new();
         public readonly List<string> QuietPrompts = new(), QuietResolved = new();
-        public readonly List<string?> QuietTo = new();
         // CB-400: the quiet calls record a prompt with no push, and which were quiet.
-        bool IPromptSender.PromptQuiet(string r, string s, string p, string? onlyPhone) { QuietPrompts.Add(r); QuietTo.Add(onlyPhone); Prompts.Add((r, s, p, null)); return Online; }
+        bool IPromptSender.PromptQuiet(string r, string s, string p) { QuietPrompts.Add(r); Prompts.Add((r, s, p, null)); return Online; }
         void IPromptSender.ResolvedQuiet(string r, string s, string by) { QuietResolved.Add(r); Resolved.Add((r, s, by)); ResolvedPushes.Add(null); }
         void IPromptSender.Resolved(string r, string s, string by, string? push) { Resolved.Add((r, s, by)); ResolvedPushes.Add(push); }
         void IPromptSender.Refusal(string ph, string r, string s, string code) => Refusals.Add((ph, r, code));
+        public readonly List<(string Phone, string Rid, string Sid, string Prompt)> PromptsTo = new();
+        bool IPromptSender.PromptTo(string ph, string r, string s, string p) { PromptsTo.Add((ph, r, s, p)); return Online; }
     }
 
     // CB-321 addendum 2: a sender whose roster gives each session a persona.
@@ -345,7 +346,7 @@ public class PromptPipelineTests
         _sent.Online = true;
         await _p.ResendPendingAsync();            // the welcome
         Assert.Equal(3, _sent.Prompts.Count);
-        Assert.Equal(minted, _sent.Prompts[2]);   // same request id, same bytes
+        Assert.Equal(minted, _sent.Prompts[2]);   // same request id, same plaintext
         Assert.Contains($"prompt-resent {minted.Rid}", _log);
     }
 
@@ -377,6 +378,95 @@ public class PromptPipelineTests
         Assert.True(_p.PendingFor("s1")!.Answered);
         await _p.ResendPendingAsync();
         Assert.Single(_sent.Prompts);
+    }
+
+    // ---- CB-401: a phone that comes online later ------------------------------
+
+    [Fact]
+    public async Task A_pending_prompt_is_resent_to_the_named_phone_only_and_without_a_push()
+    {
+        await _p.OnScannedAsync(Snap());
+        var minted = Assert.Single(_sent.Prompts);
+
+        await _p.ResendPendingToAsync("phone-b");
+
+        var again = Assert.Single(_sent.PromptsTo);
+        Assert.Equal(("phone-b", minted.Rid, minted.Sid, minted.Prompt), again);   // same id, same plaintext
+        Assert.Single(_sent.Prompts);                                              // nobody else, and no push path
+        Assert.Contains($"prompt-resent {minted.Rid} to phone-b", _log);
+    }
+
+    [Fact]
+    public async Task A_resend_to_a_phone_says_when_the_frame_was_not_sent()
+    {
+        await _p.OnScannedAsync(Snap());
+        _sent.Online = false;
+        await _p.ResendPendingToAsync("phone-b");
+        Assert.Contains(_log, l => l.EndsWith("to phone-b (not sent)"));
+    }
+
+    [Fact]
+    public async Task An_expired_or_answered_prompt_is_not_resent_to_a_phone()
+    {
+        await _p.OnScannedAsync(Snap());
+        _now = _now.AddSeconds(1800);                                  // expired
+        await _p.ResendPendingToAsync("phone-b");
+        Assert.Empty(_sent.PromptsTo);
+
+        _now = _now.AddSeconds(-1800);
+        _pane.Stuck = true;
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());     // answered (no effect), still pending
+        Assert.True(_p.PendingFor("s1")!.Answered);
+        await _p.ResendPendingToAsync("phone-b");
+        Assert.Empty(_sent.PromptsTo);
+    }
+
+    [Fact]
+    public async Task Every_pending_session_is_replayed_with_its_own_request_id()
+    {
+        await _p.OnScannedAsync([("s1", Status()), ("s2", Status())]);
+        Assert.Equal(2, _sent.Prompts.Count);
+
+        await _p.ResendPendingToAsync("phone-b");
+
+        Assert.Equal(2, _sent.PromptsTo.Count);
+        Assert.Equal(["s1", "s2"], _sent.PromptsTo.Select(x => x.Sid).Order());
+        Assert.Equal(2, _sent.PromptsTo.Select(x => x.Rid).Distinct().Count());
+    }
+
+    [Fact]
+    public async Task A_replay_changes_nothing_about_the_pending_prompt()
+    {
+        await _p.OnScannedAsync(Snap());
+        var before = _p.PendingFor("s1")!;
+        await _p.ResendPendingToAsync("phone-b");
+        var after = _p.PendingFor("s1")!;
+        Assert.Equal((before.RequestId, before.ExpiresAt, false), (after.RequestId, after.ExpiresAt, after.Answered));
+        await _p.OnScannedAsync(Snap());                                   // same dialog: still no new prompt
+        Assert.Single(_sent.Prompts);
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());         // and it is still answerable
+        Assert.Equal(["1"], _pane.Keys);
+    }
+
+    // CB-401, accepted: after a desk reconnect an online phone gets each prompt
+    // from the welcome replay and again from this one — the same request_id,
+    // which its PromptBook replaces, so the second copy is harmless.
+    [Fact]
+    public async Task A_welcome_replay_and_a_phone_replay_carry_the_same_request_id()
+    {
+        await _p.OnScannedAsync(Snap());
+        await _p.ResendPendingAsync();
+        await _p.ResendPendingToAsync("phone-b");
+        Assert.Equal(_sent.Prompts[1].Rid, _sent.PromptsTo.Single().Rid);
+        Assert.Equal(_sent.Prompts[1].Prompt, _sent.PromptsTo.Single().Prompt);
+        Assert.NotNull(_sent.Prompts[1].Push);                             // the welcome path still pushes
+    }
+
+    [Fact]
+    public async Task A_resend_to_a_phone_with_nothing_pending_sends_nothing()
+    {
+        await _p.ResendPendingToAsync("phone-b");
+        Assert.Empty(_sent.PromptsTo);
     }
 
     // ---- first-run screens -----------------------------------------------------
@@ -1412,6 +1502,7 @@ public class PromptPipelineTests
         bool IPromptSender.Prompt(string r, string s, string p, string? push) { Prompts.Add((r, push)); return true; }
         void IPromptSender.Resolved(string r, string s, string by, string? push) => Resolved.Add((r, by, push));
         void IPromptSender.Refusal(string ph, string r, string s, string code) { }
+        bool IPromptSender.PromptTo(string ph, string r, string s, string p) => true;
     }
 
     [Fact]
@@ -1554,37 +1645,40 @@ public class PromptPipelineTests
     private static (string, SessionStatus)[] TwoSessions() =>
         [("so", Status(title: "overlay")), ("sd", Status(title: "dialog"))];
 
+    // CB-401's replay (ResendPendingToAsync) is what carries a pending prompt to a phone that
+    // comes online, and it carries an overlay's too: same request id, same bytes, to that phone
+    // alone, through PromptTo, which sends with push none and no e.
     [Fact]
-    public async Task A_phone_coming_online_is_resent_the_overlay_prompt_alone_and_not_the_permission_prompt()
+    public async Task An_overlay_prompt_rides_the_replay_to_a_returning_phone_with_its_own_request_id()
     {
         var sender = new Sender();
         var p = TwoSessionPipeline(sender);
         await p.OnScannedAsync(TwoSessions());
-        Assert.Equal(2, sender.Prompts.Count);
-        var overlayRid = sender.QuietPrompts.Single();
-        sender.QuietPrompts.Clear(); sender.QuietTo.Clear(); sender.Prompts.Clear();
+        var overlay = sender.Prompts.Single(x => x.Sid == "so");
 
-        await p.ResendQuietAsync("ph_a");
+        await p.ResendPendingToAsync("ph_a");
 
-        var (rid, sid, _, push) = Assert.Single(sender.Prompts);
-        Assert.Equal((overlayRid, "so", (string?)null), (rid, sid, push));
-        Assert.Equal(["ph_a"], sender.QuietTo);
-        Assert.Contains($"prompt-resent {overlayRid} presence", _log);
+        Assert.Contains(("ph_a", overlay.Rid, "so", overlay.Prompt), sender.PromptsTo);
+        Assert.Equal(2, sender.PromptsTo.Count);              // and the permission prompt, as CB-401 designed
+        Assert.Equal(2, sender.Prompts.Count);                // nothing went out through the alerting or quiet mint again
     }
 
-    // An answered overlay is not left pending (addendum 4 clears the mark after a press that
-    // changed nothing, and a press that did settles it), so expiry is the case left.
+    // And the desk-welcome replay (ResendPendingAsync, which does send alerts) keeps an
+    // overlay quiet: PromptQuiet, never the alerting call.
     [Fact]
-    public async Task An_expired_overlay_is_not_resent_on_presence()
+    public async Task The_welcome_replay_keeps_an_overlay_quiet_and_a_permission_prompt_alerting()
     {
         var sender = new Sender();
         var p = TwoSessionPipeline(sender);
         await p.OnScannedAsync(TwoSessions());
+        var quietBefore = sender.QuietPrompts.Count;
         sender.Prompts.Clear();
 
-        _now = _now.AddSeconds(1800);
-        await p.ResendQuietAsync("ph_a");
+        await p.ResendPendingAsync();
 
-        Assert.Empty(sender.Prompts);                       // the next scan re-mints it, and that mint reaches the phone
+        Assert.Equal(quietBefore + 1, sender.QuietPrompts.Count);          // the overlay, quiet again
+        Assert.Equal(2, sender.Prompts.Count);
+        Assert.Null(sender.Prompts.Single(x => x.Sid == "so").Push);
+        Assert.NotNull(sender.Prompts.Single(x => x.Sid == "sd").Push);
     }
 }

@@ -156,9 +156,9 @@ namespace Orbweaver
             // Every pending prompt goes out again on each welcome (see
             // ResendPendingAsync for why every one, not only the unsent).
             _link.WelcomeReceived += () => Defer(() => _ = Prompts.ResendPendingAsync());
-            // CB-400: and a quiet overlay prompt to a phone that comes online, to it alone.
-            // Deferred, so the roster that OnPresence returns goes out first.
-            _link.PhoneCameOnline += phone => Defer(() => _ = Prompts.ResendQuietAsync(phone));
+            // CB-401: a phone that came online or resynced gets the prompts
+            // still pending, after its roster (see ResendPendingToAsync).
+            _link.PhoneNeedsPrompts += phone => Defer(() => _ = Prompts.ResendPendingToAsync(phone));
             // CB-323: with the phone's accepted watch key, read now, under the lock,
             // so the gate judges the answer against the key as of its arrival.
             _link.AnswerReceived += (phone, idPub, answer) =>
@@ -306,11 +306,14 @@ namespace Orbweaver
         bool IPromptSender.Prompt(string requestId, string sessionId, string prompt, string? pushPlaintext) =>
             Dispatch(() => _link.SendPrompt(requestId, sessionId, prompt, pushPlaintext));
 
-        bool IPromptSender.PromptQuiet(string requestId, string sessionId, string prompt, string? onlyPhone) =>
-            Dispatch(() => _link.SendPrompt(requestId, sessionId, prompt, null, quiet: true, onlyPhone: onlyPhone));
+        bool IPromptSender.PromptQuiet(string requestId, string sessionId, string prompt) =>
+            Dispatch(() => _link.SendPrompt(requestId, sessionId, prompt, null, quiet: true));
 
         void IPromptSender.ResolvedQuiet(string requestId, string sessionId, string by) =>
             Dispatch(() => _link.SendResolved(requestId, sessionId, by, null, quiet: true));
+
+        bool IPromptSender.PromptTo(string phoneId, string requestId, string sessionId, string prompt) =>
+            Dispatch(() => _link.SendPromptTo(phoneId, requestId, sessionId, prompt));
 
         // CB-321 addendum 2: the persona an amber for this session speaks as,
         // read off the link's book under the lock like everything else there.

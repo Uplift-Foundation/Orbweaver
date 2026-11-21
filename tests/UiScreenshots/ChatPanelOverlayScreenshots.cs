@@ -35,7 +35,7 @@ public class ChatPanelOverlayScreenshots : IDisposable
     {
         var id = "screenshot-overlay-" + Guid.NewGuid();
         _toClean.Add(id);
-        var fake = new FakeChatSession(history) { SessionId = id, DisplayName = "claude-buddy", Prompt = Overlay() };
+        var fake = new FakeChatSession(history) { SessionId = id, DisplayName = "orbweaver", Prompt = Overlay() };
 
         ChatPanel.OpenFor(NewOrb(), fake);
         ScreenshotHelper.Flush();
@@ -85,7 +85,7 @@ public class ChatPanelOverlayScreenshots : IDisposable
         var id = "screenshot-overlay-tall-" + Guid.NewGuid();
         _toClean.Add(id);
         var prompt = ChatTranscript.ParseDialog(screen)!;
-        var fake = new FakeChatSession(Context()) { SessionId = id, DisplayName = "claude-buddy", Prompt = prompt };
+        var fake = new FakeChatSession(Context()) { SessionId = id, DisplayName = "orbweaver", Prompt = prompt };
 
         ChatPanel.OpenFor(NewOrb(), fake);
         ScreenshotHelper.Flush();
