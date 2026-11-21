@@ -39,7 +39,11 @@ namespace Orbweaver
             // CB-307: shadow mode and where its verdicts are logged, as on the
             // server's own seams. Null shadow is off.
             Func<bool>? Shadow = null,
-            Action<string, string>? Log = null);
+            Action<string, string>? Log = null,
+
+            // CB-403: the clock the gate waits on while a screen settles into
+            // a prompt. Null is real time.
+            Func<TimeSpan, Task>? Delay = null);
 
         // CB-306's product-readiness round: the far side's answer to a control
         // request, carried back over the link so the near panel says what the
@@ -87,7 +91,7 @@ namespace Orbweaver
                 case SlashRouteKind.Typed:
                     var (typed, notAtPrompt, _) = await TypingGate.GuardedTypeAsync(status, line, _seams.TypeInto,
                         _seams.RecordStatus, _seams.CapturePane, _seams.CanReadPane,
-                        _seams.Shadow, _seams.Log ?? ((what, detail) => MirrorLog.Say(what, detail)), "slash-host")
+                        _seams.Shadow, _seams.Log ?? ((what, detail) => MirrorLog.Say(what, detail)), "slash-host", _seams.Delay)
                         .ConfigureAwait(false);
                     if (notAtPrompt is not null) return Refused(TypingGate.NotAtPromptReason(notAtPrompt));
 

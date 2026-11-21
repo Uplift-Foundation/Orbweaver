@@ -1,0 +1,23 @@
+  haven't received its completion notification yet, so I don't have a "done" to
+  report. I'll reply "done" once it finishes.
+
+⏺ scratch-two is in the same state as scratch-one: its sleep 900 is still
+  running in the background and it will report "done" when it finishes. No
+  action is needed from me.
+
+❯ x
+
+⏺ Both teammates are still running their sleep 900 commands, and neither has
+  reported "done" yet. What would you like me to do with "x"? If you meant to
+  send a different message, go ahead and type it.
+
+✻ Worked for 3m 46s · done 1:19 PM
+
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+  Haiku 5.5 | ~/throwaway | 67% (7d:33%) | [.claude-board]
+  enter to view · x to clear
+
+  ⏺ main
+❯ ◯ scratch-two  Spawn scratch-two teammate                   stopped · 3m 40s
