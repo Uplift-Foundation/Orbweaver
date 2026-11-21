@@ -304,4 +304,23 @@ public class PeerLaunchTrustWireClientTests
         rig.OnSend = m => rig.ReplyTo(m, new PeerLaunchResult(true, PeerLaunchCodes.Launched, "forged", null), from: "pc");
         Assert.Equal(PeerLaunchCodes.NoAnswer, (await rig.Client.TrustAsync("mini", Question, true, CancellationToken.None)).Code);
     }
+
+    // A question the far desk has given up is dropped on the next launch; a live one is kept.
+    [Fact]
+    public async Task An_expired_question_is_dropped_on_the_next_launch_and_a_live_one_is_kept()
+    {
+        var rig = new Rig();
+        var expired = Question with { Token = "OLD", ExpiresAt = Now.ToUnixTimeSeconds() };
+        await rig.AskedAsync(expired);
+        var live = Question with { Token = "LIVE" };
+        await rig.AskedAsync(live);   // the launch sweeps OLD before recording LIVE
+
+        var sent = rig.Sent.Count;
+        Assert.Equal(PeerLaunchCodes.TrustGone, (await rig.Client.TrustAsync("mini", expired, true, CancellationToken.None)).Code);
+        Assert.Equal(sent, rig.Sent.Count);
+
+        rig.OnSend = m => rig.ReplyTo(m, new PeerLaunchResult(true, PeerLaunchCodes.Launched, "sid", null));
+        Assert.True((await rig.Client.TrustAsync("mini", live, true, CancellationToken.None)).Ok);
+
+    }
 }

@@ -88,7 +88,7 @@ namespace Orbweaver
             if (prompt.Kind == TrustPrompt.Kind.Answerable && policy == TrustPolicy.Ask)
                 return new(PeerLaunchCodes.TrustNeeded, null, null, new HeldTrust(pane!, before, prompt.Hooks));
 
-            await CloseIfStillAskingAsync(f.Cwd, cli, pane!).ConfigureAwait(false);
+            await CloseIfStillAskingAsync(f.Cwd, cli, pane!, prompt.Kind).ConfigureAwait(false);
             return new(RelayReplies.LaunchFailed, prompt.Kind == TrustPrompt.Kind.Answerable
                 ? name + " is asking whether to trust that folder. Update this machine to answer from here."
                 : name + " is asking whether to trust that folder. Answer it once on that machine.", null);
@@ -108,14 +108,17 @@ namespace Orbweaver
         // the session is theirs; the same look also guards a pane id reused
         // after a tmux server restart. Reads and kills are two processes
         // apart, which is the named residual window.
-        internal async Task CloseIfStillAskingAsync(string cwd, NewChatCli cli, string pane)
+        internal async Task CloseIfStillAskingAsync(string cwd, NewChatCli cli, string pane, TrustPrompt.Kind expected = TrustPrompt.Kind.Answerable)
         {
             if (_seams.Launch.Trust is not { } trust) return;
             var screen = await trust.ReadPane(pane).ConfigureAwait(false);
-            // Narrower than "any trust prompt": the prompt for the launched
-            // folder, in either spelling. A reused pane id showing somebody
-            // else's prompt, or a CLI whose prompt is only reported, is left alone.
-            if (TrustPrompt.Read(screen, cwd, cli, ResolveFolder(cwd)).Kind == TrustPrompt.Kind.Answerable)
+            // The reading that led here, not "any trust prompt": Answerable for
+            // the launched folder (either spelling) for a held question, and
+            // the same Unanswerable reading for the close RunAsync makes on a
+            // pane this very launch started. A reused pane id showing
+            // somebody else's Claude prompt is Unanswerable, so it is never
+            // killed on the held-question paths.
+            if (TrustPrompt.Read(screen, cwd, cli, ResolveFolder(cwd)).Kind == expected)
                 await trust.ClosePane(pane).ConfigureAwait(false);
         }
 
@@ -131,7 +134,13 @@ namespace Orbweaver
             static Outcome Failed(string why) => new(RelayReplies.LaunchFailed, why, null);
 
             var first = Look(await trust.ReadPane(held.Pane).ConfigureAwait(false));
-            if (first.Kind != TrustPrompt.Kind.Answerable) return Failed("The trust question was no longer on screen.");
+            if (first.Kind != TrustPrompt.Kind.Answerable)
+            {
+                // A read that merely failed also lands here, and the record is
+                // already taken: nothing else will ever close a pane still on the prompt.
+                await CloseIfStillAskingAsync(f.Cwd, cli, held.Pane).ConfigureAwait(false);
+                return Failed("The trust question was no longer on screen.");
+            }
 
             if (first.Marker == TrustPrompt.Option.No)
             {
@@ -151,7 +160,11 @@ namespace Orbweaver
             }
 
             var (pressed, _) = await trust.CaptureAndPress(held.Pane, "Enter", s => Look(s) is { Kind: TrustPrompt.Kind.Answerable, Marker: TrustPrompt.Option.Yes }).ConfigureAwait(false);
-            if (!pressed) return Failed("The trust question changed before it could be answered.");
+            if (!pressed)
+            {
+                await CloseIfStillAskingAsync(f.Cwd, cli, held.Pane).ConfigureAwait(false);
+                return Failed("The trust question changed before it could be answered.");
+            }
 
             // After Enter the pane is never closed by us: it is past the
             // question and belongs to the session.
@@ -218,7 +231,7 @@ namespace Orbweaver
         // A new local session of that CLI in that folder, one that was not in
         // the book before the launch. Polled every 500 ms for up to 30 s.
         //
-        // With a pane, the pane is also read once a second from 1.5 s in, after
+        // With a pane, the pane is also read once a second from 1 s in, after
         // the roster check so a session that checks in always wins, and a trust
         // prompt ends the wait with the reading (CB-397).
         private async Task<(string? SessionId, TrustPrompt.Reading? Prompt)> AwaitNewSessionAsync(
@@ -300,7 +313,7 @@ namespace Orbweaver
             TrustForTests is { } fake ? fake.ClosePane(pane) : Task.Run(() => TerminalFocuser.TryRun(
                 TerminalFocuser.ResolveTmuxBinary(null) ?? "tmux", out _, TerminalScripts.TmuxKillPaneArgs(pane)));
 
-        private static SessionStatus PaneStatus(string pane) =>
+        internal static SessionStatus PaneStatus(string pane) =>
             new() { Source = SessionSource.ClaudeCode, TmuxPane = pane };
 
         // Looked up when the start is called, not when the seams are built:

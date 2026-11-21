@@ -60,7 +60,7 @@ namespace Orbweaver
 
         // CB-397: the launch behind each question this desk was asked, so the
         // answer is signed over the values this desk actually sent.
-        private sealed record Asked(string Machine, string Cwd, string Cli, string Account, string LaunchNonce);
+        private sealed record Asked(string Machine, string Cwd, string Cli, string Account, string LaunchNonce, long ExpiresAt);
         private readonly Dictionary<string, Asked> _asked = new();
 
         internal PeerLaunchClient(Seams seams) => _seams = seams;
@@ -76,9 +76,21 @@ namespace Orbweaver
             return reply?.Body is { } body ? PeerLaunchWire.ParseInfo(body) : null;
         }
 
+        // A question the far desk has given up is dropped here, on the next
+        // launch or answer: nothing else would ever remove it, and a desktop
+        // app runs for weeks.
+        private void SweepExpired()
+        {
+            var now = _seams.Now().ToUnixTimeSeconds();
+            lock (_gate)
+                foreach (var token in _asked.Where(a => a.Value.ExpiresAt <= now).Select(a => a.Key).ToList())
+                    _asked.Remove(token);
+        }
+
         public async Task<PeerLaunchResult> LaunchAsync(
             string machine, PeerLaunchSpec spec, CancellationToken ct)
         {
+            SweepExpired();
             var unsigned = new PeerLaunchWire.LaunchRequest(
                 spec.Cwd, spec.Cli, "", "", spec.Account, "", "",
                 _seams.NewNonce(),
@@ -112,13 +124,14 @@ namespace Orbweaver
             if (result.Trust is not { } trust || trust.Cwd != spec.Cwd || trust.Cli != spec.Cli)
                 return new PeerLaunchResult(false, PeerLaunchCodes.NoAnswer, null, "unexpected trust question");
 
-            lock (_gate) _asked[trust.Token] = new Asked(machine, spec.Cwd, spec.Cli, spec.Account, unsigned.Nonce);
+            lock (_gate) _asked[trust.Token] = new Asked(machine, spec.Cwd, spec.Cli, spec.Account, unsigned.Nonce, trust.ExpiresAt);
             return result;
         }
 
         public async Task<PeerLaunchResult> TrustAsync(
             string machine, PeerLaunchTrust trust, bool trusted, CancellationToken ct)
         {
+            SweepExpired();
             Asked? asked;
             lock (_gate)
                 asked = _asked.GetValueOrDefault(trust.Token) is { } a

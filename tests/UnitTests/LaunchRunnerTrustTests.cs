@@ -74,16 +74,17 @@ public class LaunchRunnerTrustTests
     [Theory]
     [InlineData("grok", "tmux-grok-trustdialog")]
     [InlineData("codex", "wt-codex-trustdialog")]
-    public async Task Other_clis_prompts_are_reported_never_answered_and_the_pane_is_left_for_that_machine(string cli, string fixture)
+    public async Task Other_clis_prompts_are_reported_never_answered_and_the_pane_this_launch_started_is_closed(string cli, string fixture)
     {
         var d = Pane(Screens(fixture));
         foreach (var policy in new[] { LaunchRunner.TrustPolicy.Ask, LaunchRunner.TrustPolicy.Close })
         {
+            d.Closed.Clear();
             var outcome = await d.Runner().RunAsync(F(cli), policy);
             Assert.Equal(RelayReplies.LaunchFailed, outcome.Code);
             Assert.StartsWith(NewChatLauncher.DisplayName(LaunchGate.CliFor(cli)), outcome.Why);
             Assert.EndsWith("Answer it once on that machine.", outcome.Why);
-            Assert.Empty(d.Closed);
+            Assert.Equal(["%1"], d.Closed);
             Assert.Empty(d.Presses);
         }
     }
@@ -288,5 +289,56 @@ public class LaunchRunnerTrustTests
         var answered = await d.Runner().AnswerTrustAsync(F() with { Cwd = Asked }, asked.Held!);
         Assert.Equal("new", answered.SessionId);
         Assert.Equal(["Down", "Enter"], d.Presses);
+    }
+
+    // The guard is the reading that led there: an Unanswerable pane is closed only on the
+    // path that read it as Unanswerable, and a held question never kills it.
+    [Fact]
+    public async Task The_guard_kills_only_the_reading_that_led_to_it()
+    {
+        var other = OnNo.Replace(Folder, "/private/tmp/cb397-w/somebody-elses");
+        var d = Pane(other);
+        await d.Runner().CloseIfStillAskingAsync(Folder, NewChatCli.ClaudeCode, "%1");
+        Assert.Empty(d.Closed);
+        await d.Runner().CloseIfStillAskingAsync(Folder, NewChatCli.ClaudeCode, "%1", TrustPrompt.Kind.Unanswerable);
+        Assert.Equal(["%1"], d.Closed);
+
+        var ours = Pane(OnNo);
+        await ours.Runner().CloseIfStillAskingAsync(Folder, NewChatCli.ClaudeCode, "%1", TrustPrompt.Kind.Unanswerable);
+        Assert.Empty(ours.Closed);
+    }
+
+    // ---- the answer's failure exits close a pane still on the prompt --------------------
+
+    [Fact]
+    public async Task A_read_that_merely_failed_is_closed_when_the_prompt_is_still_there()
+    {
+        var d = new LaunchRunnerTests.Desk { TrustOn = true, Screen = n => n == 0 ? null : OnNo };
+        var outcome = await d.Runner().AnswerTrustAsync(F(), Held());
+        Assert.Equal("The trust question was no longer on screen.", outcome.Why);
+        Assert.Equal(["%1"], d.Closed);
+        Assert.Empty(d.Presses);
+    }
+
+    [Fact]
+    public async Task An_enter_that_was_not_approved_is_closed_when_the_prompt_is_still_there()
+    {
+        // The look before Enter shows the marker back on No, so Enter is refused; the pane still asks.
+        var d = new LaunchRunnerTests.Desk { TrustOn = true, Screen = n => n == 0 ? OnYes : OnNo };
+        var outcome = await d.Runner().AnswerTrustAsync(F(), Held());
+        Assert.Equal("The trust question changed before it could be answered.", outcome.Why);
+        Assert.Empty(d.Presses);
+        Assert.Equal(["%1"], d.Closed);
+    }
+
+    // Nothing pins the routing otherwise: a pane-only status that did not route to tmux would
+    // make every real Trust end "Couldn't select Yes" while the faked suites stayed green.
+    [Fact]
+    public void A_status_carrying_only_a_pane_routes_to_tmux()
+    {
+        var status = LaunchRunner.PaneStatus("%12");
+        Assert.Equal("%12", status.TmuxPane);
+        Assert.Equal(TerminalTyping.Route.Tmux, TerminalTyping.RouteFor(status, onMacOS: true, onWindows: false, new TerminalTyping.Tools(true, false, false)));
+        Assert.Equal(TerminalTyping.Route.Tmux, TerminalTyping.RouteFor(status, onMacOS: false, onWindows: false, new TerminalTyping.Tools(true, false, false)));
     }
 }
