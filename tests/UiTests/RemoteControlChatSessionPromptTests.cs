@@ -535,7 +535,24 @@ public class RemoteControlChatSessionPromptTests
         Assert.Equal(3, h.Asks);
     }
 
-    // And a timed-out answer never latches either: asking goes on.
+    // The other arm of the wake-up in the no-reply case: a form was handed over (an earlier read)
+    // with no poll loop running, so there is nobody waiting to wake. The answer still notes that
+    // nothing came back, and does not throw.
+    [AvaloniaFact]
+    public async Task ATimedOutAnswerWithNoPollLoopWaitingStillNotesItAndDoesNotThrow()
+    {
+        var h = new Harness();
+        h.Session.ApplyReply(Shown("fp1"));
+        h.NextAnswer = new AnswerReply(AnswerKind.NoReply);
+
+        await h.Session.AnswerAsync(h.Session.Prompt!.Options[0]);
+        await h.Settle();
+
+        Assert.Contains(h.Session.History, t => t.Text.Contains("Didn't hear back", StringComparison.Ordinal));
+        Assert.Equal(0, h.Asks);
+    }
+
+
     [AvaloniaFact]
     public async Task ATimedOutAnswerDoesNotStopTheAsking()
     {
