@@ -108,7 +108,8 @@ public class ChatPanelRunControlsTests : IDisposable
         Assert.Equal(SlashRouting.PeerSocketReason, ToolTip.GetTip(panel.RunModelBox));
         Assert.True(ToolTip.GetShowOnDisabled(panel.RunModelBox));
         Assert.False(panel.RunEffortDial!.IsEnabled);
-        Assert.Equal(SlashRouting.PeerSocketReason, panel.RunEffortReason!.Text);
+        // The same cause is said once, under the model; the dial keeps it as a tooltip.
+        Assert.Null(panel.RunEffortReason);
         Assert.Equal(SlashRouting.PeerSocketReason, ToolTip.GetTip(panel.RunEffortDial));
     }
 

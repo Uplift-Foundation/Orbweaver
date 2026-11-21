@@ -1221,7 +1221,10 @@ namespace Orbweaver
                         if (_runApplying) return;
                         await ChangeAsync(dial, () => run.SetThinkingAsync(choices[index].Id));
                     };
+                    // One cause greying both controls is said once, under the
+                    // model; the dial still carries it as its tooltip.
                     RunEffortReason = Reason(dial, options.EffortDisabledReason);
+                    if (RunEffortReason is not null && options.EffortDisabledReason == modelOff) RunEffortReason = null;
 
                     Control body = dial;
                     if (options.CanResetToDefault)

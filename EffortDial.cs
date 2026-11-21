@@ -372,11 +372,12 @@ namespace Orbweaver
                 context.DrawEllipse(accent, null, EffortDialMath.PointAt(centre, radius, a), 5, 5);
             }
 
-            // The name in the middle, with "…" while pending.
+            // The name in the gap at the bottom, where nothing else is drawn and
+            // the pointer never goes, with "…" while pending.
             var name = ShownLevel ?? "—";
             if (IsPending && PreviewIndex < 0) name += "…";
             var label = Formatted(name, 11, enabled ? Foreground() : fg);
-            context.DrawText(label, new Point(centre.X - label.Width / 2, centre.Y + radius * 0.2));
+            context.DrawText(label, new Point(centre.X - label.Width / 2, centre.Y + radius * 0.72));
 
             if (IsFocused && enabled)
                 context.DrawEllipse(null, new Pen(accent, 1, new DashStyle(new double[] { 2, 2 }, 0)), centre, radius + 20, radius + 20);
