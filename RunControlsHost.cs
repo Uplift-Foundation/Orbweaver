@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Nodes;
 
 namespace Orbweaver
@@ -206,6 +207,61 @@ namespace Orbweaver
                 _seams.Log ?? ((what, detail) => MirrorLog.Say(what, detail)), "run-host").ConfigureAwait(false);
             if (notAtPrompt is not null) return new(RunSetKind.Failed, TypingGate.NotAtPromptReason(notAtPrompt));
             return typed ? RunSetResult.Sent : new(RunSetKind.Failed, "the terminal refused the text");
+        }
+    }
+
+    // The one host this app runs, shared by the chat panel, the phone relay and
+    // the mirror server, so a set from any of them is pending for all three.
+    //
+    // Excluded from coverage: every seam is one line into something that types
+    // into a real pane, posts to a real bridge or scans a real registry —
+    // RunControlsHost itself is driven with fakes.
+    [ExcludeFromCodeCoverage]
+    internal static class RunControlsLive
+    {
+        // What the session is running and could run. Pointed at the core's
+        // readers (RunControls' parsers over the tailed files and the catalogue
+        // caches); until then nothing is read, and the controls say "not known
+        // yet" rather than guessing. Both must answer from what is already
+        // cached: the mirror asks on its peer pump.
+        internal static Func<SessionStatus, RunReading?> ReadingFor = _ => null;
+        internal static Func<SessionStatus, RunCatalogue?> CatalogueFor = _ => null;
+        internal static Func<SessionStatus, Version?> CodexVersionFor = _ => null;
+
+        private static readonly Lazy<RunControlsHost> _shared = new(Build);
+
+        internal static RunControlsHost Shared => _shared.Value;
+
+        private static string? BridgeIdFor(SessionStatus status) => LocalSlashChannel.BridgeIdFor(
+            status.IsDesktopHosted ? status.BridgeSessionId : null,
+            status.IsDesktopHosted ? null : RemoteMirrorServer.RegistryEntryFor(status)?.BridgeSessionId);
+
+        private static RunControlsHost Build()
+        {
+            var cloudApi = new HttpCloudApi();
+            return new RunControlsHost(new RunControlsHost.Seams(
+                TerminalFocuser.CanSendQuietly,
+                BridgeIdFor,
+                () => OrbweaverSettings.BridgeCommandsEnabled,
+                status => ReadingFor(status),
+                status => CatalogueFor(status),
+                status => CodexVersionFor(status),
+                (status, text) => TerminalFocuser.SendTextAndSubmit(status, text),
+                MirrorSlashHost.GatedPost(
+                    () => OrbweaverSettings.BridgeCommandsEnabled,
+                    BridgeIdFor,
+                    status => RemoteMirrorServer.RegistryEntryFor(status)?.Version,
+                    (status, bridgeId, request) => CloudTurnSender.PostControlAndReadAnswerAsync(
+                        cloudApi,
+                        CloudAccounts.SourceFor(ClaudeConfigRoots.RootOfTranscript(status.TranscriptPath)),
+                        CredentialBudget.Unmeasured, bridgeId, request, Task.Delay,
+                        CancellationToken.None)),
+                () => DateTimeOffset.UtcNow,
+                RecordStatus: status => status.SessionPid > 0 && status.SessionId.Length > 0
+                    ? SessionPark.RecordStatus(status.SessionPid, status.SessionId) : null,
+                CapturePane: TerminalFocuser.CapturePane,
+                CanReadPane: TerminalFocuser.CanReadPane,
+                Log: (what, detail) => MirrorLog.Say(what, detail)));
         }
     }
 }

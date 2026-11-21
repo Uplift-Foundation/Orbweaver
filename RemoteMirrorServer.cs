@@ -518,7 +518,8 @@ namespace Orbweaver
                 PressKey: TerminalFocuser.SendPaneKey,
                 TypeLiteral: TerminalFocuser.SendPaneText,
                 Shadow: RealShadowOn,
-                Files: LiveFiles);
+                Files: LiveFiles,
+                RunControls: RunControlsLive.Shared);
         }
 
         // CB-307: shadow mode, read the way the local panel's gate reads it —
@@ -565,7 +566,7 @@ namespace Orbweaver
         // Excluded from coverage along with the rest of LiveSeams: it scans
         // a real registry directory and checks a real process table.
         [ExcludeFromCodeCoverage]
-        private static SessionRegistry.Entry? RegistryEntryFor(SessionStatus status)
+        internal static SessionRegistry.Entry? RegistryEntryFor(SessionStatus status)
         {
             if (status.SessionPid <= 0) return null;
 
