@@ -4,6 +4,10 @@ namespace Orbweaver.Tests;
 
 // CB-402: the rows the scan draws catch up with what the client knows within one
 // dial tick, even when no roster reply registered a change.
+//
+// Drives the client straight in rather than installing it on PeerSessions:
+// MirrorEdgeCaseTests runs in another collection, in parallel, and installs and
+// clears its own client there.
 public partial class MirrorRoundTripTests
 {
     [Fact]
@@ -19,28 +23,25 @@ public partial class MirrorRoundTripTests
         {
             // The drawn rows hold nothing although the client knows two: the
             // stale state no later "nothing changed" reply would ever repair.
-            // Reset first: it also uninstalls a test client.
-            RemoteControlSessions.ResetForTests();
-            PeerSessions.UseClientForTests(harness.Client);
-            Assert.Empty(RemoteControlSessions.SnapshotForTests);
+            RemoteControlSessions.SetPeerRowsForTests(Array.Empty<RemoteControlSessions.Remote>());
 
-            RemoteControlSessions.RepublishIfOutOfStep();
+            RemoteControlSessions.RepublishIfOutOfStep(harness.Client);
             var caughtUp = RemoteControlSessions.SnapshotForTests;
             Assert.Equal(2, caughtUp.Count);
 
             // In step: left exactly as it was, so Seen and the lifetime rule
             // that reads it are untouched.
-            RemoteControlSessions.RepublishIfOutOfStep();
+            RemoteControlSessions.RepublishIfOutOfStep(harness.Client);
             Assert.Same(caughtUp, RemoteControlSessions.SnapshotForTests);
+
+            // No client: nothing to compare, nothing published.
+            RemoteControlSessions.SetPeerRowsForTests(Array.Empty<RemoteControlSessions.Remote>());
+            RemoteControlSessions.RepublishIfOutOfStep(null);
+            Assert.Empty(RemoteControlSessions.SnapshotForTests);
         }
         finally
         {
-            PeerSessions.UseClientForTests(null);
-            RemoteControlSessions.ResetForTests();
+            RemoteControlSessions.SetPeerRowsForTests(Array.Empty<RemoteControlSessions.Remote>());
         }
-
-        // No client at all: nothing to compare, nothing published.
-        RemoteControlSessions.RepublishIfOutOfStep();
-        Assert.Empty(RemoteControlSessions.SnapshotForTests);
     }
 }

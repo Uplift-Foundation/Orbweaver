@@ -492,6 +492,14 @@ namespace Orbweaver
 
         // Test seam, matching SetSnapshotForTests: RepublishFromLink is the only
         // production writer and reads a live link.
+        // CB-402: stands up drawn rows that disagree with a client, without
+        // ResetForTests, which would also uninstall a mirror client another
+        // test class is using at the same moment.
+        internal static void SetPeerRowsForTests(IReadOnlyList<Remote> rows)
+        {
+            lock (Gate) { _peerRows = rows; _snapshot = OnePerSession(rows); }
+        }
+
         internal static void SetListedByPeerForTests(
             IReadOnlyDictionary<string, IReadOnlySet<string>> listed)
         {
@@ -521,9 +529,13 @@ namespace Orbweaver
         // RemotesFromRoster, which is tested; this is the two lines that fetch
         // and store.
         [ExcludeFromCodeCoverage]
-        internal static void RepublishFromLink()
+        internal static void RepublishFromLink() => RepublishFrom(PeerSessions.Host?.Client);
+
+        // The republish itself, handed its client. Split out (CB-402) so a test
+        // can drive it with its own client instead of installing one on
+        // PeerSessions, which other test classes running in parallel also use.
+        internal static void RepublishFrom(RemoteMirrorClient? client)
         {
-            var client = PeerSessions.Host?.Client;
 
             var listed = client is null
                 ? EmptyListedByPeer
@@ -580,9 +592,10 @@ namespace Orbweaver
 
         // Run once per dial tick, after the rosters have been asked for. Cheap:
         // a few dozen rows, compared by key.
-        internal static void RepublishIfOutOfStep()
+        internal static void RepublishIfOutOfStep() => RepublishIfOutOfStep(PeerSessions.Host?.Client);
+
+        internal static void RepublishIfOutOfStep(RemoteMirrorClient? client)
         {
-            var client = PeerSessions.Host?.Client;
             if (client is null) return;
 
             var fresh = RemotesFromRoster(
@@ -603,7 +616,7 @@ namespace Orbweaver
             // Said every time, because it should never be said at all: a line
             // here is the stale-rows path caught in the act.
             MirrorLog.Say("rc-resync", $"held={held.Count} known={fresh.Count}");
-            RepublishFromLink();
+            RepublishFrom(client);
         }
 
         // CB-402: the rows' keys as one string, so a republish is logged when the
