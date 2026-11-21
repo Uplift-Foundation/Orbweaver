@@ -2499,24 +2499,31 @@ namespace Orbweaver
             }
         }
 
-        // CB-404: a `run` INPUT. Shape first (the field's name, the value's
-        // grammar — the same rules a phone's set_run is held to), then the host.
+        // CB-404: a `run` INPUT, held to the rules a phone's set_run is: the
+        // shape (field name, ID grammar), then the field's state as last read
+        // (off or another change running, then a value outside its choices), then the
+        // route.
         // Answered OK with via=set, or via=refused with why and kind; never ERR,
         // which is for a request that could not be served at all.
         private async Task SetRunAsync(string fromPeer, MirrorProtocol.MirrorFrame frame, SessionStatus status,
             string field, string value)
         {
-            RunSetResult result;
-            if (!RunFrames.FieldOk(field)) result = new(RunSetKind.BadValue, $"\"{field}\" is not something that can be changed");
-            else if (!RunFrames.ValueOk(value)) result = new(RunSetKind.BadValue, "that value can't be passed to the CLI");
-            else if (_seams.RunControls is not { } run) result = new(RunSetKind.Unavailable, RelayRemote.NoRunControlsWhy);
+            (string Code, string? Why)? answer;
+            if (!RunFrames.FieldOk(field) || !RunFrames.IdOk(value))
+                answer = (RunFrames.BadValue, "that can't be passed to the CLI");
+            else if (_seams.RunControls is not { } run || run.Read(status) is not { } state)
+                answer = (RunFrames.Unavailable, RelayRemote.NoRunControlsWhy);
+            else if (RunFrames.Refusal(state, field, value, run.IsRunning(status)) is { } refused)
+                answer = refused;
             else
             {
+                RunSetResult result;
                 try { result = await run.SetAsync(status, field, value).ConfigureAwait(false); }
                 catch { result = new(RunSetKind.Failed, "that machine failed while changing it"); }
+                answer = result.Kind == RunSetKind.Sent ? null : RunFrames.Answer(result);
             }
 
-            var fields = MirrorRun.ReplyFields(result);
+            var fields = MirrorRun.ReplyFields(answer?.Code, answer?.Why);
             InputLog("input", $"n={frame.Text("n")} -> ok via={fields["via"]} run={field}");
             await SendAsync(fromPeer, MirrorProtocol.BuildFrame(MirrorProtocol.Ok, frame.Id, fields)).ConfigureAwait(false);
         }

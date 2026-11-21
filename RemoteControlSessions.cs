@@ -542,14 +542,30 @@ namespace Orbweaver
                         OrbweaverSettings.OpenClawNativeMode),
                     Now());
 
+            string? previous;
             lock (Gate)
             {
+                previous = _republishSignature;
                 _peerRows = rows;
                 _listedByPeer = listed;
             }
 
+            var signature = KeySignature(rows);
+            if (signature != previous)
+            {
+                lock (Gate) _republishSignature = signature;
+                MirrorLog.Say("rc-republish", $"rows={rows.Count}");
+            }
+
             Republish();
         }
+
+        // CB-402: the rows' keys as one string, so a republish is logged when the
+        // set changed and not on every tick.
+        private static string? _republishSignature;
+
+        internal static string KeySignature(IEnumerable<Remote> rows) =>
+            string.Join("|", rows.Select(r => r.Key).Order(StringComparer.Ordinal));
 
         // The link's rows, one per session, as the list the scan reads.
         internal static void Republish()

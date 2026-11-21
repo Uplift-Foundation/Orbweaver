@@ -38,8 +38,8 @@ public class RelayV4RuleTests
             RelayReplies.Err("r", RelayReplies.NotAtPrompt, "s"));
         Assert.Equal(5, RelayReplies.OkCodes.Length);
         // 18 from v4, plus v5's unknown_image (CB-321), the launch account's unknown_account and
-        // frames-v11's four folder-picker codes (CB-339), and frames-v13's four set_run codes (CB-404).
-        Assert.Equal(28, RelayReplies.ErrCodes.Length);
+        // frames-v11's four folder-picker codes (CB-339), and frames-v13's three set_run codes (CB-404).
+        Assert.Equal(27, RelayReplies.ErrCodes.Length);
         Assert.Contains(RelayReplies.ForbiddenPath, RelayReplies.ErrCodes);
         Assert.Contains(RelayReplies.UnknownAccount, RelayReplies.ErrCodes);
     }

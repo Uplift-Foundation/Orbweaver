@@ -58,9 +58,8 @@ namespace Orbweaver
         private readonly Seams _seams;
         private readonly object _gate = new();
         private readonly Dictionary<string, IReadOnlyList<RunPending>> _pending = new(StringComparer.Ordinal);
-        // Per session, the last failure of each field (CB-404 review: a failure
-        // belongs under the control it is about).
-        private readonly Dictionary<string, List<RunFailure>> _failures = new(StringComparer.Ordinal);
+        private readonly Dictionary<(string Session, RunField Field), string> _failures = new();
+        private readonly HashSet<string> _running = new(StringComparer.Ordinal);
 
         internal RunControlsHost(Seams seams) => _seams = seams;
 
@@ -80,8 +79,16 @@ namespace Orbweaver
 
         private static string Key(SessionStatus status) => status.SessionId;
 
+        internal const string CheckingCodexVersion = RunText.CodexVersionUnknown;
+
+        // Until a Codex session's version is known, neither form can be chosen
+        // safely: "/model x" opens the old picker and a digit means nothing to
+        // the new one. So the controls are off and nothing is typed (lead's
+        // ruling on F4).
         internal RunRouteDecision RouteFor(SessionStatus status, RunCli cli) =>
-            RunRoutes.For(cli,
+            cli == RunCli.Codex && _seams.CodexVersionFor(status) is null
+                ? RunRouteDecision.Unavailable(CheckingCodexVersion)
+                : RunRoutes.For(cli,
                 hasPane: !status.IsDesktopHosted && _seams.CanType(status),
                 bridgeId: _seams.BridgeIdFor(status),
                 bridgeSlashOn: _seams.BridgeCommandsEnabled(),
@@ -97,19 +104,18 @@ namespace Orbweaver
             var catalogue = _seams.CatalogueFor(status) ?? RunCatalogue.Empty;
             var pending = Reconcile(status, cli, reading, catalogue);
             IReadOnlyList<RunFailure> failures;
-            lock (_gate) failures = _failures.TryGetValue(Key(status), out var f) ? f.ToList() : [];
+            lock (_gate)
+                failures = _failures.Where(f => f.Key.Session == Key(status))
+                    .Select(f => new RunFailure(f.Key.Field, f.Value)).ToList();
             return RunControlsResolver.Resolve(cli, RouteFor(status, cli), reading, catalogue, pending, failures: failures);
         }
 
-        // The last pending set a reading contradicted or that timed out, once:
-        // the panel shows it and the next call answers null.
-        internal string? TakeFailure(SessionStatus status)
+        // The sentence for a field's last set that a reading contradicted or that
+        // timed out. It stays until the next set of that field goes out, which is
+        // how frames-v13's `failed` reads: present while the desk is reporting it.
+        internal string? FailureFor(SessionStatus status, RunField field)
         {
-            lock (_gate)
-            {
-                if (!_failures.Remove(Key(status), out var failures) || failures.Count == 0) return null;
-                return failures[^1].Why;
-            }
+            lock (_gate) return _failures.GetValueOrDefault((Key(status), field));
         }
 
         private IReadOnlyList<RunPending> Reconcile(SessionStatus status, RunCli cli, RunReading reading, RunCatalogue catalogue)
@@ -119,44 +125,60 @@ namespace Orbweaver
             lock (_gate)
             {
                 if (!_pending.TryGetValue(Key(status), out var pending) || pending.Count == 0) return [];
+                // Each failure is filed under the field whose set it reports, and
+                // stays until that field is set again.
                 var (kept, failures) = RunPendingRules.Reconcile(pending, reading, _seams.Now(),
                     RunPendingRules.TimeoutFor(cli), catalogue);
+                foreach (var f in failures) _failures[(Key(status), f.Field)] = f.Why;
                 still = kept;
                 moved = kept.Count != pending.Count;
                 if (kept.Count == 0) _pending.Remove(Key(status));
                 else _pending[Key(status)] = kept;
-                if (failures.Count > 0)
-                {
-                    var list = _failures.GetValueOrDefault(Key(status)) ?? new List<RunFailure>();
-                    foreach (var f in failures) { list.RemoveAll(x => x.Field == f.Field); list.Add(f); }
-                    _failures[Key(status)] = list;
-                }
             }
             if (moved) Changed?.Invoke(Key(status));
             return still;
         }
 
-        public RunState? Read(SessionStatus status) => Options(status) is { } o ? Wire(o) : null;
+        public RunState? Read(SessionStatus status) =>
+            Options(status) is { } o
+                ? Wire(o, FailureFor(status, RunField.Model), FailureFor(status, RunField.Effort))
+                : null;
 
         // The wire's view of the panel's record (frames-v13 run, the mirror's
-        // `run` roster field). Labels are the choice's label where the
-        // catalogue has one; an unknown value has no id and no label.
-        internal static RunState Wire(RemoteRunOptions o) => new(
-            new RunFieldState(o.ModelId, LabelOf(o.Models, o.ModelId), o.Models, o.ModelDisabledReason, o.ModelPending),
-            new RunFieldState(o.ThinkingId, LabelOf(o.ThinkingChoices, o.ThinkingId), o.ThinkingChoices,
-                o.EffortDisabledReason, o.EffortPending));
-
-        private static string? LabelOf(IReadOnlyList<RemoteRunChoice> choices, string? id) =>
-            id is null ? null : choices.FirstOrDefault(c => c.Id == id)?.Label ?? id;
+        // `run` roster field): the confirmed value as id, the chosen one as
+        // pending while it is unconfirmed.
+        internal static RunState Wire(RemoteRunOptions o, string? modelFailed = null, string? effortFailed = null) => new(
+            new RunFieldState(o.ConfirmedModelId, o.ModelPending ? o.ModelId : null, o.Models, o.ModelDisabledReason, modelFailed),
+            new RunFieldState(o.ConfirmedEffortId, o.EffortPending ? o.ThinkingId : null, o.ThinkingChoices,
+                o.EffortDisabledReason, effortFailed),
+            o.DefaultWarning is not null);
 
         public Task<RunSetResult> SetAsync(SessionStatus status, string field, string value) =>
             SetAsync(status, field == RunFrames.FieldEffort ? RunField.Effort : RunField.Model, value);
 
+        public bool IsRunning(SessionStatus status)
+        {
+            lock (_gate) return _running.Contains(Key(status));
+        }
+
         // Runs one change by the session's route. Sent means it went and is now
-        // pending until a reading confirms it — never that it took.
+        // pending until a reading confirms it — never that it took. One change
+        // per session at a time: two phones, or a phone and the panel, would
+        // otherwise interleave two typed commands in one pane.
         internal async Task<RunSetResult> SetAsync(SessionStatus status, RunField field, string value)
         {
             if (CliFor(status) is not { } cli) return new(RunSetKind.Unavailable, RunText.NoRoute);
+            lock (_gate)
+                if (!_running.Add(Key(status))) return new(RunSetKind.Unavailable, RunFrames.BusyWhy);
+            try { return await RunAsync(status, cli, field, value).ConfigureAwait(false); }
+            finally
+            {
+                lock (_gate) _running.Remove(Key(status));
+            }
+        }
+
+        private async Task<RunSetResult> RunAsync(SessionStatus status, RunCli cli, RunField field, string value)
+        {
 
             var route = RouteFor(status, cli);
             if (route.Route == RunRoute.None) return new(RunSetKind.Unavailable, route.DisabledReason ?? RunText.NoRoute);
@@ -176,7 +198,7 @@ namespace Orbweaver
                 {
                     _pending[Key(status)] = RunPendingRules.With(
                         _pending.GetValueOrDefault(Key(status)) ?? [], new RunPending(field, value, _seams.Now()));
-                    if (_failures.TryGetValue(Key(status), out var list)) list.RemoveAll(x => x.Field == field);
+                    _failures.Remove((Key(status), field));
                 }
                 Changed?.Invoke(Key(status));
             }
@@ -205,6 +227,7 @@ namespace Orbweaver
             (_, RunField.Model) => "/model " + value,
             _ => "/effort " + value,
         };
+
 
         internal const string OldCodexReason =
             "this Codex is older than 0.164, which can only be changed through its own /model picker";
@@ -261,14 +284,12 @@ namespace Orbweaver
     [ExcludeFromCodeCoverage]
     internal static class RunControlsLive
     {
-        // What the session is running and could run. Pointed at the core's
-        // readers (RunControls' parsers over the tailed files and the catalogue
-        // caches); until then nothing is read, and the controls say "not known
-        // yet" rather than guessing. Both must answer from what is already
-        // cached: the mirror asks on its peer pump.
-        internal static Func<SessionStatus, RunReading?> ReadingFor = _ => null;
-        internal static Func<SessionStatus, RunCatalogue?> CatalogueFor = _ => null;
-        internal static Func<SessionStatus, Version?> CodexVersionFor = _ => null;
+        // What the session is running and could run, from RunSources' caches:
+        // the mirror asks on its peer pump, so none of these may wait on a disk
+        // walk or a process.
+        internal static Func<SessionStatus, RunReading?> ReadingFor = RunSourcesLive.Shared.ReadingFor;
+        internal static Func<SessionStatus, RunCatalogue?> CatalogueFor = RunSourcesLive.Shared.CatalogueFor;
+        internal static Func<SessionStatus, Version?> CodexVersionFor = RunSourcesLive.Shared.CodexVersionFor;
 
         private static readonly Lazy<RunControlsHost> _shared = new(Build);
 

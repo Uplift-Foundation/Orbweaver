@@ -259,11 +259,11 @@ namespace Orbweaver
         // CB-404: each watched session's run frame, to the phones watching it,
         // when its bytes changed since that phone was last sent one. The host
         // is read once per session, however many phones watch it.
-        internal void SendRunStates()
+        internal void SendRunStates(string? onlySession = null)
         {
             if (_seams.RunControls is not { } run) return;
             List<(string Phone, string Session)> keys;
-            lock (_gate) keys = _watches.Keys.ToList();
+            lock (_gate) keys = _watches.Keys.Where(k => onlySession is null || k.Session == onlySession).ToList();
             foreach (var session in keys.Select(k => k.Session).Distinct())
             {
                 if (Local(session) is not { } status) continue;
@@ -367,54 +367,52 @@ namespace Orbweaver
             foreach (var frame in frames) _send.Reply(phoneId, null, frame);
         }
 
-        // frames-v13 set_run.rules: the session first (unknown_session), then the
-        // field, then the value's shape; then the desk's own answer. The phone
-        // is sent the new state at once on success, so it does not wait a tick
-        // to show "applying…".
+        // frames-v13 set_run, after the parser's bad_frame: unknown_session, then
+        // the field's state (unavailable when it is off or the host is running
+        // another change to the session,
+        // bad_value when the value is not one of its choices as last written),
+        // then the route, whose failure is set_failed. `ok set` says the route
+        // ran, not that it took: the confirming run frame says that.
         private async Task SetRunAsync(string phoneId, SetRunRequest r)
         {
             if (Local(r.SessionId) is not { } status)
             {
-                Err(phoneId, r.Ref, RelayReplies.UnknownSession, r.SessionId);
+                RunErr(phoneId, r, RelayReplies.UnknownSession);
                 return;
             }
-            if (r.Field is not { } field)
+            if (_seams.RunControls is not { } run || run.Read(status) is not { } state)
             {
-                Err(phoneId, r.Ref, RunFrames.BadField, r.SessionId);
+                RunErr(phoneId, r, RunFrames.Unavailable, NoRunControlsWhy);
                 return;
             }
-            if (r.Value is not { } value)
+            if (RunFrames.Refusal(state, r.Field, r.Value, run.IsRunning(status)) is { } refused)
             {
-                Err(phoneId, r.Ref, RunFrames.BadValue, r.SessionId);
-                return;
-            }
-            if (_seams.RunControls is not { } run)
-            {
-                Err(phoneId, r.Ref, RunFrames.Unavailable, r.SessionId, NoRunControlsWhy);
+                RunErr(phoneId, r, refused.Code, refused.Why);
                 return;
             }
 
-            var result = await run.SetAsync(status, field, value).ConfigureAwait(false);
-            switch (result.Kind)
+            var result = await run.SetAsync(status, r.Field, r.Value).ConfigureAwait(false);
+            if (result.Kind != RunSetKind.Sent)
             {
-                case RunSetKind.Sent:
-                    _seams.Log($"ok {RelayLink.Safe(r.Ref)} {RunFrames.SetOk} {field}");
-                    _send.Reply(phoneId, r.SessionId, RelayReplies.Ok(r.Ref, RunFrames.SetOk, r.SessionId));
-                    SendRunStates();
-                    break;
-                case RunSetKind.BadValue:
-                    Err(phoneId, r.Ref, RunFrames.BadValue, r.SessionId);
-                    break;
-                case RunSetKind.Unavailable:
-                    Err(phoneId, r.Ref, RunFrames.Unavailable, r.SessionId, result.Why);
-                    break;
-                default:
-                    Err(phoneId, r.Ref, RunFrames.Failed, r.SessionId, result.Why);
-                    break;
+                var (code, why) = RunFrames.Answer(result);
+                RunErr(phoneId, r, code, why);
+                return;
             }
+            _seams.Log($"ok {RelayLink.Safe(r.Ref)} {RunFrames.SetOk} {r.Field}");
+            _send.Reply(phoneId, r.SessionId, RelayReplies.Ok(r.Ref, RunFrames.SetOk, r.SessionId));
+            // The pending frame now, rather than at the next one-second look.
+            SendRunStates();
         }
 
-        internal const string NoRunControlsWhy = "this desk can't change that session's model or effort";
+        // frames-v13: every set_run reply travels under the session's ck, the
+        // unknown_session one included, since the request named it.
+        private void RunErr(string phoneId, SetRunRequest r, string code, string? why = null)
+        {
+            _seams.Log($"err {RelayLink.Safe(r.Ref)} {code}");
+            _send.Reply(phoneId, r.SessionId, RelayReplies.Err(r.Ref, code, r.SessionId, why));
+        }
+
+        internal const string NoRunControlsWhy = "This desk can't change that session's model or effort.";
 
         private void Err(string phoneId, string reference, string code, string? sessionId = null, string? why = null)
         {
@@ -452,6 +450,9 @@ namespace Orbweaver
                 _runSent.Remove((phoneId, w.SessionId));
             }
             Ok(phoneId, w.Ref, RelayReplies.Watching, w.SessionId, total);
+            // frames-v13: the run frame between `ok watching` and the backfill,
+            // always, so a phone that re-watches is never left holding a stale one.
+            SendRunStates(w.SessionId);
             foreach (var window in windows) _send.Window(phoneId, w.SessionId, window);
         }
 

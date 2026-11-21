@@ -29,6 +29,7 @@ public class RunControlsHostTests
         public readonly List<string> Typed = [];
         public readonly List<(string Subtype, string Json)> Posted = [];
         public readonly List<string> Changed = [];
+        public TaskCompletionSource<bool>? TypeGate;
         public RunControlsHost Host = null!;
 
         public Desk()
@@ -40,7 +41,12 @@ public class RunControlsHostTests
                 _ => Reading,
                 _ => Catalogue,
                 _ => CodexVersion,
-                (_, text) => { Typed.Add(text); return Task.FromResult(Types); },
+                async (_, text) =>
+                {
+                    Typed.Add(text);
+                    if (TypeGate is { } gate) await gate.Task;
+                    return Types;
+                },
                 (_, subtype, request) => { Posted.Add((subtype, request.ToJsonString())); return Task.FromResult(Verdict); },
                 () => Now,
                 RecordStatus: _ => Record,
@@ -96,7 +102,7 @@ public class RunControlsHostTests
         o = d.Host.Options(Claude())!;
         Assert.False(o.ModelPending);
         Assert.Equal(["s1", "s1"], d.Changed);
-        Assert.Null(d.Host.TakeFailure(Claude()));
+        Assert.Null(d.Host.FailureFor(Claude(), RunField.Model));
     }
 
     [Fact]
@@ -202,31 +208,51 @@ public class RunControlsHostTests
     }
 
     [Fact]
-    public async Task A_codex_older_than_the_argument_form_is_unavailable_rather_than_opening_its_picker()
+    public async Task Until_the_codex_version_is_known_the_controls_are_off_and_nothing_is_typed()
     {
-        var d = new Desk { Catalogue = null, CodexVersion = new Version(0, 154, 0) };
-        Assert.Equal(new RunSetResult(RunSetKind.Unavailable, RunControlsHost.OldCodexReason),
-            await d.Host.SetAsync(Of(SessionSource.Codex), RunField.Model, "gpt-5.6-terra"));
+        var d = new Desk { Catalogue = null, CodexVersion = null };
+        Assert.Equal(new RunSetResult(RunSetKind.Unavailable, RunControlsHost.CheckingCodexVersion),
+            await d.Host.SetAsync(Of(SessionSource.Codex), RunField.Effort, "low"));
+        Assert.Equal(RunControlsHost.CheckingCodexVersion, d.Host.Options(Of(SessionSource.Codex))!.ModelDisabledReason);
         Assert.Empty(d.Typed);
     }
 
     [Fact]
-    public async Task A_contradicting_reading_reports_once_and_a_new_set_clears_an_old_failure()
+    public async Task A_second_change_while_one_is_running_is_unavailable_and_goes_ahead_once_it_returns()
+    {
+        var d = new Desk { Catalogue = null, TypeGate = new() };
+        var first = d.Host.SetAsync(Of(SessionSource.Grok), RunField.Model, "grok-4.7");
+        Assert.True(d.Host.IsRunning(Of(SessionSource.Grok)));
+
+        Assert.Equal(new RunSetResult(RunSetKind.Unavailable, RunFrames.BusyWhy),
+            await d.Host.SetAsync(Of(SessionSource.Grok), RunField.Effort, "high"));
+        Assert.Single(d.Typed);
+
+        d.TypeGate.SetResult(true);
+        Assert.Equal(RunSetResult.Sent, await first);
+        Assert.False(d.Host.IsRunning(Of(SessionSource.Grok)));
+        d.TypeGate = null;
+        Assert.Equal(RunSetResult.Sent, await d.Host.SetAsync(Of(SessionSource.Grok), RunField.Effort, "high"));
+    }
+
+    [Fact]
+    public async Task A_contradicted_set_stays_reported_for_its_field_until_that_field_is_set_again()
     {
         var d = new Desk { Bridge = "b" };
         await d.Host.SetAsync(Claude(), RunField.Model, "sonnet");
         d.Reading = At("claude-opus-5-5", null, d.Now.AddSeconds(1));
 
         Assert.False(d.Host.Options(Claude())!.ModelPending);
-        Assert.Equal(RunText.Contradicted(RunField.Model, "sonnet", "claude-opus-5-5"), d.Host.TakeFailure(Claude()));
-        Assert.Null(d.Host.TakeFailure(Claude()));
+        var failed = RunText.Contradicted(RunField.Model, "sonnet", "claude-opus-5-5");
+        Assert.Equal(failed, d.Host.FailureFor(Claude(), RunField.Model));
+        Assert.Equal(failed, d.Host.Read(Claude())!.Model.Failed);
+        Assert.Null(d.Host.FailureFor(Claude(), RunField.Effort));
 
-        // A failure left untaken is cleared by the next set going out.
+        // A set of the other field leaves it; a set of this one clears it.
+        await d.Host.SetAsync(Claude(), RunField.Effort, "low");
+        Assert.Equal(failed, d.Host.FailureFor(Claude(), RunField.Model));
         await d.Host.SetAsync(Claude(), RunField.Model, "sonnet");
-        d.Reading = At("claude-opus-5-5", null, d.Now.AddSeconds(2));
-        d.Host.Options(Claude());
-        await d.Host.SetAsync(Claude(), RunField.Model, "sonnet");
-        Assert.Null(d.Host.TakeFailure(Claude()));
+        Assert.Null(d.Host.FailureFor(Claude(), RunField.Model));
     }
 
     [Fact]
@@ -242,18 +268,25 @@ public class RunControlsHostTests
     }
 
     [Fact]
-    public void The_wire_view_carries_ids_labels_choices_reasons_and_pending()
+    public async Task The_wire_view_carries_the_confirmed_id_the_pending_one_and_saves_default()
     {
         var d = new Desk { Bridge = "b", Reading = At("claude-opus-5-5", "high", d0) };
         var w = d.Host.Read(Claude())!;
-        Assert.Equal(("opus", "Opus 5.5", null, false), (w.Model.Id, w.Model.Label, w.Model.Off, w.Model.Pending));
+        Assert.Equal(("opus", null, null, null), (w.Model.Id, w.Model.Pending, w.Model.Off, w.Model.Failed));
         Assert.Equal(3, w.Model.Choices.Count);
-        Assert.Equal(("high", "high"), (w.Effort.Id, w.Effort.Label));
+        Assert.Equal("high", w.Effort.Id);
+        Assert.False(w.SavesDefault);
 
-        // Nothing read: no id and no label, rather than a guess.
-        d.Reading = null;
+        await d.Host.SetAsync(Claude(), RunField.Effort, "xhigh");
         w = d.Host.Read(Claude())!;
-        Assert.Equal((null, null, null), (w.Model.Id, w.Model.Label, w.Effort.Id));
+        Assert.Equal(("high", "xhigh"), (w.Effort.Id, w.Effort.Pending));
+
+        // Nothing read: no id rather than a guess. The typed route saves a default.
+        d.Reading = null;
+        d.BridgeCommands = false;
+        w = d.Host.Read(Claude())!;
+        Assert.Equal((null, null), (w.Model.Id, w.Model.Pending));
+        Assert.True(w.SavesDefault);
     }
 
     [Fact]

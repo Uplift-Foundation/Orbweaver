@@ -551,8 +551,11 @@ namespace Orbweaver
     {
         internal const string CapsCk = "caps";
 
-        internal static readonly string Caps =
-            new CanonicalJson().Str("t", "caps").Array("caps", [CanonicalJson.Quote("list_dir"), CanonicalJson.Quote(RunFrames.Cap)]).ToString();
+        // CB-404: frames-v13 adds run_options; the names are byte-sorted.
+        internal static readonly string Caps = CapsFrame("list_dir", RunFrames.Cap);
+
+        internal static string CapsFrame(params string[] names) =>
+            new CanonicalJson().Str("t", "caps").Array("caps", names.Select(CanonicalJson.Quote)).ToString();
 
         private static string Entry(BrowseItem e)
         {

@@ -10,10 +10,13 @@ public partial class MirrorRoundTripTests
     private sealed class FarRun : IRunControls
     {
         public RunState? State = new(
-            new RunFieldState("opus", "Opus 5.5", [new("opus", "Opus 5.5"), new("sonnet", "Sonnet 5.5")], null, false),
-            new RunFieldState("high", "high", [new("low", "low"), new("high", "high")], null, true));
+            new RunFieldState("opus", null, [new("opus", "Opus 5.5"), new("sonnet", "Sonnet 5.5")], null, null),
+            new RunFieldState("high", "low", [new("low", "low"), new("high", "high")], null, "didn't apply"),
+            true);
         public RunSetResult Result = RunSetResult.Sent;
-        public bool ReadThrows, SetThrows;
+        public bool ReadThrows, SetThrows, Running;
+
+        public bool IsRunning(SessionStatus status) => Running;
         public readonly List<(string Field, string Value)> Sets = [];
 
         public RunState? Read(SessionStatus status) =>
@@ -35,12 +38,17 @@ public partial class MirrorRoundTripTests
         await harness.HandshakeAsync("job-hunter");
 
         var run = harness.Client.StateFor("job-hunter").Entry!.Run!;
-        Assert.Equal(("opus", "Opus 5.5", null), (run.Model!.Id, run.Model.Label, run.Model.Pending));
+        Assert.Equal(("opus", null), (run.Model!.Id, run.Model.Pending));
         Assert.Equal(2, run.Model.Choices!.Count);
-        Assert.True(run.Effort!.Pending);
+        Assert.Equal(("high", "low", "didn't apply"), (run.Effort!.Id, run.Effort.Pending, run.Effort.Failed));
+        Assert.True(run.SavesDefault);
 
-        var options = MirrorRun.Options(run, "mini");
-        Assert.Equal(("opus", "high", true, "Opus 5.5 · high"), (options.ModelId, options.ThinkingId, options.EffortPending, options.ChipText));
+        // The near panel draws the chosen value as pending, with the confirmed one beside it.
+        var options = MirrorRun.Options(run, "mini", "claude");
+        Assert.Equal(("opus", "low", true, "high", "Opus 5.5 · low"),
+            (options.ModelId, options.ThinkingId, options.EffortPending, options.ConfirmedEffortId, options.ChipText));
+        Assert.Equal(RunText.ClaudeTypedDefault, options.DefaultWarning);
+        Assert.Equal(RunText.CodexPickerDefault, MirrorRun.Options(run, "mini", MirrorProtocol.CliFor(SessionSource.Codex)).DefaultWarning);
         Assert.Null(options.ModelDisabledReason);
     }
 
@@ -93,6 +101,37 @@ public partial class MirrorRoundTripTests
         Assert.Empty(harness.SlashRan);
     }
 
+    [Fact]
+    public async Task AModelWithNoEffortSettingDrawsTheModelAloneAndUnknownsSaySo()
+    {
+        var options = MirrorRun.Options(new PeerRun(
+            new PeerRunField(Choices: [new("haiku", "Haiku 4.5")]),
+            new PeerRunField(Off: RunText.NoEffortSetting)), "mini");
+        Assert.Equal((RunText.ModelUnknown, null, false), (options.ChipText, options.DefaultWarning, options.ModelPending));
+        options = MirrorRun.Options(new PeerRun(new PeerRunField("haiku", Choices: [new("haiku", "Haiku 4.5")]), null), "mini");
+        Assert.Equal("Haiku 4.5 · " + RunText.EffortUnknown, options.ChipText);
+        await Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task ARunChangeWhileAnotherIsRunningOrOutsideTheChoicesIsRefusedBeforeTheHost()
+    {
+        var far = new FarRun();
+        var harness = new Harness(_dir, run: far);
+        harness.AddSession("job-hunter", WriteTranscript("run10.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var notAChoice = harness.Client.SetRunAsync("job-hunter", RunField.Model, "haiku");
+        await harness.Server.RunInFlight;
+        Assert.Equal(RunSetKind.BadValue, (await notAChoice).Kind);
+
+        far.Running = true;
+        var busy = harness.Client.SetRunAsync("job-hunter", RunField.Model, "sonnet");
+        await harness.Server.RunInFlight;
+        Assert.Equal(new RunSetResult(RunSetKind.Unavailable, RunFrames.BusyWhy), await busy);
+        Assert.Empty(far.Sets);
+    }
+
     [Theory]
     [InlineData(1)]
     [InlineData(2)]
@@ -105,10 +144,14 @@ public partial class MirrorRoundTripTests
         harness.AddSession("job-hunter", WriteTranscript("run5-" + kind + ".jsonl", Conversation(2)));
         await harness.HandshakeAsync("job-hunter");
 
-        var setting = harness.Client.SetRunAsync("job-hunter", RunField.Model, "x");
+        var setting = harness.Client.SetRunAsync("job-hunter", RunField.Model, "sonnet");
         await harness.Server.RunInFlight;
 
-        Assert.Equal(new RunSetResult(kind, "Model 'x' not found, with \"quotes\" and ünicode"), await setting);
+        // A bad_value from the route says so with the desk's own sentence for it.
+        Assert.Equal(kind == RunSetKind.BadValue
+                ? new RunSetResult(kind, "that isn't one of this session's choices")
+                : new RunSetResult(kind, "Model 'x' not found, with \"quotes\" and ünicode"),
+            await setting);
     }
 
     [Fact]

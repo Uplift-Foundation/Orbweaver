@@ -22,6 +22,10 @@ namespace Orbweaver
         // the host is wired, which shows disabled controls with a reason).
         RunState? Read(SessionStatus status);
 
+        // Whether a change to this session is being run right now: the busy
+        // check frames-v13 makes before bad_value.
+        bool IsRunning(SessionStatus status);
+
         // field is RunFrames.FieldModel or FieldEffort, already shape-checked.
         Task<RunSetResult> SetAsync(SessionStatus status, string field, string value);
     }

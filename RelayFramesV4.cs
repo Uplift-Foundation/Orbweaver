@@ -77,14 +77,14 @@ namespace Orbweaver
             UnknownCli, UnknownCwd, BadModel, UnsupportedPersona, UnknownParent, UnsupportedParent, NoTerminal,
             LaunchFailed, NoSession, UnknownImage, UnknownAccount, ForbiddenPath, UnknownPath, Unreadable, RateLimited,
             // CB-404 (frames-v13 set_run).
-            RunFrames.BadField, RunFrames.BadValue, RunFrames.Unavailable, RunFrames.Failed,
+            RunFrames.BadValue, RunFrames.Unavailable, RunFrames.SetFailed,
         ];
 
         // Only these carry the desktop's own sentence; every other code's
         // copy is the phone's (frames-v4 err.rules).
         // frames-v13 adds two: a set the desk cannot make here, and one the CLI refused.
         internal static readonly string[] CodesWithWhy =
-            [NotAtPrompt, TypingFailed, NoTerminal, LaunchFailed, RunFrames.Unavailable, RunFrames.Failed];
+            [NotAtPrompt, TypingFailed, NoTerminal, LaunchFailed, RunFrames.Unavailable, RunFrames.SetFailed];
 
         internal static string Ok(string reference, string code, string sessionId, long? total = null)
         {
@@ -172,15 +172,17 @@ namespace Orbweaver
                     }
                     var path = Str(f, "path");
                     return new ListDirRequest(reference, shapeOk && path is not null && BrowseRules.PathShapeOk(path) ? path : null, hidden);
-                // CB-404 (frames-v13): a missing session is bad_frame; a field or
-                // value of the wrong shape is carried as null for the handler to
-                // name (bad_field / bad_value), once it knows the session exists.
+                // CB-404 (frames-v13 set_run.rules): every shape fault is bad_frame,
+                // carrying the session_id only when it was a non-empty string. The
+                // value must be an ID, which is what keeps a newline or a quote away
+                // from a typed route.
                 case "set_run":
-                    if (sid is null) return new BadFrameRequest(reference, null);
+                    if (string.IsNullOrEmpty(sid)) return new BadFrameRequest(reference, null);
                     var field = Str(f, "field");
                     var value = Str(f, "value");
-                    return new SetRunRequest(reference, sid, RunFrames.FieldOk(field) ? field : null,
-                        RunFrames.ValueOk(value) ? value : null);
+                    return RunFrames.FieldOk(field) && RunFrames.IdOk(value)
+                        ? new SetRunRequest(reference, sid, field!, value!)
+                        : new BadFrameRequest(reference, sid);
                 default:
                     return ParseLaunch(f, reference);
             }
