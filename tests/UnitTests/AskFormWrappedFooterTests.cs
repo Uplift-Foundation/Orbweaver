@@ -153,4 +153,45 @@ public class AskFormWrappedFooterTests
             _ => Task.FromResult<string?>(widened), Press, null, fp, "3", null, null));
         Assert.Equal(["3"], pressed);
     }
+
+    // ---- with the CB-400 overlays on the tree -----------------------------------
+
+    // An overlay (`/mobile`, `/mcp`'s detail page) carries an "Esc to ..." footer too, and the
+    // wrapped-footer matcher must not take it for a form: no transcript is consulted, and the
+    // prompt is the overlay's own with its Close or Go back button.
+    [Theory]
+    [InlineData(nameof(PaneFixtures.MobileOverlay80x50), "Close")]
+    [InlineData(nameof(PaneFixtures.McpDetail), "Go back")]
+    public void An_overlay_is_still_an_overlay_and_not_a_form(string name, string label)
+    {
+        var screen = (string)typeof(PaneFixtures).GetField(name, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.GetValue(null)!;
+
+        Assert.Null(AskFormTranscript.CallFor(screen, Rollout));
+        var fp = PromptFingerprint.Of(screen, null)!;
+        Assert.True(fp.Overlay);
+        Assert.Equal(label, Assert.Single(fp.Prompt.Options).Label);
+        Assert.Null(AskFormTranscript.ReadForm(screen, AskFormTranscript.PendingCall([System.IO.File.ReadAllLines(Rollout)[0]])));
+    }
+
+    // And the other way round, which is the one that matters: a question form squeezed to
+    // twelve columns (its footer ends "Esc to cancel") is a form, never an overlay with a
+    // Cancel button, which would press Esc and abandon the question. Before this fix it was
+    // neither: no call was read and nothing was offered, so the phone saw nothing to answer.
+    [Theory]
+    [InlineData("askform-12x23", "askform-rollout.jsonl")]
+    [InlineData("askform-single-12x23", "askform-merge.jsonl")]
+    public void A_twelve_column_form_is_a_form_and_not_an_overlay(string screenName, string rows)
+    {
+        var screen = Cb407Captures.Screen(screenName);
+        var call = AskFormTranscript.CallFor(screen, Cb407Captures.PathOf(rows));
+
+        Assert.Null(OverlayScreen.Read(screen));
+        Assert.Null(ChatTranscript.ParseDialog(screen));
+        var fp = PromptFingerprint.Of(screen, call)!;
+        Assert.False(fp.Overlay);
+        Assert.Contains(fp.Prompt.Options, o => o.Label == AskFormTranscript.TypeRowLabel || o.Label.StartsWith("Type s", StringComparison.Ordinal));
+        Assert.DoesNotContain(fp.Prompt.Options, o => o.Key == OverlayScreen.CloseKey);
+        Assert.DoesNotContain(fp.Prompt.Options, o => o.Label == OverlayScreen.CancelLabel);
+        Assert.Null(PromptFingerprint.Of(screen, null));           // with no call it is still nothing, as before
+    }
 }
