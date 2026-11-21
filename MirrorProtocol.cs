@@ -1203,7 +1203,12 @@ namespace Orbweaver
             [property: JsonPropertyName("review")] IReadOnlyList<WireReviewItem>? Review = null,
             [property: JsonPropertyName("submitKey")] string? SubmitAnswersKey = null,
             [property: JsonPropertyName("cancelKey")] string? CancelKey = null,
-            [property: JsonPropertyName("cursor")] string? CursorKey = null);
+            [property: JsonPropertyName("cursor")] string? CursorKey = null,
+            // CB-400: the rows of a screen that is not a question (the /mobile
+            // overlay), so the near panel can draw what the far terminal shows.
+            // Optional both ways: an older peer ignores the property and still
+            // gets a working Close button, and a frame without it decodes as null.
+            [property: JsonPropertyName("body")] IReadOnlyList<string>? Body = null);
 
         public sealed record WireReviewItem(
             [property: JsonPropertyName("q")] string Question,
@@ -1248,7 +1253,37 @@ namespace Orbweaver
             return new WirePrompt(title, options, PromptFingerprint(title, options, form.CurrentTab, ticked, wireTabs),
                 wireTabs, form.CurrentTab, Known(form.FreeTextKey), Known(form.ChatAboutKey),
                 form.MultiSelect, ticked, form.HasSubmitRow, review,
-                Known(form.SubmitAnswersKey), Known(form.CancelKey), Known(form.CursorKey));
+                Known(form.SubmitAnswersKey), Known(form.CancelKey), Known(form.CursorKey),
+                BoundedBody(form.Prompt.Body));
+        }
+
+        // CB-400: an overlay's rows, held to what a peer will accept — at most MaxBodyLines
+        // of MaxBodyChars each, the same bounds OverlayScreen.Read applies, so a hostile or
+        // buggy far side cannot make this side draw an unbounded block. Null stays null: no
+        // body is how an ordinary dialog says it is not an overlay.
+        public const int MaxBodyLines = 60;
+        public const int MaxBodyChars = 200;
+
+        // What the last row says when the body was cut, at rows or at columns, so a reader is
+        // never shown a screen that looks whole and is not. The reader (OverlayScreen.CutMarker)
+        // uses the same text, and a test pins that. The marker rides one row beyond MaxBodyLines,
+        // so a cut body is at most MaxBodyLines + 1 rows. A body already inside both bounds, a
+        // marked one included, passes unchanged, so cutting at the reader, the encoder and the
+        // decoder says it once.
+        public const string BodyCutMarker = "… (more in the terminal)";
+
+        private static IReadOnlyList<string>? BoundedBody(IReadOnlyList<string>? body)
+        {
+            if (body is null) return null;
+
+            var marked = body.Count > 0 && body[^1] == BodyCutMarker;
+            var content = marked ? body.Take(body.Count - 1).ToList() : body;
+            var cut = marked || content.Count > MaxBodyLines || content.Any(l => l.Length > MaxBodyChars);
+            if (!cut) return body.ToList();
+
+            var rows = content.Take(MaxBodyLines).Select(l => Clip(l, MaxBodyChars)).ToList();
+            rows.Add(BodyCutMarker);
+            return rows;
         }
 
         private static string Clip(string text, int max) => text.Length <= max ? text : text[..max];
@@ -1281,7 +1316,11 @@ namespace Orbweaver
             try
             {
                 var prompt = JsonSerializer.Deserialize<WirePrompt>(bytes);
-                return prompt is { Title: not null, Options: not null, Fingerprint: not null } ? prompt : null;
+                // The body is bounded on the way in as well as out (CB-400): this side
+                // draws it, and the far side is not trusted to have kept to the limits.
+                return prompt is { Title: not null, Options: not null, Fingerprint: not null }
+                    ? prompt with { Body = BoundedBody(prompt.Body) }
+                    : null;
             }
             catch (JsonException)
             {

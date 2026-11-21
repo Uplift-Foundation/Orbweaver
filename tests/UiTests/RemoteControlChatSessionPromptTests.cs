@@ -528,6 +528,49 @@ public class RemoteControlChatSessionPromptTests
         Assert.True(h.Asks > before);
     }
 
+    // CB-400's overlay prompts (a screen only Esc leaves, carried with its rows and one Close)
+    // travel the same request and the same rule: a timed-out PROMPT or ANSWER is transient.
+    private static PromptReply OverlayShown(string fp) => new(PromptReplyKind.Prompt,
+        new ChatPrompt("Get the Claude app on your phone",
+            new[] { new ChatPromptOption("Escape", "Close") }, Body: new[] { "Get the Claude app on your phone", "Scan it" }), fp);
+
+    [AvaloniaFact]
+    public async Task AnOverlayIsShownAfterTimeoutsLikeAnyOtherForm()
+    {
+        var h = new Harness();
+        h.Replies.Enqueue(TimedOut());
+        h.Replies.Enqueue(TimedOut());
+        h.Replies.Enqueue(OverlayShown("ov1"));
+
+        h.Open();
+        await h.Settle();
+        for (var i = 0; i < 2; i++) { h.Tick(); await h.Settle(); }
+
+        Assert.Equal(3, h.Asks);
+        Assert.NotNull(h.Session.Prompt!.Body);
+    }
+
+    [AvaloniaFact]
+    public async Task ATimedOutCloseDoesNotLatchAndTheOverlayIsReReadBeforeItsButtonReturns()
+    {
+        var h = new Harness();
+        h.Replies.Enqueue(OverlayShown("ov1"));
+        h.Replies.Enqueue(OverlayShown("ov1"));   // straight away: the Esc may be landing
+        h.Replies.Enqueue(new PromptReply(PromptReplyKind.NoPrompt));   // then it had
+        h.NextAnswer = new AnswerReply(MapAnswerCode(RemoteMirrorClient.AnswerErrorOf(false, null)));
+        h.Open();
+        await h.Settle();
+
+        await h.Session.AnswerAsync(h.Session.Prompt!.Options[0]);
+        await h.Settle();
+        Assert.Null(h.Session.Prompt);                       // held back, not offered again blind
+        Assert.Contains(h.Session.History, t => t.Text.Contains("Didn't hear back", StringComparison.Ordinal));
+
+        h.Tick(); await h.Settle();
+        Assert.Equal(3, h.Asks);                             // asking went on: nothing latched
+        Assert.Null(h.Session.Prompt);                       // and the overlay is gone
+    }
+
     [AvaloniaFact]
     public async Task AFailedAnswerSaysSoAndAsksAgainSoTheButtonsComeBack()
     {

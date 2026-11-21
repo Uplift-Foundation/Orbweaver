@@ -125,6 +125,31 @@ public class RelayTestHooksTests : IDisposable
         await run.WaitAsync(TimeSpan.FromSeconds(10));
     }
 
+    // The race CB-400's CI run exposed on Windows: two threads append to the events file at
+    // once and one gets "The process cannot access the file ... because it is being used by
+    // another process". Many requests raised in parallel while the loop logs its own lines
+    // make that window wide; with the log serialised every line lands.
+    [Fact]
+    public async Task Logging_from_many_threads_at_once_loses_no_line_and_throws_nothing()
+    {
+        var fake = new Fake { AllowResult = false };
+        var expiry = new TaskCompletionSource();
+        var run = RelayTestHooks.RunAsync(fake, _dir, () => T0, (t, ct) => expiry.Task.WaitAsync(ct), default);
+        const int threads = 16, each = 25;
+
+        Parallel.For(0, threads, new ParallelOptions { MaxDegreeOfParallelism = threads }, t =>
+        {
+            for (var i = 0; i < each; i++) fake.Raise($"ph_{t}_{i}");
+        });
+
+        var lines = Events().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(threads * each, lines.Count(l => l.Contains(" request ph_")));
+        Assert.Equal(threads * each, lines.Count(l => l.Contains(" allow not sent for ph_")));
+        fake.AllowResult = true;
+        fake.Raise("ph_done");
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
