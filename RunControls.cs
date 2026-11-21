@@ -65,8 +65,14 @@ namespace Orbweaver
         public RunModel? Find(string? model)
         {
             if (string.IsNullOrWhiteSpace(model)) return null;
+            // By resolved id, Claude Code's "default" entry is passed over for the
+            // named one it resolves to: list_models lists both "default" and
+            // "opus" as claude-opus-5-5 (measured), and the transcript should
+            // read as Opus, not as "Default (recommended)".
+            var resolved = Models.Where(m => string.Equals(m.ResolvedId, model, StringComparison.OrdinalIgnoreCase)).ToList();
             return Models.FirstOrDefault(m => string.Equals(m.Id, model, StringComparison.OrdinalIgnoreCase))
-                ?? Models.FirstOrDefault(m => string.Equals(m.ResolvedId, model, StringComparison.OrdinalIgnoreCase))
+                ?? resolved.FirstOrDefault(m => !string.Equals(m.Id, "default", StringComparison.OrdinalIgnoreCase))
+                ?? resolved.FirstOrDefault()
                 ?? Models.FirstOrDefault(m => string.Equals(m.Label, model, StringComparison.OrdinalIgnoreCase));
         }
     }
@@ -215,7 +221,8 @@ namespace Orbweaver
             // "opus" was asked for and "claude-opus-5-5" is what the transcript
             // says: the same model under its two names.
             var a = catalogue.Find(wanted);
-            return a is not null && ReferenceEquals(a, catalogue.Find(actual));
+            var b = catalogue.Find(actual);
+            return a is not null && b is not null && string.Equals(a.ResolvedId ?? a.Id, b.ResolvedId ?? b.Id, StringComparison.OrdinalIgnoreCase);
         }
     }
 
