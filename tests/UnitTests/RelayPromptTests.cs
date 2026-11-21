@@ -232,6 +232,43 @@ public class RelayPromptVectorTests
         return PromptFrames.FitPush(Str(i, "request_id"), Str(i, "session_id"), Str(i, "label"), Str(i, "tool"), Str(i, "summary"),
             Str(i, "preview"), i.GetProperty("expires_at").GetInt64(), options, Str(i, "screen_hash"));
     }
+
+    // ---- CB-400: the quiet prompt vector ---------------------------------------
+
+    [Fact]
+    public void The_quiet_prompt_vector_is_rebuilt_byte_for_byte_ends_in_quiet_true_and_seals()
+    {
+        var fp = PromptFingerprint.Of(PaneFixtures.MobileOverlay80x50)!;
+        var box = P.GetProperty("prompt_quiet");
+        var json = JsonDocument.Parse(Str(box, "plaintext")).RootElement;
+        var rebuilt = PromptFrames.Prompt(Str(json, "request_id"), Str(json, "session_id"), "question", "claude", "",
+            PromptPipeline.OverlayPreview(fp.Preview), [new PromptOption("Escape", "Close", OptionKinds.Option, null)], fp.Hash,
+            json.GetProperty("expires_at").GetInt64(), quiet: true);
+
+        AssertSealed(box, EpochKey0, DesktopToPhone, rebuilt);
+        Assert.Equal(("quiet", true), (json.EnumerateObject().Last().Name, json.EnumerateObject().Last().Value.GetBoolean()));
+        // The fingerprint and the request id are untouched by the key: the same frame without it
+        // is the frame minus its last member, and the hash is the overlay's own.
+        Assert.Equal(fp.Hash, Str(json, "screen_hash"));
+        var without = PromptFrames.Prompt(Str(json, "request_id"), Str(json, "session_id"), "question", "claude", "",
+            PromptPipeline.OverlayPreview(fp.Preview), [new PromptOption("Escape", "Close", OptionKinds.Option, null)], fp.Hash,
+            json.GetProperty("expires_at").GetInt64());
+        Assert.Equal(without[..^1] + ",\"quiet\":true}", rebuilt);
+        Assert.NotEqual(P.GetProperty("prompt").GetProperty("nonce").GetString(), box.GetProperty("nonce").GetString());
+    }
+
+    [Fact]
+    public void The_frames_v3_example_prompt_and_every_other_vector_box_carry_no_quiet_key()
+    {
+        Assert.DoesNotContain("quiet", Str(P.GetProperty("prompt"), "plaintext"));
+        foreach (var r in P.GetProperty("resolved").EnumerateArray().Concat(P.GetProperty("refusals").EnumerateArray()))
+            Assert.DoesNotContain("quiet", Str(r, "plaintext"));
+        var permission = PromptFrames.Prompt("r", "s", "permission", "claude", "Bash", "p", [], "h", 1);
+        var question = PromptFrames.Prompt("r", "s", "question", "claude", "", "p", [], "h", 1, multi: true, text: true);
+        Assert.DoesNotContain("quiet", permission);
+        Assert.DoesNotContain("quiet", question);
+    }
+
 }
 
 // The generator's two helpers, restated here rather than referenced: the
