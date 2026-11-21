@@ -27,20 +27,25 @@ namespace Orbweaver.Tests;
 [Collection("ConfigDirEnv")]
 public partial class MirrorRoundTripTests : IDisposable
 {
-    private readonly string _dir;
-    private readonly string? _previousConfigDir;
+    // Assigned inside MirrorGate.Hold, so not readonly.
+    private string _dir = "";
+    private string? _previousConfigDir;
 
     public MirrorRoundTripTests()
     {
-        _previousConfigDir = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
-        _dir = Path.Combine(Path.GetTempPath(), "cb-mirror-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_dir);
+        MirrorGate.Shared.Hold(() =>
+        {
+            _previousConfigDir = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
+            _dir = Path.Combine(Path.GetTempPath(), "cb-mirror-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(_dir);
+        });
     }
 
     public void Dispose()
     {
         Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", _previousConfigDir);
         try { Directory.Delete(_dir, recursive: true); } catch { }
+        MirrorGate.Shared.Leave();
     }
 
     // --- the claim ------------------------------------------------------------
