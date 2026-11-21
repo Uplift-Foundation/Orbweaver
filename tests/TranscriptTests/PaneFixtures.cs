@@ -3499,5 +3499,37 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
   Ctrl+A to show all projects · Ctrl+B to only show current branch · Space to preview · Ctrl+R to
   rename · Type to search · Enter to resume · Esc to close
 """"");
+
+        // CB-406 QA (Ottilie), mini, Claude Code 2.1.330: a team lead's pane at
+        // 35x23 with one teammate, after a peer ANSWER typed a long answer into
+        // the free-text row. The settled screen, captured after the installed
+        // build (which turned out not to carry this branch) refused the
+        // read-back and left the text unsent. Under the fix the row reads back
+        // whole, and the form reads as being edited.
+        internal static readonly string QaTeamLeadShortPaneTyped = Lf("""""
+  test, ignore: peer answer",
+  options Alpha and Beta. After I
+  answer, reply with exactly the
+  answer text and nothing else.
+───────────────────────────────────
+ ☐ QA
+
+QA test, ignore: peer answer
+
+  1. Alpha
+     Option Alpha
+  2. Beta
+     Option Beta
+❯ 3. QA test, ignore: a long peer
+     answer that wraps over
+     several rows of the narrow
+     pane
+───────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate ·
+ctrl+g to edit in nano · Esc to
+cancel
+""""");
     }
 }

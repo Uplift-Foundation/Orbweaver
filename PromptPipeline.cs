@@ -650,8 +650,8 @@ namespace Orbweaver
         private async Task<PressOutcome> PressOtherAsync(SessionStatus status, PendingPrompt pending, string requestId, string row, string note)
         {
             if (await ApprovedFormAsync(status, pending).ConfigureAwait(false) is not { } form) return PressOutcome.Changed;
-            var code = await FormAnswer.AnswerAsync(status, _seams.Capture, _seams.PressKey, _seams.TypeLiteral, form.Fingerprint, row, null, note)
-                .ConfigureAwait(false);
+            var code = await FormAnswer.AnswerAsync(status, _seams.Capture, _seams.PressKey, _seams.TypeLiteral, form.Fingerprint, row, null, note,
+                why => _seams.Log($"{why} {requestId}")).ConfigureAwait(false);
             if (code is null) _seams.Log($"press {requestId} other");
             return OutcomeOf(code);
         }

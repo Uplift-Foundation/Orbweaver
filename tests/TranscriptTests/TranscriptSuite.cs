@@ -1735,8 +1735,15 @@ namespace Orbweaver.Tests
                 .Where(f => f.GetValue(null) is string text && ChatTranscript.ParseAskForm(text) is { } f2 && ChatTranscript.IsEditingFreeText(f2))
                 .Select(f => f.Name).OrderBy(n => n, StringComparer.Ordinal).ToList();
             Check("only the typed-text captures read as a free-text row being edited",
-                editingForms.SequenceEqual(new[] { "QaFreeTextTyped", "TeamLeadNarrowFreeTextTyped" }),
+                editingForms.SequenceEqual(new[] { "QaFreeTextTyped", "QaTeamLeadShortPaneTyped", "TeamLeadNarrowFreeTextTyped" }),
                 string.Join(",", editingForms));
+
+            // QA's real 35x23 capture: the four-row answer reads back whole. The
+            // old wrap test (no slack) cut it after "answer that wraps over" —
+            // 27 + 1 + "several" ends at 35 — which is the type-failed QA saw.
+            var qaRow = ChatTranscript.ParseDialog(PaneFixtures.QaTeamLeadShortPaneTyped)?.Options.FirstOrDefault(o => o.Key == "3")?.Label;
+            Check("QA's 35x23 team-lead capture reads its typed row back whole",
+                qaRow == "QA test, ignore: a long peer answer that wraps over several rows of the narrow pane", qaRow ?? "null");
 
             // QA round 1: the wrap test's boundary, on the real capture with only
             // the continuation's first word resized. The line above is 28 wide

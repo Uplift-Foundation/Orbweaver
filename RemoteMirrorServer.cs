@@ -1218,7 +1218,7 @@ namespace Orbweaver
             var code = _seams.PressKey is not { } press
                 ? MirrorProtocol.ErrUnsupported
                 : await FormAnswer.AnswerAsync(status, _seams.CapturePane!, press, _seams.TypeLiteral,
-                    wanted, key, action, text).ConfigureAwait(false);
+                    wanted, key, action, text, why => AnswerLog("answer", $"n={name} {why}")).ConfigureAwait(false);
 
             var what = action is null ? $"key={key}" : $"act={action}";
             if (code is not null)

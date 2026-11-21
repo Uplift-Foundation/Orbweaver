@@ -2621,6 +2621,29 @@ public partial class MirrorRoundTripTests : IDisposable
     }
 
     // The cursor below the row moves up to it.
+    // CB-406: a free-text answer whose row never shows the text is refused
+    // type-failed, and the far side's log says why in numbers — the line the
+    // next real failure is diagnosed from — never the text.
+    [Fact]
+    public async Task AFreeTextAnswerRefusedAtTheReadBackIsLoggedWithoutTheText()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.QaFormQ1 };
+        harness.AddSession("qa", WriteTranscript("readback.jsonl", Conversation(2)));
+        var downs = 0;
+        harness.AfterPress = key => key == "Down" && ++downs == 2 ? PaneFixtures.QaCursorOnFreeText : null;
+        var log = new List<string>();
+        harness.Server.AnswerLog = (_, detail) => log.Add(detail);
+        await harness.HandshakeAsync("qa");
+        var prompt = (await harness.Client.FetchPromptAsync("qa")).Prompt!;
+
+        Assert.Equal(MirrorProtocol.ErrTypeFailed,
+            await harness.Client.AnswerFreeTextAsync("qa", prompt.FreeTextKey!, prompt.Fingerprint, "my own answer"));
+
+        Assert.Contains(log, l => l.StartsWith("n=qa readback stage=typed ", StringComparison.Ordinal) && l.Contains("wanted=13"));
+        Assert.DoesNotContain(log, l => l.Contains("my own answer"));
+        Assert.DoesNotContain("Enter", harness.Pressed);
+    }
+
     [Fact]
     public async Task FreeTextFromBelowTheRowMovesUp()
     {

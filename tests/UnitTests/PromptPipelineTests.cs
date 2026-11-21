@@ -253,6 +253,12 @@ public class PromptPipelineTests
         Assert.Equal("gone", Assert.Single(_sent.Resolved).By);
         Assert.Equal(0, _p.PendingCount);
         Assert.Empty(_pane.Keys);
+
+        // And QA's own 35x23 capture of the same state, which the installed
+        // (pre-fix) build minted a prompt for at 23:03:17.550.
+        _pane.Screen = PaneFixtures.QaTeamLeadShortPaneTyped;
+        await _p.OnScannedAsync(Snap());
+        Assert.Single(_sent.Prompts);
     }
 
     [Fact]
@@ -1244,9 +1250,13 @@ public class PromptPipelineTests
             (_, _) => Task.FromResult(true),                          // typed, but the row never shows it
             () => _now, _ => Task.CompletedTask, _log.Add), _sent, "Test Mac");
         await p.OnScannedAsync(Snap());
-        await p.OnAnswerAsync(PhoneId, Phone.Public, AnswerToFrom(p, "other", "my own answer"));
+        var a = AnswerToFrom(p, "other", "my own answer");
+        await p.OnAnswerAsync(PhoneId, Phone.Public, a);
         Assert.DoesNotContain("Enter", keys);
         Assert.Equal(AnswerGate.StalePrompt, Assert.Single(_sent.Refusals).Code);
+        // CB-406: the relay log says why, in numbers, and never the text.
+        var why = Assert.Single(_log, l => l.StartsWith("readback ", StringComparison.Ordinal));
+        Assert.Equal($"readback stage=typed read=form same-form=1 cursor=3 free=3 shown=15 wanted=13 prefix=0 rows=1 {a.RequestId}", why);
     }
 
     [Fact]
