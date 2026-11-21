@@ -96,4 +96,25 @@ public class RelayAlertRulesTests
         Assert.Equal("proj on mac · 1 member finished since", RelayAlertRules.WithMembersSince("proj on mac", 1));
         Assert.Equal("proj on mac · 3 members finished since", RelayAlertRules.WithMembersSince("proj on mac", 3));
     }
+
+    // The file's spelling is the frame's, and each mode survives the round trip through it.
+    [Theory]
+    [InlineData((int)DoneAlerts.All, "all")]
+    [InlineData((int)DoneAlerts.Leads, "leads")]
+    [InlineData((int)DoneAlerts.Off, "off")]
+    public void A_stored_choice_reads_back_as_the_one_that_was_written(int mode, string name)
+    {
+        var prefs = new AlertPrefs((DoneAlerts)mode, AmberMembers: false);
+        Assert.Equal(name, prefs.DoneAlertsName);
+        Assert.Equal(prefs, AlertPrefs.FromStored(prefs.DoneAlertsName, prefs.AmberMembers));
+    }
+
+    [Fact]
+    public void A_stored_choice_with_no_mode_or_an_unknown_one_is_no_choice_and_a_missing_toggle_is_on()
+    {
+        Assert.Null(AlertPrefs.FromStored(null, null));
+        Assert.Null(AlertPrefs.FromStored(null, false));
+        Assert.Null(AlertPrefs.FromStored("sometimes", true));
+        Assert.Equal(new AlertPrefs(DoneAlerts.Leads, AmberMembers: true), AlertPrefs.FromStored("leads", null));
+    }
 }

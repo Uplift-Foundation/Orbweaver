@@ -463,6 +463,10 @@ namespace Orbweaver
             {
                 c.Alerts = prefs;
                 Note($"prefs from {Safe(from)} done_alerts={prefs.DoneAlerts} amber_members={prefs.AmberMembers}");
+                // Still prefs.ok when the write fails: the choice is in force
+                // now, and the phone has nothing better to do with a refusal.
+                if (!_identity.SaveAlerts(c.Phone.PhoneId, prefs))
+                    Note($"prefs from {Safe(from)} not saved; they hold until this desktop restarts");
             }
             else Note($"prefs from {Safe(from)} malformed; refused");
             var reply = ok
@@ -1105,6 +1109,9 @@ namespace Orbweaver
                 Window = phone.Received is { } r ? new RelayReceiveWindow(r.Epoch, r.Counter) : new RelayReceiveWindow(),
                 // A fresh pairing's epoch 0 is already on disk (AddPhone).
                 EpochPersisted = fresh || _identity.SaveSendEpoch(phone.PhoneId, counter.Epoch, counter.Exhausted),
+                // CB-358: the choice the phone last sent, from the file; a
+                // phone that never sent one gets every alert, as before.
+                Alerts = phone.Alerts ?? AlertPrefs.Default,
             };
             _channels[phone.PhoneId] = c;
             return c;

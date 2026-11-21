@@ -19,17 +19,32 @@ internal readonly record struct AlertPrefs(DoneAlerts DoneAlerts, bool AmberMemb
     internal static AlertPrefs? Parse(JsonElement body)
     {
         if (!body.TryGetProperty("done_alerts", out var done) || done.ValueKind != JsonValueKind.String) return null;
-        var mode = done.GetString() switch
-        {
-            "all" => DoneAlerts.All,
-            "leads" => DoneAlerts.Leads,
-            "off" => DoneAlerts.Off,
-            _ => (DoneAlerts?)null,
-        };
-        if (mode is not { } known) return null;
+        if (Mode(done.GetString()) is not { } known) return null;
         var amber = !body.TryGetProperty("amber_members", out var a) || a.ValueKind != JsonValueKind.False;
         return new AlertPrefs(known, amber);
     }
+
+    private static DoneAlerts? Mode(string? name) => name switch
+    {
+        "all" => DoneAlerts.All,
+        "leads" => DoneAlerts.Leads,
+        "off" => DoneAlerts.Off,
+        _ => null,
+    };
+
+    // The choice as relay-identity.json keeps it, in the frame's own words so
+    // the file reads like the wire. A phone that never sent prefs has neither
+    // key, and a done_alerts this build does not know reads as no choice at
+    // all, for the reason Parse refuses one: it must not become a guess.
+    internal string DoneAlertsName => DoneAlerts switch
+    {
+        DoneAlerts.All => "all",
+        DoneAlerts.Leads => "leads",
+        _ => "off",
+    };
+
+    internal static AlertPrefs? FromStored(string? doneAlerts, bool? amberMembers) =>
+        Mode(doneAlerts) is { } known ? new AlertPrefs(known, amberMembers ?? true) : null;
 }
 
 internal static class RelayAlertRules

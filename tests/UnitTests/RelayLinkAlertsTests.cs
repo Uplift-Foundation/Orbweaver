@@ -135,4 +135,69 @@ public partial class RelayLinkTests
         var m1Alert = link.OnScan([Row("s1"), Member("m1", "idle", "s1"), Member("m2", "idle", "m1")]);
         Assert.DoesNotContain("finished since", DoneLabel(link, phone, m1Alert));
     }
+
+    // ---- the choice outlives the process -----------------------------------------------------------------------
+    // The phone resends prefs only when it is running to see this desktop come back. A suspended iPhone is not,
+    // so the desktop has to remember: each case below restarts over the same files and sends no new prefs frame.
+
+    private (RelayLink Link, List<string> Notes) Restarted(FakePhone phone)
+    {
+        var (restarted, _, notes) = New(new RelayIdentity(_dir, _store, () => _now));
+        restarted.OnFrame(Welcome(phone.Id));
+        restarted.OnFrame(Presence(phone.Id, true));
+        return (restarted, notes);
+    }
+
+    private static IReadOnlyList<string> MemberFinishes(RelayLink link)
+    {
+        link.OnScan([Row("s1"), Member("m1", "idle", "s1")]);
+        link.OnScan([Row("s1"), Member("m1", "generating", "s1")]);
+        return link.OnScan([Row("s1"), Member("m1", "idle", "s1")]);
+    }
+
+    [Fact]
+    public void After_a_restart_a_member_finish_is_still_withheld_with_no_new_prefs_frame()
+    {
+        var (_, _, phone, _, _) = Paired();
+        var (first, _) = Restarted(phone);                                       // control: before any prefs, a restart pushes
+        Assert.Contains(MemberFinishes(first), f => J(f).GetProperty("push").GetString() == "done");
+
+        first.OnFrame(phone.Sealed("pair", """{"t":"prefs","done_alerts":"leads","amber_members":false}"""));
+        Assert.Equal(new AlertPrefs(DoneAlerts.Leads, AmberMembers: false), new RelayIdentity(_dir, _store).PhoneById(phone.Id)!.Alerts);
+
+        var (second, _) = Restarted(phone);
+        var done = Assert.Single(MemberFinishes(second));
+        Assert.Equal("none", J(done).GetProperty("push").GetString());
+        Assert.Equal("delta", phone.OpenFromDesktop(done).GetProperty("t").GetString());
+
+        // The other half of the frame came back too: the member's prompt carries no alert.
+        var prompt = Assert.Single(second.SendPrompt("req-1", "m1", "Allow?", "plain"), f => J(f).GetProperty("class").GetString() == "action");
+        Assert.False(J(prompt).TryGetProperty("e", out _));
+    }
+
+    [Fact]
+    public void A_phone_that_never_sent_prefs_has_none_on_disk_and_a_refused_frame_writes_none()
+    {
+        var (link, identity, phone, _, _) = Paired();
+        Assert.Null(identity.PhoneById(phone.Id)!.Alerts);
+        link.OnFrame(phone.Sealed("pair", """{"t":"prefs","done_alerts":"sometimes"}"""));
+        Assert.Null(new RelayIdentity(_dir, _store).PhoneById(phone.Id)!.Alerts);
+        Assert.DoesNotContain("done_alerts", File.ReadAllText(Path.Combine(_dir, RelayIdentity.FileName)));
+    }
+
+    [Fact]
+    public void Prefs_that_cannot_be_written_are_acknowledged_and_hold_only_until_the_restart()
+    {
+        var (link, identity, phone, notes, _) = Paired();
+        var moved = Block();
+        var reply = phone.OpenFromDesktop(Assert.Single(link.OnFrame(phone.Sealed("pair", """{"t":"prefs","done_alerts":"leads"}"""))));
+        Unblock(moved);
+        Assert.Equal("prefs.ok", reply.GetProperty("t").GetString());
+        Assert.Contains(notes, n => n.Contains("not saved"));
+        Assert.Equal("none", J(Assert.Single(MemberFinishes(link))).GetProperty("push").GetString());   // in force now
+
+        var (restarted, _) = Restarted(phone);                                                          // and gone after
+        Assert.Contains(MemberFinishes(restarted), f => J(f).GetProperty("push").GetString() == "done");
+        Assert.False(identity.SaveAlerts("ph_nobody", AlertPrefs.Default));
+    }
 }
