@@ -58,7 +58,9 @@ namespace Orbweaver
                     () => RemoteControlSessions.LocalSessions().Select(s => s.Status).ToList()),
                 PeerLaunchServer.Shared.HandleAsync,
                 client,
-                PeerBrowseServer.ForThisDesk(() => OrbweaverSettings.PeerLaunchInboundEnabled));
+                PeerBrowseServer.ForThisDesk(() => OrbweaverSettings.PeerLaunchInboundEnabled),
+                PeerLaunchServer.Shared.HandleTrustAsync,
+                machine => _ = PeerLaunchServer.Shared.OnDisconnectedAsync(machine));
 
         // What New Chat asks to start a session on another desktop: null until
         // the link is running.
@@ -85,7 +87,12 @@ namespace Orbweaver
             PeerLaunchClient.SignerFor(
                 machine => PeerIdentity.PeerFor(machine)?.Pin,
                 message => PeerIdentity.SignAsync(message)),
-            () => DateTimeOffset.UtcNow));
+            () => DateTimeOffset.UtcNow)
+        {
+            TrustSign = PeerLaunchClient.TrustSignerFor(
+                machine => PeerIdentity.PeerFor(machine)?.Pin,
+                message => PeerIdentity.SignAsync(message)),
+        });
 
         // The running link's host, or — only in a test, only when no real one
         // is running — the stand-in UseClientForTests installed. The real host

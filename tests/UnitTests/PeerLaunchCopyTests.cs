@@ -57,3 +57,33 @@ public class PeerLaunchCopyTests
         Assert.Equal("OpenClaw conversations start from this machine only.", PeerLaunchCopy.OpenClawLocalOnly);
     }
 }
+
+// CB-397: the words of the trust question, one case each.
+public class PeerLaunchTrustCopyTests
+{
+    [Fact]
+    public void The_question_reads_the_same_whichever_cli_asked()
+    {
+        Assert.Equal("Claude Code on mini is asking whether to trust this folder.", PeerLaunchCopy.TrustAsking("claude", "mini"));
+        Assert.Equal("Trust this folder on mini?", PeerLaunchCopy.TrustTitle("mini"));
+        Assert.Equal("Codex will be able to read, edit and run files there.", PeerLaunchCopy.TrustWarning("codex"));
+        Assert.Equal("This folder declares hooks that run commands on mini without asking.", PeerLaunchCopy.TrustHooks("mini"));
+        Assert.Equal("Trusting it on mini…", PeerLaunchCopy.Trusting("mini"));
+    }
+
+    [Theory]
+    [InlineData(true, "launched", null, true, "Claude Code is starting on mini. Its orb appears when mini next reports its sessions.")]
+    [InlineData(false, "trust_gone", null, true, "Nobody answered in time, so mini closed the session. Nothing was trusted.")]
+    [InlineData(false, "expired", null, false, "Nobody answered in time, so mini closed the session. Nothing was trusted.")]
+    [InlineData(false, "trust_cancelled", null, false, "Cancelled. Nothing was trusted, and mini closed the session.")]
+    [InlineData(false, "no_answer", null, false, "Cancelled here. mini didn't confirm, and closes the session itself within two minutes.")]
+    [InlineData(false, "link_lost", null, false, "Cancelled here. mini didn't confirm, and closes the session itself within two minutes.")]
+    [InlineData(false, "no_answer", null, true, "mini didn't answer. It may be asleep, or running a version that can't start sessions for another desktop.")]
+    [InlineData(false, "launch_failed", "gone", true, "mini could not start it (gone).")]
+    [InlineData(false, "launch_failed", "gone", false, "mini could not start it (gone).")]
+    [InlineData(false, "bad_signature", null, false, "mini could not verify this machine's signature. Nothing was started.")]
+    public void An_answer_reads_as_one_sentence(bool ok, string code, string? why, bool trusted, string expected)
+    {
+        Assert.Equal(expected, PeerLaunchCopy.AfterAnswer(new PeerLaunchResult(ok, code, null, why), trusted, "claude", "mini"));
+    }
+}

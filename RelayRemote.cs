@@ -38,7 +38,9 @@ namespace Orbweaver
             Func<string> Shell,
             Func<string, string, (string? Pane, string? Why)> PlaceMac,
             Func<ProcessStartInfo, int?> StartWindows,
-            Func<string>? Home = null);
+            Func<string>? Home = null,
+            LaunchRunner.TrustSeams? Trust = null,
+            Func<string, string>? Resolve = null);
 
         internal sealed record Seams(
             Func<DateTimeOffset> Now,
@@ -461,7 +463,7 @@ namespace Orbweaver
                 return;
             }
 
-            var outcome = await runner.RunAsync(f).ConfigureAwait(false);
+            var outcome = await runner.RunAsync(f, LaunchRunner.TrustPolicy.Report).ConfigureAwait(false);
             if (outcome.SessionId is not { } sessionId)
             {
                 Err(phoneId, r.Ref, outcome.Code, why: outcome.Why);

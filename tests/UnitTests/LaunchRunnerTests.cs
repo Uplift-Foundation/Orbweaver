@@ -29,6 +29,32 @@ public class LaunchRunnerTests
         // Absolute on both rids, so the expected values are the same rule on each.
         public string Home = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "cb397-home"));
 
+        // CB-397: the pane the launch started, as a fake. Screen is what it shows now;
+        // Reads, Presses and Closed record what the runner did to it.
+        public bool TrustOn;
+        public Func<int, string?> Screen = _ => null;
+        public int Reads;
+        public readonly List<string> Presses = [];
+        public readonly List<string> Closed = [];
+        public Action<string>? OnPress;
+        public Func<string, string>? Resolve;
+        public string? Current => Screen(Reads - 1);
+
+        public LaunchRunner.TrustSeams? TrustOverride;
+
+        public LaunchRunner.TrustSeams? Trust() => TrustOverride ?? (!TrustOn ? null : new(
+            pane => { Reads++; return Task.FromResult(Screen(Reads - 1)); },
+            (pane, key, approved) =>
+            {
+                Reads++;
+                var look = Screen(Reads - 1);
+                if (!approved(look)) return Task.FromResult((false, look));
+                Presses.Add(key);
+                OnPress?.Invoke(key);
+                return Task.FromResult((true, (string?)Screen(Reads)));
+            },
+            pane => { Closed.Add(pane); return Task.CompletedTask; }));
+
         public RelayRemote.LaunchSeams Launch() => new(
             Windows,
             _ => Binary,
@@ -36,7 +62,9 @@ public class LaunchRunnerTests
             () => "/bin/zsh",
             (command, cwd) => { MacStarts.Add((command, cwd)); return MacPlace; },
             psi => { WindowsStarts.Add(psi); return WindowsPid; },
-            () => Home);
+            () => Home,
+            Trust(),
+            Resolve);
 
         public RelayRemote.AccountSeams Accounts() => new(_ => Choices, _ => Designated);
 
