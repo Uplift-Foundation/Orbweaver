@@ -90,6 +90,8 @@ namespace Orbweaver
 
     public static class RunText
     {
+        public const string EffortLabel = "Effort";
+        public const string ChipTip = "Model and effort for this session. Click to change them.";
         public const string ModelUnknown = "model not known yet";
         public const string EffortUnknown = "effort not known yet";
         public const string Applying = "applying…";

@@ -2,6 +2,7 @@ using System;
 using System.Collections.ObjectModel;
 using System.Diagnostics.CodeAnalysis;
 using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
@@ -1123,10 +1124,10 @@ namespace Orbweaver
                 return;
             }
 
-            RunOptionsChipText.Text = options.ChipText;
+            RunOptionsChipText.Text = ChipTextFor(options);
             // The whole text in the tip as well, since a long model name can be cut
             // by the column's width.
-            ToolTip.SetTip(RunOptionsChip, options.ChipText + "\n" + OpenClawRunText.ChipTip);
+            ToolTip.SetTip(RunOptionsChip, RunOptionsChipText.Text + "\n" + (options.HasFast ? OpenClawRunText.ChipTip : RunText.ChipTip));
 
             if (_runFlyout is not null) _runFlyout.Content = BuildRunFlyout((IRemoteChatRunOptions)session!, options);
         }
@@ -1137,7 +1138,11 @@ namespace Orbweaver
         // would click without a pointer. Rebuilt from the options every time they
         // change; _runApplying holds the handlers off while it is being set.
         internal ComboBox? RunModelBox { get; private set; }
-        internal ComboBox? RunThinkingBox { get; private set; }
+        internal EffortDial? RunEffortDial { get; private set; }
+        internal Button? RunEffortDefault { get; private set; }
+        internal TextBlock? RunModelReason { get; private set; }
+        internal TextBlock? RunEffortReason { get; private set; }
+        internal TextBlock? RunDefaultWarning { get; private set; }
         internal ToggleSwitch? RunFastSwitch { get; private set; }
         internal Button? RunFastDefault { get; private set; }
         internal ComboBox? RunLimitBox { get; private set; }
@@ -1162,13 +1167,22 @@ namespace Orbweaver
             {
                 var panel = new StackPanel { Spacing = 8, MinWidth = 240 };
 
+                // CB-404: when the route also changes the default for new
+                // sessions, say so before anything is chosen.
+                RunDefaultWarning = null;
+                if (options.DefaultWarning is { } warning)
+                {
+                    RunDefaultWarning = new TextBlock { Text = warning, FontSize = 11, TextWrapping = TextWrapping.Wrap, Opacity = 0.8, MaxWidth = 260 };
+                    panel.Children.Add(RunDefaultWarning);
+                }
+
                 // Model. "Default" first when it can be reset, so it is the same
                 // gesture as choosing any other.
                 RunModelBox = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
                 if (options.CanResetToDefault) RunModelBox.Items.Add(new ComboBoxItem { Content = OpenClawRunText.DefaultLabel, Tag = null });
                 foreach (var m in options.Models) RunModelBox.Items.Add(new ComboBoxItem { Content = m.Label, Tag = m.Id });
-                RunModelBox.IsEnabled = !options.Locked;
-                if (options.Locked) ToolTip.SetTip(RunModelBox, OpenClawRunText.LockedModelTip);
+                var modelOff = options.ModelDisabledReason ?? (options.Locked ? OpenClawRunText.LockedModelTip : null);
+                RunModelBox.IsEnabled = modelOff is null;
                 // The handler before the selection, so setting the selection from
                 // the options is held off by _runApplying like any other.
                 RunModelBox.SelectionChanged += async (_, _) =>
@@ -1177,66 +1191,100 @@ namespace Orbweaver
                     await ChangeAsync(RunModelBox, () => run.SetModelAsync((string?)item.Tag));
                 };
                 RunModelBox.SelectedIndex = IndexOfTag(RunModelBox, options.ModelId);
-                panel.Children.Add(Labelled(OpenClawRunText.ModelLabel, RunModelBox));
+                RunModelReason = Reason(RunModelBox, modelOff);
+                panel.Children.Add(Labelled(Pending(OpenClawRunText.ModelLabel, options.ModelPending), RunModelBox, RunModelReason));
 
-                // Thinking: the model's own levels, id sent and label shown.
-                RunThinkingBox = null;
-                if (options.ThinkingChoices.Count > 0)
+                // Effort: the round dial over the model's own levels, id sent and
+                // label shown. Shown disabled with its reason rather than hidden
+                // whenever there is a reason; hidden only when there is neither a
+                // level nor a reason, which is a gateway model with no levels.
+                RunEffortDial = null;
+                RunEffortDefault = null;
+                RunEffortReason = null;
+                if (options.ThinkingChoices.Count > 0 || options.EffortDisabledReason is not null)
                 {
-                    RunThinkingBox = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+                    var choices = options.ThinkingChoices;
+                    var labels = choices.Select(c => c.Label).ToList();
+                    RunEffortDial = new EffortDial
+                    {
+                        Levels = labels,
+                        SelectedIndex = IndexOfId(choices, options.ThinkingId ?? DefaultChoiceId(options)),
+                        ConfirmedIndex = IndexOfId(choices, options.ConfirmedEffortId),
+                        IsPending = options.EffortPending,
+                        IsEnabled = options.EffortDisabledReason is null && choices.Count > 0,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                    };
+                    AutomationProperties.SetName(RunEffortDial, options.HasFast ? OpenClawRunText.ThinkingLabel : RunText.EffortLabel);
+                    var dial = RunEffortDial;
+                    dial.Committed += async (_, index) =>
+                    {
+                        if (_runApplying) return;
+                        await ChangeAsync(dial, () => run.SetThinkingAsync(choices[index].Id));
+                    };
+                    RunEffortReason = Reason(dial, options.EffortDisabledReason);
+
+                    Control body = dial;
                     if (options.CanResetToDefault)
                     {
-                        var label = options.ThinkingDefaultLabel is { } d
-                            ? $"{OpenClawRunText.DefaultLabel} ({d})"
-                            : OpenClawRunText.DefaultLabel;
-                        RunThinkingBox.Items.Add(new ComboBoxItem { Content = label, Tag = null });
+                        var label = options.ThinkingDefaultLabel is { } d ? $"{OpenClawRunText.DefaultLabel} ({d})" : OpenClawRunText.DefaultLabel;
+                        RunEffortDefault = new Button { Content = label, IsVisible = options.ThinkingId is not null, Padding = new Thickness(6, 1), HorizontalAlignment = HorizontalAlignment.Center };
+                        var reset = RunEffortDefault;
+                        reset.Click += async (_, _) => await ChangeAsync(reset, () => run.SetThinkingAsync(null));
+                        body = new StackPanel { Spacing = 4, Children = { dial, reset } };
                     }
 
-                    foreach (var t in options.ThinkingChoices) RunThinkingBox.Items.Add(new ComboBoxItem { Content = t.Label, Tag = t.Id });
-                    RunThinkingBox.SelectionChanged += async (_, _) =>
+                    panel.Children.Add(Labelled(
+                        Pending(options.HasFast ? OpenClawRunText.ThinkingLabel : RunText.EffortLabel, options.EffortPending),
+                        body, RunEffortReason));
+                }
+
+                RunFastSwitch = null;
+                RunFastDefault = null;
+                RunLimitBox = null;
+                if (options.HasFast)
+                {
+                    // Fast mode, with its own way back to the default.
+                    RunFastSwitch = new ToggleSwitch { IsChecked = options.Fast, OnContent = "", OffContent = "" };
+                    var fastSwitch = RunFastSwitch;
+                    fastSwitch.IsCheckedChanged += async (_, _) =>
                     {
-                        if (_runApplying || RunThinkingBox.SelectedItem is not ComboBoxItem item) return;
-                        await ChangeAsync(RunThinkingBox, () => run.SetThinkingAsync((string?)item.Tag));
+                        if (_runApplying) return;
+                        var on = fastSwitch.IsChecked == true;
+                        await ChangeAsync(fastSwitch, () => run.SetFastModeAsync(on));
                     };
-                    RunThinkingBox.SelectedIndex = IndexOfTag(RunThinkingBox, options.ThinkingId);
-                    panel.Children.Add(Labelled(OpenClawRunText.ThinkingLabel, RunThinkingBox));
+                    RunFastDefault = new Button
+                    {
+                        Content = OpenClawRunText.DefaultLabel,
+                        IsVisible = options.CanResetToDefault && options.FastIsSet,
+                        Padding = new Thickness(6, 1)
+                    };
+                    var fastDefault = RunFastDefault;
+                    fastDefault.Click += async (_, _) => await ChangeAsync(fastDefault, () => run.SetFastModeAsync(null));
+                    var fastRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+                    fastRow.Children.Add(fastSwitch);
+                    fastRow.Children.Add(fastDefault);
+                    panel.Children.Add(Labelled(OpenClawRunText.FastLabel, fastRow));
                 }
 
-                // Fast mode, with its own way back to the default.
-                RunFastSwitch = new ToggleSwitch { IsChecked = options.Fast, OnContent = "", OffContent = "" };
-                RunFastSwitch.IsCheckedChanged += async (_, _) =>
+                if (options.HasTimeLimit)
                 {
-                    if (_runApplying) return;
-                    var on = RunFastSwitch.IsChecked == true;
-                    await ChangeAsync(RunFastSwitch, () => run.SetFastModeAsync(on));
-                };
-                RunFastDefault = new Button
-                {
-                    Content = OpenClawRunText.DefaultLabel,
-                    IsVisible = options.CanResetToDefault && options.FastIsSet,
-                    Padding = new Thickness(6, 1)
-                };
-                RunFastDefault.Click += async (_, _) => await ChangeAsync(RunFastDefault, () => run.SetFastModeAsync(null));
-                var fastRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-                fastRow.Children.Add(RunFastSwitch);
-                fastRow.Children.Add(RunFastDefault);
-                panel.Children.Add(Labelled(OpenClawRunText.FastLabel, fastRow));
+                    // Time limit for the next sends: held on the session, never zero.
+                    RunLimitBox = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+                    var limit = RunLimitBox;
+                    limit.Items.Add(new ComboBoxItem { Content = OpenClawRunText.TimeLimitText(null), Tag = null });
+                    foreach (var minutes in OpenClawRunText.TimeLimitMinutes)
+                    {
+                        limit.Items.Add(new ComboBoxItem { Content = OpenClawRunText.TimeLimitText(minutes), Tag = minutes });
+                    }
 
-                // Time limit for the next sends: held on the session, never zero.
-                RunLimitBox = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
-                RunLimitBox.Items.Add(new ComboBoxItem { Content = OpenClawRunText.TimeLimitText(null), Tag = null });
-                foreach (var minutes in OpenClawRunText.TimeLimitMinutes)
-                {
-                    RunLimitBox.Items.Add(new ComboBoxItem { Content = OpenClawRunText.TimeLimitText(minutes), Tag = minutes });
+                    limit.SelectionChanged += (_, _) =>
+                    {
+                        if (_runApplying || limit.SelectedItem is not ComboBoxItem item) return;
+                        run.TimeoutMinutes = (int?)item.Tag;
+                    };
+                    limit.SelectedIndex = IndexOfTag(limit, run.TimeoutMinutes);
+                    panel.Children.Add(Labelled(OpenClawRunText.TimeLimitLabel, limit));
                 }
-
-                RunLimitBox.SelectionChanged += (_, _) =>
-                {
-                    if (_runApplying || RunLimitBox.SelectedItem is not ComboBoxItem item) return;
-                    run.TimeoutMinutes = (int?)item.Tag;
-                };
-                RunLimitBox.SelectedIndex = IndexOfTag(RunLimitBox, run.TimeoutMinutes);
-                panel.Children.Add(Labelled(OpenClawRunText.TimeLimitLabel, RunLimitBox));
 
                 RunStatus = new TextBlock
                 {
@@ -1264,13 +1312,46 @@ namespace Orbweaver
             return -1;
         }
 
-        private static Control Labelled(string label, Control control)
+        private static Control Labelled(string label, Control control, TextBlock? reason = null)
         {
             var row = new StackPanel { Spacing = 2 };
             row.Children.Add(new TextBlock { Text = label, FontSize = 10.5, Opacity = 0.7 });
             row.Children.Add(control);
+            if (reason is not null) row.Children.Add(reason);
             return row;
         }
+
+        // CB-404: a disabled control keeps its place, greyed, with the reason
+        // both as its tooltip and as a line under it — a tooltip alone is
+        // invisible on touch and in a screenshot. Null when it is enabled.
+        private static TextBlock? Reason(Control control, string? reason)
+        {
+            if (reason is null) return null;
+            ToolTip.SetTip(control, reason);
+            ToolTip.SetShowOnDisabled(control, true);
+            return new TextBlock { Text = reason, FontSize = 10.5, Opacity = 0.7, TextWrapping = TextWrapping.Wrap, MaxWidth = 260 };
+        }
+
+        private static string Pending(string label, bool pending) => pending ? $"{label} · {RunText.Applying}" : label;
+
+        // The chip, with "applying…" while a set is unconfirmed.
+        internal static string ChipTextFor(RemoteRunOptions options) =>
+            options.ModelPending || options.EffortPending ? $"{options.ChipText} · {RunText.Applying}" : options.ChipText;
+
+        private static int IndexOfId(IReadOnlyList<RemoteRunChoice> choices, string? id)
+        {
+            if (id is null) return -1;
+            for (var i = 0; i < choices.Count; i++)
+                if (string.Equals(choices[i].Id, id, StringComparison.OrdinalIgnoreCase)) return i;
+            return -1;
+        }
+
+        // With no level chosen, the dial points at the level the default is, when
+        // the gateway names it by one of the levels' labels.
+        private static string? DefaultChoiceId(RemoteRunOptions options) =>
+            options.ThinkingDefaultLabel is { } label
+                ? options.ThinkingChoices.FirstOrDefault(c => string.Equals(c.Label, label, StringComparison.OrdinalIgnoreCase))?.Id
+                : null;
 
         // One change: the control is held off while the request is out, and the
         // sentence the session returns, if any, goes in the status line. Success
