@@ -1701,6 +1701,63 @@ namespace Orbweaver.Tests
                     named?.Prompt.Title ?? "null");
                 Check($"…and its screen as a dialog ({name})", PaneScreen.Classify(screen) == PaneReading.Dialog);
             }
+            // CB-406: an agent team's lead, its pane cut to 35 columns by the
+            // teammate's split. The form reads exactly as it does full width,
+            // and an answer typed into "Type something." reads back whole even
+            // where Claude Code wrapped a word that would have ended at the edge.
+            var teamForm = ChatTranscript.ParseAskForm(PaneFixtures.TeamLeadNarrowForm);
+            Check("a team lead's form in a 35-column pane reads as its five options",
+                teamForm is not null && teamForm.Prompt.Title == "Which colour?" && teamForm.Prompt.Options.Count == 5
+                && teamForm.FreeTextKey == "4",
+                teamForm?.Prompt.Title ?? "null");
+            var typedRow = ChatTranscript.ParseDialog(PaneFixtures.TeamLeadNarrowFreeTextTyped)?.Options.FirstOrDefault(o => o.Key == "4");
+            Check("…and a long typed answer wrapped over four rows reads back whole",
+                typedRow?.Label == "my own answer and this is a much longer reply that will not fit on one row of a narrow pane",
+                typedRow?.Label ?? "null");
+
+            // CB-406: the free-text row with text in it reads as being edited;
+            // the same form untouched, or with the cursor on an empty
+            // "Type something.", does not.
+            Check("a form with text typed in its free-text row is being edited",
+                ChatTranscript.ParseAskForm(PaneFixtures.TeamLeadNarrowFreeTextTyped) is { } editing
+                && ChatTranscript.IsEditingFreeText(editing));
+            Check("…and the untouched form is not",
+                ChatTranscript.ParseAskForm(PaneFixtures.TeamLeadNarrowForm) is { } untouched
+                && !ChatTranscript.IsEditingFreeText(untouched));
+
+            // QA round 2: no real form reads as being edited unless text is in
+            // its free-text row. Swept over every capture here, so a new
+            // fixture is held to it too: of the forms, only the two typed-text
+            // captures qualify (four multi-selects among the rest, cursor on
+            // various rows, all with "Type something" still drawn).
+            var editingForms = typeof(PaneFixtures)
+                .GetFields(System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)
+                .Where(f => f.GetValue(null) is string text && ChatTranscript.ParseAskForm(text) is { } f2 && ChatTranscript.IsEditingFreeText(f2))
+                .Select(f => f.Name).OrderBy(n => n, StringComparer.Ordinal).ToList();
+            Check("only the typed-text captures read as a free-text row being edited",
+                editingForms.SequenceEqual(new[] { "QaFreeTextTyped", "QaTeamLeadShortPaneTyped", "TeamLeadNarrowFreeTextTyped" }),
+                string.Join(",", editingForms));
+
+            // QA's real 35x23 capture: the four-row answer reads back whole. The
+            // old wrap test (no slack) cut it after "answer that wraps over" —
+            // 27 + 1 + "several" ends at 35 — which is the type-failed QA saw.
+            var qaRow = ChatTranscript.ParseDialog(PaneFixtures.QaTeamLeadShortPaneTyped)?.Options.FirstOrDefault(o => o.Key == "3")?.Label;
+            Check("QA's 35x23 team-lead capture reads its typed row back whole",
+                qaRow == "QA test, ignore: a long peer answer that wraps over several rows of the narrow pane", qaRow ?? "null");
+
+            // QA round 1: the wrap test's boundary, on the real capture with only
+            // the continuation's first word resized. The line above is 28 wide
+            // on a 35-wide screen: a word of 5 would have fitted with room to
+            // spare (34), so it is not a wrap; 6 ends exactly at the edge (35),
+            // which Claude Code wraps; 7 runs past it (36).
+            foreach (var (word, joined) in new[] { ("narro", false), ("narrow", true), ("narrowe", true) })
+            {
+                var screen = PaneFixtures.TeamLeadNarrowFreeTextTyped.Replace("     narrow pane", "     " + word + " pane");
+                var row = ChatTranscript.ParseDialog(screen)?.Options.FirstOrDefault(o => o.Key == "4")?.Label ?? "";
+                Check($"a continuation whose first word ends at {28 + 1 + word.Length} of 35 is {(joined ? "" : "not ")}joined",
+                    row.EndsWith(word + " pane", StringComparison.Ordinal) == joined, row);
+            }
+
             Check("the cut-off border really is a pure rule on the last line",
                 ChatTranscript.IsHorizontalRule(PaneFixtures.MacNamedFormClippedName.TrimEnd().Split('\n')[^1].Trim()));
 

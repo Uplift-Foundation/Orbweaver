@@ -254,6 +254,24 @@ public class MirrorEdgeCaseTests : IDisposable
             _client.StateFor(Name).Availability);
     }
 
+    // CB-406: a PROMPT or ANSWER the far side never replied to is no-reply,
+    // which the panel asks again after, and never unsupported, which it treats
+    // as final. Measured live: one PROMPT queued ten seconds behind other peer
+    // traffic on the mini, timed out on the MacBook, and the form was gone
+    // from the panel for good.
+    [Fact]
+    public async Task APromptOrAnswerWithNoReplyIsNoReplyNotUnsupported()
+    {
+        AddSession();
+        await Handshake();
+
+        _dropEverything = true;
+        _client.TimeoutOverrideForTests = TimeSpan.FromMilliseconds(250);
+
+        Assert.Equal(MirrorProtocol.ErrNoReply, (await _client.FetchPromptAsync(Name)).Error);
+        Assert.Equal(MirrorProtocol.ErrNoReply, await _client.AnswerPromptAsync(Name, "1", "fp"));
+    }
+
     // Asked once and answered, the roster is not asked for again — every
     // handshake is a model turn on both relays.
     [Fact]

@@ -114,7 +114,8 @@ namespace Orbweaver
         // Never on the wire: made here when a request got no reply at all (nothing came back
         // within the timeout, the relay could not be reached, or an OK carried a payload that
         // is not what was asked for). It says nothing about what the far side can do, so it is
-        // never read as ErrUnsupported, which a session treats as final (CB-407).
+        // never read as ErrUnsupported, which a session treats as final (CB-407, and
+        // CB-406, where it took a form off the MacBook's panel for good).
         public const string ErrNoReply = "no-reply";
 
         // The far session's own registry entry is gone — CB-105's messaging

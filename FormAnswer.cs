@@ -48,7 +48,8 @@ namespace Orbweaver
             Func<SessionStatus, Task<string?>> capture,
             Func<SessionStatus, string, Task<bool>> press,
             Func<SessionStatus, string, Task<bool>>? typeLiteral,
-            string fingerprint, string? key, string? action, string? text)
+            string fingerprint, string? key, string? action, string? text,
+            Action<string>? diagnose = null)
         {
             var prompt = await ReadAsync(capture, status).ConfigureAwait(false);
 
@@ -63,7 +64,7 @@ namespace Orbweaver
             if (action is not null) return MirrorProtocol.ErrBadKey;
 
             if (key is not null && key == prompt.FreeTextKey)
-                return await FreeTextAsync(capture, press, typeLiteral, status, prompt, text).ConfigureAwait(false);
+                return await FreeTextAsync(capture, press, typeLiteral, status, prompt, text, diagnose).ConfigureAwait(false);
 
             if (text is not null || prompt.Options.All(o => o.Key != key)) return MirrorProtocol.ErrBadKey;
 
@@ -76,24 +77,79 @@ namespace Orbweaver
         internal static bool IsUsableFreeText(string? text) =>
             !string.IsNullOrWhiteSpace(text) && text.IndexOfAny(new[] { '\n', '\r' }) < 0;
 
-        // Whether the row reads back as what was typed — whole, or cut short
-        // with an ellipsis on a narrow pane.
+        // Whether the row reads back as what was typed — whole, cut short with
+        // an ellipsis on a narrow pane, or cut at a word boundary.
+        //
+        // The last is CB-406. A narrow pane (an agent team's split leaves the
+        // lead 35 columns) wraps a typed answer over more rows than the parser
+        // joins (ChatTranscript's MaxWrappedLines), so the row reads back as
+        // the answer's opening words. That is the text on the row, and Enter
+        // is pressed only after it; refusing it left the answer typed in the
+        // field and unsent, and the phone's next press was typed into it.
+        // A terminal wraps only between words, so the cut must land on one:
+        // a shown label that stops mid-word is not this.
         internal static bool ShowsTyped(string label, string text)
         {
             var shown = label.Trim();
             var wanted = text.Trim();
             if (shown == wanted) return true;
-            return shown.EndsWith('…') && shown.Length > 1 && wanted.StartsWith(shown[..^1].TrimEnd(), StringComparison.Ordinal);
+            if (shown.EndsWith('…') && shown.Length > 1) return wanted.StartsWith(shown[..^1].TrimEnd(), StringComparison.Ordinal);
+            return shown.Length > 0 && wanted.Length > shown.Length && wanted[shown.Length] == ' '
+                   && wanted.StartsWith(shown, StringComparison.Ordinal);
         }
 
         private static async Task<MirrorProtocol.WirePrompt?> ReadAsync(
+            Func<SessionStatus, Task<string?>> capture, SessionStatus status) =>
+            (await ReadWithScreenAsync(capture, status).ConfigureAwait(false)).Prompt;
+
+        private static async Task<(MirrorProtocol.WirePrompt? Prompt, string? Screen)> ReadWithScreenAsync(
             Func<SessionStatus, Task<string?>> capture, SessionStatus status)
         {
             string? screen;
             try { screen = await capture(status).ConfigureAwait(false); }
             catch { screen = null; }
 
-            return MirrorProtocol.PromptFromScreen(screen, AskFormTranscript.CallFor(screen, status.TranscriptPath));
+            return (MirrorProtocol.PromptFromScreen(screen, AskFormTranscript.CallFor(screen, status.TranscriptPath)), screen);
+        }
+
+        // CB-406: why a read-back refused, as numbers, never the text — so the
+        // next type-failed names its cause in the log instead of being
+        // reasoned about. Stage "row": the cursor did not arrive on the
+        // free-text row (or the form changed under it). Stage "typed": the row
+        // did not read back as the answer; shown/wanted are lengths, prefix says
+        // whether what was read is the start of what was typed, rows how many
+        // screen lines the row ran over.
+        internal static string ReadBackDiagnosis(string stage, MirrorProtocol.WirePrompt? read, string? screen,
+            string freeKey, string? wanted, bool sameForm)
+        {
+            var row = read?.Options.FirstOrDefault(o => o.Key == freeKey);
+            var shown = row?.Label.Trim() ?? "";
+            var want = wanted?.Trim() ?? "";
+            return $"readback stage={stage} read={(read is null ? "none" : "form")} same-form={(sameForm ? 1 : 0)} "
+                   + $"cursor={read?.CursorKey ?? "none"} free={freeKey} shown={shown.Length} wanted={want.Length} "
+                   + $"prefix={(shown.Length > 0 && want.StartsWith(shown, StringComparison.Ordinal) ? 1 : 0)} rows={RowLines(screen, freeKey)}";
+        }
+
+        // How many screen lines the option numbered key runs over: its own line
+        // and the indented lines under it, up to the next option, rule or blank.
+        internal static int RowLines(string? screen, string key)
+        {
+            if (string.IsNullOrEmpty(screen)) return 0;
+            var lines = screen.Replace("\r\n", "\n").Split('\n');
+            var head = key + ". ";
+            for (var i = 0; i < lines.Length; i++)
+            {
+                if (!lines[i].TrimStart('❯', ' ').StartsWith(head, StringComparison.Ordinal)) continue;
+                var n = 1;
+                for (var k = i + 1; k < lines.Length; k++)
+                {
+                    var t = lines[k].Trim();
+                    if (t.Length == 0 || ChatTranscript.IsHorizontalRule(t) || char.IsDigit(t[0]) || t[0] == '❯') break;
+                    n++;
+                }
+                return n;
+            }
+            return 0;
         }
 
         private static async Task<string?> PressAsync(Func<SessionStatus, string, Task<bool>> press, SessionStatus status, string key)
@@ -106,7 +162,7 @@ namespace Orbweaver
             Func<SessionStatus, Task<string?>> capture,
             Func<SessionStatus, string, Task<bool>> press,
             Func<SessionStatus, string, Task<bool>>? typeLiteral,
-            SessionStatus status, MirrorProtocol.WirePrompt prompt, string? text)
+            SessionStatus status, MirrorProtocol.WirePrompt prompt, string? text, Action<string>? diagnose)
         {
             if (!IsUsableFreeText(text)) return MirrorProtocol.ErrBadKey;
             if (prompt.MultiSelect || typeLiteral is null) return MirrorProtocol.ErrUnsupported;
@@ -132,9 +188,13 @@ namespace Orbweaver
                 return failed;
 
             // On the row, and still the same form.
-            var there = await ReadAsync(capture, status).ConfigureAwait(false);
+            var (there, thereScreen) = await ReadWithScreenAsync(capture, status).ConfigureAwait(false);
             if (there is null || there.Fingerprint != prompt.Fingerprint || there.CursorKey != prompt.FreeTextKey)
+            {
+                diagnose?.Invoke(ReadBackDiagnosis("row", there, thereScreen, prompt.FreeTextKey!, null,
+                    there?.Fingerprint == prompt.Fingerprint));
                 return MirrorProtocol.ErrTypeFailed;
+            }
 
             bool typed;
             try { typed = await typeLiteral(status, text!).ConfigureAwait(false); }
@@ -142,10 +202,13 @@ namespace Orbweaver
             if (!typed) return MirrorProtocol.ErrTypeFailed;
 
             // The row now shows the text (capture 05), and nothing else moved.
-            var filled = await ReadAsync(capture, status).ConfigureAwait(false);
+            var (filled, filledScreen) = await ReadWithScreenAsync(capture, status).ConfigureAwait(false);
             var row = filled?.Options.FirstOrDefault(o => o.Key == prompt.FreeTextKey);
             if (filled is null || row is null || filled.CursorKey != prompt.FreeTextKey || !ShowsTyped(row.Label, text!))
+            {
+                diagnose?.Invoke(ReadBackDiagnosis("typed", filled, filledScreen, prompt.FreeTextKey!, text, true));
                 return MirrorProtocol.ErrTypeFailed;
+            }
 
             return await PressAsync(press, status, "Enter").ConfigureAwait(false);
         }

@@ -242,6 +242,33 @@ public class RemoteControlChatSessionPromptTests
         Assert.Equal(1, h.Asks);
     }
 
+    // CB-406, the measured bug: a PROMPT that queued ten seconds behind other
+    // peer traffic on the far side timed out, the timeout read as unsupported,
+    // and the panel stopped asking for good — the form vanished and the
+    // question could not be answered from the MacBook at all. Driven through
+    // the real mapping of a no-reply outcome, not a hand-picked reply kind.
+    [AvaloniaFact]
+    public async Task APromptThatTimesOutKeepsTheFormAndTheAsking()
+    {
+        var h = new Harness();
+        var timedOut = MapFetch(new RemoteMirrorClient.PromptOutcome(null, RemoteMirrorClient.PromptOutcomeOf(false, null, null).Error));
+        h.Replies.Enqueue(Shown("fp1"));
+        h.Replies.Enqueue(timedOut);
+        h.Replies.Enqueue(timedOut);
+        h.Replies.Enqueue(Shown("fp1"));
+        h.Open();
+        await h.Settle();
+        Assert.NotNull(h.Session.Prompt);
+
+        h.Tick(); await h.Settle();
+        h.Tick(); await h.Settle();
+        Assert.NotNull(h.Session.Prompt);
+
+        h.Tick(); await h.Settle();
+        Assert.Equal(4, h.Asks);
+        Assert.Equal("Which exhibit?", h.Session.Prompt!.Title);
+    }
+
     [AvaloniaFact]
     public async Task NothingReadableClearsTheFormAndATransientFailureLeavesItAlone()
     {

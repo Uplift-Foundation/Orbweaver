@@ -226,12 +226,72 @@ public class PromptPipelineTests
         await _p.OnAnswerAsync(PhoneId, Phone.Public, a with { Sig = sig });
         Assert.Empty(_pane.Keys);
         Assert.Equal(AnswerGate.NotPending, Assert.Single(_sent.Refusals).Code);
+        // CB-406: and the phones are told it is over, quietly, so the card goes.
+        Assert.Equal((a.RequestId, a.SessionId, "gone"), Assert.Single(_sent.Resolved));
+        Assert.Equal([a.RequestId], _sent.QuietResolved);
+    }
+
+    // CB-406, what clears the two cards already on Warren's phone: the fixed
+    // build restarts with nothing pending, so nothing will ever settle them,
+    // and his next tap on either is answered with resolved gone.
+    // CB-406, QA round 1 item 5, on the real captures: a team lead's form, then
+    // the same form with an answer typed into its free-text row (a phone's
+    // typed answer that failed its read-back left it so). The first prompt is
+    // resolved gone, and no prompt is minted for the edited form — so no phone
+    // can press a digit into the field, which is what "1" did at 21:49:12.
+    [Fact]
+    public async Task A_form_with_text_in_its_free_text_field_is_not_offered_to_a_phone()
+    {
+        _pane.Screen = PaneFixtures.TeamLeadNarrowForm;
+        await _p.OnScannedAsync(Snap());
+        var first = Assert.Single(_sent.Prompts);
+
+        _pane.Screen = PaneFixtures.TeamLeadNarrowFreeTextTyped;
+        await _p.OnScannedAsync(Snap());
+
+        Assert.Single(_sent.Prompts);
+        Assert.Equal("gone", Assert.Single(_sent.Resolved).By);
+        Assert.Equal(0, _p.PendingCount);
+        Assert.Empty(_pane.Keys);
+
+        // And QA's own 35x23 capture of the same state, which the installed
+        // (pre-fix) build minted a prompt for at 23:03:17.550.
+        _pane.Screen = PaneFixtures.QaTeamLeadShortPaneTyped;
+        await _p.OnScannedAsync(Snap());
+        Assert.Single(_sent.Prompts);
+    }
+
+    [Fact]
+    public async Task A_tap_on_a_prompt_minted_before_a_restart_resolves_it_gone()
+    {
+        await _p.OnScannedAsync(Snap());
+        var stale = AnswerTo();
+        var restarted = new PromptPipeline(new PromptPipeline.Seams(_pane.Capture, _pane.Press, _pane.Type, () => _now, _ => Task.CompletedTask, _log.Add),
+            _sent, "Test Mac");
+
+        await restarted.OnAnswerAsync(PhoneId, Phone.Public, stale);
+
+        Assert.Empty(_pane.Keys);
+        Assert.Equal(AnswerGate.NotPending, Assert.Single(_sent.Refusals).Code);
+        Assert.Equal((stale.RequestId, "s1", "gone"), Assert.Single(_sent.Resolved));
+    }
+
+    // Only past the signature: an unknown id with a bad signature resolves
+    // nothing, so nobody unpaired can clear a phone's cards.
+    [Fact]
+    public async Task An_unsigned_answer_to_an_unknown_id_resolves_nothing()
+    {
+        await _p.OnScannedAsync(Snap());
+        var a = AnswerTo(signer: Other) with { RequestId = "01JC9R0A5N2Q7W8X3E4T6Y9ZZZ" };
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, a);
+        Assert.Equal(AnswerGate.BadSignature, Assert.Single(_sent.Refusals).Code);
+        Assert.Empty(_sent.Resolved);
     }
 
     [Theory]
     [InlineData(true, false)]
     [InlineData(false, true)]
-    public async Task A_press_that_changes_nothing_is_stale_with_no_retry(bool stuck, bool pressFails)
+    public async Task A_press_that_changes_nothing_is_stale_and_resolved_when_the_desk_answers(bool stuck, bool pressFails)
     {
         await _p.OnScannedAsync(Snap());
         _pane.Stuck = stuck;
@@ -241,27 +301,84 @@ public class PromptPipelineTests
         Assert.Equal(["1"], _pane.Keys);
         Assert.Equal(AnswerGate.StalePrompt, Assert.Single(_sent.Refusals).Code);
         Assert.Contains($"press-no-effect {a.RequestId}", _log);
-        Assert.True(_p.PendingFor("s1")!.Answered);
+        Assert.False(_p.PendingFor("s1")!.Answered);
 
-        // The same dialog on the next scan is not prompted again, and when the
-        // desk answers it nothing more is sent: the phone already heard.
+        // The same dialog on the next scan is not prompted again; when the desk
+        // answers it, every phone is told (CB-406 — the stale refusal reached
+        // only the one that tapped, and the card stayed on Warren's phone).
         await _p.OnScannedAsync(Snap());
         Assert.Single(_sent.Prompts);
         await _p.OnScannedAsync(Snap("generating"));
-        Assert.Empty(_sent.Resolved);
+        Assert.Equal((a.RequestId, "s1", "desk"), Assert.Single(_sent.Resolved));
+        Assert.Equal(0, _p.PendingCount);
+    }
+
+    // CB-406, the other half of what Warren saw: after a press with no effect
+    // the screen moved to a different dialog (the field now held text, a new
+    // fingerprint), and the relay minted a second prompt for it. The first
+    // must be resolved gone, not dropped silently, and the second resolved too
+    // when the question leaves the screen — no prompt minted for it left over.
+    [Fact]
+    public async Task Every_prompt_minted_for_a_question_is_resolved_when_it_leaves_the_screen()
+    {
+        await _p.OnScannedAsync(Snap());
+        _pane.Stuck = true;
+        var first = AnswerTo();
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, first);
+
+        _pane.Screen = DialogB;
+        await _p.OnScannedAsync(Snap());
+        Assert.Equal(2, _sent.Prompts.Count);
+        Assert.Contains((first.RequestId, "s1", "gone"), _sent.Resolved);
+
+        var second = AnswerTo(prompt: 1);
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, second);
+        await _p.OnScannedAsync(Snap("generating"));
+        Assert.Contains((second.RequestId, "s1", "desk"), _sent.Resolved);
+        Assert.Equal(2, _sent.Resolved.Count);
         Assert.Equal(0, _p.PendingCount);
     }
 
     [Fact]
     public async Task Two_answers_racing_press_exactly_once()
     {
-        await _p.OnScannedAsync(Snap());
+        // A real race: the first press is held in its settle wait until the
+        // second answer has arrived and queued behind it. (With the default
+        // instant seams the first finishes before the second starts, and the
+        // second is then a retry — see the next test.)
+        var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var p = new PromptPipeline(new PromptPipeline.Seams(_pane.Capture, _pane.Press, _pane.Type, () => _now, _ => hold.Task, _log.Add),
+            _sent, "Test Mac");
+        await p.OnScannedAsync(Snap());
         _pane.Stuck = true;   // even with the dialog still up, the second must not press
-        var one = _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());
-        var two = _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());
+        var one = p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());
+        var two = p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());
+        hold.SetResult();
         await Task.WhenAll(one, two);
         Assert.Equal(["1"], _pane.Keys);
         Assert.Contains(_sent.Refusals, r => r.Code == AnswerGate.NotPending);
+        // A held prompt refused for a race is not resolved: it is still up.
+        Assert.Empty(_sent.Resolved);
+    }
+
+    // CB-406: an answer that came AFTER a press with no effect is a retry, and
+    // is pressed — the dialog is still the one the prompt was sent for, which
+    // the gate checks as for any answer. It used to be refused not_pending for
+    // ever, which is what Warren's phone got six times.
+    [Fact]
+    public async Task An_answer_after_a_press_with_no_effect_is_a_retry_and_is_pressed()
+    {
+        await _p.OnScannedAsync(Snap());
+        _pane.Stuck = true;
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());
+        Assert.False(_p.PendingFor("s1")!.Answered);
+
+        _pane.Stuck = false;
+        var retry = AnswerTo();
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, retry);
+        Assert.Equal(["1", "1"], _pane.Keys);
+        Assert.DoesNotContain(_sent.Refusals, r => r.Code == AnswerGate.NotPending);
+        Assert.Equal((retry.RequestId, "s1", "phone:" + PhoneId), Assert.Single(_sent.Resolved));
     }
 
     [Fact]
@@ -372,12 +489,14 @@ public class PromptPipelineTests
         await _p.ResendPendingAsync();
         Assert.Single(_sent.Prompts);
 
+        // A press with no effect leaves it unanswered and answerable (CB-406),
+        // so a phone that reconnects is sent it again.
         _now = _now.AddSeconds(-1800);
         _pane.Stuck = true;
-        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());   // answered (no effect), still pending
-        Assert.True(_p.PendingFor("s1")!.Answered);
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());
+        Assert.False(_p.PendingFor("s1")!.Answered);
         await _p.ResendPendingAsync();
-        Assert.Single(_sent.Prompts);
+        Assert.Equal(2, _sent.Prompts.Count);
     }
 
     // ---- CB-401: a phone that comes online later ------------------------------
@@ -413,12 +532,13 @@ public class PromptPipelineTests
         await _p.ResendPendingToAsync("phone-b");
         Assert.Empty(_sent.PromptsTo);
 
+        // A press with no effect leaves it unanswered and answerable (CB-406).
         _now = _now.AddSeconds(-1800);
         _pane.Stuck = true;
-        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());     // answered (no effect), still pending
-        Assert.True(_p.PendingFor("s1")!.Answered);
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());
+        Assert.False(_p.PendingFor("s1")!.Answered);
         await _p.ResendPendingToAsync("phone-b");
-        Assert.Empty(_sent.PromptsTo);
+        Assert.Single(_sent.PromptsTo);
     }
 
     [Fact]
@@ -1130,9 +1250,13 @@ public class PromptPipelineTests
             (_, _) => Task.FromResult(true),                          // typed, but the row never shows it
             () => _now, _ => Task.CompletedTask, _log.Add), _sent, "Test Mac");
         await p.OnScannedAsync(Snap());
-        await p.OnAnswerAsync(PhoneId, Phone.Public, AnswerToFrom(p, "other", "my own answer"));
+        var a = AnswerToFrom(p, "other", "my own answer");
+        await p.OnAnswerAsync(PhoneId, Phone.Public, a);
         Assert.DoesNotContain("Enter", keys);
         Assert.Equal(AnswerGate.StalePrompt, Assert.Single(_sent.Refusals).Code);
+        // CB-406: the relay log says why, in numbers, and never the text.
+        var why = Assert.Single(_log, l => l.StartsWith("readback ", StringComparison.Ordinal));
+        Assert.Equal($"readback stage=typed read=form same-form=1 cursor=3 free=3 shown=15 wanted=13 prefix=0 rows=1 {a.RequestId}", why);
     }
 
     [Fact]
@@ -1542,19 +1666,25 @@ public class PromptPipelineTests
     }
 
     [Fact]
-    public async Task A_no_effect_press_on_a_permission_prompt_still_refuses_the_second_answer_not_pending()
+    // CB-400 pinned the opposite here, as a control for its overlay rule. CB-406
+    // reversed it for every prompt: a permission prompt left answered after a
+    // press with no effect could never be retried, and was never resolved for
+    // the phones when the dialog left (two prompts stuck on Warren's phone).
+    // A retry is decided against a fresh read like any answer; a racing
+    // duplicate is still refused (Two_answers_racing_press_exactly_once).
+    public async Task A_no_effect_press_on_a_permission_prompt_is_retried_like_an_overlay()
     {
         await _p.OnScannedAsync(Snap());
         _pane.Stuck = true;
         await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());
         Assert.Equal(AnswerGate.StalePrompt, _sent.Refusals[0].Code);
-        Assert.True(_p.PendingFor("s1")!.Answered);
+        Assert.False(_p.PendingFor("s1")!.Answered);
 
         _pane.Stuck = false;
         await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo());
 
-        Assert.Equal(AnswerGate.NotPending, _sent.Refusals[1].Code);
-        Assert.Single(_pane.Keys);
+        Assert.Single(_sent.Refusals);
+        Assert.Equal(["1", "1"], _pane.Keys);
     }
 
     // ---- addendum 6: re-mint an expired overlay, resend to a phone on presence --

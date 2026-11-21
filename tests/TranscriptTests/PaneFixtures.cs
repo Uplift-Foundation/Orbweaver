@@ -1728,6 +1728,107 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 
 """"");
 
+        // CB-406: mini, Claude Code 2.1.330, the lead of an agent team with one
+        // teammate. teammateMode tmux splits the window, so the lead's pane is
+        // 35 columns wide, and the form is drawn in it. captured 2026-11-21
+        internal static readonly string TeamLeadNarrowForm = Lf("""""
+
+
+❯ Use the AskUserQuestion tool
+  right now to ask me one
+  question: 'Which colour?' with
+  exactly 3 options: Red, Green,
+  Blue. Nothing else.
+
+⏺ Answered Claude's questions:
+  ⎿  · Which colour? → Red
+
+⏺ Red.
+
+✻ Brewed for 4s · done 2:03 PM
+
+❯ Create an agent team: spawn
+  exactly one teammate with the
+  Agent tool, name 'helper', whose
+  only task is: 'Reply OK to the
+  lead, then wait idle for further
+  messages.' Do not wait for it.
+  Then immediately use
+  AskUserQuestion to ask me 'Which
+  colour?' with exactly 3
+  options: Red, Green, Blue.
+
+⏺ Agent(Spawn idle helper)
+───────────────────────────────────
+ ☐ Colour
+
+Which colour?
+
+❯ 1. Red
+     Red
+  2. Green
+     Green
+  3. Blue
+     Blue
+  4. Type something.
+───────────────────────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate ·
+Esc to cancel
+""""");
+
+        // The same form with the cursor moved to "Type something." and a long
+        // answer typed into it, wrapped over four rows. The row's last line
+        // ("narrow pane") used to be dropped, because Claude Code wraps a line
+        // one column short of the edge. (PaneFixtures.TeamLeadNarrowFreeTextTyped)
+        internal static readonly string TeamLeadNarrowFreeTextTyped = Lf("""""
+  question: 'Which colour?' with
+  exactly 3 options: Red, Green,
+  Blue. Nothing else.
+
+⏺ Answered Claude's questions:
+  ⎿  · Which colour? → Red
+
+⏺ Red.
+
+✻ Brewed for 4s · done 2:03 PM
+
+❯ Create an agent team: spawn
+  exactly one teammate with the
+  Agent tool, name 'helper', whose
+  only task is: 'Reply OK to the
+  lead, then wait idle for further
+  messages.' Do not wait for it.
+  Then immediately use
+  AskUserQuestion to ask me 'Which
+  colour?' with exactly 3
+  options: Red, Green, Blue.
+
+⏺ Agent(Spawn idle helper)
+───────────────────────────────────
+ ☐ Colour
+
+Which colour?
+
+  1. Red
+     Red
+  2. Green
+     Green
+  3. Blue
+     Blue
+❯ 4. my own answer and this is a
+     much longer reply that will
+     not fit on one row of a
+     narrow pane
+───────────────────────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate ·
+ctrl+g to edit in nano · Esc to
+cancel
+""""");
+
         // CB-400, MacBook, Claude Code 2.1.330, tmux 3.7c: the primary fixture: `/mobile` on an 80x50 pane. (cb400-captures/mobile-overlay-80x50.txt)
         internal static readonly string MobileOverlay80x50 = Lf("""""
 
@@ -3397,6 +3498,38 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
 
   Ctrl+A to show all projects · Ctrl+B to only show current branch · Space to preview · Ctrl+R to
   rename · Type to search · Enter to resume · Esc to close
+""""");
+
+        // CB-406 QA (Ottilie), mini, Claude Code 2.1.330: a team lead's pane at
+        // 35x23 with one teammate, after a peer ANSWER typed a long answer into
+        // the free-text row. The settled screen, captured after the installed
+        // build (which turned out not to carry this branch) refused the
+        // read-back and left the text unsent. Under the fix the row reads back
+        // whole, and the form reads as being edited.
+        internal static readonly string QaTeamLeadShortPaneTyped = Lf("""""
+  test, ignore: peer answer",
+  options Alpha and Beta. After I
+  answer, reply with exactly the
+  answer text and nothing else.
+───────────────────────────────────
+ ☐ QA
+
+QA test, ignore: peer answer
+
+  1. Alpha
+     Option Alpha
+  2. Beta
+     Option Beta
+❯ 3. QA test, ignore: a long peer
+     answer that wraps over
+     several rows of the narrow
+     pane
+───────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate ·
+ctrl+g to edit in nano · Esc to
+cancel
 """"");
     }
 }

@@ -156,8 +156,36 @@ public class PromptWireTests
     [InlineData("my own…", "your own answer", false)]
     [InlineData("…", "anything", false)]
     [InlineData("Type something.", "my own answer", false)]
+    // CB-406: a row cut at a word boundary — more rows than the parser joins
+    // — is the answer's opening words. One cut mid-word is not.
+    [InlineData("my own", "my own answer", true)]
+    [InlineData("my ow", "my own answer", false)]
+    [InlineData("", "my own answer", false)]
+    [InlineData("my own answer and more", "my own answer", false)]
+    // QA round 1 edges: a trailing or doubled space at the cut, and a non-ASCII
+    // word either side of it.
+    [InlineData("my own", "my own  answer", true)]
+    [InlineData("my own answer", "my own answer ", true)]
+    [InlineData("café au", "café au lait", true)]
+    [InlineData("go 🚀", "go 🚀 now", true)]
+    [InlineData("go 🚀", "go 🚀🚀 now", false)]
     public void TheRowReadsBackAsWhatWasTyped(string label, string text, bool shown) =>
         Assert.Equal(shown, FormAnswer.ShowsTyped(label, text));
+
+    // CB-406, end to end on the real capture: the free-text row of a team
+    // lead's 35-column form, with a long answer typed in, reads back as that
+    // answer, so the read-back passes and Enter is pressed.
+    [Fact]
+    public void ALongAnswerTypedIntoANarrowTeamLeadsFormReadsBackAsTyped()
+    {
+        const string typed = "my own answer and this is a much longer reply that will not fit on one row of a narrow pane";
+        var form = MirrorProtocol.PromptFromScreen(PaneFixtures.TeamLeadNarrowForm)!;
+        var filled = MirrorProtocol.PromptFromScreen(PaneFixtures.TeamLeadNarrowFreeTextTyped)!;
+
+        Assert.Equal("4", form.FreeTextKey);
+        Assert.Equal("4", filled.CursorKey);
+        Assert.True(FormAnswer.ShowsTyped(filled.Options.Single(o => o.Key == form.FreeTextKey).Label, typed));
+    }
 
     // --- the client's reading of a reply (coverage QA asked for) ---------------
 
