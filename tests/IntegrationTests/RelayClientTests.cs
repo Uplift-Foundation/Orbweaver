@@ -482,6 +482,65 @@ public class RelayClientTests : IAsyncLifetime
         lock (keys) Assert.Equal(["3"], keys);
     }
 
+    // CB-400: `/mobile`'s overlay over a real socket. It goes out as a question
+    // with one Close; a Close that arrives after the screen has gone back to the
+    // prompt is stale_prompt with no key (Esc there would open the rewind picker),
+    // and a Close while the overlay is up presses Escape once and resolves.
+    [Fact]
+    public async Task An_overlay_goes_out_as_a_Close_question_and_a_stale_close_presses_nothing()
+    {
+        var identity = Identity();
+        identity.Keys();
+        var phone = PairInto(identity);
+        var screen = PaneFixtures.MobileOverlay80x50;
+        var keys = new List<string>();
+        var seams = new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(screen),
+            (_, k) => { lock (keys) keys.Add(k); screen = PaneFixtures.MobileAfterEsc; return Task.FromResult(true); },
+            (_, _) => Task.FromResult(true),
+            () => DateTimeOffset.UtcNow, _ => Task.CompletedTask, _ => { });
+        var client = Client(identity, prompts: seams);
+        client.Start();
+        await _stub.NextT("hello");
+        await Until(() => client.State == RelayClient.Status.Connected);
+
+        await client.OnStatuses([("s1", new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode, Title = "proj" })]);
+        var amber = await _stub.Next(IsEnvelope);
+        var prompt = OpenAsPhone(amber, phone, identity);
+        Assert.Equal("question", prompt.GetProperty("kind").GetString());
+        var option = Assert.Single(prompt.GetProperty("options").EnumerateArray());
+        Assert.Equal(("Escape", "Close"), (option.GetProperty("key").GetString(), option.GetProperty("label").GetString()));
+        Assert.Contains("Scan the QR code", prompt.GetProperty("preview").GetString());
+        var rid = prompt.GetProperty("request_id").GetString()!;
+        var exp = prompt.GetProperty("expires_at").GetInt64();
+        var desktopId = amber.GetProperty("from").GetString()!;
+        var basis = SessionBase(SharedSecret(phone.KaKey, identity.Keys().Agreement.Public), desktopId, phone.Id);
+        ulong counter = 0;
+        Task SendAnswer(string action)
+        {
+            var nonce = Base64Url(RandomNumberGenerator.GetBytes(16));
+            var sig = Base64Url(Sign(phone.IdKey, AnswerSigning.Message(AnswerSigning.Body(rid, "s1", action, "", nonce, exp))));
+            var answer = JsonSerializer.Serialize(new
+            {
+                t = "answer", request_id = rid, session_id = "s1", action, scope = "", note = "", nonce,
+                expires_at = exp, screen_hash = prompt.GetProperty("screen_hash").GetString(), sig,
+            });
+            var ct = Seal(EpochKey(basis, 0), Nonce(PhoneToDesktop, 0, counter++), Encoding.UTF8.GetBytes(answer), Aad(phone.Id, desktopId, "action"));
+            return _stub.Send(JsonSerializer.Serialize(new { v = 2, id = "o" + counter, from = phone.Id, to = desktopId, ts = 0, @class = "action", push = "none", ck = "", ct }));
+        }
+
+        screen = PaneFixtures.MobileAfterEsc;
+        await SendAnswer("option:Escape");
+        Assert.Equal("stale_prompt", OpenAsPhone(await _stub.Next(IsEnvelope), phone, identity).GetProperty("code").GetString());
+        lock (keys) Assert.Empty(keys);
+
+        screen = PaneFixtures.MobileOverlay80x50;
+        await SendAnswer("option:Escape");
+        var resolve = await _stub.Next(e => IsEnvelope(e) && e.GetProperty("push").GetString() == "resolve");
+        Assert.Equal("phone:" + phone.Id, OpenAsPhone(resolve, phone, identity).GetProperty("by").GetString());
+        lock (keys) Assert.Equal(["Escape"], keys);
+    }
+
     // CB-316: the v4 round trip through a real socket — a sealed watch from the
     // phone becomes ok watching and a chat window, an input is typed and
     // answered, a request whose handler throws costs only itself, usage goes

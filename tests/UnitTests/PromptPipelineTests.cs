@@ -1237,4 +1237,126 @@ public class PromptPipelineTests
         Assert.Empty(_pane.Keys);
         Assert.Equal(AnswerGate.StalePrompt, Assert.Single(_sent.Refusals).Code);
     }
+
+    // ---- CB-400: an overlay goes to the phone as a question with one Close -----
+
+    private async Task ScanOverlay()
+    {
+        _pane.Screen = PaneFixtures.MobileOverlay80x50;
+        await _p.OnScannedAsync(Snap());
+    }
+
+    [Fact]
+    public async Task An_overlay_goes_out_as_one_question_frame_with_a_Close_option()
+    {
+        await ScanOverlay();
+
+        var j = PromptJson(_sent);
+        var fp = PromptFingerprint.Of(PaneFixtures.MobileOverlay80x50)!;
+        Assert.Equal(("question", "", string.Join("\n", fp.Preview), fp.Hash),
+            (j.GetProperty("kind").GetString(), j.GetProperty("tool").GetString(), j.GetProperty("preview").GetString(), j.GetProperty("screen_hash").GetString()));
+        var option = Assert.Single(j.GetProperty("options").EnumerateArray());
+        Assert.Equal(("Escape", "Close", "option"),
+            (option.GetProperty("key").GetString(), option.GetProperty("label").GetString(), option.GetProperty("kind").GetString()));
+        var push = JsonDocument.Parse(_sent.Prompts[0].Push!).RootElement;
+        Assert.Equal(PromptPipeline.AsksAQuestion, push.GetProperty("summary").GetString());
+        Assert.Equal("Get the Claude app on your phone", _p.ActivityFor("s1")!.Command);
+    }
+
+    [Fact]
+    public async Task A_phones_Close_presses_Escape_once_and_resolves_as_the_phones()
+    {
+        await ScanOverlay();
+        var a = AnswerTo(action: "option:Escape");
+
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, a);
+
+        Assert.Equal(["Escape"], _pane.Keys);
+        Assert.Equal((a.RequestId, "s1", "phone:" + PhoneId), Assert.Single(_sent.Resolved));
+        Assert.Empty(_sent.Refusals);
+    }
+
+    // Criterion 3's control: Esc at an idle prompt opens the rewind picker and
+    // at a working session interrupts the turn, so an old Close must press nothing
+    // once the overlay is gone.
+    [Fact]
+    public async Task A_Close_after_the_screen_went_back_to_the_prompt_is_stale_and_presses_nothing()
+    {
+        await ScanOverlay();
+        var a = AnswerTo(action: "option:Escape");
+        _pane.Screen = PaneFixtures.MobileAfterEsc;
+
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, a);
+
+        Assert.Empty(_pane.Keys);
+        Assert.Equal(AnswerGate.StalePrompt, Assert.Single(_sent.Refusals).Code);
+        Assert.Empty(_sent.Resolved);
+    }
+
+    [Fact]
+    public async Task A_different_overlay_between_the_looks_presses_nothing()
+    {
+        await ScanOverlay();
+        var a = AnswerTo(action: "option:Escape");
+        _pane.Screen = PaneFixtures.MobileOverlay80x50.Replace("Get the Claude app on your phone", "Something else entirely");
+
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, a);
+
+        Assert.Empty(_pane.Keys);
+        Assert.Equal(AnswerGate.StalePrompt, Assert.Single(_sent.Refusals).Code);
+    }
+
+    [Fact]
+    public async Task The_state_leaving_waiting_resolves_the_overlay_at_the_desk()
+    {
+        await ScanOverlay();
+        var rid = _sent.Prompts[0].Rid;
+
+        await _p.OnScannedAsync(Snap("idle"));
+
+        Assert.Equal((rid, "s1", "desk"), Assert.Single(_sent.Resolved));
+    }
+
+    [Theory]
+    [InlineData("approve")]
+    [InlineData("deny")]
+    [InlineData("tell")]
+    [InlineData("always")]
+    [InlineData("option:1")]
+    [InlineData("option:Enter")]
+    public async Task Anything_but_Close_is_refused_on_an_overlay_and_presses_nothing(string action)
+    {
+        await ScanOverlay();
+
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo(action: action, scope: action == "tell" ? AnswerSigning.TellScope("no") : "", note: action == "tell" ? "no" : ""));
+
+        Assert.Empty(_pane.Keys);
+        Assert.Equal(AnswerGate.ForbiddenOption, Assert.Single(_sent.Refusals).Code);
+    }
+
+    [Fact]
+    public async Task A_Close_signed_by_another_phone_is_refused_and_presses_nothing()
+    {
+        await ScanOverlay();
+
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo(action: "option:Escape", signer: Other));
+
+        Assert.Empty(_pane.Keys);
+        Assert.Equal(AnswerGate.BadSignature, Assert.Single(_sent.Refusals).Code);
+    }
+
+    [Fact]
+    public async Task An_overlay_on_a_route_that_cannot_press_goes_out_open_on_desk()
+    {
+        var p = new PromptPipeline(new PromptPipeline.Seams(_pane.Capture, _pane.Press, _pane.Type, () => _now, _ => Task.CompletedTask, _log.Add,
+            CanPress: _ => false), _sent, "Test Mac");
+        _pane.Screen = PaneFixtures.MobileOverlay80x50;
+
+        await p.OnScannedAsync(Snap());
+        Assert.Equal(0, JsonDocument.Parse(Assert.Single(_sent.Prompts).Prompt).RootElement.GetProperty("options").GetArrayLength());
+        await p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo(action: "option:Escape"));
+
+        Assert.Empty(_pane.Keys);
+        Assert.Equal(AnswerGate.ForbiddenOption, Assert.Single(_sent.Refusals).Code);
+    }
 }

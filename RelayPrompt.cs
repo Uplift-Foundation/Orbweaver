@@ -39,7 +39,10 @@ namespace Orbweaver
     //      of SHA-256 over its UTF-8.
     // A pane resized between the prompt and the answer can rewrap the preview
     // and so change the hash. That fails safe — stale_prompt — and is accepted.
-    internal sealed record PromptFingerprint(ChatPrompt Prompt, IReadOnlyList<string> Preview, string Canonical, string Hash)
+    internal sealed record PromptFingerprint(
+        ChatPrompt Prompt, IReadOnlyList<string> Preview, string Canonical, string Hash,
+        // CB-400: the screen is an overlay (OverlayScreen), not a numbered dialog.
+        bool Overlay = false)
     {
         // call: the transcript's pending AskUserQuestion (AskFormTranscript.CallFor),
         // or null. It changes nothing for a screen ParseDialogCore can read; it only
@@ -49,7 +52,10 @@ namespace Orbweaver
             if (string.IsNullOrEmpty(screen)) return null;
             var prompt = ChatTranscript.ParseDialogCore(screen, out var cleaned, out var firstOption);
             if (prompt is null || firstOption < 0)
-                return call is not null && AskFormTranscript.Tall(screen, call) is { } tall ? OfTall(tall) : null;
+            {
+                if (call is not null && AskFormTranscript.Tall(screen, call) is { } tall) return OfTall(tall);
+                return OfOverlay(screen);
+            }
 
             var start = DialogStart(ChatTranscript.ScreenLines(screen), cleaned, firstOption);
 
@@ -59,6 +65,20 @@ namespace Orbweaver
 
             var canonical = CanonicalText(preview, prompt.Options);
             return new PromptFingerprint(prompt, preview, canonical, HashOf(canonical));
+        }
+
+        // CB-400: an overlay has no numbered run to anchor the preview on, so its
+        // preview is its caption (the words, not the QR rows: the code's pixels
+        // would make the hash move with the terminal's width for nothing) and its
+        // canonical text is the caption plus the one option, `Escape. Close`. The
+        // same overlay hashes the same however it is looked at, and typing into
+        // it changes nothing (measured), so the hash survives a stray keypress.
+        private static PromptFingerprint? OfOverlay(string screen)
+        {
+            if (OverlayScreen.Read(screen) is not { } overlay) return null;
+            var prompt = OverlayScreen.ToPrompt(overlay);
+            var canonical = CanonicalText(overlay.Caption, prompt.Options);
+            return new PromptFingerprint(prompt, overlay.Caption, canonical, HashOf(canonical), Overlay: true);
         }
 
         // A form taller than the pane has no dialog block on screen to hash: its

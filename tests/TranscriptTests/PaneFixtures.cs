@@ -1727,5 +1727,293 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 
 
 """"");
+
+        // CB-400, MacBook, Claude Code 2.1.330, tmux 3.7c: the primary fixture: `/mobile` on an 80x50 pane. (cb400-captures/mobile-overlay-80x50.txt)
+        internal static readonly string MobileOverlay80x50 = Lf("""""
+
+ ▐▛███▛█   Claude Code v2.1.330
+▝▜██████▀  Fable 5.2 · Claude Team
+ ▝▝   ▝▝   /…/scratchpad/scratchdir · /rc
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Get the Claude app on your phone
+
+  Scan the QR code, or visit claude.ai/mobile
+  Esc to close
+
+
+    █▀▀▀▀▀█ ▄███ ▄▀█ ██▀▄ █▀▀▀▀▀█
+    █ ███ █ ▀▄ ▀  █ ▄▀█   █ ███ █
+    █ ▀▀▀ █ █▀▄▀▄▄▀█  █▄▄ █ ▀▀▀ █
+    ▀▀▀▀▀▀▀ █ █ ▀ ▀▄▀▄█▄▀ ▀▀▀▀▀▀▀
+    ▀▀ █▄ ▀▀▄▄ ▀██▀ ▄ █ ▄▄█▀▀▄▀▀▄
+    ▄ █   ▀█ ▄▄▄▄█▀ ▄▀▄▀ █ █▀▀██
+    ▀ ▄ ██▀  ▄▀█▄▀▄▀▀█ ███▀▀ ▀ ▀▀
+    ▀ ▀▀▄ ▀▀██ █▄▄█▄ █▄▄█▀▀▄▀█▀█▀
+    ▀██▀▀▄▀ ▀ █▄█▄▄▀▄█  ▀▄▄▄ ▄ ▀▄
+    ▀ ▀ ▄▀▀ ██▄▄█    █ ▄▄█  █  ██
+    ▀ ▀▀▀▀▀▀▄ ▄▀██▀▀█▄▄██▀▀▀█ █▄▄
+    █▀▀▀▀▀█ ▀▄█▄▄█ ▄   ▄█ ▀ █▄▄▀▄
+    █ ███ █ ▄▀▄▀█▄▄  █▄▄▀▀███▄▄ ▀
+    █ ▀▀▀ █ ▄ █▀ ██▄ ▄▀▄█▄  █▀▀▄▀
+    ▀▀▀▀▀▀▀ ▀▀▀ ▀  ▀▀▀  ▀▀  ▀▀ ▀
+
+  Find this session in the Code tab of the Claude app
+""""");
+
+        // CB-400, MacBook, Claude Code 2.1.330, tmux 3.7c: 40x50: the caption wraps, the QR rows are intact. (cb400-captures/mobile-overlay-40x50.txt)
+        internal static readonly string MobileOverlay40x50 = Lf("""""
+
+ ▐▛███▛█   Claude Code v2.1.330
+▝▜██████▀  Fable 5.2 · Claude Team
+ ▝▝   ▝▝   /…/scratchpad/scratchdir
+
+
+❯ /mobile
+
+❯ /mobile
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Get the Claude app on your phone
+
+  Scan the QR code, or visit
+  claude.ai/mobile
+  Esc to close
+
+
+    █▀▀▀▀▀█ ▄███ ▄▀█ ██▀▄ █▀▀▀▀▀█
+    █ ███ █ ▀▄ ▀  █ ▄▀█   █ ███ █
+    █ ▀▀▀ █ █▀▄▀▄▄▀█  █▄▄ █ ▀▀▀ █
+    ▀▀▀▀▀▀▀ █ █ ▀ ▀▄▀▄█▄▀ ▀▀▀▀▀▀▀
+    ▀▀ █▄ ▀▀▄▄ ▀██▀ ▄ █ ▄▄█▀▀▄▀▀▄
+    ▄ █   ▀█ ▄▄▄▄█▀ ▄▀▄▀ █ █▀▀██
+    ▀ ▄ ██▀  ▄▀█▄▀▄▀▀█ ███▀▀ ▀ ▀▀
+    ▀ ▀▀▄ ▀▀██ █▄▄█▄ █▄▄█▀▀▄▀█▀█▀
+    ▀██▀▀▄▀ ▀ █▄█▄▄▀▄█  ▀▄▄▄ ▄ ▀▄
+    ▀ ▀ ▄▀▀ ██▄▄█    █ ▄▄█  █  ██
+    ▀ ▀▀▀▀▀▀▄ ▄▀██▀▀█▄▄██▀▀▀█ █▄▄
+    █▀▀▀▀▀█ ▀▄█▄▄█ ▄   ▄█ ▀ █▄▄▀▄
+    █ ███ █ ▄▀▄▀█▄▄  █▄▄▀▀███▄▄ ▀
+    █ ▀▀▀ █ ▄ █▀ ██▄ ▄▀▄█▄  █▀▀▄▀
+    ▀▀▀▀▀▀▀ ▀▀▀ ▀  ▀▀▀  ▀▀  ▀▀ ▀
+
+  Find this session in the Code tab of
+  the Claude app
+""""");
+
+        // CB-400, MacBook, Claude Code 2.1.330, tmux 3.7c: 28x50: too narrow, the QR rows wrap and are unreadable; title and footer intact. (cb400-captures/mobile-overlay-28x50.txt)
+        internal static readonly string MobileOverlay28x50 = Lf("""""
+
+
+❯ /mobile
+
+❯ /mobile
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Get the Claude app on
+  your phone
+
+  Scan the QR code, or
+  visit claude.ai/mobile
+  Esc to close
+
+
+
+    █▀▀▀▀▀█ ▄███ ▄▀█ ██▀▄
+  █▀▀▀▀▀█
+    █ ███ █ ▀▄ ▀  █ ▄▀█
+  █ ███ █
+    █ ▀▀▀ █ █▀▄▀▄▄▀█  █▄▄
+  █ ▀▀▀ █
+    ▀▀▀▀▀▀▀ █ █ ▀ ▀▄▀▄█▄▀
+  ▀▀▀▀▀▀▀
+    ▀▀ █▄ ▀▀▄▄ ▀██▀ ▄ █
+  ▄▄█▀▀▄▀▀▄
+    ▄ █   ▀█ ▄▄▄▄█▀ ▄▀▄▀ █
+  █▀▀██
+    ▀ ▄ ██▀  ▄▀█▄▀▄▀▀█
+  ███▀▀ ▀ ▀▀
+    ▀ ▀▀▄ ▀▀██ █▄▄█▄
+  █▄▄█▀▀▄▀█▀█▀
+    ▀██▀▀▄▀ ▀ █▄█▄▄▀▄█
+  ▀▄▄▄ ▄ ▀▄
+    ▀ ▀ ▄▀▀ ██▄▄█    █ ▄▄█
+   █  ██
+    ▀ ▀▀▀▀▀▀▄
+  ▄▀██▀▀█▄▄██▀▀▀█ █▄▄
+    █▀▀▀▀▀█ ▀▄█▄▄█ ▄   ▄█
+  ▀ █▄▄▀▄
+    █ ███ █ ▄▀▄▀█▄▄
+  █▄▄▀▀███▄▄ ▀
+    █ ▀▀▀ █ ▄ █▀ ██▄ ▄▀▄█▄
+   █▀▀▄▀
+    ▀▀▀▀▀▀▀ ▀▀▀ ▀  ▀▀▀  ▀▀
+   ▀▀ ▀
+
+
+  Find this session in the
+  Code tab of the Claude
+  app
+""""");
+
+        // CB-400, MacBook, Claude Code 2.1.330, tmux 3.7c: 80x14: a short pane, the block is clipped with a down arrow at the right edge of the last row. (cb400-captures/mobile-overlay-80x14.txt)
+        internal static readonly string MobileOverlay80x14 = Lf("""""
+
+❯ /mobile
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Get the Claude app on your phone
+
+  Scan the QR code, or visit claude.ai/mobile
+  Esc to close
+
+
+    █▀▀▀▀▀█ ▄███ ▄▀█ ██▀▄ █▀▀▀▀▀█
+    █ ███ █ ▀▄ ▀  █ ▄▀█   █ ███ █
+    █ ▀▀▀ █ █▀▄▀▄▄▀█  █▄▄ █ ▀▀▀ █
+    ▀▀▀▀▀▀▀ █ █ ▀ ▀▄▀▄█▄▀ ▀▀▀▀▀▀▀
+    ▀▀ █▄ ▀▀▄▄ ▀██▀ ▄ █ ▄▄█▀▀▄▀▀▄                                              ↓
+""""");
+
+        // CB-400, MacBook, Claude Code 2.1.330, tmux 3.7c: 80x50 after typing "zz" and Enter: byte-identical to the primary, typing changes nothing. (cb400-captures/mobile-overlay-80x50-after-typing-zz.txt)
+        internal static readonly string MobileOverlayAfterTyping = Lf("""""
+
+ ▐▛███▛█   Claude Code v2.1.330
+▝▜██████▀  Fable 5.2 · Claude Team
+ ▝▝   ▝▝   /…/scratchpad/scratchdir · /rc
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Get the Claude app on your phone
+
+  Scan the QR code, or visit claude.ai/mobile
+  Esc to close
+
+
+    █▀▀▀▀▀█ ▄███ ▄▀█ ██▀▄ █▀▀▀▀▀█
+    █ ███ █ ▀▄ ▀  █ ▄▀█   █ ███ █
+    █ ▀▀▀ █ █▀▄▀▄▄▀█  █▄▄ █ ▀▀▀ █
+    ▀▀▀▀▀▀▀ █ █ ▀ ▀▄▀▄█▄▀ ▀▀▀▀▀▀▀
+    ▀▀ █▄ ▀▀▄▄ ▀██▀ ▄ █ ▄▄█▀▀▄▀▀▄
+    ▄ █   ▀█ ▄▄▄▄█▀ ▄▀▄▀ █ █▀▀██
+    ▀ ▄ ██▀  ▄▀█▄▀▄▀▀█ ███▀▀ ▀ ▀▀
+    ▀ ▀▀▄ ▀▀██ █▄▄█▄ █▄▄█▀▀▄▀█▀█▀
+    ▀██▀▀▄▀ ▀ █▄█▄▄▀▄█  ▀▄▄▄ ▄ ▀▄
+    ▀ ▀ ▄▀▀ ██▄▄█    █ ▄▄█  █  ██
+    ▀ ▀▀▀▀▀▀▄ ▄▀██▀▀█▄▄██▀▀▀█ █▄▄
+    █▀▀▀▀▀█ ▀▄█▄▄█ ▄   ▄█ ▀ █▄▄▀▄
+    █ ███ █ ▄▀▄▀█▄▄  █▄▄▀▀███▄▄ ▀
+    █ ▀▀▀ █ ▄ █▀ ██▄ ▄▀▄█▄  █▀▀▄▀
+    ▀▀▀▀▀▀▀ ▀▀▀ ▀  ▀▀▀  ▀▀  ▀▀ ▀
+
+  Find this session in the Code tab of the Claude app
+""""");
+
+        // CB-400, MacBook, Claude Code 2.1.330, tmux 3.7c: 80x50 after Esc: the idle prompt, the negative control. (cb400-captures/after-esc-80x50.txt)
+        internal static readonly string MobileAfterEsc = Lf("""""
+
+ ▐▛███▛█   Claude Code v2.1.330
+▝▜██████▀  Fable 5.2 · Claude Team
+ ▝▝   ▝▝   /…/scratchpad/scratchdir · /rc
+
+
+❯ /mobile
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+  Fable 5.2 | ~/scratchdir | 4% (7d:22%) | [.claude-board]
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+""""");
     }
 }

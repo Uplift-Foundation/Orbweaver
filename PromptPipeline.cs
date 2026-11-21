@@ -212,12 +212,18 @@ namespace Orbweaver
             var requestId = RelayLink.Ulid(now);
             var expires = now.ToUnixTimeSeconds() + PromptFrames.Lifetime;
             var cli = MirrorProtocol.CliFor(status.Source);
-            var kind = form is null ? "permission" : "question";
+            // An overlay is a question too (CB-400): the phone draws a `question`
+            // generically, its preview as the prompt and one preselected choice,
+            // where a `permission` with one option would show "Allow this
+            // command to run?" and no buttons.
+            var kind = form is null && !fp.Overlay ? "permission" : "question";
             // A trust, update or hooks-review screen numbers its choices like a
             // permission dialog, so the fingerprint alone cannot tell them apart.
             // It goes to the phone as "Open on desk": the same prompt with no
             // options, and the gate refuses anything an answer names.
-            var questionOptions = form is null ? null : QuestionOptions(form);
+            var questionOptions = form is not null ? QuestionOptions(form)
+                : fp.Overlay ? [new PromptOption(OverlayScreen.CloseKey, OverlayScreen.CloseLabel, OptionKinds.Option, null)]
+                : null;
             var deskOnly = FirstRunDialogs.Is(screen) || !(_seams.CanPress?.Invoke(status) ?? true) || questionOptions is { Count: 0 };
             var options = deskOnly ? [] : questionOptions ?? fp.Prompt.Options.Select(o =>
             {
@@ -225,7 +231,7 @@ namespace Orbweaver
                 return new PromptOption(o.Key, o.Label, c.Kind, c.Scope, o.ScopeTruncated);
             }).ToList();
             var preview = form is null ? string.Join("\n", fp.Preview) : QuestionPreview(form);
-            var tool = form is null ? ToolOf(fp.Preview) : "";
+            var tool = form is null && !fp.Overlay ? ToolOf(fp.Preview) : "";
             // frames-v7-questions: what else the question takes, from the screen,
             // so the phone never has to guess. Neither on a question that went
             // out with nothing to answer.
@@ -234,17 +240,17 @@ namespace Orbweaver
             var prompt = PromptFrames.Prompt(requestId, sid, kind, cli, tool, preview, options, fp.Hash, expires, multi, text);
             var label = string.IsNullOrWhiteSpace(status.Title) ? _machine : $"{status.Title} on {_machine}";
             var persona = _send.PersonaFor(sid);
-            var push = PromptFrames.FitPush(requestId, sid, label, tool, form is null ? SummaryOf(tool) : AsksAQuestion, preview, expires, options, fp.Hash, persona);
+            var push = PromptFrames.FitPush(requestId, sid, label, tool, form is null && !fp.Overlay ? SummaryOf(tool) : AsksAQuestion, preview, expires, options, fp.Hash, persona);
 
             // A question presses only what it offered (the gate's rule 7).
-            var keys = form is null ? null : options.Select(o => o.Key).ToList();
+            var keys = form is null && !fp.Overlay ? null : options.Select(o => o.Key).ToList();
             var live = new Live { Pending = new PendingPrompt(requestId, sid, kind, fp.Hash, expires, deskOnly, keys, multi, text), Status = status, Prompt = prompt, Push = push?.Plaintext, Label = label };
             _live[sid] = live;
             // Before the send, so the activity frame that goes ahead of this
             // prompt's push already names it.
             // A question's line on the island is the question itself; its
             // preview's first line is the form's tab bar ("☐ Colour").
-            lock (_activityGate) _activity[sid] = new ActivityPrompt(requestId, tool, form is null ? RelayActivity.CommandOf(fp.Preview) : form.Prompt.Title);
+            lock (_activityGate) _activity[sid] = new ActivityPrompt(requestId, tool, form is null ? (fp.Overlay ? fp.Prompt.Title : RelayActivity.CommandOf(fp.Preview)) : form.Prompt.Title);
             _send.Prompt(requestId, sid, prompt, push?.Plaintext);
             _seams.Log($"prompt {requestId} {fp.Hash}{(deskOnly ? " desk-only" : "")}{(push is null ? " no-e" : "")} "
                 + PushPersona.LogTagFor(persona, push is { PersonaDropped: false } && persona is not null));

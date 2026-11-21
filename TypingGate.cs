@@ -50,6 +50,11 @@ namespace Orbweaver
 
         internal static string DialogWhy(string title) => "it is showing a dialog: " + title;
 
+        // CB-400: an overlay only Esc closes (`/mobile`'s QR screen). Text typed
+        // into it is discarded, not queued (measured), so the refusal names the
+        // screen and the caller keeps the text in the composer.
+        internal static string OverlayWhy(string title) => $"it is showing \"{title}\", which has to be closed first";
+
         // The sentence a slash refusal carries back, wrapping the gate's own
         // reason; the near panel puts it after "can't run from here —".
         internal static string NotAtPromptReason(string why) =>
@@ -104,14 +109,33 @@ namespace Orbweaver
             return (await typeInto(status, text).ConfigureAwait(false), null, null);
         }
 
+        private static async Task<string?> OverlayTitleAsync(SessionStatus status, Func<SessionStatus, Task<string?>> capturePane)
+        {
+            try
+            {
+                var screen = await capturePane(status).ConfigureAwait(false);
+                return screen is null ? null : OverlayScreen.Read(screen)?.Title;
+            }
+            catch (Exception) { return null; }
+        }
+
         internal static async Task<TypingVerdict> JudgeAsync(
             SessionStatus status,
             Func<SessionStatus, string?> recordStatus,
             Func<SessionStatus, Task<string?>>? capturePane,
             bool paneReadable)
         {
-            if (string.Equals(recordStatus(status), "waiting", StringComparison.Ordinal))
+            var waiting = string.Equals(recordStatus(status), "waiting", StringComparison.Ordinal);
+            if (waiting)
+            {
+                // The record says waiting for an overlay as for a dialog; the
+                // screen says which. Read only to give the refusal a name: this
+                // branch never allows, and a screen that cannot be read, or is
+                // anything but an overlay, keeps today's wording.
+                if (paneReadable && capturePane is not null && await OverlayTitleAsync(status, capturePane).ConfigureAwait(false) is { } title)
+                    return new TypingVerdict(false, OverlayWhy(title));
                 return new TypingVerdict(false, WaitingWhy);
+            }
 
             // No screen to read: the record is the only guard (see the header).
             if (!paneReadable || capturePane is null) return TypingVerdict.Allow;
@@ -132,8 +156,9 @@ namespace Orbweaver
             return reading switch
             {
                 PaneReading.Prompt => TypingVerdict.Allow with { Diagnostic = diagnostic },
-                PaneReading.Dialog => new TypingVerdict(false, DialogWhy(ChatTranscript.ParseDialog(screen)!.Title))
-                    { Diagnostic = diagnostic },
+                PaneReading.Dialog => ChatTranscript.ParseDialog(screen)! is { Body: not null } overlay
+                    ? new TypingVerdict(false, OverlayWhy(overlay.Title)) { Diagnostic = diagnostic }
+                    : new TypingVerdict(false, DialogWhy(ChatTranscript.ParseDialog(screen)!.Title)) { Diagnostic = diagnostic },
                 _ => new TypingVerdict(false, UnreadableWhy) { Diagnostic = diagnostic },
             };
         }

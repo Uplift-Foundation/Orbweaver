@@ -460,4 +460,33 @@ public class RelayPromptRuleTests
         Assert.False(fit.DetailCut);
         Assert.Equal("short detail", JsonDocument.Parse(fit.Plaintext).RootElement.GetProperty("detail").GetString());
     }
+
+    // ---- CB-400: an overlay's fingerprint ---------------------------------------
+
+    [Fact]
+    public void An_overlay_fingerprints_by_its_caption_and_its_one_option()
+    {
+        var fp = PromptFingerprint.Of(PaneFixtures.MobileOverlay80x50)!;
+
+        Assert.True(fp.Overlay);
+        Assert.Equal(OverlayScreen.Read(PaneFixtures.MobileOverlay80x50)!.Caption, fp.Preview);
+        Assert.EndsWith("\nEscape. Close", fp.Canonical);
+        Assert.DoesNotContain(fp.Canonical, c => c is '█' or '▀' or '▄');
+        Assert.Equal(PromptFingerprint.HashOf(fp.Canonical), fp.Hash);
+        Assert.Equal("Escape", Assert.Single(fp.Prompt.Options).Key);
+        Assert.NotNull(fp.Prompt.Body);
+    }
+
+    [Fact]
+    public void The_same_overlay_hashes_the_same_after_typing_and_a_dialog_is_not_flagged()
+    {
+        Assert.Equal(PromptFingerprint.Of(PaneFixtures.MobileOverlay80x50)!.Hash, PromptFingerprint.Of(PaneFixtures.MobileOverlayAfterTyping)!.Hash);
+        Assert.False(PromptFingerprint.Of(PaneFixtures.MacModelSwitchDialog)!.Overlay);
+    }
+
+    [Fact]
+    public void The_screen_after_esc_has_no_fingerprint()
+    {
+        Assert.Null(PromptFingerprint.Of(PaneFixtures.MobileAfterEsc));
+    }
 }

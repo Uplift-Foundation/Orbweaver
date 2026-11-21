@@ -341,6 +341,16 @@ namespace Orbweaver.Tests
                  ❯ 1. Yes
                 """) is null);
 
+            // CB-400: `/mobile`'s screen is not a dialog but only Esc closes it, so it
+            // reads as one Close option with its rows; the idle prompt after Esc does not.
+            Check("an Esc-to-close overlay reads as one Close option carrying its body",
+                ChatTranscript.ParseDialog(PaneFixtures.MobileOverlay80x50) is { Body: not null } overlay
+                && overlay.Options.Count == 1 && overlay.Options[0].Key == "Escape" && overlay.Options[0].Label == "Close"
+                && overlay.Title == "Get the Claude app on your phone");
+            Check("the screen after Esc is not an overlay", ChatTranscript.ParseDialog(PaneFixtures.MobileAfterEsc) is null);
+            Check("a numbered dialog that also shows the footer is that dialog",
+                ChatTranscript.ParseDialog(PaneFixtures.MacModelSwitchDialog + "\n  Esc to close\n") is { Body: null, Options.Count: >= 2 });
+
             Check("options that don't start at 1 are refused", ChatTranscript.ParseDialog("""
                  Do you want to proceed?
                  ❯ 2. Yes
