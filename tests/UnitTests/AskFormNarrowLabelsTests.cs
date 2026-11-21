@@ -134,6 +134,26 @@ public class AskFormNarrowLabelsTests
         Assert.Equal("prefer?", ChatTranscript.ParseDialog(live)!.Title);
     }
 
+    // Pinned as it is today, so nobody changes it by accident: a pending call that does not
+    // agree with the screen (a stale or different call, or a multi-question form the matcher
+    // cannot place) leaves the screen's own reading, which at an ordinary width is whole and
+    // correct on its own, as forms read before the transcript was merged in. Not an error: offering
+    // nothing here would take away forms that work today.
+    [Fact]
+    public void A_mismatched_pending_call_leaves_the_screens_own_reading_at_80_columns()
+    {
+        var other = new AskFormTranscript.Call("toolu_other",
+            [new AskFormTranscript.CallQuestion("Something else entirely?", "Other", false, ["Red", "Green", "Blue"])]);
+
+        var own = ChatTranscript.ParseAskForm(Wide)!;
+        var served = MirrorProtocol.PromptFromScreen(Wide, other)!;
+
+        Assert.Equal(own.Prompt.Title, served.Title);
+        Assert.Equal("Which fruit do you prefer?", served.Title);
+        Assert.Equal(own.Prompt.Options.Select(o => (o.Key, o.Label)), served.Options.Select(o => (o.Key, o.Label)));
+        Assert.Equal(["Apple", "Banana", "Cherry", "Type something.", "Chat about this"], served.Options.Select(o => o.Label));
+    }
+
     // ---- the fallthrough that served the garbled text -----------------------------
 
     // A shape neither form reader places, invented by wrapping and not by editing the
