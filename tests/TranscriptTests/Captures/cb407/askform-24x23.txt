@@ -1,0 +1,23 @@
+     problem would hit
+     every machine at
+     once and could
+     interrupt the image
+     server.
+  4. Hold until Monday
+     Delay the whole
+     rollout until
+     Monday, when the
+     image server is
+     less likely to be
+     in use. This is the
+     safest for shared
+     resources but
+     pushes the change
+     back by days.
+  5. Type something.
+────────────────────────
+  6. Chat about this
+ ↑ 45 more lines
+Enter to select ·
+Tab/Arrow keys to
+navigate · Esc to cancel

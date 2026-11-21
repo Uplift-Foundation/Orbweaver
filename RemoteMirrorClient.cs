@@ -1111,24 +1111,26 @@ namespace Orbweaver
         }
 
         // What a PROMPT reply means, pure so each arm is asserted without a
-        // far side that misbehaves on cue: a refusal is its code, and an OK
-        // whose payload is not a prompt reads as unsupported — the panel then
-        // offers the terminal rather than buttons it cannot trust. A request
-        // that never got an answer (no code at all) is ErrNoReply, not
-        // unsupported: a timeout is a fact about this one request, and
-        // unsupported is final (CB-406).
+        // far side that misbehaves on cue: a refusal is its code, and a request
+        // that never got an answer (no code at all) is ErrNoReply, as is an OK
+        // whose payload is not a prompt. Neither is "unsupported": a slow or
+        // lost reply says nothing about what the far side can do, and a session
+        // treats unsupported as final (CB-407, where three slow replies in a
+        // row turned prompts off for the rest of a session). The panel asks
+        // again on its next poll.
         internal static PromptOutcome PromptOutcomeOf(bool ok, string? errCode, byte[]? payload)
         {
             if (!ok) return new PromptOutcome(null, errCode ?? MirrorProtocol.ErrNoReply);
 
             return MirrorProtocol.DecodePrompt(payload) is { } prompt
                 ? new PromptOutcome(prompt, null)
-                : new PromptOutcome(null, MirrorProtocol.ErrUnsupported);
+                : new PromptOutcome(null, MirrorProtocol.ErrNoReply);
         }
 
         // And an ANSWER reply: null when it was taken, otherwise the code, with
-        // no code at all (never answered) read as ErrNoReply — retryable, for
-        // the same reason as above.
+        // no code at all (never answered) ErrNoReply. The answer may still have
+        // landed on the far side, which is why a caller re-reads the screen
+        // before offering buttons again.
         internal static string? AnswerErrorOf(bool ok, string? errCode) =>
             ok ? null : errCode ?? MirrorProtocol.ErrNoReply;
 

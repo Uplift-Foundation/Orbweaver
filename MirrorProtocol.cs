@@ -111,13 +111,11 @@ namespace Orbweaver
         public const string ErrBadHash = "bad-hash";
         public const string ErrUnsupported = "unsupported";
 
-        // Never on the wire: what the near side records when a request it sent
-        // got no reply at all — the far side was busy past the timeout, or the
-        // frame could not be sent. CB-406: this used to read as ErrUnsupported,
-        // which a panel treats as final, so one PROMPT that queued for ten
-        // seconds behind other peer traffic on the mini took the form off the
-        // MacBook's panel for good and the question could not be answered.
-        // Silence says nothing about what the far side can do; ask again.
+        // Never on the wire: made here when a request got no reply at all (nothing came back
+        // within the timeout, the relay could not be reached, or an OK carried a payload that
+        // is not what was asked for). It says nothing about what the far side can do, so it is
+        // never read as ErrUnsupported, which a session treats as final (CB-407, and
+        // CB-406, where it took a form off the MacBook's panel for good).
         public const string ErrNoReply = "no-reply";
 
         // The far session's own registry entry is gone — CB-105's messaging
