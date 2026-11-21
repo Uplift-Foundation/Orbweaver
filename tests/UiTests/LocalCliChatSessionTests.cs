@@ -2252,12 +2252,11 @@ public class LocalCliChatSessionTests : IDisposable
         Assert.Empty(session.History);
     }
 
-    // CB-307, the lead's decision: the guard ships log-only. With no marker
-    // and no variable (the test settings folder is empty and the variable
-    // unset), the real switch lets a refused send through — logged, not
-    // blocked, and no refusal note under it.
+    // CB-403: the guard enforces by default. With no marker and no variable
+    // (the test settings folder is empty and the variable unset), the real
+    // switch refuses: Failed, a note under the composer, nothing pending.
     [AvaloniaFact]
-    public async Task TheDefaultShadowSwitchIsLogOnly()
+    public async Task TheDefaultShadowSwitchEnforces()
     {
         var session = new LocalCliChatSession("s1", new SessionStatus
         {
@@ -2267,8 +2266,8 @@ public class LocalCliChatSessionTests : IDisposable
             Gate = _ => Task.FromResult(new TypingVerdict(false, TypingGate.UnreadableWhy)),
         };
 
-        Assert.Null(await session.RefuseIfNotAtPromptAsync());
-        Assert.Empty(session.History);
+        Assert.Equal(ChatSendOutcome.Failed, await session.RefuseIfNotAtPromptAsync());
+        Assert.NotEmpty(session.History);
     }
 
     // A pane that cannot be captured: the form could not be read, so the honest
