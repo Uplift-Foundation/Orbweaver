@@ -32,3 +32,7 @@ Source: contracts/frames-v13.json (`phone_rules`, `desktop_rules`, `back_compat`
 6. New phone + old desk: no controls. Old phone + new desk: nothing changes (code-read only; exercise against a built old phone).
 7. A stale `run` frame the relay stored while the phone was away is not drawn; only frames after `ok watching` count.
 Also: contract checker + 126 mutations run in relay-tests.yml; confirm it ran green at the sha.
+
+## Added check (S1, Codex version)
+
+Before the first turn, Codex controls must leave "checking Codex version..." within a few seconds (Windows box and the mini). The version is read from the session process image and must resolve to a binary named codex. Neg: if it stays on "checking...", npm node launcher is probably the recorded pid; capture what the pid resolves to and report it.
