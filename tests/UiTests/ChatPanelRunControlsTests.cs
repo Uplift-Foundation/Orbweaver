@@ -187,6 +187,39 @@ public class ChatPanelRunControlsTests : IDisposable
         Assert.Null(panel.RunEffortDial);
     }
 
+    // A change a reading contradicted is said as soon as the flyout opens,
+    // under its own field; both, model's first.
+    [AvaloniaTheory]
+    [InlineData("m", null, "m")]
+    [InlineData(null, "e", "e")]
+    [InlineData("m", "e", "m\ne")]
+    public void AFailedChangeIsSaidWhenTheFlyoutOpens(string? model, string? effort, string expected)
+    {
+        var panel = Open(Resolve() with { ModelFailure = model, EffortFailure = effort }, out _);
+
+        Assert.True(panel.RunStatus!.IsVisible);
+        Assert.Equal(expected, panel.RunStatus.Text);
+    }
+
+    [AvaloniaFact]
+    public void NoFailureLeavesTheStatusLineHidden()
+    {
+        var panel = Open(Resolve(), out _);
+
+        Assert.False(panel.RunStatus!.IsVisible);
+    }
+
+    // An effort id that is no choice's points the dial at nothing rather than
+    // at a wrong level.
+    [AvaloniaFact]
+    public void AnEffortIdInNoChoicePointsAtNothing()
+    {
+        var panel = Open(Resolve() with { ThinkingId = "ultra", ConfirmedEffortId = "ultra" }, out _);
+
+        Assert.Equal(-1, panel.RunEffortDial!.SelectedIndex);
+        Assert.Equal(-1, panel.RunEffortDial.ConfirmedIndex);
+    }
+
     [Fact]
     public void TheChipTextAddsApplyingOnlyWhilePending()
     {

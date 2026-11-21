@@ -265,6 +265,18 @@ public class EffortDialTests
     }
 
     [AvaloniaFact]
+    public void TheAccentCanBeSetAndANullOneStillDraws()
+    {
+        var (_, dial, _) = Host(selected: 2);
+        dial.Accent = Avalonia.Media.Brushes.Teal;
+        Assert.Same(Avalonia.Media.Brushes.Teal, dial.Accent);
+
+        dial.Accent = null;
+        Draw(dial);
+        Assert.Null(dial.Accent);
+    }
+
+    [AvaloniaFact]
     public void ChooseOutOfRangeDoesNothing()
     {
         var (_, dial, commits) = Host();

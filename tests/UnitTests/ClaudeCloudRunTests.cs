@@ -14,7 +14,7 @@ namespace Orbweaver.Tests;
 // confirms it.
 public class ClaudeCloudRunTests
 {
-    private sealed class Api : ICloudApi
+    private sealed class CloudRunApi : ICloudApi
     {
         public int Status = 200;
         public string Body = "";
@@ -45,7 +45,7 @@ public class ClaudeCloudRunTests
         new("session_a", "a cloud session", "idle", new DateTime(2026, 11, 21, 12, 0, 0, DateTimeKind.Utc),
             "https://claude.ai/code/session_a", "idle", false, model, null, null, null);
 
-    private static ClaudeCloudChatSession Chat(Api api, ClaudeCloudSessions.Session? row = null, bool enabled = true) =>
+    private static ClaudeCloudChatSession Chat(CloudRunApi api, ClaudeCloudSessions.Session? row = null, bool enabled = true) =>
         new(row ?? Row(), api, new Creds(), action => action())
         {
             ReadBudget = TestBudgets.AlwaysAnswers,
@@ -59,7 +59,7 @@ public class ClaudeCloudRunTests
     [Fact]
     public void TheRostersModelIsTheReadingBeforeAnyRow()
     {
-        var o = Chat(new Api()).RunOptions!;
+        var o = Chat(new CloudRunApi()).RunOptions!;
 
         Assert.Equal("opus", o.ModelId);
         Assert.Equal(RunReadingSource.CloudRoster, o.Source);
@@ -72,7 +72,7 @@ public class ClaudeCloudRunTests
     [Fact]
     public void ARowWinsOverTheRosterAndARosterUpdateDoesNotUndoIt()
     {
-        var chat = Chat(new Api());
+        var chat = Chat(new CloudRunApi());
         var changed = 0;
         chat.RunOptionsChanged += () => changed++;
 
@@ -86,7 +86,7 @@ public class ClaudeCloudRunTests
     [Fact]
     public void ASwitchedOffCloudDisablesBothWithTheReason()
     {
-        var o = Chat(new Api(), enabled: false).RunOptions!;
+        var o = Chat(new CloudRunApi(), enabled: false).RunOptions!;
 
         Assert.Equal(ClaudeCloudChatSession.CloudOffReason, o.ModelDisabledReason);
         Assert.Equal(ClaudeCloudChatSession.CloudOffReason, o.EffortDisabledReason);
@@ -95,7 +95,7 @@ public class ClaudeCloudRunTests
     [Fact]
     public async Task SettingTheModelPostsSetModelAndIsPendingUntilARowAgrees()
     {
-        var api = new Api();
+        var api = new CloudRunApi();
         var chat = Chat(api);
 
         Assert.Null(await chat.SetModelAsync("sonnet"));
@@ -112,7 +112,7 @@ public class ClaudeCloudRunTests
     [Fact]
     public async Task SettingEffortPostsApplyFlagSettings()
     {
-        var api = new Api();
+        var api = new CloudRunApi();
         var chat = Chat(api);
 
         Assert.Null(await chat.SetThinkingAsync("high"));
@@ -123,7 +123,7 @@ public class ClaudeCloudRunTests
     [Fact]
     public async Task ARowThatDisagreesIsAFailureUnderItsField()
     {
-        var chat = Chat(new Api());
+        var chat = Chat(new CloudRunApi());
         await chat.SetThinkingAsync("high");
 
         chat.ObserveRun(new RunReading(null, "low", T0.AddSeconds(5), RunReadingSource.CloudEvents));
@@ -140,7 +140,7 @@ public class ClaudeCloudRunTests
     [Fact]
     public async Task MaxIsRefusedOnACloudSessionBeforeAnythingIsSent()
     {
-        var api = new Api();
+        var api = new CloudRunApi();
         var chat = Chat(api);
 
         Assert.NotNull(await chat.SetThinkingAsync("max"));
@@ -150,7 +150,7 @@ public class ClaudeCloudRunTests
     [Fact]
     public async Task TheWorkersRefusalComesBack()
     {
-        var api = new Api { Status = 403 };
+        var api = new CloudRunApi { Status = 403 };
         var chat = Chat(api);
 
         var why = await chat.SetModelAsync("sonnet");
@@ -162,7 +162,7 @@ public class ClaudeCloudRunTests
     [Fact]
     public async Task ADisabledControlAndANullChoiceSendNothing()
     {
-        var api = new Api();
+        var api = new CloudRunApi();
 
         Assert.Equal(ClaudeCloudChatSession.CloudOffReason, await Chat(api, enabled: false).SetModelAsync("sonnet"));
         Assert.Equal("name a model", await Chat(api).SetModelAsync(null));
@@ -177,7 +177,7 @@ public class ClaudeCloudRunTests
     [Fact]
     public void ARosterWithNoModelSaysTheModelIsNotKnown()
     {
-        var o = Chat(new Api(), Row(model: null)).RunOptions!;
+        var o = Chat(new CloudRunApi(), Row(model: null)).RunOptions!;
 
         Assert.Null(o.ModelId);
         Assert.StartsWith(RunText.ModelUnknown, o.ChipText);
