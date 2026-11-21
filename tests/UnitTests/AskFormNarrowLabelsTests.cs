@@ -104,4 +104,68 @@ public class AskFormNarrowLabelsTests
         Assert.Equal("Type something.", form.Prompt.Options[3].Label);
         Assert.Equal("Chat about this", form.Prompt.Options[4].Label);
     }
+
+    // ---- the fallthrough that served the garbled text -----------------------------
+
+    // A shape neither form reader places, invented by wrapping and not by editing the
+    // capture's content: the free-text row drawn the way a cursor row cut short at this width
+    // draws it ("❯ 4. Type s…", the shape the 24-column capture already shows), with no header row
+    // on screen and option 1 visible, so ParseAskForm and Tall both decline. The transcript
+    // says this is an AskUserQuestion, so it must not be served as the plain dialog the screen
+    // reads as (labels glued to their description rows, one row of the title): nothing is
+    // offered, to the mirror or to the phone, and the person is sent to the terminal.
+    private static string Unplaceable =>
+        Narrow.Replace("  4. Type\n     somethi\n     ng.", "❯ 4. Type s…");
+
+    [Fact]
+    public async Task A_form_neither_reader_places_is_not_served_as_a_glued_together_dialog()
+    {
+        var screen = Unplaceable;
+        Assert.NotEqual(Narrow, screen);
+        var call = AskFormTranscript.CallFor(screen, NarrowRows);
+        Assert.NotNull(call);
+        Assert.Null(ChatTranscript.ParseAskForm(screen));
+        Assert.Null(AskFormTranscript.ReadForm(screen, call));
+        Assert.NotNull(ChatTranscript.ParseDialog(screen));     // the plausible text that used to be served
+
+        Assert.Null(MirrorProtocol.PromptFromScreen(screen, call));
+        Assert.Null(PromptFingerprint.Of(screen, call));
+
+        var sent = new List<string>();
+        var p = new PromptPipeline(new PromptPipeline.Seams(_ => Task.FromResult<string?>(screen), (_, _) => Task.FromResult(true),
+            (_, _) => Task.FromResult(true), () => DateTimeOffset.FromUnixTimeSeconds(1794111792), _ => Task.CompletedTask, _ => { }),
+            new Sender(sent), "Test Mac");
+        await p.OnScannedAsync([("s1", new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode, TranscriptPath = NarrowRows })]);
+        Assert.Empty(sent);
+    }
+
+    // Controls: with no transcript call the same screen reads through ParseDialog as it always
+    // did; a genuine numbered permission dialog, with or without an unrelated call, is
+    // untouched; an overlay is not refused by the rule.
+    [Fact]
+    public void Without_a_call_the_screen_still_reads_as_the_dialog_it_looks_like()
+    {
+        var served = MirrorProtocol.PromptFromScreen(Unplaceable, null);
+        Assert.NotNull(served);
+        Assert.Equal(5, served!.Options.Count);
+        Assert.NotNull(PromptFingerprint.Of(Unplaceable, null));
+    }
+
+    [Fact]
+    public void A_permission_dialog_reads_through_ParseDialog_as_before_with_or_without_a_call()
+    {
+        var dialog = PaneFixtures.MiniExitDialog;
+        var unrelated = AskFormTranscript.PendingCall([System.IO.File.ReadAllLines(NarrowRows)[0]]);
+
+        Assert.Equal(PromptFingerprint.Of(dialog, null)!.Hash, PromptFingerprint.Of(dialog, unrelated)!.Hash);
+        Assert.Equal(MirrorProtocol.PromptFromScreen(dialog, null)!.Fingerprint, MirrorProtocol.PromptFromScreen(dialog, unrelated)!.Fingerprint);
+        Assert.Equal(3, MirrorProtocol.PromptFromScreen(dialog, unrelated)!.Options.Count);
+    }
+
+    [Fact]
+    public void An_overlay_is_served_as_itself_even_with_a_call_pending()
+    {
+        var unrelated = AskFormTranscript.PendingCall([System.IO.File.ReadAllLines(NarrowRows)[0]]);
+        Assert.NotNull(MirrorProtocol.PromptFromScreen(PaneFixtures.MobileOverlay80x50, unrelated)!.Body);
+    }
 }

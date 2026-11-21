@@ -1232,7 +1232,16 @@ namespace Orbweaver
 
             if (AskFormTranscript.ReadForm(screen, call) is { } form) return Bounded(form);
 
-            return ChatTranscript.ParseDialog(screen) is { } dialog
+            // The transcript says this screen is an AskUserQuestion (a call is pending and
+            // the form footer is drawn) and neither form reader could place it. The screen's
+            // own numbered reading is then the wrong thing to serve: it glues each label to
+            // its description row and keeps one row of a wrapped title, and it looks
+            // plausible (CB-407). Nothing is offered, and the person is sent to the terminal.
+            // An overlay is not that: it has no numbered rows to glue, and reads as its own.
+            var dialog = ChatTranscript.ParseDialog(screen);
+            if (call is not null && dialog?.Body is null && AskFormTranscript.HasFormFooter(screen)) return null;
+
+            return dialog is not null
                 ? Bounded(new AskForm(dialog, Array.Empty<AskTab>(), -1, null, null))
                 : null;
         }

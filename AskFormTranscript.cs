@@ -300,6 +300,9 @@ namespace Orbweaver
 
         internal static bool HasFormFooter(IEnumerable<string> cleaned) => FooterIndex(cleaned.ToArray()) >= 0;
 
+        internal static bool HasFormFooter(string screen) =>
+            HasFormFooter(ChatTranscript.ScreenLines(screen).Select(Clean).ToArray());
+
         // The row the form footer starts on, or -1. The footer is the bottom of the
         // screen, so it is the row from which everything that follows, joined, begins
         // "Enter to select" — and spaces do not count, because a pane about twelve
