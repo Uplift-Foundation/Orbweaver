@@ -864,7 +864,9 @@ public partial class MirrorRoundTripTests : IDisposable
 
         Assert.Equal(MirrorProtocol.ErrNotAtPrompt, outcome.Error);
         Assert.Equal(TypingGate.WaitingWhy, outcome.Why);
-        Assert.Equal(0, harness.Captures);
+        // CB-400: the screen is now read once, only to name an overlay if that is
+        // what the record is waiting on. It is a prompt here, so the wording stays.
+        Assert.Equal(1, harness.Captures);
         Assert.Empty(harness.Typed);
     }
 
