@@ -105,6 +105,35 @@ public class AskFormNarrowLabelsTests
         Assert.Equal("Chat about this", form.Prompt.Options[4].Label);
     }
 
+    // ---- QA's live pane from the mini (2.1.330), 30 seconds after the form appeared --------
+
+    // The footer here reads "select · ↑/↓ to navigate · Esc to cancel" and the scroll hint
+    // "↑ 1 more l…"; the top is partly scrolled with option 1 still visible, and the labels are
+    // lowercase. The transcript row is not beside the capture, so the call is built from the
+    // labels the pane itself draws (the question and "apple", "banana", "cherry"), which is what
+    // the live row held; nothing here reads a row QA has not supplied.
+    private static AskFormTranscript.Call LiveCall => new("toolu_live",
+        [new AskFormTranscript.CallQuestion("Which fruit do you prefer?", "Fruit", false, ["apple", "banana", "cherry"])]);
+
+    [Fact]
+    public void The_live_twelve_column_pane_is_offered_whole_through_the_form_reader_and_the_mirror()
+    {
+        var live = Cb407Captures.Screen("mirror-form-12col-run4-t30-screen");
+
+        Assert.True(AskFormTranscript.HasFormFooter(live));
+        var form = AskFormTranscript.ReadForm(live, LiveCall)!;
+        Assert.Equal("Which fruit do you prefer?", form.Prompt.Title);
+        Assert.Equal(["apple", "banana", "cherry", "Type something.", "Chat about this"], form.Prompt.Options.Select(o => o.Label));
+        Assert.Equal(("4", "5"), (form.FreeTextKey, form.ChatAboutKey));
+
+        var wire = MirrorProtocol.PromptFromScreen(live, LiveCall)!;
+        Assert.Equal(form.Prompt.Title, wire.Title);
+        Assert.Equal(["apple", "banana", "cherry", "Type something.", "Chat about this"], wire.Options.Select(o => o.Label));
+        Assert.DoesNotContain(wire.Options, o => o.Label.Contains("  ") || o.Label == "Chat" || o.Label.StartsWith("apple apple"));
+        // On the old code this screen read as the glued dialog: title "prefer?", "apple apple".
+        Assert.Equal("prefer?", ChatTranscript.ParseDialog(live)!.Title);
+    }
+
     // ---- the fallthrough that served the garbled text -----------------------------
 
     // A shape neither form reader places, invented by wrapping and not by editing the
