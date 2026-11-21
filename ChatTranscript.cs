@@ -558,7 +558,18 @@ namespace Orbweaver
         //
         // Null on anything unexpected, and every caller treats null as "send the
         // person to the terminal".
-        public static ChatPrompt? ParseDialog(string screen) => ParseDialogCore(screen, out _, out _);
+        //
+        // CB-400: a screen that is not a dialog at all but is drawn over the
+        // conversation and closed only by Esc (`/mobile`'s QR screen) reads as a
+        // one-option prompt with a Body, from OverlayScreen. It is the fallback
+        // after ParseDialogCore, never before it, so a real dialog always wins,
+        // and ParseDialogCore itself is untouched: everything that reads options
+        // (the ask-form parser, the fingerprint's numbered branch) sees what it
+        // always did. One line here carries it to PaneScreen, TypingGate, the
+        // mirror's PromptFromScreen and the local chat session.
+        public static ChatPrompt? ParseDialog(string screen) =>
+            ParseDialogCore(screen, out _, out _)
+            ?? (OverlayScreen.Read(screen) is { } overlay ? OverlayScreen.ToPrompt(overlay) : null);
 
         // ParseDialog, also handing back the cleaned lines and the index of
         // option 1, so ParseAskForm reads the same option run rather than a

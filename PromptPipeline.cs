@@ -28,6 +28,13 @@ namespace Orbweaver
         // CB-321 addendum 2: the persona this session's amber speaks as (its
         // roster row's), or null. A sender that knows no roster names none.
         PushPersona? PersonaFor(string sessionId) => null;
+
+        // CB-400: a prompt that goes to phones as a pending prompt only, with no
+        // push class (so no notification), and the resolve that closes it, also
+        // quiet. The defaults fall back to the alerting calls with no sealed push,
+        // so a sender that predates them still compiles; RelayClient overrides both.
+        bool PromptQuiet(string requestId, string sessionId, string prompt) => Prompt(requestId, sessionId, prompt, null);
+        void ResolvedQuiet(string requestId, string sessionId, string by) => Resolved(requestId, sessionId, by, null);
     }
 
     // CB-315 surface B, the desktop half of the amber loop:
@@ -101,6 +108,9 @@ namespace Orbweaver
             internal required string Prompt;
             internal required string? Push;
             internal required string Label;
+            // CB-400: an overlay is a screen someone opened on purpose at the desk, so
+            // it never buzzes a phone, going out and resolving with no push.
+            internal bool Quiet;
         }
 
         private readonly Seams _seams;
@@ -177,7 +187,13 @@ namespace Orbweaver
                     if (live is not null)
                     {
                         live.Status = status;
-                        if (fp?.Hash == live.Pending.ScreenHash) continue;
+                        // CB-400: a quiet prompt has no push carrying a copy and expires
+                        // after 30 minutes, so an overlay that is still up when its prompt
+                        // expires is settled and minted again, reaching the phones with a
+                        // fresh id and lifetime. An expired permission prompt or question
+                        // whose screen stands keeps its id, as before.
+                        var expiredQuiet = live.Quiet && _seams.Now().ToUnixTimeSeconds() >= live.Pending.ExpiresAt;
+                        if (fp?.Hash == live.Pending.ScreenHash && !expiredQuiet) continue;
                         // Another dialog in its place: the old request is gone
                         // (plan's wording) — nobody here can say who answered
                         // it, or whether anyone did. No dialog while the hook
@@ -210,8 +226,20 @@ namespace Orbweaver
         {
             Drop(sid);
             if (live.Pending.Answered) return;
-            _send.Resolved(live.Pending.RequestId, sid, by, PromptFrames.ResolvedPush(live.Pending.RequestId, sid, by, live.Label));
+            SendResolved(live, live.Pending.RequestId, sid, by);
             _seams.Log($"resolved {live.Pending.RequestId} {by}");
+        }
+
+        // A phone's sheet is not a terminal: the caption, at most twelve lines, and a
+        // last line "…" when it was cut.
+        internal const int OverlayPreviewLines = 12;
+        internal static string OverlayPreview(IReadOnlyList<string> caption) =>
+            string.Join("\n", caption.Count <= OverlayPreviewLines ? caption : caption.Take(OverlayPreviewLines).Append("…"));
+
+        private void SendResolved(Live live, string requestId, string sid, string by)
+        {
+            if (live.Quiet) _send.ResolvedQuiet(requestId, sid, by);
+            else _send.Resolved(requestId, sid, by, PromptFrames.ResolvedPush(requestId, sid, by, live.Label));
         }
 
         private void Mint(string sid, SessionStatus status, PromptFingerprint fp, string screen, AskForm? form = null)
@@ -220,41 +248,48 @@ namespace Orbweaver
             var requestId = RelayLink.Ulid(now);
             var expires = now.ToUnixTimeSeconds() + PromptFrames.Lifetime;
             var cli = MirrorProtocol.CliFor(status.Source);
-            var kind = form is null ? "permission" : "question";
+            // An overlay is a question too (CB-400): the phone draws a `question`
+            // generically, its preview as the prompt and one preselected choice,
+            // where a `permission` with one option would show "Allow this
+            // command to run?" and no buttons.
+            var kind = form is null && !fp.Overlay ? "permission" : "question";
             // A trust, update or hooks-review screen numbers its choices like a
             // permission dialog, so the fingerprint alone cannot tell them apart.
             // It goes to the phone as "Open on desk": the same prompt with no
             // options, and the gate refuses anything an answer names.
-            var questionOptions = form is null ? null : QuestionOptions(form);
+            var questionOptions = form is not null ? QuestionOptions(form)
+                : fp.Overlay ? [new PromptOption(fp.Prompt.Options[0].Key, fp.Prompt.Options[0].Label, OptionKinds.Option, null)]
+                : null;
             var deskOnly = FirstRunDialogs.Is(screen) || !(_seams.CanPress?.Invoke(status) ?? true) || questionOptions is { Count: 0 };
             var options = deskOnly ? [] : questionOptions ?? fp.Prompt.Options.Select(o =>
             {
                 var c = OptionKinds.Classify(kind, o.Label, o.Mode);
                 return new PromptOption(o.Key, o.Label, c.Kind, c.Scope, o.ScopeTruncated);
             }).ToList();
-            var preview = form is null ? string.Join("\n", fp.Preview) : QuestionPreview(form);
-            var tool = form is null ? ToolOf(fp.Preview) : "";
+            var preview = form is not null ? QuestionPreview(form) : fp.Overlay ? OverlayPreview(fp.Preview) : string.Join("\n", fp.Preview);
+            var tool = form is null && !fp.Overlay ? ToolOf(fp.Preview) : "";
             // frames-v7-questions: what else the question takes, from the screen,
             // so the phone never has to guess. Neither on a question that went
             // out with nothing to answer.
             var multi = form is { MultiSelect: true } && options.Count > 0;
             var text = form is { MultiSelect: false, IsReview: false, FreeTextKey: not null } && options.Count > 0;
-            var prompt = PromptFrames.Prompt(requestId, sid, kind, cli, tool, preview, options, fp.Hash, expires, multi, text);
+            var prompt = PromptFrames.Prompt(requestId, sid, kind, cli, tool, preview, options, fp.Hash, expires, multi, text, quiet: fp.Overlay);
             var label = string.IsNullOrWhiteSpace(status.Title) ? _machine : $"{status.Title} on {_machine}";
             var persona = _send.PersonaFor(sid);
-            var push = PromptFrames.FitPush(requestId, sid, label, tool, form is null ? SummaryOf(tool) : AsksAQuestion, preview, expires, options, fp.Hash, persona);
+            var push = fp.Overlay ? null : PromptFrames.FitPush(requestId, sid, label, tool, form is null ? SummaryOf(tool) : AsksAQuestion, preview, expires, options, fp.Hash, persona);
 
             // A question presses only what it offered (the gate's rule 7).
-            var keys = form is null ? null : options.Select(o => o.Key).ToList();
-            var live = new Live { Pending = new PendingPrompt(requestId, sid, kind, fp.Hash, expires, deskOnly, keys, multi, text), Status = status, Prompt = prompt, Push = push?.Plaintext, Label = label };
+            var keys = form is null && !fp.Overlay ? null : options.Select(o => o.Key).ToList();
+            var live = new Live { Pending = new PendingPrompt(requestId, sid, kind, fp.Hash, expires, deskOnly, keys, multi, text), Status = status, Prompt = prompt, Push = push?.Plaintext, Label = label, Quiet = fp.Overlay };
             _live[sid] = live;
             // Before the send, so the activity frame that goes ahead of this
             // prompt's push already names it.
             // A question's line on the island is the question itself; its
             // preview's first line is the form's tab bar ("☐ Colour").
-            lock (_activityGate) _activity[sid] = new ActivityPrompt(requestId, tool, form is null ? RelayActivity.CommandOf(fp.Preview) : form.Prompt.Title);
-            _send.Prompt(requestId, sid, prompt, push?.Plaintext);
-            _seams.Log($"prompt {requestId} {fp.Hash}{(deskOnly ? " desk-only" : "")}{(push is null ? " no-e" : "")} "
+            lock (_activityGate) _activity[sid] = new ActivityPrompt(requestId, tool, form is null ? (fp.Overlay ? fp.Prompt.Title : RelayActivity.CommandOf(fp.Preview)) : form.Prompt.Title);
+            if (fp.Overlay) _send.PromptQuiet(requestId, sid, prompt);
+            else _send.Prompt(requestId, sid, prompt, push?.Plaintext);
+            _seams.Log($"prompt {requestId} {fp.Hash}{(deskOnly ? " desk-only" : "")}{(fp.Overlay ? " quiet" : push is null ? " no-e" : "")} "
                 + PushPersona.LogTagFor(persona, push is { PersonaDropped: false } && persona is not null));
         }
 
@@ -334,7 +369,9 @@ namespace Orbweaver
                 foreach (var live in _live.Values)
                 {
                     if (live.Pending.Answered || now >= live.Pending.ExpiresAt) continue;
-                    var sent = _send.Prompt(live.Pending.RequestId, live.Pending.SessionId, live.Prompt, live.Push);
+                    var sent = live.Quiet
+                        ? _send.PromptQuiet(live.Pending.RequestId, live.Pending.SessionId, live.Prompt)
+                        : _send.Prompt(live.Pending.RequestId, live.Pending.SessionId, live.Prompt, live.Push);
                     _seams.Log($"prompt-resent {live.Pending.RequestId}{(sent ? "" : " (still not sent)")}");
                 }
             }
@@ -419,7 +456,7 @@ namespace Orbweaver
                     // settled for everyone, by an actor nobody can name.
                     _seams.Log($"warning press-landed-elsewhere {answer.RequestId} {d.Key}");
                     Drop(answer.SessionId);
-                    _send.Resolved(answer.RequestId, answer.SessionId, "unknown", PromptFrames.ResolvedPush(answer.RequestId, answer.SessionId, "unknown", live.Label));
+                    SendResolved(live, answer.RequestId, answer.SessionId, "unknown");
                     _seams.Log($"resolved {answer.RequestId} unknown");
                     return;
                 }
@@ -450,7 +487,10 @@ namespace Orbweaver
                     // refused not_pending. Unanswered, a retry is decided by the
                     // gate like any answer (the screen must still be this
                     // dialog), and the scan sends resolved when it moves on. Not
-                    // minted again while its hash stands, as before.
+                    // minted again while its hash stands, as before. This
+                    // subsumes CB-400's overlay case (an Esc that moved
+                    // nothing is harmless to press again), which develop
+                    // un-answered on its own.
                     pending.Answered = false;
                     // Stamped when the outcome is known: an answer read before
                     // this (queued behind the press) raced it and is refused; one
@@ -460,7 +500,7 @@ namespace Orbweaver
                 }
 
                 Drop(answer.SessionId);
-                _send.Resolved(answer.RequestId, answer.SessionId, "phone:" + phoneId, PromptFrames.ResolvedPush(answer.RequestId, answer.SessionId, "phone:" + phoneId, live.Label));
+                SendResolved(live, answer.RequestId, answer.SessionId, "phone:" + phoneId);
                 _seams.Log($"resolved {answer.RequestId} phone:{phoneId}");
             }
             // The caller fires this and forgets it, so an exception here would

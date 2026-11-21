@@ -30,13 +30,14 @@ namespace Orbweaver
         internal static string? Bytes(string key) => key switch
         {
             "Enter" => "\r",
+            "Escape" => Escape,
             "Up" => ArrowUp,
             "Down" => ArrowDown,
             "Right" => ArrowRight,
             _ => key.Length == 1 && char.IsAsciiDigit(key[0]) ? key : null,
         };
 
-        internal const string ArrowUp = "\u001b[A", ArrowDown = "\u001b[B", ArrowRight = "\u001b[C";
+        internal const string Escape = "\u001b", ArrowUp = "\u001b[A", ArrowDown = "\u001b[B", ArrowRight = "\u001b[C";
 
         // The Windows virtual-key code for an arrow's sequence, or 0. A console
         // reads an arrow as one key event carrying VK_UP / VK_DOWN / VK_RIGHT,
