@@ -45,7 +45,7 @@ namespace Orbweaver
     internal sealed class LocalCliChatSession :
         IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatPrompts, IRemoteChatFreeText,
         IRemoteChatImages, IRemoteChatSlashCommands, IRemoteChatSlashRunner, IRemoteChatElsewhere, IRemoteChatReadOnly,
-        IRemoteChatPeerInbound, IRemoteChatFiles, IDisposable
+        IRemoteChatPeerInbound, IRemoteChatFiles, IRemoteChatRunOptions, IDisposable
     {
         // How much of the tail to read when the panel first opens.
         //
@@ -138,7 +138,8 @@ namespace Orbweaver
                                    Func<SessionStatus, bool>? focusDesktop = null,
                                    Action<SessionStatus, string>? focusTerminal = null,
                                    Func<string, string?>? readSettings = null,
-                                   Func<string, bool, PeerInboundWrite>? applySetting = null)
+                                   Func<string, bool, PeerInboundWrite>? applySetting = null,
+                                   RunControlsHost? runControls = null)
         {
             SessionId = sessionId;
             _status = status;
@@ -158,6 +159,9 @@ namespace Orbweaver
             _readSettings = readSettings ?? PeerInboundSettingsFile.ReadText;
             _applySetting = applySetting ?? PeerInboundSettingsFile.Apply;
             _announced = DesktopView();
+            _runHost = runControls ?? RunControlsLive.Shared;
+            _runHost.Changed += OnRunHostChanged;
+            _runShown = RunSignature(RunOptions);
         }
 
         // CB-266: what sending into a Remote Control-bridged Claude Desktop chat
@@ -237,6 +241,7 @@ namespace Orbweaver
 
             _status = status;
             AnnounceView();
+            AnnounceRun();
             if (!string.IsNullOrEmpty(status.Title)) DisplayName = status.Title;
 
             // CB-267: the scan is also when replying gets switched on or off, the
@@ -376,6 +381,7 @@ namespace Orbweaver
 
         public void Dispose()
         {
+            _runHost.Changed -= OnRunHostChanged;
             _watcher?.Dispose();
             _watcher = null;
             _poll?.Stop();
@@ -383,6 +389,62 @@ namespace Orbweaver
             _debounce?.Stop();
             _debounce = null;
         }
+
+        // --- CB-404: model and effort ---------------------------------------
+
+        // The windowless host does the reading and the setting for every local
+        // CLI (RunControlsHost); this session only asks it and says when the
+        // answer moved. One host for the panel, the phone and the mirror, so a
+        // change made from any of them is pending for all three.
+        private readonly RunControlsHost _runHost;
+        private string _runShown = "";
+
+        public RemoteRunOptions? RunOptions => _runHost.Options(_status);
+
+        public event Action? RunOptionsChanged;
+
+        public Task<string?> SetModelAsync(string? id) => SetRunAsync(RunField.Model, id);
+
+        public Task<string?> SetThinkingAsync(string? id) => SetRunAsync(RunField.Effort, id);
+
+        // Fast mode and the time limit are OpenClaw's, and HasFast/HasTimeLimit
+        // keep the flyout from offering them here.
+        public Task<string?> SetFastModeAsync(bool? on) => Task.FromResult<string?>(RunText.NoRoute);
+
+        public int? TimeoutMinutes { get => null; set { } }
+
+        private async Task<string?> SetRunAsync(RunField field, string? value)
+        {
+            // No "Default" is offered for a CLI session (CanResetToDefault is
+            // false), so a null here is not a choice anyone made.
+            if (value is null) return field == RunField.Model ? "name a model" : "name an effort level";
+            var result = await _runHost.SetAsync(_status, field, value);
+            AnnounceRun();
+            return result.Why;
+        }
+
+        // The host says a pending change moved; it may say so off the UI thread.
+        private void OnRunHostChanged(string sessionId)
+        {
+            if (!string.Equals(sessionId, _status.SessionId, StringComparison.Ordinal)) return;
+            if (Dispatcher.UIThread.CheckAccess()) AnnounceRun();
+            else Dispatcher.UIThread.Post(AnnounceRun);
+        }
+
+        // Raised only when what the panel would draw changed, so a 2 s poll does
+        // not rebuild an open flyout under the pointer.
+        internal void AnnounceRun()
+        {
+            var now = RunSignature(RunOptions);
+            if (now == _runShown) return;
+            _runShown = now;
+            RunOptionsChanged?.Invoke();
+        }
+
+        internal static string RunSignature(RemoteRunOptions? o) => o is null ? "" : string.Join("\u001f",
+            o.ChipText, o.ModelId, o.ThinkingId, o.ModelDisabledReason, o.EffortDisabledReason, o.ModelPending, o.EffortPending,
+            o.ConfirmedModelId, o.ConfirmedEffortId, o.DefaultWarning, o.ModelFailure, o.EffortFailure,
+            string.Join(",", o.Models.Select(m => m.Id + "=" + m.Label)), string.Join(",", o.ThinkingChoices.Select(c => c.Id)));
 
         // --- reading ---
 
@@ -500,6 +562,10 @@ namespace Orbweaver
         // whole lines only.
         private void Pump()
         {
+            // CB-404: a new transcript row is also a new reading, which can
+            // confirm or contradict a pending change.
+            AnnounceRun();
+
             // Not before the opening read has landed. Watch() starts the poll
             // immediately after kicking off LoadInitialAsync, so without this a
             // tick that beat the initial read's post back to the UI thread would
