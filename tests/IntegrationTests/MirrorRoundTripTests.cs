@@ -2268,6 +2268,10 @@ public partial class MirrorRoundTripTests : IDisposable
         Assert.Equal(marked, RoundTrip(marked));
     }
 
+    // An empty body is not a cut and not a marked one: it stays empty, with no marker added.
+    [Fact]
+    public void AnEmptyBodyStaysEmpty() => Assert.Empty(RoundTrip(new List<string>()));
+
     // Either direction of version skew: a frame with no body decodes with none, which is
     // what an older far side sends and what every ordinary dialog sends.
     [Fact]

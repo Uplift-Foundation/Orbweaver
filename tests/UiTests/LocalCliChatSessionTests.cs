@@ -2917,4 +2917,38 @@ public class LocalCliChatSessionTests : IDisposable
             Assert.Equal("Close", Assert.Single(session.Prompt!.Options).Label);
         });
     }
+
+    // A route read that began before a click and finishes after it saw the screen before the key:
+    // it is dropped, so it cannot put the overlay back up under a press that already went out.
+    [AvaloniaFact]
+    public async Task ARouteReadThatFinishesAfterAClickIsDropped()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new OverlayPane(PaneFixtures.MobileOverlay80x50);
+            var tmuxReadable = true;
+            var gate = new TaskCompletionSource<string?>();
+            var reads = 0;
+            var session = await OverlayWaitingOn(
+                pane,
+                capture: s => tmuxReadable ? pane.Capture(s) : Task.FromResult<string?>(null),
+                readAnyRoute: _ => { reads++; return gate.Task; });
+            Assert.Equal(0, reads);
+
+            // The next scan finds no tmux and waits on the route reader...
+            tmuxReadable = false;
+            session.UpdateStatus(WaitingStatus());
+            for (var i = 0; i < 400 && reads == 0; i++) await Task.Delay(5);
+            Assert.Equal(1, reads);
+
+            // ...and a click goes out meanwhile.
+            await session.AnswerAsync(session.Prompt!.Options[0]);
+            Assert.Null(session.Prompt);
+
+            gate.SetResult(PaneFixtures.MobileOverlay80x50);
+            for (var i = 0; i < 20; i++) { Avalonia.Threading.Dispatcher.UIThread.RunJobs(); await Task.Delay(5); }
+
+            Assert.Null(session.Prompt);
+        });
+    }
 }
