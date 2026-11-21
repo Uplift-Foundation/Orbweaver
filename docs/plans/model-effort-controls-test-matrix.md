@@ -19,3 +19,16 @@ Rows = CLI x route. Each cell: set model / set effort / read both.
 Phone (iOS + Android), each of the above: chip text per state (enabled / disabled-with-reason / pending), flyout, failure sentence restoring old value, dial snapping, frames v13 vectors, old phone ignores unknown state frame, desk without capability hides/disables.
 
 Gates per push: added-line coverage 100% (tools/coverage.sh --base, merged 4), CI green both rids at sha, screenshots both rids (chip + flyout x enabled/disabled/pending), installs hash-checked on 3 machines under /tmp/ow-install.lock, installer files unchanged (build-macos-dmg/app, Orbweaver.iss, install-hooks).
+
+## Phone contract behaviours a machine must show (frames-v13, Orbweaver-Mobile 01d45c3)
+
+Source: contracts/frames-v13.json (`phone_rules`, `desktop_rules`, `back_compat`, `not_verified`), frames-v13-vectors.json, effort-dial-vectors.json. Each has a paired negative.
+
+1. Disabled control shown with its reason as text, never hidden. Neg: desk without `run_options` cap -> no controls at all.
+2. `ok set` is not confirmation: control shows applying until a reading confirms; the desk's `failed` sentence shows if it does not. Neg: desk accepts, never confirms -> pick dropped with sentence.
+3. While one change is pending both controls are disabled; a second set_run is refused `unavailable`.
+4. Typed route (bridge setting off) and Codex < 0.164 show "Changing this also changes the default for new sessions on <machine>." Neg: bridge route shows no such line.
+5. Dial drag across the bottom gap stays at the end it left, never jumps lowest to highest.
+6. New phone + old desk: no controls. Old phone + new desk: nothing changes (code-read only; exercise against a built old phone).
+7. A stale `run` frame the relay stored while the phone was away is not drawn; only frames after `ok watching` count.
+Also: contract checker + 126 mutations run in relay-tests.yml; confirm it ran green at the sha.
