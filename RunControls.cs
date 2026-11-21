@@ -24,8 +24,6 @@ namespace Orbweaver
     // at all, and always comes with a reason.
     public enum RunRoute { None, Control, Typed, GatewayPatch }
 
-    // Where a reading came from, so the chip can tell a reading from a guess.
-    public enum RunReadingSource { None, Transcript, PaneFooter, Rollout, GrokSummary, CloudEvents, CloudRoster, Gateway, LastSet }
 
     // What the session is actually running, as far as anything on this machine
     // says. Either half may be missing; At is when the source wrote it.
@@ -152,7 +150,6 @@ namespace Orbweaver
         public const string NoRoute = "this session has no way to change it from here";
         public const string CloudEffortUnreported = "not reported by a cloud session";
         public const string CodexVersionUnknown = "checking Codex version…";
-        public const string StillApplying = "another change to this session is still being sent; try again in a moment";
         public const string ClaudeTypedDefault =
             "Typing this into the terminal also saves it as Claude Code's default for new sessions.";
         public const string CodexPickerDefault =
