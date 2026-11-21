@@ -403,4 +403,19 @@ public class OverlayScreenTests
         Assert.Equal(("Escape", "Cancel"), (only.Key, only.Label));
         Assert.Equal((PaneReading.Dialog, "overlay"), PaneScreen.Read(Fixture(name)));
     }
+
+    // Only blank rows between the edge and the footer: nothing to show, so no overlay (the
+    // leading-blank trim runs on an already-emptied list).
+    [Fact]
+    public void An_edge_and_footer_with_only_blank_rows_between_them_is_not_an_overlay() =>
+        Assert.Null(OverlayScreen.Read("▔▔▔▔▔▔▔▔▔▔▔▔\n\n\n  Esc to close\n"));
+
+    // Blank rows ahead of the first content row are dropped, so the title is that row.
+    [Fact]
+    public void Blank_rows_before_the_title_are_dropped()
+    {
+        var o = OverlayScreen.Read("▔▔▔▔▔▔▔▔▔▔▔▔\n\n  Late title\n  body\n  Esc to close\n")!;
+        Assert.Equal("Late title", o.Title);
+        Assert.Equal("Late title", o.Body[0]);
+    }
 }

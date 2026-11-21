@@ -101,8 +101,9 @@ namespace Orbweaver
             if (cut) body.Add(CutMarker);
 
             var caption = body.Where(r => r.Any(char.IsLetterOrDigit)).Select(r => Collapse(r.Trim())).ToList();
-            var first = body.FirstOrDefault(r => r.Trim().Length > 0);
-            var title = first is null ? "" : TwoSpaces.Split(first.Trim())[0];
+            // A non-blank row exists: the trailing blanks were trimmed above, so the last
+            // row is one.
+            var title = TwoSpaces.Split(body.First(r => r.Trim().Length > 0).Trim())[0];
             return new Overlay(title, caption, body, label!);
         }
 

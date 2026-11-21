@@ -272,7 +272,7 @@ namespace Orbweaver
             var prompt = PromptFrames.Prompt(requestId, sid, kind, cli, tool, preview, options, fp.Hash, expires, multi, text, quiet: fp.Overlay);
             var label = string.IsNullOrWhiteSpace(status.Title) ? _machine : $"{status.Title} on {_machine}";
             var persona = _send.PersonaFor(sid);
-            var push = fp.Overlay ? null : PromptFrames.FitPush(requestId, sid, label, tool, form is null && !fp.Overlay ? SummaryOf(tool) : AsksAQuestion, preview, expires, options, fp.Hash, persona);
+            var push = fp.Overlay ? null : PromptFrames.FitPush(requestId, sid, label, tool, form is null ? SummaryOf(tool) : AsksAQuestion, preview, expires, options, fp.Hash, persona);
 
             // A question presses only what it offered (the gate's rule 7).
             var keys = form is null && !fp.Overlay ? null : options.Select(o => o.Key).ToList();
