@@ -2339,14 +2339,15 @@ public class LocalCliChatSessionTests : IDisposable
     private static async Task<LocalCliChatSession> OverlayWaitingOn(
         OverlayPane pane, Func<SessionStatus, Task<string?>>? readAnyRoute = null, bool tmux = true,
         Func<SessionStatus, string, Func<string?, bool>, Task<(bool Pressed, string? Before)>>? press = null,
-        Func<SessionStatus, string, Task<bool>>? plain = null)
+        Func<SessionStatus, string, Task<bool>>? plain = null,
+        Func<SessionStatus, Task<string?>>? capture = null)
     {
         var session = new LocalCliChatSession("s1", new SessionStatus
         {
             Source = SessionSource.ClaudeCode, State = "idle", Title = "", TmuxPane = "%42",
         })
         {
-            Capture = tmux ? pane.Capture : (_ => Task.FromResult<string?>(null)),
+            Capture = capture ?? (tmux ? pane.Capture : (_ => Task.FromResult<string?>(null))),
             PressKey = plain ?? pane.Press,
             CaptureAndPress = press ?? pane.CaptureAndPress,
             ReadAnyRoute = readAnyRoute ?? (_ => Task.FromResult<string?>(null)),
@@ -2678,5 +2679,113 @@ public class LocalCliChatSessionTests : IDisposable
             Assert.DoesNotContain(session.History, t => t.Text.Contains("for its next turn"));
         }
         finally { OrbweaverSettings.ClaudeCodeReplyEnabled = before; }
+    }
+
+    // --- CB-400: an overlay on show is refreshed on every scan ---------------------
+
+    private static SessionStatus WaitingStatus() => new()
+    {
+        Source = SessionSource.ClaudeCode, State = "waiting", Title = "", TmuxPane = "%42",
+    };
+
+    // Runs a scan and waits until its read has finished (counted by the capture seam), then
+    // lets the posted PromptChanged calls land.
+    private static async Task ScanAsync(LocalCliChatSession session, Func<int> reads)
+    {
+        var before = reads();
+        session.UpdateStatus(WaitingStatus());
+        for (var i = 0; i < 400 && reads() == before; i++) await Task.Delay(5);
+        for (var i = 0; i < 10; i++)
+        {
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            await Task.Delay(5);
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task AScanOfAnUnchangedOverlayDoesNotRebuildThePrompt()
+    {
+        var pane = new OverlayPane(PaneFixtures.MobileOverlay80x50);
+        var reads = 0;
+        var session = await OverlayWaitingOn(pane, capture: s => { reads++; return pane.Capture(s); });
+        var shown = session.Prompt;
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs(); // the first prompt's own notification
+        var changed = 0;
+        session.PromptChanged += () => changed++;
+
+        await ScanAsync(session, () => reads);
+
+        Assert.Same(shown, session.Prompt);
+        Assert.Equal(0, changed);
+    }
+
+    [AvaloniaFact]
+    public async Task AScanOfAnOverlayThatChangedWhileOpenUpdatesTheBody()
+    {
+        var pane = new OverlayPane(PaneFixtures.MobileOverlay80x50);
+        var reads = 0;
+        var session = await OverlayWaitingOn(pane, capture: s => { reads++; return pane.Capture(s); });
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs(); // the first prompt's own notification
+        var changed = 0;
+        session.PromptChanged += () => changed++;
+
+        pane.Screen = PaneFixtures.MobileOverlay80x50.Replace("Scan the QR code", "Scan the new code");
+        await ScanAsync(session, () => reads);
+
+        Assert.Equal(1, changed);
+        Assert.Contains(session.Prompt!.Body!, r => r.Contains("Scan the new code"));
+        Assert.Single(session.Prompt.Options);
+    }
+
+    // Close still works on the refreshed prompt: the fingerprint is of the new screen.
+    [AvaloniaFact]
+    public async Task CloseAfterARefreshPressesOnce()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new OverlayPane(PaneFixtures.MobileOverlay80x50) { AfterPress = _ => PaneFixtures.MacPromptAfterEsc };
+            var reads = 0;
+            var session = await OverlayWaitingOn(pane, capture: s => { reads++; return pane.Capture(s); });
+            pane.Screen = PaneFixtures.MobileOverlay80x50.Replace("Scan the QR code", "Scan the new code");
+            await ScanAsync(session, () => reads);
+
+            await session.AnswerAsync(session.Prompt!.Options[0]);
+
+            Assert.Equal(new[] { "Escape" }, pane.Pressed);
+        });
+    }
+
+    // A read that fails (null from every reader) is not a closed screen: the overlay and its
+    // Close stay, rather than being swapped for an empty prompt.
+    [AvaloniaFact]
+    public async Task AFailedReadKeepsTheOverlayOnShow()
+    {
+        var pane = new OverlayPane(PaneFixtures.MobileOverlay80x50);
+        var reads = 0;
+        var fail = false;
+        var session = await OverlayWaitingOn(pane, capture: s => { reads++; return fail ? Task.FromResult<string?>(null) : pane.Capture(s); });
+        var shown = session.Prompt;
+
+        fail = true;
+        await ScanAsync(session, () => reads);
+
+        Assert.Same(shown, session.Prompt);
+    }
+
+    // The overlay closed at the desk while the state is still waiting (a dialog came up):
+    // the scan shows what is there now, not the stale overlay.
+    [AvaloniaFact]
+    public async Task AScanThatFindsADialogWhereTheOverlayWasShowsTheDialog()
+    {
+        var pane = new OverlayPane(PaneFixtures.MobileOverlay80x50);
+        var reads = 0;
+        var session = await OverlayWaitingOn(pane, capture: s => { reads++; return pane.Capture(s); });
+
+        pane.Screen = PaneFixtures.MacModelSwitchDialog;
+        await ScanAsync(session, () => reads);
+
+        Assert.Null(session.Prompt!.Body);
+        Assert.NotEmpty(session.Prompt.Options);
+        Assert.NotEqual("Escape", session.Prompt.Options[0].Key);
     }
 }

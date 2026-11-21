@@ -13,8 +13,15 @@ namespace Orbweaver.Tests
         internal static string Mcp => File.ReadAllText(Path.Combine(
             Path.GetDirectoryName(SourceFile())!, "Captures", "cb400", "other-mcp.txt"));
 
+        internal static string Help => File.ReadAllText(Path.Combine(
+            Path.GetDirectoryName(SourceFile())!, "Captures", "cb400", "other-help.txt"));
+
+        internal static IReadOnlyList<string> HelpBody() => Rows(Help);
+
         // The rows as the reader would hand them over: trailing blanks off, bounded as the wire is.
-        internal static IReadOnlyList<string> McpBody() =>
-            Mcp.Split('\n').Select(l => l.TrimEnd()).Reverse().SkipWhile(l => l.Length == 0).Reverse().ToList();
+        internal static IReadOnlyList<string> McpBody() => Rows(Mcp);
+
+        private static IReadOnlyList<string> Rows(string text) =>
+            text.Split('\n').Select(l => l.TrimEnd()).Reverse().SkipWhile(l => l.Length == 0).Reverse().ToList();
     }
 }

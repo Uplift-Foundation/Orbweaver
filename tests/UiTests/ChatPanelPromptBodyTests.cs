@@ -224,10 +224,11 @@ public class ChatPanelPromptBodyTests : IDisposable
         Assert.False(BodyCard(panel).IsVisible);
     }
 
-    // The body is part of what is being asked: a changed QR under the same title
-    // is a different screen, so the arming clock must restart for it.
+    // Some overlays change while open (/resume's "1 minute ago", /usage's live figures), so the
+    // body is refreshed in place and is not part of the signature: a changed body neither
+    // re-arms the prompt nor costs the person a click they were already making.
     [AvaloniaFact]
-    public void AChangedBodyIsADifferentPromptForTheArmingClock()
+    public void AChangedBodyUpdatesInPlaceAndDoesNotRestartTheArmingClock()
     {
         var now = new DateTime(2026, 11, 21, 12, 0, 0, DateTimeKind.Utc);
         var previous = ChatPanel.PromptClock;
@@ -237,10 +238,40 @@ public class ChatPanelPromptBodyTests : IDisposable
             var (panel, session) = Open(Overlay() with { ArmedActivation = true });
             now += ChatPanel.PromptArmDelay;
 
-            session.Show(Overlay(new[] { "Get the Claude app on your phone", "different" }) with { ArmedActivation = true });
+            var changed = new[] { "Get the Claude app on your phone", "a minute later" };
+            session.Show(Overlay(changed) with { ArmedActivation = true });
+            Flush();
+            Assert.Equal(string.Join("\n", changed), BodyText(panel).Text);
+
+            // Pressed after the arming window of the first prompt: still armed-open, so it answers.
+            Click(panel, Option(panel, 0));
+            var release = Option(panel, 0);
+            release.RaiseEvent(new PointerReleasedEventArgs(
+                release, new Pointer(Pointer.GetNextFreeId(), PointerType.Mouse, isPrimary: true), panel,
+                release.TranslatePoint(new Point(2, 2), panel) ?? new Point(2, 2), 0,
+                new PointerPointProperties(RawInputModifiers.None, PointerUpdateKind.LeftButtonReleased),
+                KeyModifiers.None, MouseButton.Left));
+
+            Assert.Equal("Escape", Assert.Single(session.Answered).Key);
+        }
+        finally { ChatPanel.PromptClock = previous; }
+    }
+
+    // The control: a changed title or key still is a different question and re-arms.
+    [AvaloniaFact]
+    public void AChangedTitleStillRestartsTheArmingClock()
+    {
+        var now = new DateTime(2026, 11, 21, 12, 0, 0, DateTimeKind.Utc);
+        var previous = ChatPanel.PromptClock;
+        ChatPanel.PromptClock = () => now;
+        try
+        {
+            var (panel, session) = Open(Overlay() with { ArmedActivation = true });
+            now += ChatPanel.PromptArmDelay;
+
+            session.Show(Overlay() with { Title = "Another screen", ArmedActivation = true });
             Flush();
 
-            // Pressed after the arming window of the first, but inside that of the second.
             Click(panel, Option(panel, 0));
             var release = Option(panel, 0);
             release.RaiseEvent(new PointerReleasedEventArgs(

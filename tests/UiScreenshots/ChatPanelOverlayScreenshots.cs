@@ -67,18 +67,26 @@ public class ChatPanelOverlayScreenshots : IDisposable
     // A tall real screen (/mcp, 50 rows by 100 columns): bounded, scrolled to its top, with Close
     // still on screen under it.
     [AvaloniaFact]
-    public void ATallScreenIsBoundedAndKeepsCloseVisible()
+    public void ATallScreenIsBoundedAndKeepsCloseVisible() =>
+        CaptureTall("MCP servers", TallOverlayCapture.McpBody(), "chat-panel-overlay-tall.png");
+
+    // The same for /help, a different layout and the one with no machine-specific text in it.
+    [AvaloniaFact]
+    public void AHelpScreenIsBoundedAndKeepsCloseVisible() =>
+        CaptureTall("Help", TallOverlayCapture.HelpBody(), "chat-panel-overlay-tall-help.png");
+
+    private void CaptureTall(string title, IReadOnlyList<string> body, string name)
     {
         var id = "screenshot-overlay-tall-" + Guid.NewGuid();
         _toClean.Add(id);
-        var prompt = new ChatPrompt("MCP servers",
+        var prompt = new ChatPrompt(title,
             new[] { new ChatPromptOption(OverlayScreen.CloseKey, OverlayScreen.CloseLabel) },
-            Body: TallOverlayCapture.McpBody());
+            Body: body);
         var fake = new FakeChatSession(Context()) { SessionId = id, DisplayName = "claude-buddy", Prompt = prompt };
 
         ChatPanel.OpenFor(NewOrb(), fake);
         ScreenshotHelper.Flush();
-        ScreenshotHelper.CaptureAlreadyShown(ChatPanelTestAccess.Instance!, "chat-panel-overlay-tall.png");
+        ScreenshotHelper.CaptureAlreadyShown(ChatPanelTestAccess.Instance!, name);
         ChatPanel.HideFor(id);
     }
 

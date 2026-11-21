@@ -268,7 +268,12 @@ namespace Orbweaver
             // This does not spin: a refresh always ends with a prompt set, even
             // when the screen could not be read, because "something is waiting
             // and I can't tell you what" is itself an answer.
-            if (Prompt is null && !_refreshing) _ = RefreshPromptAsync();
+            //
+            // An overlay on show is read again on every scan too (CB-400): some of
+            // these screens change while open (/status tabs, /usage's live figures),
+            // and a snapshot left in the panel would go on showing what the desk
+            // no longer does.
+            if ((Prompt is null || _overlayHash is not null) && !_refreshing) _ = RefreshPromptAsync();
         }
 
         // Idempotent, and called from both construction-time binding and every
@@ -1675,13 +1680,22 @@ namespace Orbweaver
                 var overlayScreen = screen ?? await ReadAnyRoute(_status);
                 if (screen is null && (generation != _generation || !_waiting)) return;
 
+                // Nothing could read the pane this time. For an overlay already on show
+                // that is a failed read, not a closed screen: keep it (and its Close)
+                // rather than swapping it for an empty prompt on a transient failure.
+                if (overlayScreen is null && _overlayHash is not null) return;
+
                 if (OverlayScreen.Read(overlayScreen) is { } overlay)
                 {
                     // The same screen reads as an overlay twice over (Read here, Of
                     // there), so Of always has a fingerprint to give.
                     _overlayHash = PromptFingerprint.Of(overlayScreen)!.Hash;
                     _formFingerprint = null;
-                    SetPrompt(OverlayScreen.ToPrompt(overlay));
+
+                    // Only when the screen's words changed: a re-read of the same overlay
+                    // must not rebuild the panel's prompt under the pointer.
+                    var shown = OverlayScreen.ToPrompt(overlay);
+                    if (!SameOverlay(Prompt, shown)) SetPrompt(shown);
                     return;
                 }
 
@@ -1751,6 +1765,9 @@ namespace Orbweaver
         [ExcludeFromCodeCoverage]
         private static Task<string?> RealReadAnyRoute(SessionStatus status) =>
             ScreenReaders.For(status) is { } reader ? reader.ReadAsync(status) : Task.FromResult<string?>(null);
+
+        private static bool SameOverlay(ChatPrompt? shown, ChatPrompt next) =>
+            shown is { Body: { } body } && shown.Title == next.Title && body.SequenceEqual(next.Body!);
 
         // The fingerprint of the overlay on show, or null when the prompt is anything else.
         private string? _overlayHash;

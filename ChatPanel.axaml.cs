@@ -3562,9 +3562,13 @@ namespace Orbweaver
             // The arming clock restarts whenever what is being asked changes, not
             // only when the box first appears: a new request replacing one under
             // the pointer is exactly the moment a click must not carry over.
+            // Not the body (CB-400): some overlays change while open (/resume's "1 minute
+            // ago", /usage's live figures), and a changed signature restarts the arming
+            // clock. The body is refreshed in place below; what is being asked is the
+            // title and the keys.
             var body = prompt.Body is null ? null : string.Join("\n", prompt.Body);
             var signature = prompt.Title + "\n" + string.Join("\n",
-                prompt.Options.Select(o => o.Key + "|" + o.ApprovalId)) + "\n" + body;
+                prompt.Options.Select(o => o.Key + "|" + o.ApprovalId));
             if (signature != _promptSignature)
             {
                 _promptSignature = signature;
