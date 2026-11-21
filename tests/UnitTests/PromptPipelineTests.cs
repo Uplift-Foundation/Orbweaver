@@ -1399,4 +1399,32 @@ public class PromptPipelineTests
         await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo(action: "option:Escape"));
         Assert.Single(_sent.QuietResolved);
     }
+
+    // A sender that knows no quiet form (it implements only the alerting calls):
+    // the default members fall back to them with no sealed push, so the overlay
+    // still reaches the phone and its resolve still goes out, only without a
+    // plaintext. RelayClient overrides both to send push none instead.
+    private sealed class AlertOnlySender : IPromptSender
+    {
+        public readonly List<(string Rid, string? Push)> Prompts = new();
+        public readonly List<(string Rid, string By, string? Push)> Resolved = new();
+        bool IPromptSender.Prompt(string r, string s, string p, string? push) { Prompts.Add((r, push)); return true; }
+        void IPromptSender.Resolved(string r, string s, string by, string? push) => Resolved.Add((r, by, push));
+        void IPromptSender.Refusal(string ph, string r, string s, string code) { }
+    }
+
+    [Fact]
+    public async Task A_sender_with_no_quiet_form_gets_the_overlay_and_its_resolve_with_no_plaintext()
+    {
+        var sender = new AlertOnlySender();
+        var p = new PromptPipeline(new PromptPipeline.Seams(_pane.Capture, _pane.Press, _pane.Type, () => _now, _ => Task.CompletedTask, _log.Add), sender, "Test Mac");
+        _pane.Screen = PaneFixtures.MobileOverlay80x50;
+
+        await p.OnScannedAsync(Snap());
+        var (rid, push) = Assert.Single(sender.Prompts);
+        Assert.Null(push);
+
+        await p.OnScannedAsync(Snap("idle"));
+        Assert.Equal((rid, "desk", (string?)null), Assert.Single(sender.Resolved));
+    }
 }
