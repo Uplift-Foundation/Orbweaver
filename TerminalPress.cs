@@ -33,10 +33,15 @@ namespace Orbweaver
             "Up" => ArrowUp,
             "Down" => ArrowDown,
             "Right" => ArrowRight,
+            // CB-404: the way out of any Codex picker screen that is not the
+            // one expected (measured: Esc twice from the level screen changed
+            // nothing).
+            "Escape" => EscapeKey,
             _ => key.Length == 1 && char.IsAsciiDigit(key[0]) ? key : null,
         };
 
         internal const string ArrowUp = "\u001b[A", ArrowDown = "\u001b[B", ArrowRight = "\u001b[C";
+        internal const string EscapeKey = "\u001b";
 
         // The Windows virtual-key code for an arrow's sequence, or 0. A console
         // reads an arrow as one key event carrying VK_UP / VK_DOWN / VK_RIGHT,
@@ -46,6 +51,9 @@ namespace Orbweaver
             ArrowUp => 0x26,
             ArrowDown => 0x28,
             ArrowRight => 0x27,
+            // A console reads Esc as VK_ESCAPE, like the arrows a key event
+            // rather than a character.
+            EscapeKey => 0x1B,
             _ => 0,
         };
 

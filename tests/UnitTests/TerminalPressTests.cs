@@ -104,6 +104,8 @@ public class TerminalPressTests
     [InlineData("Up", "\u001b[A", 0x26)]
     [InlineData("Down", "\u001b[B", 0x28)]
     [InlineData("Right", "\u001b[C", 0x27)]
+    // CB-404: Esc, the way out of a Codex picker screen, is a key event too.
+    [InlineData("Escape", "\u001b", 0x1B)]
     public void An_arrow_is_its_VT_sequence_and_one_console_key_event(string key, string bytes, int vk)
     {
         Assert.Equal(bytes, TerminalPress.Bytes(key));
@@ -119,7 +121,6 @@ public class TerminalPressTests
     public void Left_and_other_names_are_still_not_keys_and_text_is_not_an_arrow()
     {
         Assert.Null(TerminalPress.Bytes("Left"));
-        Assert.Null(TerminalPress.Bytes("Escape"));
         Assert.Equal(0, TerminalPress.ArrowVirtualKey("2"));
         Assert.Equal(0, TerminalPress.ArrowVirtualKey("\u001b[D"));
     }

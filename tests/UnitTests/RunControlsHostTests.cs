@@ -30,7 +30,6 @@ public class RunControlsHostTests
         public readonly List<(string Subtype, string Json)> Posted = [];
         public readonly List<string> Changed = [];
         public TaskCompletionSource<bool>? TypeGate;
-        public Func<SessionStatus, RunField, string, Task<RunSetResult>>? Picker;
         public RunControlsHost Host = null!;
 
         public Desk()
@@ -51,8 +50,7 @@ public class RunControlsHostTests
                 (_, subtype, request) => { Posted.Add((subtype, request.ToJsonString())); return Task.FromResult(Verdict); },
                 () => Now,
                 RecordStatus: _ => Record,
-                Log: (_, _) => { },
-                CodexPicker: (s, f, v) => Picker is { } p ? p(s, f, v) : throw new InvalidOperationException()));
+                Log: (_, _) => { }));
             Host.Changed += Changed.Add;
         }
     }
@@ -207,36 +205,6 @@ public class RunControlsHostTests
         var d = new Desk { Catalogue = null, CodexVersion = new Version(0, 167, 0) };
         Assert.Equal(RunSetResult.Sent, await d.Host.SetAsync(Of(source), field, value));
         Assert.Equal(line, d.Typed.Single());
-    }
-
-    [Fact]
-    public async Task A_codex_older_than_the_argument_form_is_set_through_its_picker_and_warns()
-    {
-        var d = new Desk { Catalogue = null, CodexVersion = new Version(0, 154, 0) };
-        var asked = new List<(RunField, string)>();
-        d.Picker = (_, f, v) => { asked.Add((f, v)); return Task.FromResult(RunSetResult.Sent); };
-
-        Assert.Equal(RunSetResult.Sent, await d.Host.SetAsync(Of(SessionSource.Codex), RunField.Model, "gpt-5.6-terra"));
-
-        Assert.Equal((RunField.Model, "gpt-5.6-terra"), asked.Single());
-        Assert.Empty(d.Typed);
-        Assert.True(d.Host.Options(Of(SessionSource.Codex))!.ModelPending);
-        Assert.Equal(RunText.CodexPickerDefault, d.Host.Options(Of(SessionSource.Codex))!.DefaultWarning);
-    }
-
-    [Fact]
-    public async Task A_picker_that_fails_is_failed_and_with_no_picker_wired_it_is_unavailable()
-    {
-        var d = new Desk { Catalogue = null, CodexVersion = new Version(0, 154, 0) };
-        d.Picker = (_, _, _) => Task.FromResult(new RunSetResult(RunSetKind.Failed, "The picker did not show that model."));
-        Assert.Equal(RunSetKind.Failed, (await d.Host.SetAsync(Of(SessionSource.Codex), RunField.Model, "x")).Kind);
-        Assert.False(d.Host.Options(Of(SessionSource.Codex))!.ModelPending);
-
-        var bare = new RunControlsHost(new RunControlsHost.Seams(_ => true, _ => null, () => true, _ => null, _ => null,
-            _ => new Version(0, 154, 0), (_, _) => Task.FromResult(true),
-            (_, _, _) => Task.FromResult(MirrorSlashHost.ControlVerdict.Done), () => d.Now, Log: (_, _) => { }));
-        Assert.Equal(new RunSetResult(RunSetKind.Unavailable, RunControlsHost.NoPickerReason),
-            await bare.SetAsync(Of(SessionSource.Codex), RunField.Model, "x"));
     }
 
     [Fact]
