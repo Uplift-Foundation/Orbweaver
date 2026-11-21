@@ -155,6 +155,10 @@ namespace Orbweaver
             // variable as the local panel's gate.
             Func<bool>? Shadow = null,
 
+            // CB-403: the clock the gate waits on while a screen settles into
+            // a prompt. Null is real time.
+            Func<TimeSpan, Task>? GateDelay = null,
+
             // CB-363: what a FILE request is answered against — the browse
             // settings, the disk BrowseRules reads, and the file reader. Read
             // once per request, off the frame loop. Null means this server does
@@ -2488,7 +2492,7 @@ namespace Orbweaver
         private Task<(bool Typed, string? Refusal, string? Diagnostic)> GuardedTypeAsync(
             SessionStatus status, string text, string who) =>
             TypingGate.GuardedTypeAsync(status, text, _seams.TypeInto,
-                _seams.RecordStatus, _seams.CapturePane, _seams.CanReadPane, _seams.Shadow, InputLog, who);
+                _seams.RecordStatus, _seams.CapturePane, _seams.CanReadPane, _seams.Shadow, InputLog, who, _seams.GateDelay);
 
         // --- sending ------------------------------------------------------------
 

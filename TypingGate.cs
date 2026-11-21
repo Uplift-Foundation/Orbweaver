@@ -41,6 +41,11 @@ namespace Orbweaver
         // "capture=threw:<exception type>", or "lines=<n> check=<PaneScreen.Read's word>". Never
         // any of the screen's text. Null when the screen was not read.
         internal string? Diagnostic { get; init; }
+
+        // Refused because Claude Code's own record says `waiting` (a dialog or
+        // CB-400's overlay). The wait never re-reads one of these: what the
+        // session is waiting on needs a person, not two more seconds.
+        internal bool FromWaitingRecord { get; init; }
     }
 
     internal static class TypingGate
@@ -87,16 +92,18 @@ namespace Orbweaver
             Func<SessionStatus, bool>? canReadPane,
             Func<bool>? shadow = null,
             Action<string, string>? log = null,
-            string? who = null)
+            string? who = null,
+            Func<TimeSpan, Task>? delay = null)
         {
             if (recordStatus is not null || capturePane is not null)
             {
                 var readable = capturePane is not null && (canReadPane?.Invoke(status) ?? true);
-                var verdict = await JudgeAsync(
+                var verdict = await JudgeWithWaitAsync(
                     status,
                     recordStatus ?? (_ => null),
                     capturePane,
-                    readable).ConfigureAwait(false);
+                    readable,
+                    delay).ConfigureAwait(false);
 
                 if (shadow?.Invoke() == true)
                 {
@@ -107,6 +114,42 @@ namespace Orbweaver
             }
 
             return (await typeInto(status, text).ConfigureAwait(false), null, null);
+        }
+
+        // How long a screen that is not yet a prompt is given to become one
+        // (CB-403). A pane mid-redraw, or one that has just closed a dialog,
+        // reads as unreadable for a moment; refusing on the first look turned
+        // a message typed a beat too early into a refusal. Re-judged every
+        // RetryInterval until RetryWindow has been spent, typing the moment it
+        // reads as a prompt.
+        internal static readonly TimeSpan RetryInterval = TimeSpan.FromMilliseconds(250);
+        internal static readonly TimeSpan RetryWindow = TimeSpan.FromSeconds(2);
+
+        // JudgeAsync with the wait above. A `waiting` record refuses at once —
+        // Claude Code itself said it is on a dialog, and a dialog a person has
+        // to answer does not clear in two seconds. `delay` is the seam: null
+        // is Task.Delay, a test hands over a fake clock.
+        internal static async Task<TypingVerdict> JudgeWithWaitAsync(
+            SessionStatus status,
+            Func<SessionStatus, string?> recordStatus,
+            Func<SessionStatus, Task<string?>>? capturePane,
+            bool paneReadable,
+            Func<TimeSpan, Task>? delay = null)
+        {
+            var wait = delay ?? (t => Task.Delay(t));
+            var verdict = await JudgeAsync(status, recordStatus, capturePane, paneReadable).ConfigureAwait(false);
+            // Any refusal that came from a `waiting` record — the plain dialog
+            // wording or CB-400's named overlay — is final at once: the record
+            // is Claude Code's own word, and what it is waiting on needs a person.
+            for (var spent = TimeSpan.Zero;
+                 !verdict.Allowed && !verdict.FromWaitingRecord && spent < RetryWindow;
+                 spent += RetryInterval)
+            {
+                await wait(RetryInterval).ConfigureAwait(false);
+                verdict = await JudgeAsync(status, recordStatus, capturePane, paneReadable).ConfigureAwait(false);
+            }
+
+            return verdict;
         }
 
         private static async Task<string?> OverlayTitleAsync(SessionStatus status, Func<SessionStatus, Task<string?>> capturePane)
@@ -133,8 +176,8 @@ namespace Orbweaver
                 // branch never allows, and a screen that cannot be read, or is
                 // anything but an overlay, keeps today's wording.
                 if (paneReadable && capturePane is not null && await OverlayTitleAsync(status, capturePane).ConfigureAwait(false) is { } title)
-                    return new TypingVerdict(false, OverlayWhy(title));
-                return new TypingVerdict(false, WaitingWhy);
+                    return new TypingVerdict(false, OverlayWhy(title)) { FromWaitingRecord = true };
+                return new TypingVerdict(false, WaitingWhy) { FromWaitingRecord = true };
             }
 
             // No screen to read: the record is the only guard (see the header).
