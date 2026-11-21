@@ -545,6 +545,87 @@ public class RelayClientTests : IAsyncLifetime
         lock (keys) Assert.Equal(["Escape"], keys);
     }
 
+    // CB-400 (addendum 6): a quiet overlay prompt has no push to carry a copy, so a phone
+    // that comes online is sent every live one, to it alone, after its roster. A pending
+    // permission prompt is not resent on presence.
+    private async Task<(RelayClient Client, Phone A, Phone B, RelayIdentity Identity)> TwoPhonesWithPending(string screen)
+    {
+        var identity = Identity();
+        identity.Keys();
+        var a = PairInto(identity);
+        var b = new Phone("ph_00000000000000c2", GenerateKeyPair(), GenerateKeyPair());
+        identity.AddPhone(b.Id, "Second iPhone", b.IdKey.Public, b.KaKey.Public);
+        var seams = new PromptPipeline.Seams(
+            _ => Task.FromResult<string?>(screen),
+            (_, _) => Task.FromResult(true), (_, _) => Task.FromResult(true),
+            () => DateTimeOffset.UtcNow, _ => Task.CompletedTask, _ => { });
+        var client = Client(identity, prompts: seams);
+        client.Start();
+        await _stub.NextT("hello");
+        await Until(() => client.State == RelayClient.Status.Connected);
+        await client.OnStatuses([("s1", new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode, Title = "proj" })]);
+        // One prompt envelope per paired phone, sent whether or not it is online.
+        await _stub.Next(IsEnvelope);
+        await _stub.Next(IsEnvelope);
+        return (client, a, b, identity);
+    }
+
+    private Task Presence(Phone phone, bool online) =>
+        _stub.Send(JsonSerializer.Serialize(new { t = "presence", device_id = phone.Id, online, last_seen = 1 }));
+
+    [Fact]
+    public async Task A_phone_coming_online_is_sent_the_overlay_prompt_alone_and_quietly_after_its_roster()
+    {
+        var (_, a, b, identity) = await TwoPhonesWithPending(PaneFixtures.MobileOverlay80x50);
+
+        await Presence(a, online: true);
+        var roster = await _stub.Next(IsEnvelope);
+        Assert.Equal((a.Id, "roster"), (roster.GetProperty("to").GetString(), OpenAsPhone(roster, a, identity).GetProperty("t").GetString()));
+        var resent = await _stub.Next(IsEnvelope);
+        Assert.Equal((a.Id, "action", "none"), (resent.GetProperty("to").GetString(), resent.GetProperty("class").GetString(), resent.GetProperty("push").GetString()));
+        Assert.False(resent.TryGetProperty("e", out var sealedPush) && sealedPush.ValueKind == JsonValueKind.String);
+        var body = OpenAsPhone(resent, a, identity);
+        Assert.Equal(("prompt", "question"), (body.GetProperty("t").GetString(), body.GetProperty("kind").GetString()));
+        Assert.Equal(body.GetProperty("request_id").GetString(), resent.GetProperty("id").GetString());
+
+        // The next frames are the second phone's own presence: nothing went to it before.
+        await Presence(b, online: true);
+        var rosterB = await _stub.Next(IsEnvelope);
+        Assert.Equal((b.Id, "roster"), (rosterB.GetProperty("to").GetString(), OpenAsPhone(rosterB, b, identity).GetProperty("t").GetString()));
+        var resentB = await _stub.Next(IsEnvelope);
+        Assert.Equal((b.Id, "none"), (resentB.GetProperty("to").GetString(), resentB.GetProperty("push").GetString()));
+        Assert.Equal(resent.GetProperty("id").GetString(), resentB.GetProperty("id").GetString());   // same request id
+    }
+
+    [Fact]
+    public async Task A_pending_permission_prompt_is_not_resent_when_a_phone_comes_online()
+    {
+        var (_, a, b, identity) = await TwoPhonesWithPending(PaneFixtures.MacModelSwitchDialog);
+
+        await Presence(a, online: true);
+        var roster = await _stub.Next(IsEnvelope);
+        Assert.Equal("roster", OpenAsPhone(roster, a, identity).GetProperty("t").GetString());
+        // Had a prompt followed it, it would be the next envelope; the next is the second phone's roster.
+        await Presence(b, online: true);
+        var next = await _stub.Next(IsEnvelope);
+        Assert.Equal((b.Id, "roster"), (next.GetProperty("to").GetString(), OpenAsPhone(next, b, identity).GetProperty("t").GetString()));
+    }
+
+    [Fact]
+    public async Task A_phone_already_online_or_going_offline_is_sent_nothing()
+    {
+        var (_, a, b, identity) = await TwoPhonesWithPending(PaneFixtures.MobileOverlay80x50);
+
+        await Presence(a, online: true);
+        await _stub.Next(IsEnvelope);     // roster
+        await _stub.Next(IsEnvelope);     // the resent prompt
+        await Presence(a, online: true);  // already online
+        await Presence(a, online: false); // going offline
+        await Presence(b, online: true);
+        var next = await _stub.Next(IsEnvelope);
+        Assert.Equal((b.Id, "roster"), (next.GetProperty("to").GetString(), OpenAsPhone(next, b, identity).GetProperty("t").GetString()));
+    }
+
     // CB-316: the v4 round trip through a real socket — a sealed watch from the
     // phone becomes ok watching and a chat window, an input is typed and
     // answered, a request whose handler throws costs only itself, usage goes

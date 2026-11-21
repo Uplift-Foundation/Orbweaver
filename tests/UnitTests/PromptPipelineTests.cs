@@ -57,8 +57,9 @@ public class PromptPipelineTests
         bool IPromptSender.Prompt(string r, string s, string p, string? push) { Prompts.Add((r, s, p, push)); return Online; }
         public readonly List<string?> ResolvedPushes = new();
         public readonly List<string> QuietPrompts = new(), QuietResolved = new();
+        public readonly List<string?> QuietTo = new();
         // CB-400: the quiet calls record a prompt with no push, and which were quiet.
-        bool IPromptSender.PromptQuiet(string r, string s, string p) { QuietPrompts.Add(r); Prompts.Add((r, s, p, null)); return Online; }
+        bool IPromptSender.PromptQuiet(string r, string s, string p, string? onlyPhone) { QuietPrompts.Add(r); QuietTo.Add(onlyPhone); Prompts.Add((r, s, p, null)); return Online; }
         void IPromptSender.ResolvedQuiet(string r, string s, string by) { QuietResolved.Add(r); Resolved.Add((r, s, by)); ResolvedPushes.Add(null); }
         void IPromptSender.Resolved(string r, string s, string by, string? push) { Resolved.Add((r, s, by)); ResolvedPushes.Add(push); }
         void IPromptSender.Refusal(string ph, string r, string s, string code) => Refusals.Add((ph, r, code));
@@ -1463,5 +1464,127 @@ public class PromptPipelineTests
 
         Assert.Equal(AnswerGate.NotPending, _sent.Refusals[1].Code);
         Assert.Single(_pane.Keys);
+    }
+
+    // ---- addendum 6: re-mint an expired overlay, resend to a phone on presence --
+
+    [Fact]
+    public async Task An_overlay_still_up_when_its_prompt_expires_is_settled_and_minted_again_quietly()
+    {
+        await ScanOverlay();
+        var oldRid = _sent.Prompts[0].Rid;
+
+        _now = _now.AddSeconds(1800);
+        await _p.OnScannedAsync(Snap());
+
+        Assert.Equal([oldRid], _sent.QuietResolved);
+        Assert.Equal("gone", _sent.Resolved.Single().By);
+        Assert.Equal(2, _sent.QuietPrompts.Count);
+        var fresh = _sent.Prompts[1];
+        Assert.NotEqual(oldRid, fresh.Rid);
+        Assert.Equal(_now.ToUnixTimeSeconds() + 1800, JsonDocument.Parse(fresh.Prompt).RootElement.GetProperty("expires_at").GetInt64());
+        Assert.Null(fresh.Push);
+        Assert.Equal(fresh.Rid, _p.PendingFor("s1")!.RequestId);
+
+        // An answer naming the old request is not pending; the new one presses.
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo(prompt: 0, action: "option:Escape"));
+        Assert.Equal(AnswerGate.NotPending, Assert.Single(_sent.Refusals).Code);
+        Assert.Empty(_pane.Keys);
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo(prompt: 1, action: "option:Escape"));
+        Assert.Equal(["Escape"], _pane.Keys);
+    }
+
+    [Fact]
+    public async Task One_second_before_the_overlay_expires_nothing_is_sent()
+    {
+        await ScanOverlay();
+        _now = _now.AddSeconds(1799);
+        await _p.OnScannedAsync(Snap());
+        Assert.Single(_sent.Prompts);
+        Assert.Empty(_sent.Resolved);
+    }
+
+    [Fact]
+    public async Task An_expired_overlay_whose_screen_is_gone_settles_at_the_desk_and_mints_nothing()
+    {
+        await ScanOverlay();
+        _now = _now.AddSeconds(1800);
+        _pane.Screen = PaneFixtures.MobileAfterEsc;       // the session still says waiting
+
+        await _p.OnScannedAsync(Snap());
+
+        Assert.Equal("desk", Assert.Single(_sent.Resolved).By);
+        Assert.Single(_sent.Prompts);
+        Assert.Null(_p.PendingFor("s1"));
+    }
+
+    [Fact]
+    public async Task An_expired_overlay_whose_session_stopped_waiting_settles_at_the_desk()
+    {
+        await ScanOverlay();
+        _now = _now.AddSeconds(1800);
+        await _p.OnScannedAsync(Snap("idle"));
+        Assert.Equal("desk", Assert.Single(_sent.Resolved).By);
+        Assert.Single(_sent.Prompts);
+    }
+
+    [Theory]
+    [InlineData("dialog")]
+    [InlineData("question")]
+    public async Task An_expired_permission_prompt_or_question_whose_screen_stands_keeps_its_id(string shape)
+    {
+        _pane.Screen = shape == "dialog" ? Dialog : PaneFixtures.MacColourQuestion;
+        await _p.OnScannedAsync(Snap());
+        var rid = _p.PendingFor("s1")!.RequestId;
+
+        _now = _now.AddSeconds(3600);
+        await _p.OnScannedAsync(Snap());
+
+        Assert.Single(_sent.Prompts);
+        Assert.Empty(_sent.Resolved);
+        Assert.Equal(rid, _p.PendingFor("s1")!.RequestId);
+    }
+
+    private PromptPipeline TwoSessionPipeline(Sender sender)
+    {
+        string? Screen(SessionStatus s) => s.Title == "overlay" ? PaneFixtures.MobileOverlay80x50 : Dialog;
+        return new PromptPipeline(new PromptPipeline.Seams(s => Task.FromResult(Screen(s)), _pane.Press, _pane.Type, () => _now, _ => Task.CompletedTask, _log.Add), sender, "Test Mac");
+    }
+
+    private static (string, SessionStatus)[] TwoSessions() =>
+        [("so", Status(title: "overlay")), ("sd", Status(title: "dialog"))];
+
+    [Fact]
+    public async Task A_phone_coming_online_is_resent_the_overlay_prompt_alone_and_not_the_permission_prompt()
+    {
+        var sender = new Sender();
+        var p = TwoSessionPipeline(sender);
+        await p.OnScannedAsync(TwoSessions());
+        Assert.Equal(2, sender.Prompts.Count);
+        var overlayRid = sender.QuietPrompts.Single();
+        sender.QuietPrompts.Clear(); sender.QuietTo.Clear(); sender.Prompts.Clear();
+
+        await p.ResendQuietAsync("ph_a");
+
+        var (rid, sid, _, push) = Assert.Single(sender.Prompts);
+        Assert.Equal((overlayRid, "so", (string?)null), (rid, sid, push));
+        Assert.Equal(["ph_a"], sender.QuietTo);
+        Assert.Contains($"prompt-resent {overlayRid} presence", _log);
+    }
+
+    // An answered overlay is not left pending (addendum 4 clears the mark after a press that
+    // changed nothing, and a press that did settles it), so expiry is the case left.
+    [Fact]
+    public async Task An_expired_overlay_is_not_resent_on_presence()
+    {
+        var sender = new Sender();
+        var p = TwoSessionPipeline(sender);
+        await p.OnScannedAsync(TwoSessions());
+        sender.Prompts.Clear();
+
+        _now = _now.AddSeconds(1800);
+        await p.ResendQuietAsync("ph_a");
+
+        Assert.Empty(sender.Prompts);                       // the next scan re-mints it, and that mint reaches the phone
     }
 }

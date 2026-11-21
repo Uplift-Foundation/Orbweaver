@@ -29,7 +29,8 @@ namespace Orbweaver
         // push class (so no notification), and the resolve that closes it, also
         // quiet. The defaults fall back to the alerting calls with no sealed push,
         // so a sender that predates them still compiles; RelayClient overrides both.
-        bool PromptQuiet(string requestId, string sessionId, string prompt) => Prompt(requestId, sessionId, prompt, null);
+        // onlyPhone: send to that phone alone (a phone that just came online); null is every phone.
+        bool PromptQuiet(string requestId, string sessionId, string prompt, string? onlyPhone = null) => Prompt(requestId, sessionId, prompt, null);
         void ResolvedQuiet(string requestId, string sessionId, string by) => Resolved(requestId, sessionId, by, null);
     }
 
@@ -179,7 +180,13 @@ namespace Orbweaver
                     if (live is not null)
                     {
                         live.Status = status;
-                        if (fp?.Hash == live.Pending.ScreenHash) continue;
+                        // CB-400: a quiet prompt has no push carrying a copy and expires
+                        // after 30 minutes, so an overlay that is still up when its prompt
+                        // expires is settled and minted again, reaching the phones with a
+                        // fresh id and lifetime. An expired permission prompt or question
+                        // whose screen stands keeps its id, as before.
+                        var expiredQuiet = live.Quiet && _seams.Now().ToUnixTimeSeconds() >= live.Pending.ExpiresAt;
+                        if (fp?.Hash == live.Pending.ScreenHash && !expiredQuiet) continue;
                         // Another dialog in its place: the old request is gone
                         // (plan's wording) — nobody here can say who answered
                         // it, or whether anyone did. No dialog while the hook
@@ -359,6 +366,29 @@ namespace Orbweaver
                         ? _send.PromptQuiet(live.Pending.RequestId, live.Pending.SessionId, live.Prompt)
                         : _send.Prompt(live.Pending.RequestId, live.Pending.SessionId, live.Prompt, live.Push);
                     _seams.Log($"prompt-resent {live.Pending.RequestId}{(sent ? "" : " (still not sent)")}");
+                }
+            }
+            finally { _gate.Release(); }
+        }
+
+        // CB-400: a phone that has just come online is sent every live overlay prompt, to
+        // it alone. An overlay has no push to carry a copy, the relay holds a frame for an
+        // offline phone for 15 minutes, and the desktop otherwise resends only on its own
+        // welcome, so a session blocked for hours would give a returning phone nothing to
+        // press. Same bytes, same request id (the phone dedupes on it). Expired ones are
+        // skipped: the next scan mints them again and that mint reaches the phone. Alerting
+        // prompts are not resent here.
+        internal async Task ResendQuietAsync(string phoneId)
+        {
+            await _gate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                var now = _seams.Now().ToUnixTimeSeconds();
+                foreach (var live in _live.Values)
+                {
+                    if (!live.Quiet || live.Pending.Answered || now >= live.Pending.ExpiresAt) continue;
+                    var sent = _send.PromptQuiet(live.Pending.RequestId, live.Pending.SessionId, live.Prompt, phoneId);
+                    _seams.Log($"prompt-resent {live.Pending.RequestId} presence{(sent ? "" : " (still not sent)")}");
                 }
             }
             finally { _gate.Release(); }

@@ -129,6 +129,7 @@ namespace Orbweaver
         internal event Action<RelayIdentity.Phone> PhonePaired = delegate { };
         internal event Action<string> PhoneRemoved = delegate { };               // by the phone, or the relay said unlinked
         internal event Action PresenceChanged = delegate { };
+        internal event Action<string> PhoneCameOnline = delegate { };            // CB-400: a paired phone went from offline to online
         internal event Action<string> Note = delegate { };                       // one log line, metadata only
         internal event Action<string, int> RetryDue = delegate { };              // (key, attempt): call Retry(key) after a backoff
         // CB-315: a sealed answer from a paired phone, with that phone's
@@ -360,6 +361,7 @@ namespace Orbweaver
             c.Online = online;
             PresenceChanged();
             if (wentOffline) PhoneWentOffline(id);
+            if (cameOnline) PhoneCameOnline(id);
             return cameOnline ? RosterAndUsage(c) : [];
         }
 
@@ -934,12 +936,13 @@ namespace Orbweaver
         // the plaintext cannot fit the relay's 3600-character cap.
         // CB-400: quiet sends the prompt as an ordinary action frame with push none, which
         // the relay queues and forwards like an answer's but never turns into an alert.
-        internal IReadOnlyList<string> SendPrompt(string requestId, string sessionId, string prompt, string? pushPlaintext, bool quiet = false)
+        internal IReadOnlyList<string> SendPrompt(string requestId, string sessionId, string prompt, string? pushPlaintext, bool quiet = false, string? onlyPhone = null)
         {
             if (!Welcomed) return [];
             var frames = new List<string>();
             foreach (var c in _channels.Values)
             {
+                if (onlyPhone is not null && c.Phone.PhoneId != onlyPhone) continue;
                 var e = pushPlaintext is null ? null : PushSeal.Seal(c.Phone.KaPublic, System.Text.Encoding.UTF8.GetBytes(pushPlaintext));
                 if (SealTo(c, "action", RelayCrypto.Ck(c.CkKey, sessionId), System.Text.Encoding.UTF8.GetBytes(prompt), requestId, quiet ? "none" : "amber", e) is { } frame)
                     frames.Add(frame);
