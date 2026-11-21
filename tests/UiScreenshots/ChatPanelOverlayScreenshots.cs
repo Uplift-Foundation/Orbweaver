@@ -64,6 +64,24 @@ public class ChatPanelOverlayScreenshots : IDisposable
     public void TheOverlayWithItsQrCodeAndCloseButton() =>
         Capture("chat-panel-overlay-qr.png", Context());
 
+    // A tall real screen (/mcp, 50 rows by 100 columns): bounded, scrolled to its top, with Close
+    // still on screen under it.
+    [AvaloniaFact]
+    public void ATallScreenIsBoundedAndKeepsCloseVisible()
+    {
+        var id = "screenshot-overlay-tall-" + Guid.NewGuid();
+        _toClean.Add(id);
+        var prompt = new ChatPrompt("MCP servers",
+            new[] { new ChatPromptOption(OverlayScreen.CloseKey, OverlayScreen.CloseLabel) },
+            Body: TallOverlayCapture.McpBody());
+        var fake = new FakeChatSession(Context()) { SessionId = id, DisplayName = "claude-buddy", Prompt = prompt };
+
+        ChatPanel.OpenFor(NewOrb(), fake);
+        ScreenshotHelper.Flush();
+        ScreenshotHelper.CaptureAlreadyShown(ChatPanelTestAccess.Instance!, "chat-panel-overlay-tall.png");
+        ChatPanel.HideFor(id);
+    }
+
     // The same, after a send was refused because of it: the note says the message was
     // not sent and is still in the box, in the sentence the panel really writes.
     [AvaloniaFact]

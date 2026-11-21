@@ -138,13 +138,13 @@ public class ChatPanelPromptBodyTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void TheBodyScrollsSidewaysInsteadOfWrapping()
+    public void TheBodyScrollsBothWaysInsteadOfWrapping()
     {
         var (panel, _) = Open(Overlay());
 
         var scroll = panel.FindControl<ScrollViewer>("PromptBodyScroll")!;
         Assert.Equal(ScrollBarVisibility.Auto, scroll.HorizontalScrollBarVisibility);
-        Assert.Equal(ScrollBarVisibility.Disabled, scroll.VerticalScrollBarVisibility);
+        Assert.Equal(ScrollBarVisibility.Auto, scroll.VerticalScrollBarVisibility);
     }
 
     [AvaloniaFact]
@@ -160,6 +160,32 @@ public class ChatPanelPromptBodyTests : IDisposable
         var answered = Assert.Single(session.Answered);
         Assert.Equal(OverlayScreen.CloseKey, answered.Key);
         Assert.Equal("Escape", answered.Key);
+    }
+
+    // A real tall screen (/mcp, 50 rows by 100 columns): the body is bounded and scrolls, and
+    // Close is inside the panel without scrolling it.
+    [AvaloniaFact]
+    public void ATallScreenIsBoundedAndCloseStaysOnScreen()
+    {
+        var body = TallOverlayCapture.McpBody();
+        Assert.True(body.Count >= 40);
+        var (panel, _) = Open(new ChatPrompt("MCP servers",
+            new[] { new ChatPromptOption(OverlayScreen.CloseKey, OverlayScreen.CloseLabel) }, Body: body));
+        Flush();
+
+        var scroll = panel.FindControl<ScrollViewer>("PromptBodyScroll")!;
+        Assert.True(scroll.Bounds.Height <= 180.5, $"body height {scroll.Bounds.Height}");
+        Assert.True(scroll.Extent.Height > scroll.Viewport.Height, "the 50 rows should overflow the bound and scroll");
+
+        var close = Option(panel, 0);
+        var top = close.TranslatePoint(new Point(0, 0), panel)!.Value;
+        var bottom = close.TranslatePoint(new Point(0, close.Bounds.Height), panel)!.Value;
+        Assert.True(top.Y >= 0 && bottom.Y <= panel.Bounds.Height,
+            $"Close spans {top.Y}..{bottom.Y} in a panel {panel.Bounds.Height} tall");
+        Assert.True(close.Bounds.Width > 0 && close.IsEffectivelyVisible);
+
+        // A QR-sized body is not clipped by the bound: 21 rows at the body's line height.
+        Assert.True(21 * BodyText(panel).LineHeight <= scroll.MaxHeight);
     }
 
     [AvaloniaFact]

@@ -2921,6 +2921,7 @@ namespace Orbweaver
             // keep touching at every scale; the family is what makes columns line up.
             PromptBody.FontSize = 8 * scale;
             PromptBody.LineHeight = PromptBody.FontSize;
+            PromptBodyScroll.MaxHeight = 180 * scale;
             PromptFreeTextBox.FontSize = 11 * scale;
             PromptElsewhere.FontSize = 10.5 * scale;
 

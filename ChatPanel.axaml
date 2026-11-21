@@ -667,13 +667,16 @@
                          text is the QR's own polarity plus a quiet zone: the
                          terminal draws it in the default foreground, which is
                          inverted on a dark theme. Scrolls sideways rather than
-                         wrapping, since a wrapped QR is not one. Visible only for
-                         a prompt that carries a Body. -->
+                         wrapping, since a wrapped QR is not one, and down past a
+                         bounded height: the other screens Esc closes are 20 to 50
+                         rows, and Close under the card must stay on screen without
+                         scrolling the panel. Visible only for a prompt with a Body. -->
                     <Border x:Name="PromptBodyCard" IsVisible="False"
                             Background="#FFFFFF" CornerRadius="4" Padding="8">
                         <ScrollViewer x:Name="PromptBodyScroll"
                                       HorizontalScrollBarVisibility="Auto"
-                                      VerticalScrollBarVisibility="Disabled">
+                                      VerticalScrollBarVisibility="Auto"
+                                      MaxHeight="180">
                             <TextBlock x:Name="PromptBody" TextWrapping="NoWrap"
                                        FontSize="8" LineHeight="8"
                                        Foreground="#FF111111"/>
