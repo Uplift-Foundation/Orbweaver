@@ -56,4 +56,56 @@ public class RemoteOmitReturnTests
             try { Directory.Delete(dir, true); } catch { }
         }
     }
+
+    // CB-402 (b): the team sat in a saved orb group, with a saved pin for the lead, when it left.
+    [AvaloniaFact]
+    public void ATeamInAGroupWithASavedPinIsDrawnOnScreenWhenItReturns()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "cb-402-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        var group = OrbweaverSettings.CreateOrbGroup("circle");
+        var keys = new[] { "rc:.claude:sid:369c40f8", "rc:.claude:sid:20b839b3", "rc:.claude:sid:other" };
+        try
+        {
+            OrbweaverSettings.PeerLinkEnabled = true;
+            RemoteControlSessions.Remote[] All() => new[]
+            {
+                Row("sid:369c40f8"), Row("sid:20b839b3", "sid:369c40f8", "wren"), Row("sid:other"),
+            };
+            foreach (var key in keys) OrbweaverSettings.MoveOrbToGroup(key, group.Id);
+            OrbweaverSettings.SetOrbPosition(keys[0], 300, 300);
+            RemoteControlSessions.SetSnapshotForTests(All());
+
+            var manager = Manager(dir);
+            manager.ScanAndUpdate();
+            Assert.Equal(3, Orbs(manager).Count);
+
+            RemoteControlSessions.SetSnapshotForTests(new[] { Row("sid:other") });
+            manager.ScanAndUpdate();
+            manager.ScanAndUpdate();
+
+            RemoteControlSessions.SetSnapshotForTests(All());
+            manager.ScanAndUpdate();
+            manager.ScanAndUpdate();
+
+            var orbs = Orbs(manager);
+            foreach (var key in keys)
+            {
+                Assert.Contains(key, orbs.Keys);
+                Assert.True(orbs[key].IsVisible, key + " not visible");
+                var screen = orbs[key].Screens.ScreenFromPoint(orbs[key].Position);
+                Assert.True(screen is not null, $"{key} at {orbs[key].Position} is on no screen");
+            }
+
+            var spots = keys.Select(k => orbs[k].Position).ToList();
+            Assert.Equal(spots.Count, spots.Distinct().Count());
+        }
+        finally
+        {
+            RemoteControlSessions.SetSnapshotForTests(Array.Empty<RemoteControlSessions.Remote>());
+            foreach (var key in keys) OrbweaverSettings.UnassignOrbGroup(key);
+            OrbweaverSettings.DeleteOrbGroup(group.Id);
+            try { Directory.Delete(dir, true); } catch { }
+        }
+    }
 }
