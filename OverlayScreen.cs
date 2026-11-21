@@ -39,7 +39,10 @@ namespace Orbweaver
         private const int MaxBodyLines = 60, MaxLineLength = 200;
 
         // The last row of a body that was cut, at either bound, so nobody takes the
-        // rows shown for the whole screen. It is one row beyond MaxBodyLines.
+        // rows shown for the whole screen. A cut body is the first 59 rows, each
+        // clipped to 200 columns, plus this as row 60: never more than 60 rows, and
+        // the same shape MirrorProtocol puts on the wire, so a body cut here passes
+        // through its bound unchanged (a test pins the two texts equal).
         internal const string CutMarker = "… (more in the terminal)";
 
         private static readonly Regex TwoSpaces = new(@"\s{2,}", RegexOptions.CultureInvariant);
@@ -91,14 +94,10 @@ namespace Orbweaver
             if (rows.Count == 0) return null;
 
             var indent = rows.Where(r => r.Length > 0).Min(r => r.Length - r.TrimStart().Length);
-            var cut = rows.Count > MaxBodyLines;
-            var body = new List<string>();
-            foreach (var r in rows.Take(MaxBodyLines))
-            {
-                var s = r.Length == 0 ? r : r[indent..];
-                if (s.Length > MaxLineLength) { s = s[..MaxLineLength]; cut = true; }
-                body.Add(s);
-            }
+            var stripped = rows.Select(r => r.Length == 0 ? r : r[indent..]).ToList();
+            var cut = stripped.Count > MaxBodyLines || stripped.Any(r => r.Length > MaxLineLength);
+            var body = (cut ? stripped.Take(MaxBodyLines - 1) : stripped)
+                .Select(r => r.Length > MaxLineLength ? r[..MaxLineLength] : r).ToList();
             if (cut) body.Add(CutMarker);
 
             var caption = body.Where(r => r.Any(char.IsLetterOrDigit)).Select(r => Collapse(r.Trim())).ToList();

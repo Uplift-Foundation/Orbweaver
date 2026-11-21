@@ -161,7 +161,7 @@ public class OverlayScreenTests
         var far = "▔▔▔▔▔▔▔▔▔▔▔▔\n  Title\n" + string.Join("\n", Enumerable.Repeat("  some prose here", 70)) + "\n  Esc to close\n";
         var o = OverlayScreen.Read(far)!;
         Assert.Equal("Title", o.Title);
-        Assert.Equal(61, o.Body.Count);                    // 60 rows and the cut marker
+        Assert.Equal(60, o.Body.Count);                    // 59 rows and the cut marker
         var two = "▔▔▔▔▔▔▔▔▔▔▔▔\n  Old\n▔▔▔▔▔▔▔▔▔▔▔▔\n  New\n  Esc to close\n";
         Assert.Equal("New", OverlayScreen.Read(two)!.Title);
     }
@@ -313,16 +313,45 @@ public class OverlayScreenTests
         Assert.Equal(["A title", "content row"], o.Body.Where(r => r.Length > 0));
     }
 
+    // One shape on both sides of the wire: a cut body is the first 59 rows, each clipped
+    // to 200 columns, plus the marker as row 60. Never more than 60 rows, a body inside
+    // both bounds is untouched, and the reader's cut passes MirrorProtocol's bound unchanged.
     [Fact]
-    public void A_body_cut_at_either_bound_ends_with_the_marker_and_a_whole_one_does_not()
+    public void A_body_cut_at_either_bound_is_59_rows_and_the_marker_and_a_whole_one_is_untouched()
     {
-        var tall = OverlayScreen.Read("▔▔▔▔▔▔▔▔▔▔▔▔\n  T\n" + string.Join("\n", Enumerable.Range(0, 80).Select(i => "  line " + i)) + "\n  Esc to close\n")!;
-        Assert.Equal(61, tall.Body.Count);
+        string Pane(int rows, int width = 8) =>
+            "▔▔▔▔▔▔▔▔▔▔▔▔\n  T\n" + string.Join("\n", Enumerable.Range(1, rows - 1).Select(i => "  " + new string('x', width))) + "\n  Esc to close\n";
+
+        var exactly = OverlayScreen.Read(Pane(60))!;                  // 60 rows: not cut
+        Assert.Equal(60, exactly.Body.Count);
+        Assert.DoesNotContain(OverlayScreen.CutMarker, exactly.Body);
+
+        var tall = OverlayScreen.Read(Pane(61))!;                     // 61 rows: cut
+        Assert.Equal(60, tall.Body.Count);
         Assert.Equal(OverlayScreen.CutMarker, tall.Body[^1]);
-        var wide = OverlayScreen.Read("▔▔▔▔▔▔▔▔▔▔▔▔\n  T\n  r" + new string('x', 250) + "\n  Esc to close\n")!;
+        Assert.Equal("T", tall.Body[0]);
+        Assert.Equal(59, tall.Body.Count(r => r != OverlayScreen.CutMarker));
+
+        var edge200 = OverlayScreen.Read(Pane(5, 200))!;              // 200 columns: not cut
+        Assert.DoesNotContain(OverlayScreen.CutMarker, edge200.Body);
+        var wide = OverlayScreen.Read(Pane(5, 201))!;                 // 201 columns: cut and clipped
         Assert.Equal(OverlayScreen.CutMarker, wide.Body[^1]);
-        Assert.Equal(200, wide.Body[1].Length);
+        Assert.All(wide.Body.SkipLast(1), r => Assert.True(r.Length <= 200));
+        Assert.Equal(6, wide.Body.Count);                             // all 5 rows, clipped, then the marker
+
         Assert.DoesNotContain(OverlayScreen.CutMarker, OverlayScreen.Read(PaneFixtures.OtherHooksScreen)!.Body);
+    }
+
+    [Fact]
+    public void The_readers_cut_marker_is_the_wires_and_a_cut_body_passes_the_wire_bound_unchanged()
+    {
+        Assert.Equal(MirrorProtocol.BodyCutMarker, OverlayScreen.CutMarker);
+        var cut = OverlayScreen.Read("▔▔▔▔▔▔▔▔▔▔▔▔\n  T\n" + string.Join("\n", Enumerable.Repeat("  " + new string('y', 250), 80)) + "\n  Esc to close\n")!.Body;
+        Assert.Equal(60, cut.Count);
+
+        var wire = MirrorProtocol.PromptFromScreen(
+            "▔▔▔▔▔▔▔▔▔▔▔▔\n  T\n" + string.Join("\n", Enumerable.Repeat("  " + new string('y', 250), 80)) + "\n  Esc to close\n");
+        Assert.Equal(cut, wire!.Body);
     }
 
     [Fact]
