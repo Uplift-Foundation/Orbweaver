@@ -329,7 +329,9 @@ namespace Orbweaver
         private static List<string> RowsUnder(string[] cleaned, int line, int end)
         {
             var rows = new List<string>();
-            for (var i = line + 1; i < end && i < cleaned.Length; i++)
+            // end is always a row index of the screen (the footer's, or the last option's),
+            // so it bounds the walk by itself.
+            for (var i = line + 1; i < end; i++)
             {
                 var l = cleaned[i];
                 if (l.Length == 0 || l[0] is '↑' or '↓' || l.All(c => c is '─' or '━' or '═' or '╌')) break;
