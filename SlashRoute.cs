@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json.Nodes;
 
 namespace Orbweaver
@@ -124,7 +125,15 @@ namespace Orbweaver
                 ["/model"] = "set_model",
                 ["/permissions"] = "set_permission_mode",
                 ["/think"] = "set_max_thinking_tokens",
+                // CB-404: measured on stdio at 2.1.330; on a bridge read only.
+                ["/effort"] = "apply_flag_settings",
             };
+
+        // The effort levels Claude Code accepts, lowest first. Validated here
+        // because apply_flag_settings answers success to a level it then
+        // ignores (measured: "bogus" changed nothing and reported success).
+        internal static readonly IReadOnlyList<string> EffortLevels =
+            new[] { "low", "medium", "high", "xhigh", "max" };
 
         internal static bool HasControl(string name) => ControlSubtypes.ContainsKey(name);
 
@@ -265,6 +274,22 @@ namespace Orbweaver
                         return null;
                     }
                     return new JsonObject { ["subtype"] = subtype, ["max_thinking_tokens"] = budget };
+
+                case "apply_flag_settings":
+                    // "default" is a JSON null, which returns the session to the
+                    // model's own default (measured: null went back to medium).
+                    if (value.Length == 0) { problem = "say which level: " + string.Join(", ", EffortLevels) + ", or default"; return null; }
+                    var lower = value.ToLowerInvariant();
+                    if (lower != "default" && !EffortLevels.Contains(lower))
+                    {
+                        problem = $"\"{value}\" is not an effort level; use one of: " + string.Join(", ", EffortLevels) + ", or default";
+                        return null;
+                    }
+                    return new JsonObject
+                    {
+                        ["subtype"] = subtype,
+                        ["settings"] = new JsonObject { ["effortLevel"] = lower == "default" ? null : lower },
+                    };
 
                 default:
                     problem = $"no control request is known for {subtype}";
