@@ -259,14 +259,12 @@ namespace Orbweaver
     [ExcludeFromCodeCoverage]
     internal static class RunControlsLive
     {
-        // What the session is running and could run. Pointed at the core's
-        // readers (RunControls' parsers over the tailed files and the catalogue
-        // caches); until then nothing is read, and the controls say "not known
-        // yet" rather than guessing. Both must answer from what is already
-        // cached: the mirror asks on its peer pump.
-        internal static Func<SessionStatus, RunReading?> ReadingFor = _ => null;
-        internal static Func<SessionStatus, RunCatalogue?> CatalogueFor = _ => null;
-        internal static Func<SessionStatus, Version?> CodexVersionFor = _ => null;
+        // What the session is running and could run, from RunSources' caches:
+        // the mirror asks on its peer pump, so none of these may wait on a disk
+        // walk or a process.
+        internal static Func<SessionStatus, RunReading?> ReadingFor = RunSourcesLive.Shared.ReadingFor;
+        internal static Func<SessionStatus, RunCatalogue?> CatalogueFor = RunSourcesLive.Shared.CatalogueFor;
+        internal static Func<SessionStatus, Version?> CodexVersionFor = RunSourcesLive.Shared.CodexVersionFor;
 
         private static readonly Lazy<RunControlsHost> _shared = new(Build);
 
