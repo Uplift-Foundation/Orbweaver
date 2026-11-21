@@ -29,24 +29,73 @@ namespace Orbweaver
 
     // What the session is actually running, as far as anything on this machine
     // says. Either half may be missing; At is when the source wrote it.
+    //
+    // Each part also carries its own time (ModelAt, EffortAt), because a merged
+    // reading can hold a model from one row and an effort from an older one: a
+    // row naming only the model must not make an old effort look fresh to a
+    // pending effort change (nadia's review). A part's time defaults to At.
     public sealed record RunReading(string? Model, string? Effort, DateTimeOffset? At, RunReadingSource Source)
     {
         public static readonly RunReading None = new(null, null, null, RunReadingSource.None);
 
-        // The newer of two readings, part by part: a reading that knows only the
-        // model must not wipe an effort an older one knew. Undated readings lose
-        // to dated ones, and between two undated ones the second wins.
+        private readonly DateTimeOffset? _modelAt;
+        private readonly DateTimeOffset? _effortAt;
+        private readonly bool _modelAtSet;
+        private readonly bool _effortAtSet;
+
+        public DateTimeOffset? ModelAt
+        {
+            get => Model is null ? null : _modelAtSet ? _modelAt : At;
+            init { _modelAt = value; _modelAtSet = true; }
+        }
+
+        public DateTimeOffset? EffortAt
+        {
+            get => Effort is null ? null : _effortAtSet ? _effortAt : At;
+            init { _effortAt = value; _effortAtSet = true; }
+        }
+
+        // Equal by what is read, not by whether a part's time was given
+        // explicitly or taken from At.
+        public bool Equals(RunReading? other) =>
+            other is not null && Model == other.Model && Effort == other.Effort && At == other.At
+            && Source == other.Source && ModelAt == other.ModelAt && EffortAt == other.EffortAt;
+
+        public override int GetHashCode() => HashCode.Combine(Model, Effort, At, Source, ModelAt, EffortAt);
+
+        // The time of the part a pending change is about.
+        public DateTimeOffset? TimeOf(RunField field) => field == RunField.Model ? ModelAt : EffortAt;
+
+        // The newer of two readings, part by part, each part judged by its own
+        // time: a reading that knows only the model must not wipe an effort an
+        // older one knew. Undated parts lose to dated ones, and between two
+        // undated parts the second wins.
         public static RunReading Merge(RunReading older, RunReading newer)
         {
-            if (older.At is { } a && newer.At is { } b && b < a) (older, newer) = (newer, older);
-            else if (newer.At is null && older.At is not null) (older, newer) = (newer, older);
+            var (model, modelAt) = Pick(older.Model, older.ModelAt, newer.Model, newer.ModelAt);
+            var (effort, effortAt) = Pick(older.Effort, older.EffortAt, newer.Effort, newer.EffortAt);
 
-            return new RunReading(
-                newer.Model ?? older.Model,
-                newer.Effort ?? older.Effort,
-                newer.At ?? older.At,
-                newer.Model is null && newer.Effort is null ? older.Source : newer.Source);
+            var newerWins = !(older.At is { } a && newer.At is { } b && b < a) && !(newer.At is null && older.At is not null);
+            var (first, second) = newerWins ? (older, newer) : (newer, older);
+
+            return new RunReading(model, effort, Max(older.At, newer.At),
+                second.Model is null && second.Effort is null ? first.Source : second.Source)
+            {
+                ModelAt = modelAt,
+                EffortAt = effortAt,
+            };
         }
+
+        private static (string?, DateTimeOffset?) Pick(string? a, DateTimeOffset? aAt, string? b, DateTimeOffset? bAt)
+        {
+            if (b is null) return (a, aAt);
+            if (a is null) return (b, bAt);
+            if (aAt is { } x && bAt is { } y) return y < x ? (a, aAt) : (b, bAt);
+            return bAt is null && aAt is not null ? (a, aAt) : (b, bAt);
+        }
+
+        private static DateTimeOffset? Max(DateTimeOffset? a, DateTimeOffset? b) =>
+            a is null ? b : b is null ? a : a > b ? a : b;
     }
 
     // One model a session may be moved to. EffortLevels is the model's own
@@ -83,6 +132,10 @@ namespace Orbweaver
     // newer reading agrees.
     public sealed record RunPending(RunField Field, string Value, DateTimeOffset At);
 
+    // A pending change that a reading contradicted or that timed out, with the
+    // control it belongs under.
+    public sealed record RunFailure(RunField Field, string Why);
+
     public sealed record RunRouteDecision(RunRoute Route, string? DisabledReason, bool SetsNewSessionDefault)
     {
         public static RunRouteDecision Unavailable(string reason) => new(RunRoute.None, reason, false);
@@ -90,12 +143,16 @@ namespace Orbweaver
 
     public static class RunText
     {
+        public const string EffortLabel = "Effort";
+        public const string ChipTip = "Model and effort for this session. Click to change them.";
         public const string ModelUnknown = "model not known yet";
         public const string EffortUnknown = "effort not known yet";
         public const string Applying = "applying…";
         public const string NoEffortSetting = "this model has no effort setting";
         public const string NoRoute = "this session has no way to change it from here";
         public const string CloudEffortUnreported = "not reported by a cloud session";
+        public const string CodexVersionUnknown = "checking Codex version…";
+        public const string StillApplying = "another change to this session is still being sent; try again in a moment";
         public const string ClaudeTypedDefault =
             "Typing this into the terminal also saves it as Claude Code's default for new sessions.";
         public const string CodexPickerDefault =
@@ -149,9 +206,11 @@ namespace Orbweaver
 
                 case RunCli.Codex:
                     if (!hasPane) return RunRouteDecision.Unavailable(RunText.NoRoute);
-                    // An unknown version is assumed current: the typed form's
-                    // refusal names the problem, and nothing is saved by it.
-                    return new(RunRoute.Typed, null, codexVersion is { } v && v < CodexTypedArguments);
+                    // Never typed blind: on a Codex before 0.164 the argument form
+                    // opens the picker and the rest of the line lands in it. So
+                    // until the version is read the controls wait (lead's ruling).
+                    if (codexVersion is not { } v) return RunRouteDecision.Unavailable(RunText.CodexVersionUnknown);
+                    return new(RunRoute.Typed, null, v < CodexTypedArguments);
 
                 case RunCli.Grok:
                     return hasPane
@@ -188,21 +247,23 @@ namespace Orbweaver
         // cleared when a reading at or after it agrees, reported when a reading
         // after it disagrees, and reported when it outlives the timeout. A
         // reading older than the set says nothing about it either way.
-        public static (IReadOnlyList<RunPending> Still, IReadOnlyList<string> Failures) Reconcile(
+        public static (IReadOnlyList<RunPending> Still, IReadOnlyList<RunFailure> Failures) Reconcile(
             IReadOnlyList<RunPending> pending, RunReading reading, DateTimeOffset now, TimeSpan timeout,
             RunCatalogue? catalogue = null)
         {
             var still = new List<RunPending>();
-            var failures = new List<string>();
+            var failures = new List<RunFailure>();
 
             foreach (var p in pending)
             {
                 var actual = p.Field == RunField.Model ? reading.Model : reading.Effort;
-                var fresh = reading.At is { } at && at >= p.At && actual is not null;
+                // Judged against the time of the part it is about, not the
+                // reading's newest row.
+                var fresh = reading.TimeOf(p.Field) is { } at && at >= p.At && actual is not null;
 
                 if (fresh && Same(p.Field, p.Value, actual!, catalogue)) continue;
-                if (fresh) { failures.Add(RunText.Contradicted(p.Field, p.Value, actual)); continue; }
-                if (now - p.At > timeout) { failures.Add(RunText.TimedOut(p.Value)); continue; }
+                if (fresh) { failures.Add(new(p.Field, RunText.Contradicted(p.Field, p.Value, actual))); continue; }
+                if (now - p.At > timeout) { failures.Add(new(p.Field, RunText.TimedOut(p.Value))); continue; }
 
                 still.Add(p);
             }
@@ -240,7 +301,8 @@ namespace Orbweaver
         public static RemoteRunOptions Resolve(
             RunCli cli, RunRouteDecision route, RunReading reading, RunCatalogue catalogue,
             IReadOnlyList<RunPending> pending,
-            string? modelLockedReason = null, string? effortUnavailableReason = null)
+            string? modelLockedReason = null, string? effortUnavailableReason = null,
+            IReadOnlyList<RunFailure>? failures = null)
         {
             var pendingModel = pending.LastOrDefault(p => p.Field == RunField.Model)?.Value;
             var pendingEffort = pending.LastOrDefault(p => p.Field == RunField.Effort)?.Value;
@@ -249,16 +311,30 @@ namespace Orbweaver
             var current = catalogue.Find(modelId);
 
             // The model the session runs is always listed, even when the
-            // catalogue does not have it (the OpenClaw rule).
+            // catalogue does not have it (the OpenClaw rule) — and so is the
+            // confirmed one while another is pending, so both ids the wire
+            // carries are among the choices.
             var models = catalogue.Models.Select(m => new RemoteRunChoice(m.Id, m.Label)).ToList();
-            if (modelId is not null && current is null) models.Insert(0, new RemoteRunChoice(modelId, modelId));
+            var confirmedModel = reading.Model is null ? null : catalogue.Find(reading.Model)?.Id ?? reading.Model;
+            foreach (var extra in new[] { confirmedModel, modelId }.Distinct())
+                if (extra is not null && catalogue.Find(extra) is null && models.All(m => m.Id != extra))
+                    models.Insert(0, new RemoteRunChoice(extra, extra));
             var shownModelId = current?.Id ?? modelId;
 
+            // Effort ids in the level's own spelling: the wire and the phone
+            // match ids exactly, so a reading of "High" must come out as "high".
+            // A value outside the levels goes at the end, since the choice order
+            // is the dial order on every platform.
             var levels = Levels(cli, current, catalogue, modelId);
-            var effortId = pendingEffort ?? reading.Effort;
             var effortChoices = (levels ?? Array.Empty<string>()).Select(l => new RemoteRunChoice(l, l)).ToList();
-            if (effortId is not null && levels is not null && !levels.Contains(effortId, StringComparer.OrdinalIgnoreCase))
-                effortChoices.Insert(0, new RemoteRunChoice(effortId, effortId));
+            string? Spell(string? e) => e is null ? null
+                : effortChoices.FirstOrDefault(c => string.Equals(c.Id, e, StringComparison.OrdinalIgnoreCase))?.Id ?? e;
+            var effortId = Spell(pendingEffort ?? reading.Effort);
+            var confirmedEffort = Spell(reading.Effort);
+            if (levels is not null)
+                foreach (var extra in new[] { confirmedEffort, effortId }.Distinct())
+                    if (extra is not null && effortChoices.All(c => c.Id != extra))
+                        effortChoices.Add(new RemoteRunChoice(extra, extra));
 
             var routeReason = route.Route == RunRoute.None ? route.DisabledReason ?? RunText.NoRoute : null;
             var modelOff = routeReason ?? modelLockedReason;
@@ -289,10 +365,13 @@ namespace Orbweaver
                 EffortPending = pendingEffort is not null,
                 Source = reading.Source,
                 DefaultWarning = RunRoutes.DefaultWarning(cli, route),
+                SavesDefault = route.SetsNewSessionDefault,
                 HasFast = false,
                 HasTimeLimit = false,
-                ConfirmedModelId = reading.Model is null ? null : catalogue.Find(reading.Model)?.Id ?? reading.Model,
-                ConfirmedEffortId = reading.Effort,
+                ConfirmedModelId = confirmedModel,
+                ConfirmedEffortId = confirmedEffort,
+                ModelFailure = failures?.LastOrDefault(f => f.Field == RunField.Model)?.Why,
+                EffortFailure = failures?.LastOrDefault(f => f.Field == RunField.Effort)?.Why,
             };
         }
 

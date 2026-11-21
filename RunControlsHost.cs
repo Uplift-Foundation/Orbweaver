@@ -80,7 +80,7 @@ namespace Orbweaver
 
         private static string Key(SessionStatus status) => status.SessionId;
 
-        internal const string CheckingCodexVersion = "checking Codex version…";
+        internal const string CheckingCodexVersion = RunText.CodexVersionUnknown;
 
         // Until a Codex session's version is known, neither form can be chosen
         // safely: "/model x" opens the old picker and a digit means nothing to
@@ -104,7 +104,11 @@ namespace Orbweaver
             var reading = _seams.ReadingFor(status) ?? RunReading.None;
             var catalogue = _seams.CatalogueFor(status) ?? RunCatalogue.Empty;
             var pending = Reconcile(status, cli, reading, catalogue);
-            return RunControlsResolver.Resolve(cli, RouteFor(status, cli), reading, catalogue, pending);
+            IReadOnlyList<RunFailure> failures;
+            lock (_gate)
+                failures = _failures.Where(f => f.Key.Session == Key(status))
+                    .Select(f => new RunFailure(f.Key.Field, f.Value)).ToList();
+            return RunControlsResolver.Resolve(cli, RouteFor(status, cli), reading, catalogue, pending, failures: failures);
         }
 
         // The sentence for a field's last set that a reading contradicted or that
@@ -122,16 +126,11 @@ namespace Orbweaver
             lock (_gate)
             {
                 if (!_pending.TryGetValue(Key(status), out var pending) || pending.Count == 0) return [];
-                // One field at a time, so each failure sentence is filed under
-                // the field whose set it reports.
-                var kept = new List<RunPending>();
-                foreach (var p in pending)
-                {
-                    var (still1, failures) = RunPendingRules.Reconcile([p], reading, _seams.Now(),
-                        RunPendingRules.TimeoutFor(cli), catalogue);
-                    kept.AddRange(still1);
-                    if (failures.Count > 0) _failures[(Key(status), p.Field)] = failures[0];
-                }
+                // Each failure is filed under the field whose set it reports, and
+                // stays until that field is set again.
+                var (kept, failures) = RunPendingRules.Reconcile(pending, reading, _seams.Now(),
+                    RunPendingRules.TimeoutFor(cli), catalogue);
+                foreach (var f in failures) _failures[(Key(status), f.Field)] = f.Why;
                 still = kept;
                 moved = kept.Count != pending.Count;
                 if (kept.Count == 0) _pending.Remove(Key(status));

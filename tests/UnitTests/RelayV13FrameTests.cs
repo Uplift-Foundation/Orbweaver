@@ -37,6 +37,7 @@ public class RelayV13FrameTests
         Assert.Equal("x x", RunFrames.Clean("x\u007fx", 10));
         Assert.Equal("ab…", RunFrames.Clean("abcdef", 3));
         Assert.Equal("id", RunFrames.Label("id", "\t\n"));
+        Assert.Equal("id", RunFrames.Label("id", new string(' ', 80)));
         Assert.Null(RunFrames.Reason(null));
     }
 

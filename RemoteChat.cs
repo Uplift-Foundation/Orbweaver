@@ -718,6 +718,12 @@ namespace Orbweaver
         // The line under the controls when the route also changes the default
         // for new sessions (Claude Code's typed route, a Codex before 0.164).
         public string? DefaultWarning { get; init; }
+        public bool SavesDefault { get; init; }
+
+        // The last change to that field a reading contradicted or that timed
+        // out; null once a newer change is made.
+        public string? ModelFailure { get; init; }
+        public string? EffortFailure { get; init; }
 
         // OpenClaw's extras. Every other CLI has neither.
         public bool HasFast { get; init; } = true;

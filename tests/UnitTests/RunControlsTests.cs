@@ -35,7 +35,10 @@ public class RunControlsTests
 
         var merged = RunReading.Merge(older, newer);
 
-        Assert.Equal(new RunReading("sonnet", "high", T0.AddSeconds(5), RunReadingSource.PaneFooter), merged);
+        Assert.Equal(new RunReading("sonnet", "high", T0.AddSeconds(5), RunReadingSource.PaneFooter) { EffortAt = T0 }, merged);
+        Assert.NotEqual(merged, merged with { EffortAt = T0.AddSeconds(1) });
+        Assert.False(merged.Equals(null));
+        Assert.Equal(merged.GetHashCode(), (merged with { }).GetHashCode());
     }
 
     [Fact]
@@ -142,13 +145,18 @@ public class RunControlsTests
     [InlineData("0.164.0", false)]
     [InlineData("0.163.0", true)]
     [InlineData("0.154.0", true)]
-    [InlineData(null, false)]
-    public void CodexTypesAndWarnsOnlyBeforeTheArgumentForm(string? version, bool warns)
+    public void CodexTypesAndWarnsOnlyBeforeTheArgumentForm(string version, bool warns)
     {
-        var route = RunRoutes.For(RunCli.Codex, true, null, false, version is null ? null : Version.Parse(version));
+        var route = RunRoutes.For(RunCli.Codex, true, null, false, Version.Parse(version));
 
         Assert.Equal(new RunRouteDecision(RunRoute.Typed, null, warns), route);
         Assert.Equal(warns ? RunText.CodexPickerDefault : null, RunRoutes.DefaultWarning(RunCli.Codex, route));
+    }
+
+    [Fact]
+    public void ACodexWhoseVersionIsNotKnownYetWaitsRatherThanTypingBlind()
+    {
+        Assert.Equal(RunRouteDecision.Unavailable(RunText.CodexVersionUnknown), RunRoutes.For(RunCli.Codex, true, null, false));
     }
 
     [Theory]
@@ -216,7 +224,7 @@ public class RunControlsTests
 
         var (_, failures) = RunPendingRules.Reconcile(pending, reading, T0, TimeSpan.FromMinutes(1));
 
-        Assert.Equal(new[] { RunText.Contradicted(RunField.Model, "opus", "claude-opus-5-5") }, failures);
+        Assert.Equal(new[] { new RunFailure(RunField.Model, RunText.Contradicted(RunField.Model, "opus", "claude-opus-5-5")) }, failures);
     }
 
     [Fact]
@@ -228,7 +236,7 @@ public class RunControlsTests
         var (still, failures) = RunPendingRules.Reconcile(pending, reading, T0.AddSeconds(2), TimeSpan.FromMinutes(1));
 
         Assert.Empty(still);
-        Assert.Equal(new[] { "The effort level didn't change to high; the session is on medium." }, failures);
+        Assert.Equal(new[] { new RunFailure(RunField.Effort, "The effort level didn't change to high; the session is on medium.") }, failures);
     }
 
     [Fact]
@@ -254,6 +262,62 @@ public class RunControlsTests
         Assert.Equal(pending, still);
     }
 
+    // nadia's case: effort pending since T1, a model-only row at T2. The old
+    // effort is not fresh just because the reading has a newer row.
+    [Fact]
+    public void AModelOnlyRowDoesNotFailAPendingEffort()
+    {
+        var older = new RunReading("opus", "high", T0, RunReadingSource.Transcript);
+        var modelOnly = new RunReading("sonnet", null, T0.AddSeconds(20), RunReadingSource.Transcript);
+        var merged = RunReading.Merge(older, modelOnly);
+        var pending = new[] { new RunPending(RunField.Effort, "xhigh", T0.AddSeconds(10)) };
+
+        var (still, failures) = RunPendingRules.Reconcile(pending, merged, T0.AddSeconds(20), TimeSpan.FromMinutes(10));
+
+        Assert.Equal(T0, merged.EffortAt);
+        Assert.Equal(T0.AddSeconds(20), merged.ModelAt);
+        Assert.Equal(pending, still);
+        Assert.Empty(failures);
+    }
+
+    // The control: a newer row that does carry a disagreeing effort fails it.
+    [Fact]
+    public void ANewerRowWithADisagreeingEffortDoesFailIt()
+    {
+        var merged = RunReading.Merge(
+            new RunReading("opus", "high", T0, RunReadingSource.Transcript),
+            new RunReading("sonnet", "medium", T0.AddSeconds(20), RunReadingSource.Transcript));
+        var pending = new[] { new RunPending(RunField.Effort, "xhigh", T0.AddSeconds(10)) };
+
+        var (_, failures) = RunPendingRules.Reconcile(pending, merged, T0.AddSeconds(20), TimeSpan.FromMinutes(10));
+
+        Assert.Equal(RunField.Effort, Assert.Single(failures).Field);
+    }
+
+    [Fact]
+    public void PartTimesDefaultToTheReadingsTimeAndAreNullForAMissingPart()
+    {
+        var r = new RunReading("opus", null, T0, RunReadingSource.Transcript);
+
+        Assert.Equal(T0, r.ModelAt);
+        Assert.Null(r.EffortAt);
+        Assert.Equal(T0, r.TimeOf(RunField.Model));
+        Assert.Null(r.TimeOf(RunField.Effort));
+        Assert.Null((r with { ModelAt = null }).ModelAt);
+    }
+
+    [Fact]
+    public void MergeKeepsTheOlderPartWhenTheNewerOnesIsOlderThanIt()
+    {
+        var a = new RunReading("opus", "high", T0.AddSeconds(30), RunReadingSource.Transcript) { EffortAt = T0.AddSeconds(30) };
+        var b = new RunReading("sonnet", "low", T0.AddSeconds(40), RunReadingSource.Rollout) { EffortAt = T0 };
+
+        var m = RunReading.Merge(a, b);
+
+        Assert.Equal(("sonnet", "high"), (m.Model, m.Effort));
+        Assert.Equal(T0.AddSeconds(40), m.At);
+    }
+
     [Fact]
     public void AnUndatedReadingSaysNothingAboutAPendingSet()
     {
@@ -274,7 +338,7 @@ public class RunControlsTests
         var (still, failures) = RunPendingRules.Reconcile(pending, RunReading.None, T0.AddSeconds(16), TimeSpan.FromSeconds(15));
 
         Assert.Empty(still);
-        Assert.Equal(new[] { RunText.TimedOut("sonnet") }, failures);
+        Assert.Equal(new[] { new RunFailure(RunField.Model, RunText.TimedOut("sonnet")) }, failures);
     }
 
     [Fact]
@@ -406,14 +470,53 @@ public class RunControlsTests
     }
 
     [Fact]
-    public void ARunningEffortMissingFromTheLevelsIsStillListed()
+    public void ARunningEffortMissingFromTheLevelsIsListedLast()
     {
         var reading = new RunReading("opus", "ultra", T0, RunReadingSource.Transcript);
 
         var o = RunControlsResolver.Resolve(RunCli.Claude, Control, reading, Claude, NonePending);
 
-        Assert.Equal("ultra", o.ThinkingChoices[0].Id);
+        Assert.Equal("ultra", o.ThinkingChoices[^1].Id);
+        Assert.Equal("low", o.ThinkingChoices[0].Id);
     }
+
+    [Fact]
+    public void EffortIdsComeOutInTheLevelsOwnSpelling()
+    {
+        var reading = new RunReading("opus", "HIGH", T0, RunReadingSource.Transcript);
+
+        var o = RunControlsResolver.Resolve(RunCli.Claude, Control, reading, Claude, new[] { new RunPending(RunField.Effort, "XHigh", T0) });
+
+        Assert.Equal("xhigh", o.ThinkingId);
+        Assert.Equal("high", o.ConfirmedEffortId);
+        Assert.Equal(Five, o.ThinkingChoices.Select(c => c.Id));
+    }
+
+    [Fact]
+    public void AConfirmedModelOutsideTheCatalogueIsListedWhileAnotherIsPending()
+    {
+        var reading = new RunReading("claude-fable-5-2", "high", T0, RunReadingSource.Transcript);
+
+        var o = RunControlsResolver.Resolve(RunCli.Claude, Control, reading, Claude, new[] { new RunPending(RunField.Model, "sonnet", T0) });
+
+        Assert.Equal("sonnet", o.ModelId);
+        Assert.Equal("claude-fable-5-2", o.ConfirmedModelId);
+        Assert.Contains(o.Models, m => m.Id == "claude-fable-5-2");
+    }
+
+    [Fact]
+    public void FailuresLandUnderTheirOwnField()
+    {
+        var failures = new[] { new RunFailure(RunField.Effort, "e1"), new RunFailure(RunField.Effort, "e2") };
+
+        var o = RunControlsResolver.Resolve(RunCli.Claude, Control, Reading0, Claude, NonePending, failures: failures);
+
+        Assert.Equal("e2", o.EffortFailure);
+        Assert.Null(o.ModelFailure);
+        Assert.Null(RunControlsResolver.Resolve(RunCli.Claude, Control, Reading0, Claude, NonePending).EffortFailure);
+    }
+
+    private static readonly RunReading Reading0 = new("opus", "high", T0, RunReadingSource.Transcript);
 
     [Fact]
     public void APendingSetIsDrawnAsTheChosenValue()
@@ -437,6 +540,8 @@ public class RunControlsTests
         var o = RunControlsResolver.Resolve(RunCli.Claude, new RunRouteDecision(RunRoute.Typed, null, true), RunReading.None, Claude, NonePending);
 
         Assert.Equal(RunText.ClaudeTypedDefault, o.DefaultWarning);
+        Assert.True(o.SavesDefault);
+        Assert.False(RunControlsResolver.Resolve(RunCli.Claude, Control, RunReading.None, Claude, NonePending).SavesDefault);
     }
 
     [Fact]

@@ -83,10 +83,12 @@ namespace Orbweaver
         }
 
         // A blank label (or one of nothing but controls) is the id.
+        // The blank test comes before the cut, as the contract orders it, so a
+        // label of nothing but blanks can never come out as blanks and "…".
         internal static string Label(string id, string label)
         {
-            var clean = Clean(label, MaxLabel);
-            return string.IsNullOrWhiteSpace(clean) ? id : clean;
+            var spaced = Clean(label, int.MaxValue);
+            return string.IsNullOrWhiteSpace(spaced) ? id : PromptFrames.Cut(spaced, MaxLabel);
         }
 
         internal static string? Reason(string? text) => text is null ? null : Clean(text, MaxReason);
