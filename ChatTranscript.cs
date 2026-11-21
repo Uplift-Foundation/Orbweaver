@@ -746,9 +746,16 @@ namespace Orbweaver
                 if (text.Length == 0 || OptionLine.IsMatch(text) || IsHorizontalRule(text) || IsHint(text)) break;
                 if (ContentColumn(lines[k]) < labelColumn) break;
 
+                // One column of slack: Claude Code wraps a line one short of
+                // the screen, so a word that would end exactly at the edge is
+                // still sent down. Measured on 2.1.330 in a 35-column pane
+                // (PaneFixtures.TeamLeadNarrowFreeTextTyped): "not fit on one row of
+                // a" (28) + " narrow" ends at 35 and was wrapped, and the row's
+                // last line was lost — the read-back of a typed answer then
+                // failed and the phone's answer was never sent (CB-406).
                 var firstWord = text.Split(' ', 2)[0];
                 var above = lines[previous].TrimEnd().Length;
-                if (above + 1 + firstWord.Length <= width) break;
+                if (above + 1 + firstWord.Length < width) break;
 
                 // A terminal also breaks a word at a hyphen ("cb313-" / "probe"); that one is
                 // rejoined without the space it never had. A label that truly ends in " -"

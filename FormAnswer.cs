@@ -76,14 +76,25 @@ namespace Orbweaver
         internal static bool IsUsableFreeText(string? text) =>
             !string.IsNullOrWhiteSpace(text) && text.IndexOfAny(new[] { '\n', '\r' }) < 0;
 
-        // Whether the row reads back as what was typed — whole, or cut short
-        // with an ellipsis on a narrow pane.
+        // Whether the row reads back as what was typed — whole, cut short with
+        // an ellipsis on a narrow pane, or cut at a word boundary.
+        //
+        // The last is CB-406. A narrow pane (an agent team's split leaves the
+        // lead 35 columns) wraps a typed answer over more rows than the parser
+        // joins (ChatTranscript's MaxWrappedLines), so the row reads back as
+        // the answer's opening words. That is the text on the row, and Enter
+        // is pressed only after it; refusing it left the answer typed in the
+        // field and unsent, and the phone's next press was typed into it.
+        // A terminal wraps only between words, so the cut must land on one:
+        // a shown label that stops mid-word is not this.
         internal static bool ShowsTyped(string label, string text)
         {
             var shown = label.Trim();
             var wanted = text.Trim();
             if (shown == wanted) return true;
-            return shown.EndsWith('…') && shown.Length > 1 && wanted.StartsWith(shown[..^1].TrimEnd(), StringComparison.Ordinal);
+            if (shown.EndsWith('…') && shown.Length > 1) return wanted.StartsWith(shown[..^1].TrimEnd(), StringComparison.Ordinal);
+            return shown.Length > 0 && wanted.Length > shown.Length && wanted[shown.Length] == ' '
+                   && wanted.StartsWith(shown, StringComparison.Ordinal);
         }
 
         private static async Task<MirrorProtocol.WirePrompt?> ReadAsync(

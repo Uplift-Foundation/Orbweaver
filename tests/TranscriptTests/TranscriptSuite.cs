@@ -1685,6 +1685,20 @@ namespace Orbweaver.Tests
                     named?.Prompt.Title ?? "null");
                 Check($"…and its screen as a dialog ({name})", PaneScreen.Classify(screen) == PaneReading.Dialog);
             }
+            // CB-406: an agent team's lead, its pane cut to 35 columns by the
+            // teammate's split. The form reads exactly as it does full width,
+            // and an answer typed into "Type something." reads back whole even
+            // where Claude Code wrapped a word that would have ended at the edge.
+            var teamForm = ChatTranscript.ParseAskForm(PaneFixtures.TeamLeadNarrowForm);
+            Check("a team lead's form in a 35-column pane reads as its five options",
+                teamForm is not null && teamForm.Prompt.Title == "Which colour?" && teamForm.Prompt.Options.Count == 5
+                && teamForm.FreeTextKey == "4",
+                teamForm?.Prompt.Title ?? "null");
+            var typedRow = ChatTranscript.ParseDialog(PaneFixtures.TeamLeadNarrowFreeTextTyped)?.Options.FirstOrDefault(o => o.Key == "4");
+            Check("…and a long typed answer wrapped over four rows reads back whole",
+                typedRow?.Label == "my own answer and this is a much longer reply that will not fit on one row of a narrow pane",
+                typedRow?.Label ?? "null");
+
             Check("the cut-off border really is a pure rule on the last line",
                 ChatTranscript.IsHorizontalRule(PaneFixtures.MacNamedFormClippedName.TrimEnd().Split('\n')[^1].Trim()));
 

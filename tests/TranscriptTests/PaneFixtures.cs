@@ -1727,5 +1727,106 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 
 
 """"");
+
+        // CB-406: mini, Claude Code 2.1.330, the lead of an agent team with one
+        // teammate. teammateMode tmux splits the window, so the lead's pane is
+        // 35 columns wide, and the form is drawn in it. captured 2026-11-21
+        internal static readonly string TeamLeadNarrowForm = Lf("""""
+
+
+❯ Use the AskUserQuestion tool
+  right now to ask me one
+  question: 'Which colour?' with
+  exactly 3 options: Red, Green,
+  Blue. Nothing else.
+
+⏺ Answered Claude's questions:
+  ⎿  · Which colour? → Red
+
+⏺ Red.
+
+✻ Brewed for 4s · done 2:03 PM
+
+❯ Create an agent team: spawn
+  exactly one teammate with the
+  Agent tool, name 'helper', whose
+  only task is: 'Reply OK to the
+  lead, then wait idle for further
+  messages.' Do not wait for it.
+  Then immediately use
+  AskUserQuestion to ask me 'Which
+  colour?' with exactly 3
+  options: Red, Green, Blue.
+
+⏺ Agent(Spawn idle helper)
+───────────────────────────────────
+ ☐ Colour
+
+Which colour?
+
+❯ 1. Red
+     Red
+  2. Green
+     Green
+  3. Blue
+     Blue
+  4. Type something.
+───────────────────────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate ·
+Esc to cancel
+""""");
+
+        // The same form with the cursor moved to "Type something." and a long
+        // answer typed into it, wrapped over four rows. The row's last line
+        // ("narrow pane") used to be dropped, because Claude Code wraps a line
+        // one column short of the edge. (PaneFixtures.TeamLeadNarrowFreeTextTyped)
+        internal static readonly string TeamLeadNarrowFreeTextTyped = Lf("""""
+  question: 'Which colour?' with
+  exactly 3 options: Red, Green,
+  Blue. Nothing else.
+
+⏺ Answered Claude's questions:
+  ⎿  · Which colour? → Red
+
+⏺ Red.
+
+✻ Brewed for 4s · done 2:03 PM
+
+❯ Create an agent team: spawn
+  exactly one teammate with the
+  Agent tool, name 'helper', whose
+  only task is: 'Reply OK to the
+  lead, then wait idle for further
+  messages.' Do not wait for it.
+  Then immediately use
+  AskUserQuestion to ask me 'Which
+  colour?' with exactly 3
+  options: Red, Green, Blue.
+
+⏺ Agent(Spawn idle helper)
+───────────────────────────────────
+ ☐ Colour
+
+Which colour?
+
+  1. Red
+     Red
+  2. Green
+     Green
+  3. Blue
+     Blue
+❯ 4. my own answer and this is a
+     much longer reply that will
+     not fit on one row of a
+     narrow pane
+───────────────────────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate ·
+ctrl+g to edit in nano · Esc to
+cancel
+""""");
     }
 }
