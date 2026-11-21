@@ -1054,6 +1054,65 @@ public class RemoteMirrorChatSessionTests : IDisposable
         Assert.Empty(_typed);
     }
 
+    // CB-400: the far terminal is on the /mobile overlay. Over the real link the near
+    // panel gets its rows and one Close button, and a click presses Escape on the far
+    // side exactly once, having re-read that screen and found the same overlay there.
+    [AvaloniaFact]
+    public async Task AnOverlayOnTheFarScreenIsShownWithItsBodyAndCloseSendsEscapeOnce()
+    {
+        _farScreen = PaneFixtures.MobileOverlay80x50;
+        _farState = "waiting";
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        await PumpUntilAsync(() => session.Prompt is not null);
+
+        Assert.Equal("Get the Claude app on your phone", session.Prompt!.Title);
+        Assert.NotNull(session.Prompt.Body);
+        Assert.Contains(session.Prompt.Body!, r => r.Contains("Scan the QR code"));
+        var close = Assert.Single(session.Prompt.Options);
+        Assert.Equal(("Escape", "Close"), (close.Key, close.Label));
+
+        await session.AnswerAsync(close);
+
+        Assert.Equal(new[] { "Escape" }, _pressed);
+        Assert.Empty(_typed);
+    }
+
+    // The far screen moved on before the click (Esc by hand, or the session's own
+    // next screen): the answer carries the fingerprint of what was shown, the far
+    // side re-reads, and nothing is pressed. Esc at a working session would
+    // interrupt the turn.
+    [AvaloniaFact]
+    public async Task CloseAfterTheFarOverlayWentAwayPressesNothing()
+    {
+        _farScreen = PaneFixtures.MobileOverlay80x50;
+        _farState = "waiting";
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        await PumpUntilAsync(() => session.Prompt is not null);
+
+        _farScreen = PaneFixtures.MacPromptAfterEsc;
+        await session.AnswerAsync(session.Prompt!.Options[0]);
+
+        Assert.Empty(_pressed);
+    }
+
+    // The control: an ordinary far dialog carries no body, so the panel draws none.
+    [AvaloniaFact]
+    public async Task AnOrdinaryFarDialogCarriesNoBody()
+    {
+        _farScreen = PaneFixtures.MiniAskForm;
+        _farState = "waiting";
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        await PumpUntilAsync(() => session.Prompt is not null);
+
+        Assert.Null(session.Prompt!.Body);
+    }
+
     // A multiSelect over the real link: ticking is a digit, and the explicit
     // Submit button is Right on the far side — never a digit, never typed.
     [AvaloniaFact]

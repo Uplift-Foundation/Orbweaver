@@ -2086,6 +2086,148 @@ public partial class MirrorRoundTripTests : IDisposable
         Assert.Empty(harness.Pressed);
     }
 
+    // --- CB-400: a screen only Esc closes (the /mobile overlay) -----------------
+
+    // The far terminal is on the QR overlay. Over the real link the prompt arrives with
+    // its rows and one Close, and the answer presses Escape on the far pane exactly once.
+    [Fact]
+    public async Task AFarOverlayArrivesWithItsBodyAndCloseSendsEscapeOnce()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MobileOverlay80x50, Record = "waiting" };
+        harness.AddSession("evidence", WriteTranscript("overlay.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+
+        var (prompt, error) = await harness.Client.FetchPromptAsync("evidence");
+
+        Assert.Null(error);
+        Assert.Equal("Get the Claude app on your phone", prompt!.Title);
+        var close = Assert.Single(prompt.Options);
+        Assert.Equal(("Escape", "Close"), (close.Key, close.Label));
+        Assert.NotNull(prompt.Body);
+        Assert.Contains(prompt.Body!, r => r.Contains("Scan the QR code"));
+
+        Assert.Null(await harness.Client.AnswerPromptAsync("evidence", "Escape", prompt.Fingerprint));
+
+        Assert.Equal(new[] { "Escape" }, harness.Pressed);
+        Assert.Empty(harness.Typed);
+    }
+
+    // Once the far screen has changed, the same answer presses nothing: Esc at a working
+    // session interrupts the turn and a second one at an idle prompt opens the rewind picker.
+    [Fact]
+    public async Task AnEscapeAnswerAfterTheFarScreenChangedPressesNothing()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MobileOverlay80x50, Record = "waiting" };
+        harness.AddSession("evidence", WriteTranscript("overlay-gone.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+        var prompt = (await harness.Client.FetchPromptAsync("evidence")).Prompt!;
+
+        harness.Screen = PaneFixtures.MacPromptAfterEsc;
+
+        Assert.Equal(MirrorProtocol.ErrNoPrompt,
+            await harness.Client.AnswerPromptAsync("evidence", "Escape", prompt.Fingerprint));
+        Assert.Empty(harness.Pressed);
+    }
+
+    // And Escape can never be pressed on anything but the overlay: a numbered dialog
+    // does not offer it, so it is refused as a key that is not on the screen.
+    [Fact]
+    public async Task EscapeAskedOfANumberedDialogIsRefusedAndPressesNothing()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniExitDialog };
+        harness.AddSession("ll", WriteTranscript("not-overlay.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("ll");
+        var prompt = (await harness.Client.FetchPromptAsync("ll")).Prompt!;
+        Assert.Null(prompt.Body);
+
+        Assert.Equal(MirrorProtocol.ErrBadKey, await harness.Client.AnswerPromptAsync("ll", "Escape", prompt.Fingerprint));
+        Assert.Empty(harness.Pressed);
+    }
+
+    // Typed text is discarded by the overlay, never queued, so a send during it is
+    // refused with a reason that names the screen, whichever way the gate found out:
+    // the record says waiting (the screen is read to name it), or only the screen says.
+    [Theory]
+    [InlineData("waiting")]
+    [InlineData("idle")]
+    public async Task TypingDuringAnOverlayIsRefusedAndTheReasonNamesIt(string record)
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MobileOverlay80x50, Record = record };
+        harness.AddSession("openclaw", WriteTranscript("overlay-typing-" + record + ".jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("openclaw", "hello there");
+
+        Assert.Equal(MirrorProtocol.ErrNotAtPrompt, outcome.Error);
+        Assert.Equal(TypingGate.OverlayWhy("Get the Claude app on your phone"), outcome.Why);
+        Assert.Empty(harness.Typed);
+
+        // The near panel's sentence carries that reason, so the phone and the panel say the same thing.
+        Assert.Contains("Get the Claude app on your phone",
+            RemoteControlChatSession.TypingRefusal(outcome.Error, "openclaw", outcome.Why));
+    }
+
+    // The message route has no pane to read, so it cannot name the screen, but the far
+    // record's status rides back and the near note says the session is blocked on one.
+    [Fact]
+    public async Task AMessageToAWaitingSessionCarriesItsStatusBack()
+    {
+        var harness = new Harness(_dir, wireDelivery: true)
+        {
+            CanType = false,
+            CanDeliverAnswer = true,
+            DeliverAgentStatus = "waiting",
+        };
+        harness.AddSession("job-hunter", WriteTranscript("headless-waiting.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "hello");
+
+        Assert.Null(outcome.Error);
+        Assert.Equal(MirrorProtocol.ViaMessage, outcome.Via);
+        Assert.Equal("waiting", outcome.AgentStatus);
+        Assert.Equal("hello", Assert.Single(harness.Delivered).Text);
+
+        var note = RemoteControlChatSession.DeliveredRemotelyNote("job-hunter", outcome.AgentStatus);
+        Assert.Equal(
+            "Handed to job-hunter, but it is showing a screen that has to be closed or answered in its terminal first. "
+            + "It will read this once that is done.",
+            note);
+
+        // Controls: the other two arms keep their wording.
+        Assert.StartsWith("Handed to job-hunter. It's mid-turn", RemoteControlChatSession.DeliveredRemotelyNote("job-hunter", "working"));
+        Assert.StartsWith("Handed to job-hunter for its next turn.", RemoteControlChatSession.DeliveredRemotelyNote("job-hunter", "idle"));
+        Assert.StartsWith("Handed to job-hunter for its next turn.", RemoteControlChatSession.DeliveredRemotelyNote("job-hunter", null));
+    }
+
+    // The wire body is held to its bounds on the way in too: a far side that sends too
+    // many rows or rows that are too long cannot make this side draw an unbounded block.
+    [Fact]
+    public void ABodyOnTheWireIsBoundedWhenItIsDecoded()
+    {
+        var rows = Enumerable.Range(0, MirrorProtocol.MaxBodyLines + 40)
+            .Select(i => new string('x', MirrorProtocol.MaxBodyChars + 50)).ToList();
+        var wire = new MirrorProtocol.WirePrompt("t", new[] { new MirrorProtocol.WireOption("Escape", "Close") }, "fp", Body: rows);
+
+        var decoded = MirrorProtocol.DecodePrompt(MirrorProtocol.EncodePrompt(wire))!;
+
+        Assert.Equal(MirrorProtocol.MaxBodyLines, decoded.Body!.Count);
+        Assert.All(decoded.Body, r => Assert.Equal(MirrorProtocol.MaxBodyChars, r.Length));
+    }
+
+    // Either direction of version skew: a frame with no body decodes with none, which is
+    // what an older far side sends and what every ordinary dialog sends.
+    [Fact]
+    public void AFrameWithNoBodyDecodesWithNone()
+    {
+        const string json = "{\"title\":\"t\",\"options\":[{\"key\":\"1\",\"label\":\"Yes\"}],\"fp\":\"abc\"}";
+
+        var decoded = MirrorProtocol.DecodePrompt(System.Text.Encoding.UTF8.GetBytes(json))!;
+
+        Assert.Null(decoded.Body);
+        Assert.Null(AskFormView.FromWire(decoded).Body);
+    }
+
     [Fact]
     public async Task AKeyThatIsNotOnTheScreenIsRefused()
     {

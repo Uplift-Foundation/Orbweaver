@@ -1296,6 +1296,13 @@ namespace Orbweaver
                 $"Handed to {name}. It's mid-turn and will read this when that turn ends — "
                 + "the message shows here once it has.",
 
+            // CB-400: Claude Code accepts and queues a message for a session sitting on
+            // a screen it must be closed or answered at, so "for its next turn" would
+            // promise a turn that is not coming until someone deals with that screen.
+            DeliveryResult.Accepted when string.Equals(receipt.AgentStatus, "waiting", StringComparison.Ordinal) =>
+                $"Handed to {name}, but it is showing a screen that has to be closed or answered in its terminal first. "
+                + "It will read this once that is done.",
+
             DeliveryResult.Accepted =>
                 $"Handed to {name} for its next turn. It arrives as a message from {Brand.DisplayName}, "
                 + "not keystrokes, so built-in slash commands won't run.",
@@ -1504,9 +1511,20 @@ namespace Orbweaver
 
         private static string SetOrEmpty(string? value) => string.IsNullOrEmpty(value) ? "empty" : "set";
 
+        // TypingGate.OverlayWhy(title) is `it is showing "<title>", which has to be
+        // closed first`. The note wants the title back out of it; the pair is pinned
+        // by a test that builds the reason with OverlayWhy and reads it here.
+        private const string OverlayWhyOpen = "it is showing \"";
+        private const string OverlayWhyClose = "\", which has to be closed first";
+
         internal static string NotAtPromptNote(string? why) =>
-            "This terminal isn't at its prompt" + (string.IsNullOrEmpty(why) ? "" : " — " + why)
-            + ". Nothing was typed; answer that screen in the terminal and send again.";
+            why is not null && why.StartsWith(OverlayWhyOpen, StringComparison.Ordinal)
+                && why.EndsWith(OverlayWhyClose, StringComparison.Ordinal)
+                ? "Not sent: this session is showing \""
+                  + why[OverlayWhyOpen.Length..^OverlayWhyClose.Length]
+                  + "\". Close it above and send again. Your message is still in the box."
+                : "This terminal isn't at its prompt" + (string.IsNullOrEmpty(why) ? "" : " — " + why)
+                  + ". Nothing was typed; answer that screen in the terminal and send again.";
 
         // The body of a delivered message, unwrapped from the tag Claude Code's
         // own transcript holds it in.
@@ -1647,6 +1665,28 @@ namespace Orbweaver
                 // have been given in the terminal while it did.
                 if (!_waiting) return;
 
+                // CB-400: a screen that is not a question but has to be closed (the
+                // /mobile QR overlay). Read first, off the tmux capture when there
+                // is one and otherwise off the route's own reader (a Windows console
+                // has no tmux), and only for this: an ordinary dialog on a non-tmux
+                // route is still not read here. A prompt carrying the overlay's rows
+                // answers through a verified Escape (AnswerOverlayAsync), so its
+                // fingerprint is remembered the way a form's is.
+                var overlayScreen = screen ?? await ReadAnyRoute(_status);
+                if (screen is null && (generation != _generation || !_waiting)) return;
+
+                if (OverlayScreen.Read(overlayScreen) is { } overlay)
+                {
+                    // The same screen reads as an overlay twice over (Read here, Of
+                    // there), so Of always has a fingerprint to give.
+                    _overlayHash = PromptFingerprint.Of(overlayScreen)!.Hash;
+                    _formFingerprint = null;
+                    SetPrompt(OverlayScreen.ToPrompt(overlay));
+                    return;
+                }
+
+                _overlayHash = null;
+
                 // A prompt with no options is the honest outcome when the dialog
                 // could not be read: something is waiting, we cannot say what,
                 // and the panel offers the terminal instead of a guess.
@@ -1700,6 +1740,21 @@ namespace Orbweaver
         internal Func<SessionStatus, Task<string?>> Capture { get; init; } = TerminalFocuser.CapturePane;
         internal Func<SessionStatus, string, Task<bool>> TypeLiteral { get; init; } = TerminalFocuser.SendPaneText;
 
+        // CB-400: the overlay's two seams. ReadAnyRoute is the route-aware reader
+        // (tmux, kitty, WezTerm, a Windows console), used only to notice an
+        // overlay; CaptureAndPress is the verified press that re-reads, asks
+        // whether it is still the same overlay, and only then sends the key.
+        internal Func<SessionStatus, Task<string?>> ReadAnyRoute { get; init; } = RealReadAnyRoute;
+        internal Func<SessionStatus, string, Func<string?, bool>, Task<(bool Pressed, string? Before)>> CaptureAndPress { get; init; }
+            = TerminalFocuser.CaptureAndPress;
+
+        [ExcludeFromCodeCoverage]
+        private static Task<string?> RealReadAnyRoute(SessionStatus status) =>
+            ScreenReaders.For(status) is { } reader ? reader.ReadAsync(status) : Task.FromResult<string?>(null);
+
+        // The fingerprint of the overlay on show, or null when the prompt is anything else.
+        private string? _overlayHash;
+
         // The fingerprint of the question form on show, or null when the prompt
         // is an ordinary dialog (or nothing).
         private string? _formFingerprint;
@@ -1729,6 +1784,9 @@ namespace Orbweaver
         // does not.
         internal void SetPrompt(ChatPrompt? prompt)
         {
+            // A cleared prompt is no overlay, so a later ordinary dialog is never
+            // answered as one.
+            if (prompt is null) _overlayHash = null;
             Prompt = prompt;
             Dispatcher.UIThread.Post(() => PromptChanged?.Invoke());
         }
@@ -1746,6 +1804,12 @@ namespace Orbweaver
             if (!_format.ReplyEnabled())
             {
                 Note("Replying is off, so this can only be answered in the terminal.");
+                return;
+            }
+
+            if (_overlayHash is { } overlayHash)
+            {
+                await AnswerOverlayAsync(overlayHash);
                 return;
             }
 
@@ -1787,6 +1851,40 @@ namespace Orbweaver
             // Put it back. Clearing optimistically is right when the keystroke
             // lands, and leaves the panel silent about a session that is still
             // stopped when it doesn't.
+            if (_waiting) await RefreshPromptAsync();
+        }
+
+        internal const string OverlayClosedNote = "That screen has already closed.";
+        internal const string OverlayCloseFailedNote = "Couldn't close that from here. Press Esc in the terminal.";
+
+        // Close for an overlay. Escape is the one key here that is dangerous
+        // unchecked: at a working session it interrupts the turn, and at an idle
+        // prompt a second one opens the rewind picker. So it is never pressed
+        // blind: the press re-reads the screen, asks whether it is still the very
+        // overlay that was shown, and only then sends the key. One press per click,
+        // never a retry.
+        private async Task AnswerOverlayAsync(string hash)
+        {
+            SetPrompt(null);
+            _generation++;
+
+            (bool Pressed, string? Before) result;
+            try
+            {
+                result = await CaptureAndPress(
+                    _status, OverlayScreen.CloseKey, screen => PromptFingerprint.Of(screen)?.Hash == hash);
+            }
+            finally { _generation++; }
+
+            if (result.Pressed) return;
+
+            // Read, and not the overlay: it closed (here, in the terminal, or by
+            // itself) before the click landed. Anything else — no readable route,
+            // or the same overlay and a press that failed — is the terminal's job.
+            Note(result.Before is not null && PromptFingerprint.Of(result.Before)?.Hash != hash
+                ? OverlayClosedNote
+                : OverlayCloseFailedNote);
+
             if (_waiting) await RefreshPromptAsync();
         }
 

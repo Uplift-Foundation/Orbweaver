@@ -970,6 +970,12 @@ namespace Orbweaver
             agentStatus == "working"
                 ? $"Handed to {remoteName}. It's mid-turn and will read this when that turn ends — "
                   + "the message shows here once it has."
+                // CB-400: waiting means a screen that has to be closed or answered at
+                // its terminal; Claude Code queues the message behind it, and "next
+                // turn" would promise one that is not coming until that is done.
+                : agentStatus == "waiting"
+                    ? $"Handed to {remoteName}, but it is showing a screen that has to be closed or answered in its terminal first. "
+                      + "It will read this once that is done."
                 : $"Handed to {remoteName} for its next turn. It arrives as a message from {Brand.DisplayName}, "
                   + "not keystrokes, so built-in slash commands won't run.";
 
