@@ -259,4 +259,14 @@ public class RunSourcesTests
         d.Sources.CatalogueFor(Of(SessionSource.Grok, "/g/updates.jsonl"));
         Assert.Equal(1, d.Reads);
     }
+
+    [Fact]
+    public async Task The_suites_never_start_a_probe_and_the_live_claude_catalogue_is_then_the_aliases()
+    {
+        Assert.True(RunSourcesLive.ProbesOffForTests);
+        Assert.Same(RunSources.ClaudeFallback, RunSourcesLive.Shared.CatalogueFor(new SessionStatus { Source = SessionSource.ClaudeCode }));
+        await RunSourcesLive.Shared.LastProbe;
+        Assert.Same(RunSources.ClaudeFallback, RunSourcesLive.Shared.CatalogueFor(new SessionStatus { Source = SessionSource.ClaudeCode }));
+        Assert.Null(RunSourcesLive.Shared.CodexVersionFor(new SessionStatus { SessionId = "x", Source = SessionSource.Codex, SessionPid = Environment.ProcessId }));
+    }
 }
