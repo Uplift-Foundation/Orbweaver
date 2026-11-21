@@ -146,6 +146,8 @@ public class RelayRemoteTests
         public readonly List<(string Phone, string Session, JsonElement Body)> Windows = [];
         public void Reply(string phoneId, string? sessionId, string plaintext) { lock (this) Replies.Add((phoneId, sessionId, J(plaintext))); }
         public void Window(string phoneId, string sessionId, string plaintext) { lock (this) Windows.Add((phoneId, sessionId, J(plaintext))); }
+        public readonly List<(string Phone, string Session, string Plain)> Runs = [];
+        public void Run(string phoneId, string sessionId, string plaintext) { lock (this) Runs.Add((phoneId, sessionId, plaintext)); }
         public readonly List<(string Phone, string Hash, JsonElement Body)> Images = [];
         public bool ImagesDeliver = true;
         public Action? OnImage;
@@ -186,7 +188,7 @@ public class RelayRemoteTests
         public Func<SessionStatus, string, Task<string?>> Summarizer = (_, reply) => Task.FromResult<string?>("summary of " + reply);
 
         public World(bool windows = false, string? binary = "/bin/claude", (string?, string?)? place = null, int? pid = 42,
-            bool accounts = true, bool summarizes = true, string? paneShows = null)
+            bool accounts = true, bool summarizes = true, string? paneShows = null, IRunControls? run = null)
         {
             PaneShows = paneShows;
             Windows = windows;
@@ -219,6 +221,7 @@ public class RelayRemoteTests
                 Accounts = accounts ? new RelayRemote.AccountSeams(_ => AccountChoices, _ => Designated) : null,
                 Summarize = summarizes ? (s, reply) => Summarizer(s, reply) : null,
                 Settle = () => Task.CompletedTask,
+                RunControls = run,
             }, Sent, Nonces);
         }
 
@@ -975,5 +978,204 @@ public class RelayRemoteTests
     {
         var w = new World();
         Assert.Empty(w.Remote.Watchers("nope"));
+    }
+
+    // ---- CB-404: frames-v13 set_run and run ------------------------------------------
+
+    private sealed class FakeRun : IRunControls
+    {
+        public RunState? State = Run("opus");
+        public RunSetResult Result = RunSetResult.Sent;
+        public bool Throws;
+        public readonly List<(string Field, string Value)> Sets = [];
+        public int Reads;
+        public Action? OnRead;
+
+        public RunState? Read(SessionStatus status)
+        {
+            Reads++;
+            OnRead?.Invoke();
+            if (Throws) throw new IOException("busy");
+            return State;
+        }
+
+        public Task<RunSetResult> SetAsync(SessionStatus status, string field, string value)
+        {
+            Sets.Add((field, value));
+            return Task.FromResult(Result);
+        }
+    }
+
+    private static RunState Run(string model, string? off = null) => new(
+        new RunFieldState(model, model, [new("opus", "Opus"), new("sonnet", "Sonnet")], off, false),
+        new RunFieldState("high", "high", [new("low", "low"), new("high", "high")], null, false));
+
+    private static void Ticks(World w, int n)
+    {
+        for (var i = 0; i < n; i++) w.Remote.Tick(w.Now);
+    }
+
+    [Fact]
+    public async Task Set_run_reaches_the_host_and_answers_ok_set_then_sends_the_state()
+    {
+        var run = new FakeRun();
+        var w = new World(run: run);
+        w.Files["/t"] = Lines(1);
+        w.Sessions(("s1", Watched("/t")));
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r0", "s1", null));
+
+        await w.Remote.HandleAsync("ph", [], new SetRunRequest("r1", "s1", "model", "sonnet"));
+
+        Assert.Equal(("model", "sonnet"), run.Sets.Single());
+        var ok = w.Sent.Replies.Last();
+        Assert.Equal(("s1", "ok", "set", "s1"), (ok.Session, ok.Body.GetProperty("t").GetString(),
+            ok.Body.GetProperty("code").GetString(), ok.Body.GetProperty("session_id").GetString()));
+        // The state follows the answer at once, not a tick later.
+        var frame = w.Sent.Runs.Single();
+        Assert.Equal(("ph", "s1"), (frame.Phone, frame.Session));
+        Assert.Equal("opus", J(frame.Plain).GetProperty("model").GetProperty("id").GetString());
+    }
+
+    [Theory]
+    [InlineData(1, "bad_value", null)]
+    [InlineData(2, "unavailable", "no bridge")]
+    [InlineData(3, "failed", "Model 'x' not found")]
+    public async Task Set_run_refusals_carry_their_code_and_why(int kind, string code, string? why)
+    {
+        var run = new FakeRun { Result = new RunSetResult((RunSetKind)kind, why) };
+        var w = new World(run: run);
+        w.Sessions(("s1", Status()));
+
+        await w.Remote.HandleAsync("ph", [], new SetRunRequest("r1", "s1", "effort", "high"));
+
+        var err = w.Sent.Replies.Single().Body;
+        Assert.Equal(("err", code), (err.GetProperty("t").GetString(), err.GetProperty("code").GetString()));
+        Assert.Equal(why, err.TryGetProperty("why", out var y) ? y.GetString() : null);
+        Assert.Empty(w.Sent.Runs);
+    }
+
+    [Fact]
+    public async Task Set_run_checks_session_then_field_then_value_before_the_host()
+    {
+        var run = new FakeRun();
+        var w = new World(run: run);
+        w.Sessions(("s1", Status()));
+
+        await w.Remote.HandleAsync("ph", [], new SetRunRequest("a", "nope", "model", "opus"));
+        await w.Remote.HandleAsync("ph", [], new SetRunRequest("b", "s1", null, "opus"));
+        await w.Remote.HandleAsync("ph", [], new SetRunRequest("c", "s1", "model", null));
+
+        Assert.Equal(["unknown_session", "bad_field", "bad_value"],
+            w.Sent.Replies.Select(r => r.Body.GetProperty("code").GetString()).ToArray());
+        Assert.Empty(run.Sets);
+    }
+
+    [Fact]
+    public async Task Set_run_on_a_desk_with_no_run_controls_is_unavailable_with_a_why()
+    {
+        var w = new World();
+        w.Sessions(("s1", Status()));
+
+        await w.Remote.HandleAsync("ph", [], new SetRunRequest("r", "s1", "model", "opus"));
+
+        var err = w.Sent.Replies.Single().Body;
+        Assert.Equal(("unavailable", RelayRemote.NoRunControlsWhy),
+            (err.GetProperty("code").GetString(), err.GetProperty("why").GetString()));
+        // And no state frames either.
+        w.Remote.SendRunStates();
+        Assert.Empty(w.Sent.Runs);
+    }
+
+    [Fact]
+    public async Task Run_frames_go_to_watchers_only_when_their_bytes_change()
+    {
+        var run = new FakeRun();
+        var w = new World(run: run);
+        w.Files["/t"] = Lines(1);
+        w.Files["/u"] = Lines(1);
+        w.Sessions(("s1", Watched("/t")), ("s2", Watched("/u")));
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r0", "s1", null));
+        await w.Remote.HandleAsync("ph2", [], new WatchRequest("r1", "s1", null));
+
+        Ticks(w, RelayRemote.RunEveryTicks - 1);
+        Assert.Empty(w.Sent.Runs);                                  // not at the window cadence
+        Ticks(w, 1);
+        Assert.Equal(["ph", "ph2"], w.Sent.Runs.Select(r => r.Phone).Order().ToArray());
+        Assert.Equal(1, run.Reads);                                 // one read for two watchers; s2 unwatched
+        Assert.All(w.Sent.Runs, r => Assert.Equal("s1", r.Session));
+
+        Ticks(w, RelayRemote.RunEveryTicks);
+        Assert.Equal(2, w.Sent.Runs.Count);                         // unchanged: nothing
+
+        run.State = Run("sonnet");
+        Ticks(w, RelayRemote.RunEveryTicks);
+        Assert.Equal(4, w.Sent.Runs.Count);
+        Assert.Equal("sonnet", J(w.Sent.Runs.Last().Plain).GetProperty("model").GetProperty("id").GetString());
+    }
+
+    [Fact]
+    public async Task A_rewatch_is_sent_the_current_state_again_and_an_unwatch_stops_it()
+    {
+        var run = new FakeRun();
+        var w = new World(run: run);
+        w.Files["/t"] = Lines(1);
+        w.Sessions(("s1", Watched("/t")));
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r0", "s1", null));
+        w.Remote.SendRunStates();
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r1", "s1", null));
+        w.Remote.SendRunStates();
+        Assert.Equal(2, w.Sent.Runs.Count);
+
+        await w.Remote.HandleAsync("ph", [], new UnwatchRequest("r2", "s1"));
+        run.State = Run("sonnet");
+        w.Remote.SendRunStates();
+        Assert.Equal(2, w.Sent.Runs.Count);
+
+        // A reconnect clears every watch, and with them what each was sent.
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r3", "s1", null));
+        w.Remote.SendRunStates();
+        w.Remote.Disconnected();
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r4", "s1", null));
+        w.Remote.SendRunStates();
+        Assert.Equal(4, w.Sent.Runs.Count);
+    }
+
+    [Fact]
+    public async Task A_host_that_throws_or_offers_nothing_sends_no_frame_and_logs_only_the_kind()
+    {
+        var run = new FakeRun { Throws = true };
+        var w = new World(run: run);
+        w.Files["/t"] = Lines(1);
+        w.Sessions(("s1", Watched("/t")));
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r0", "s1", null));
+
+        w.Remote.SendRunStates();
+        Assert.Empty(w.Sent.Runs);
+        Assert.Contains("run s1: IOException", w.Log);
+
+        run.Throws = false;
+        run.State = null;
+        w.Remote.SendRunStates();
+        Assert.Empty(w.Sent.Runs);
+    }
+
+    [Fact]
+    public async Task A_session_or_watch_that_goes_while_the_host_is_read_is_not_sent_to()
+    {
+        var run = new FakeRun();
+        var w = new World(run: run);
+        w.Files["/t"] = Lines(1);
+        w.Files["/u"] = Lines(1);
+        w.Sessions(("s1", Watched("/t")), ("s2", Watched("/u")));
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r0", "s1", null));
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r1", "s2", null));
+
+        // The read is not under the lock: while s1 is being read, both sessions leave
+        // the roster, which ends both watches. Neither is sent a frame.
+        run.OnRead = () => w.Sessions();
+        w.Remote.SendRunStates();
+
+        Assert.Empty(w.Sent.Runs);
+        Assert.Equal(1, run.Reads);
     }
 }

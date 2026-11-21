@@ -4417,7 +4417,7 @@ public partial class MirrorRoundTripTests : IDisposable
         public Harness(string dir, bool wireDelivery = false, bool machineUserConfigDirs = false, bool wireSlash = false,
             LastTurnCache? lastTurns = null, bool ungated = false, bool noTypeLiteral = false,
             bool noPressKey = false, bool noCanReadPane = false, Func<PeerFileEnv>? files = null,
-            Func<IReadOnlyList<AgentRoster.Entry>?>? peekAgents = null)
+            Func<IReadOnlyList<AgentRoster.Entry>?>? peekAgents = null, IRunControls? run = null)
         {
             _dir = dir;
 
@@ -4494,7 +4494,9 @@ public partial class MirrorRoundTripTests : IDisposable
                 // CB-363: null unless a test serves files, so every harness
                 // above keeps a far side that never says rf=1.
                 Files: files,
-                PeekAgents: peekAgents));
+                PeekAgents: peekAgents,
+                // CB-404: null unless a test drives run controls.
+                RunControls: run));
 
             // The far machine's clock, parked beside the fixture's own instant.
             //

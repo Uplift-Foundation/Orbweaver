@@ -204,6 +204,9 @@ namespace Orbweaver
 
             public bool ImageWindow(string phoneId, string hash, string plaintext) =>
                 client.Dispatch(() => client._link.SendImageWindow(phoneId, hash, plaintext));
+
+            public void Run(string phoneId, string sessionId, string plaintext) =>
+                client.Dispatch(() => client._link.SendRun(phoneId, sessionId, plaintext));
         }
 
         // The real desk: the session's own transcript and parser, the
@@ -231,6 +234,8 @@ namespace Orbweaver
             Summarize = RelayAccounts.Summarize,
             Settle = () => Task.Delay(500),
             Browse = DefaultBrowseSeams(),
+            // CB-404: the same host the panel and the mirror use.
+            RunControls = RunControlsLive.Shared,
         };
 
         // CB-339: the real folder picker seam: the real disk, the settings as they are on each
