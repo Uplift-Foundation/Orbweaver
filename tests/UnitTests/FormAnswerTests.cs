@@ -113,6 +113,36 @@ public class FormAnswerTests
         Assert.DoesNotContain("my own answer", said[0]);
     }
 
+    // Every arm of the diagnosis: no form read at all, a form without the row,
+    // and a row that is the start of what was typed.
+    [Fact]
+    public void TheDiagnosisReadsEveryShapeOfARefusalAsNumbers()
+    {
+        Assert.Equal("readback stage=row read=none same-form=0 cursor=none free=3 shown=0 wanted=0 prefix=0 rows=0",
+            FormAnswer.ReadBackDiagnosis("row", null, null, "3", null, false));
+
+        var form = MirrorProtocol.PromptFromScreen(PaneFixtures.QaTeamLeadShortPaneTyped)!;
+        Assert.Equal("readback stage=typed read=form same-form=1 cursor=3 free=9 shown=0 wanted=4 prefix=0 rows=0",
+            FormAnswer.ReadBackDiagnosis("typed", form, PaneFixtures.QaTeamLeadShortPaneTyped, "9", "four", true));
+        Assert.Equal("readback stage=typed read=form same-form=1 cursor=3 free=3 shown=83 wanted=88 prefix=1 rows=4",
+            FormAnswer.ReadBackDiagnosis("typed", form, PaneFixtures.QaTeamLeadShortPaneTyped, "3",
+                "QA test, ignore: a long peer answer that wraps over several rows of the narrow pane more", true));
+    }
+
+    // The screen stops being a form after the arrows: the row stage refuses
+    // with nothing read, and says so.
+    [Fact]
+    public async Task AFormThatVanishesBeforeTheRowIsReachedIsDiagnosedAsNoneRead()
+    {
+        var pane = new Pane(PaneFixtures.QaFormQ1);
+        pane.AfterPress = k => k == "Down" ? PaneFixtures.MacPromptAfterEsc : null;
+        var said = new List<string>();
+
+        Assert.Equal(MirrorProtocol.ErrTypeFailed,
+            await FormAnswer.AnswerAsync(Status, pane.Capture, pane.Press, pane.Type, pane.Fp, "3", null, "my own answer", said.Add));
+        Assert.StartsWith("readback stage=row read=none same-form=0 cursor=none", Assert.Single(said));
+    }
+
     [Fact]
     public void RowLinesCountsAWrappedRowAndNothingForAMissingOne()
     {
