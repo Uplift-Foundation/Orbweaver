@@ -2090,38 +2090,83 @@ public partial class MirrorRoundTripTests : IDisposable
 
     // --- CB-407: a request nobody answers in time is not "unsupported" ---------------
 
-    // The reply is lost: the PROMPT is not answered within the timeout. The client reports
-    // no-reply, not unsupported, and a later request on the same link, once replies arrive again,
-    // is answered normally. Nothing latches on the client.
+    // Two different failures, and the harness has one switch for each. DropRequests: the request
+    // never reaches the far side (nothing is read, nothing pressed). DropReplies: the far side
+    // gets it and does the work, and only its reply is lost or late, which is what both
+    // machines' logs showed in the ticket: the mini served every PROMPT and its reply left
+    // about ten seconds later, after the MacBook had given up.
+
+    // The request is lost: the PROMPT is not answered within the timeout. The client reports
+    // no-reply, not unsupported, and a later request on the same link, once requests arrive
+    // again, is answered normally. Nothing latches on the client.
     [Fact]
-    public async Task ALostPromptReplyIsNoReplyAndTheNextRequestIsAnsweredNormally()
+    public async Task ALostPromptRequestIsNoReplyAndTheNextRequestIsAnsweredNormally()
     {
         var harness = new Harness(_dir) { Screen = PaneFixtures.MiniAskForm };
-        harness.AddSession("evidence", WriteTranscript("slow-prompt.jsonl", Conversation(2)));
+        harness.AddSession("evidence", WriteTranscript("lost-prompt-request.jsonl", Conversation(2)));
         await harness.HandshakeAsync("evidence");
         harness.Client.TimeoutOverrideForTests = TimeSpan.FromMilliseconds(200);
 
-        harness.DropReplies = true;
+        harness.DropRequests = true;
         var (none, error) = await harness.Client.FetchPromptAsync("evidence");
         Assert.Null(none);
         Assert.Equal(MirrorProtocol.ErrNoReply, error);
         Assert.NotEqual(MirrorProtocol.ErrUnsupported, error);
 
-        harness.DropReplies = false;
+        harness.DropRequests = false;
         harness.Client.TimeoutOverrideForTests = null;
         var (prompt, again) = await harness.Client.FetchPromptAsync("evidence");
         Assert.Null(again);
         Assert.NotNull(prompt);
     }
 
-    // The same for an ANSWER: no reply is no-reply. Whether the far side pressed the key is
-    // not known from here, which is why the session re-reads the screen before offering the
-    // buttons again (asserted at the session level).
+    // An ANSWER whose request never arrives: no-reply, and nothing was pressed.
     [Fact]
-    public async Task ALostAnswerReplyIsNoReply()
+    public async Task ALostAnswerRequestIsNoReplyAndNothingIsPressed()
     {
         var harness = new Harness(_dir) { Screen = PaneFixtures.MiniAskForm };
-        harness.AddSession("evidence", WriteTranscript("slow-answer.jsonl", Conversation(2)));
+        harness.AddSession("evidence", WriteTranscript("lost-answer-request.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+        var prompt = (await harness.Client.FetchPromptAsync("evidence")).Prompt!;
+        harness.Client.TimeoutOverrideForTests = TimeSpan.FromMilliseconds(200);
+
+        harness.DropRequests = true;
+        var code = await harness.Client.AnswerPromptAsync("evidence", "2", prompt.Fingerprint);
+
+        Assert.Equal(MirrorProtocol.ErrNoReply, code);
+        Assert.Empty(harness.Pressed);
+    }
+
+    // The real case from the ticket's logs: the far side gets the PROMPT, serves it, and the
+    // reply is late. The client reports no-reply and the next PROMPT is answered normally.
+    [Fact]
+    public async Task ALostPromptReplyIsNoReplyAndTheFarSideDidServeIt()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniAskForm };
+        harness.AddSession("evidence", WriteTranscript("lost-prompt-reply.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+        harness.Client.TimeoutOverrideForTests = TimeSpan.FromMilliseconds(200);
+        var capturesBefore = harness.Captures;
+
+        harness.DropReplies = true;
+        var (none, error) = await harness.Client.FetchPromptAsync("evidence");
+
+        Assert.Null(none);
+        Assert.Equal(MirrorProtocol.ErrNoReply, error);
+        Assert.True(harness.Captures > capturesBefore, "the far side read its pane: the request arrived");
+
+        harness.DropReplies = false;
+        harness.Client.TimeoutOverrideForTests = null;
+        Assert.NotNull((await harness.Client.FetchPromptAsync("evidence")).Prompt);
+    }
+
+    // The case that matters for an ANSWER: the far side presses the key and only the reply is
+    // late. The client sees no-reply but the key landed exactly once.
+    [Fact]
+    public async Task ALostAnswerReplyIsNoReplyAndTheFarSideDidPressTheKey()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniAskForm };
+        harness.AddSession("evidence", WriteTranscript("lost-answer-reply.jsonl", Conversation(2)));
         await harness.HandshakeAsync("evidence");
         var prompt = (await harness.Client.FetchPromptAsync("evidence")).Prompt!;
         harness.Client.TimeoutOverrideForTests = TimeSpan.FromMilliseconds(200);
@@ -2130,6 +2175,37 @@ public partial class MirrorRoundTripTests : IDisposable
         var code = await harness.Client.AnswerPromptAsync("evidence", "2", prompt.Fingerprint);
 
         Assert.Equal(MirrorProtocol.ErrNoReply, code);
+        Assert.Equal(new[] { "2" }, harness.Pressed);
+    }
+
+    // And why the panel re-reads before it offers the buttons again: the same answer retried
+    // with the same fingerprint, after the press landed and the far screen moved on, is refused
+    // and presses nothing a second time. The screen went to the prompt (no form any more) or to
+    // the next form (a different fingerprint); each is its own refusal.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ARetriedAnswerAfterTheLostReplyIsRefusedAndPressesNothingTwice(bool nextFormShows)
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniAskForm };
+        harness.AfterPress = _ => nextFormShows
+            ? PaneFixtures.MiniAskForm.Replace("☐ xxx xxxx", "☒ xxx xxxx")
+            : PaneFixtures.MacPromptAfterEsc;
+        harness.AddSession("evidence", WriteTranscript("retry-" + nextFormShows + ".jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+        var prompt = (await harness.Client.FetchPromptAsync("evidence")).Prompt!;
+        harness.Client.TimeoutOverrideForTests = TimeSpan.FromMilliseconds(200);
+
+        harness.DropReplies = true;
+        Assert.Equal(MirrorProtocol.ErrNoReply, await harness.Client.AnswerPromptAsync("evidence", "2", prompt.Fingerprint));
+        Assert.Equal(new[] { "2" }, harness.Pressed);
+
+        harness.DropReplies = false;
+        harness.Client.TimeoutOverrideForTests = null;
+        var retried = await harness.Client.AnswerPromptAsync("evidence", "2", prompt.Fingerprint);
+
+        Assert.Equal(nextFormShows ? MirrorProtocol.ErrPromptChanged : MirrorProtocol.ErrNoPrompt, retried);
+        Assert.Equal(new[] { "2" }, harness.Pressed);
     }
 
     // --- CB-400: a screen only Esc closes (the /mobile overlay) -----------------
@@ -4596,8 +4672,10 @@ public partial class MirrorRoundTripTests : IDisposable
         // A capture that throws rather than answering.
         public bool CaptureThrows { get; set; }
 
-        // CB-407: a courier that loses every reply, so a request is not answered in time (the far
-        // side did the work; its answer never arrived).
+        // CB-407: two different lost messages. DropRequests loses what the client sends, so the
+        // far side never sees it; DropReplies loses what the far side sends back, so it did the
+        // work and only the answer never arrived.
+        public bool DropRequests { get; set; }
         public bool DropReplies { get; set; }
         public int RecordReads { get; private set; }
 
@@ -4927,7 +5005,7 @@ public partial class MirrorRoundTripTests : IDisposable
             ToServer.Add(line);
 
             if (CourierThrows) throw new IOException("the relay went away");
-            if (DropReplies) return true;
+            if (DropRequests) return true;
 
             var frame = MirrorProtocol.TryParseFrame(line);
             if (frame is null) return false;
@@ -4971,6 +5049,7 @@ public partial class MirrorRoundTripTests : IDisposable
             ToClient.Add(line);
 
             if (CourierThrows) throw new IOException("the relay went away");
+            if (DropReplies) return true;
 
             var frame = MirrorProtocol.TryParseFrame(line);
             if (frame is null) return false;

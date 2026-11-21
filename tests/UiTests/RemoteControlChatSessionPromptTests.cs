@@ -510,6 +510,31 @@ public class RemoteControlChatSessionPromptTests
         Assert.NotNull(h.Session.Prompt);
     }
 
+    // The press did land (the reply was only late): the first read is still the old form, held
+    // back; once the window has passed the screen is what replaced it, and the answered form's
+    // buttons are never offered again.
+    [AvaloniaFact]
+    public async Task ATimedOutAnswerThatLandedNeverOffersTheAnsweredFormAgain()
+    {
+        var h = new Harness();
+        h.Replies.Enqueue(Shown("fp1"));
+        h.Replies.Enqueue(Shown("fp1"));                                  // the far screen not redrawn yet
+        h.Replies.Enqueue(Shown("fp2", "Which month?"));                  // after the window: what replaced it
+        h.NextAnswer = new AnswerReply(AnswerKind.NoReply);
+        h.Open();
+        await h.Settle();
+
+        await h.Session.AnswerAsync(h.Session.Prompt!.Options[0]);
+        await h.Settle();
+        Assert.Null(h.Session.Prompt);
+
+        h.Now += RemoteControlChatSession.SettleAfterAnswer;
+        h.Tick(); await h.Settle();
+
+        Assert.Equal("Which month?", h.Session.Prompt!.Title);
+        Assert.Equal(3, h.Asks);
+    }
+
     // And a timed-out answer never latches either: asking goes on.
     [AvaloniaFact]
     public async Task ATimedOutAnswerDoesNotStopTheAsking()
