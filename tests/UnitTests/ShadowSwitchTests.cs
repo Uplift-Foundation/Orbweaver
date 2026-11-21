@@ -2,10 +2,10 @@ using Xunit;
 
 namespace Orbweaver.Tests;
 
-// ShadowSwitch.IsOn: whether the typing gate only logs (CB-307). Log-only is
-// the default; enforcing is opt-in. Every combination the lead listed — none,
-// the shadow marker, the enforce marker, env=0, env=1 — and the precedence:
-// env over both markers, the shadow marker over the enforce marker.
+// ShadowSwitch.IsOn: whether the typing gate only logs. CB-403 flipped the
+// default: nothing set enforces, and log-only is the explicit opt-out — the
+// variable set non-"0", or the `local-gate-shadow` marker. The enforce marker
+// is redundant and harmless.
 public class ShadowSwitchTests
 {
     private const string Dir = "/settings";
@@ -17,11 +17,11 @@ public class ShadowSwitchTests
 
     // env: null = unset. Expected: true = log-only, false = enforce.
     [Theory]
-    [InlineData(null, false, false, true)]   // nothing set: log-only
-    [InlineData(null, true, false, true)]    // shadow marker: log-only (installed Macs unchanged)
-    [InlineData(null, false, true, false)]   // enforce marker: enforce
+    [InlineData(null, false, false, false)]  // nothing set: enforce
+    [InlineData(null, true, false, true)]    // shadow marker: log-only
+    [InlineData(null, false, true, false)]   // enforce marker: redundant, still enforce
     [InlineData(null, true, true, true)]     // both markers: the shadow marker wins
-    [InlineData("0", false, false, false)]   // env=0: enforce
+    [InlineData("0", false, false, false)]
     [InlineData("0", true, false, false)]    // env=0 beats the shadow marker
     [InlineData("0", true, true, false)]
     [InlineData("1", false, false, true)]    // env=1: log-only
@@ -36,10 +36,9 @@ public class ShadowSwitchTests
     public void AnyNonZeroVariableIsLogOnly(string value) =>
         Assert.True(ShadowSwitch.IsOn(Dir, value, Markers(false, true)));
 
-    [Theory]
-    [InlineData(" 0 ")]
-    public void ZeroWithSpacesStillEnforces(string value) =>
-        Assert.False(ShadowSwitch.IsOn(Dir, value, Markers(true, false)));
+    [Fact]
+    public void ZeroWithSpacesStillEnforces() =>
+        Assert.False(ShadowSwitch.IsOn(Dir, " 0 ", Markers(true, false)));
 
     [Theory]
     [InlineData(null)]
@@ -47,24 +46,19 @@ public class ShadowSwitchTests
     [InlineData("   ")]
     public void ABlankVariableFallsThroughToTheMarkers(string? value)
     {
-        Assert.False(ShadowSwitch.IsOn(Dir, value, Markers(false, true)));
-        Assert.True(ShadowSwitch.IsOn(Dir, value, Markers(false, false)));
+        Assert.True(ShadowSwitch.IsOn(Dir, value, Markers(true, false)));
+        Assert.False(ShadowSwitch.IsOn(Dir, value, Markers(false, false)));
     }
 
     [Theory]
     [InlineData(null)]
     [InlineData("")]
-    public void NoSettingsFolderIsLogOnlyWithoutAsking(string? dir) =>
-        Assert.True(ShadowSwitch.IsOn(dir, null, _ => throw new System.InvalidOperationException("asked")));
+    public void NoSettingsFolderEnforcesWithoutAsking(string? dir) =>
+        Assert.False(ShadowSwitch.IsOn(dir, null, _ => throw new System.InvalidOperationException("asked")));
 
-    // A file check that throws is a marker that is not there: with nothing
-    // readable, the default — log-only — stands.
+    // A file check that throws is a marker that is not there: the default,
+    // enforce, stands.
     [Fact]
     public void AFileCheckThatThrowsLeavesTheDefault() =>
-        Assert.True(ShadowSwitch.IsOn(Dir, null, _ => throw new System.UnauthorizedAccessException()));
-
-    [Fact]
-    public void AnEnforceMarkerStillCountsWhenTheShadowCheckThrows() =>
-        Assert.False(ShadowSwitch.IsOn(Dir, null,
-            path => path == Shadow ? throw new System.UnauthorizedAccessException() : path == Enforce));
+        Assert.False(ShadowSwitch.IsOn(Dir, null, _ => throw new System.UnauthorizedAccessException()));
 }

@@ -823,7 +823,7 @@ public partial class MirrorRoundTripTests : IDisposable
         Assert.Equal(MirrorProtocol.ErrNotAtPrompt, outcome.Error);
         Assert.False(string.IsNullOrEmpty(outcome.Why));
         Assert.Empty(harness.Typed);
-        Assert.Equal(1, harness.Captures);
+        Assert.Equal(9, harness.Captures); // CB-403: first look + 8 re-judges, then refused
 
         // Logged with the reason and never the text.
         var line = Assert.Single(log, l => l.Contains(MirrorProtocol.ErrNotAtPrompt));
@@ -2658,6 +2658,37 @@ public partial class MirrorRoundTripTests : IDisposable
         Assert.DoesNotContain(log, l => l.Detail.Contains("please carry on") || l.Detail.Contains("Add a new rule"));
     }
 
+    // CB-403: a pane that is a dialog for a moment and then a prompt is typed
+    // into once it reads as one, and the sender sees an ordinary success.
+    [Fact]
+    public async Task ADialogThatClearsWhileTheGateWaitsIsTypedInto()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.PermissionsAllow };
+        var waits = 0;
+        harness.OnGateWait = () => { if (++waits == 2) harness.Screen = PaneFixtures.MacPromptAfterEsc; };
+        harness.AddSession("openclaw", WriteTranscript("settle.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        Assert.Null(await harness.Client.SendInputAsync("openclaw", "please carry on"));
+        Assert.Equal(new[] { ("openclaw", "please carry on") }, harness.Typed);
+        Assert.Equal(3, harness.Captures);
+    }
+
+    // CB-403: the evidence from the mini — a refused screen must come back to
+    // the sender as not-at-prompt with nothing typed, with no shadow switch set.
+    [Fact]
+    public async Task WithNothingSetAnUnreadableScreenIsRefusedNotTypedBlind()
+    {
+        var harness = new Harness(_dir) { Screen = "" };
+        harness.AddSession("openclaw", WriteTranscript("blind.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("openclaw", "please carry on");
+
+        Assert.Equal(MirrorProtocol.ErrNotAtPrompt, outcome.Error);
+        Assert.Empty(harness.Typed);
+    }
+
     [Fact]
     public async Task WithShadowOffARemoteTypedLineIntoADialogIsStillRefused()
     {
@@ -2708,7 +2739,8 @@ public partial class MirrorRoundTripTests : IDisposable
             CapturePane: harness.CaptureScreen,
             CanReadPane: _ => true,
             Shadow: () => shadow,
-            Log: (what, detail) => log.Add((what, detail))));
+            Log: (what, detail) => log.Add((what, detail)),
+            Delay: _ => Task.CompletedTask));
         harness.AddSession("openclaw", WriteTranscript("shadow-host-" + shadow + ".jsonl", Conversation(2)));
         await harness.HandshakeAsync("openclaw");
 
@@ -4347,6 +4379,7 @@ public partial class MirrorRoundTripTests : IDisposable
 
         // CB-307: the typing gate's shadow mode on the far machine.
         public bool ShadowOn { get; set; }
+        public Action? OnGateWait { get; set; }
 
         // A capture that throws rather than answering.
         public bool CaptureThrows { get; set; }
@@ -4484,6 +4517,7 @@ public partial class MirrorRoundTripTests : IDisposable
                     return Task.FromResult(true);
                 },
                 Shadow: () => ShadowOn,
+                GateDelay: _ => { OnGateWait?.Invoke(); return Task.CompletedTask; },
                 TypeLiteral: ungated || noTypeLiteral ? null : (_, text) =>
                 {
                     if (TypeLiteralFails) return Task.FromResult(false);
