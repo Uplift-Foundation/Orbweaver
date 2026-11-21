@@ -39,7 +39,10 @@ namespace Orbweaver
     //      of SHA-256 over its UTF-8.
     // A pane resized between the prompt and the answer can rewrap the preview
     // and so change the hash. That fails safe — stale_prompt — and is accepted.
-    internal sealed record PromptFingerprint(ChatPrompt Prompt, IReadOnlyList<string> Preview, string Canonical, string Hash)
+    internal sealed record PromptFingerprint(
+        ChatPrompt Prompt, IReadOnlyList<string> Preview, string Canonical, string Hash,
+        // CB-400: the screen is an overlay (OverlayScreen), not a numbered dialog.
+        bool Overlay = false)
     {
         // call: the transcript's pending AskUserQuestion (AskFormTranscript.CallFor),
         // or null. It changes nothing for a screen ParseDialogCore can read; it only
@@ -49,7 +52,10 @@ namespace Orbweaver
             if (string.IsNullOrEmpty(screen)) return null;
             var prompt = ChatTranscript.ParseDialogCore(screen, out var cleaned, out var firstOption);
             if (prompt is null || firstOption < 0)
-                return call is not null && AskFormTranscript.Tall(screen, call) is { } tall ? OfTall(tall) : null;
+            {
+                if (call is not null && AskFormTranscript.Tall(screen, call) is { } tall) return OfTall(tall);
+                return OfOverlay(screen);
+            }
 
             var start = DialogStart(ChatTranscript.ScreenLines(screen), cleaned, firstOption);
 
@@ -59,6 +65,19 @@ namespace Orbweaver
 
             var canonical = CanonicalText(preview, prompt.Options);
             return new PromptFingerprint(prompt, preview, canonical, HashOf(canonical));
+        }
+
+        // CB-400: an overlay has no numbered run to anchor the preview on, so its
+        // preview is its caption, but what is hashed is only its title plus the one
+        // option, `Escape. Close`: /resume shows "1 minute ago" and /usage live
+        // figures, and hashing content would re-mint the prompt on every change.
+        // The same overlay hashes the same however it is looked at or typed into.
+        private static PromptFingerprint? OfOverlay(string screen)
+        {
+            if (OverlayScreen.Read(screen) is not { } overlay) return null;
+            var prompt = OverlayScreen.ToPrompt(overlay);
+            var canonical = CanonicalText([overlay.Title], prompt.Options);
+            return new PromptFingerprint(prompt, overlay.Caption, canonical, HashOf(canonical), Overlay: true);
         }
 
         // A form taller than the pane has no dialog block on screen to hash: its
@@ -324,7 +343,7 @@ namespace Orbweaver
 
         // CB-323 frames-v7-questions: multi and text, present only as true.
         internal static string Prompt(string requestId, string sessionId, string kind, string cli, string tool,
-            string preview, IReadOnlyList<PromptOption> options, string screenHash, long expiresAt, bool multi = false, bool text = false)
+            string preview, IReadOnlyList<PromptOption> options, string screenHash, long expiresAt, bool multi = false, bool text = false, bool quiet = false)
         {
             var j = new JsonObject
             {
@@ -341,6 +360,11 @@ namespace Orbweaver
             };
             if (multi) j["multi"] = true;
             if (text) j["text"] = true;
+            // CB-400: an overlay is a screen opened on purpose at the desk and never
+            // alerts. Android notifies from the socket, and a replayed permission prompt
+            // also travels with push none, so the envelope's push cannot say which prompts
+            // are silent; this key does. Absent (not false) on every other prompt.
+            if (quiet) j["quiet"] = true;
             return j.ToJsonString(Json);
         }
 

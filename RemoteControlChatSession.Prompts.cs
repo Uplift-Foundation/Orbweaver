@@ -11,7 +11,10 @@ namespace Orbweaver
     // (PROMPT) and answered there (ANSWER); this side only draws what came back
     // and says which option was chosen. Nothing here types into a terminal or
     // reads a screen, and nothing ever presses Escape: on some of these screens
-    // Escape does something other than cancel.
+    // Escape does something other than cancel. The one exception is an overlay's
+    // Close (CB-400, the /mobile QR screen): this side still sends only the key
+    // `Escape` and the fingerprint it was shown, and the far side presses it only
+    // after re-reading its own screen and finding that very overlay (FormAnswer).
     //
     // **Asked only while it can matter.** The panel is open, a live view is
     // agreed, and the far roster says the session is `waiting` — checked on open,
