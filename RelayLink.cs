@@ -56,6 +56,11 @@ namespace Orbweaver
             internal required RelaySendCounter Counter;
             internal required RelayReceiveWindow Window;
             internal readonly RelayPhoneStream Stream = new();
+            // CB-358: this phone's alert choice (default: today's behaviour), and
+            // per lead, how many of its members finished since the lead's last
+            // done alert to this phone.
+            internal AlertPrefs Alerts = AlertPrefs.Default;
+            internal readonly Dictionary<string, int> MembersDone = new(StringComparer.Ordinal);
             internal readonly Dictionary<ushort, byte[]> EpochKeys = new();
             internal bool Online;
             internal bool EpochPersisted;
@@ -409,6 +414,10 @@ namespace Orbweaver
                 else
                     Note("pair.revoke with a bad signature ignored");
             }
+            // CB-358: the phone's alert choice. Class pair, under this pair's key,
+            // as the watch key below; sent on change and on connect.
+            else if (cls == "pair" && Json(plain) is { } prefsFrame && Str(prefsFrame, "t") == "prefs")
+                return PrefsReceived(channel, from, Str(f, "id") ?? "", prefsFrame);
             // CB-323: the phone's watch key, added or removed. Class pair only,
             // out of a box that opened under this pair's key, as pair.revoke.
             else if (cls == "pair" && Json(plain) is { } keyFrame && RelayWatchKey.IsKeyFrame(Str(keyFrame, "t")))
@@ -439,6 +448,27 @@ namespace Orbweaver
                 RequestReceived(from, channel.Phone.IdPublic, new BadFrameRequest(Str(f, "id") ?? "", null));
             }
             return [];
+        }
+
+        // CB-358: a malformed or unknown choice keeps the phone's last good one
+        // (or the default), and says so in the log rather than guessing.
+        // The desktop answers every prefs frame, sealed under the pair key, with
+        // prefs.ok or prefs.err, echoing the envelope id as ref. A desktop too
+        // old to know the frame never answers, which is how the phone tells.
+        private IReadOnlyList<string> PrefsReceived(Channel c, string from, string envelopeId, JsonElement body)
+        {
+            var parsed = AlertPrefs.Parse(body);
+            var ok = parsed is not null;
+            if (parsed is { } prefs)
+            {
+                c.Alerts = prefs;
+                Note($"prefs from {Safe(from)} done_alerts={prefs.DoneAlerts} amber_members={prefs.AmberMembers}");
+            }
+            else Note($"prefs from {Safe(from)} malformed; refused");
+            var reply = ok
+                ? new CanonicalJson().Str("t", "prefs.ok").Str("ref", envelopeId)
+                : new CanonicalJson().Str("t", "prefs.err").Str("ref", envelopeId).Str("code", "malformed");
+            return Collect(SealTo(c, "pair", "", Encoding.UTF8.GetBytes(reply.ToString())));
         }
 
         private byte[]? OpenFromPhone(Channel c, string cls, string ct)
@@ -652,7 +682,7 @@ namespace Orbweaver
                 // even when this scan also needs a roster, which would
                 // otherwise swallow the transition.
                 foreach (var d in update.Deltas.Where(d => d.Finished))
-                    frames.AddRange(Collect(DoneFor(c, d)));
+                    frames.AddRange(Collect(FinishedFor(c, d)));
                 if (!c.Online) continue;
                 if (update.NeedsRoster)
                 {
@@ -681,8 +711,30 @@ namespace Orbweaver
             // removal), so it is there to name the session.
             var row = _book.Find(d.SessionId)!;
             var persona = PushPersona.Of(row.Persona);
-            var e = PushE(c, "done", persona, p => DoneE(d.SessionId, row.Title, Machine, p));
+            var membersSince = c.MembersDone.GetValueOrDefault(d.SessionId);
+            c.MembersDone.Remove(d.SessionId);
+            var e = PushE(c, "done", persona, p => DoneE(d.SessionId, row.Title, Machine, p, membersSince));
             return SealTo(c, "state", RelayCrypto.Ck(c.CkKey, d.SessionId), c.Stream.DeltaForPush(d), push: "done", e: e);
+        }
+
+        // CB-358: a finished session to one phone under its alert choice. A
+        // member under "leads" (or "off") still rides the delta, numbered and
+        // sealed like the rest, so the orb updates; only the push is left off.
+        // Every member finish is counted against its lead, whatever the choice:
+        // "off" sends no lead alert, so the count is the members since the last
+        // alert that was actually sent, as the lead's next alert will say.
+        // A member's own count is for its members' summary, which a withheld
+        // member never sends, so it is dropped rather than left to grow.
+        private string? FinishedFor(Channel c, RelayDelta d)
+        {
+            var row = _book.Find(d.SessionId)!;
+            var member = RelayAlertRules.IsMember(row.ParentSessionId, id => _book.Find(id) is not null);
+            if (member)
+                c.MembersDone[row.ParentSessionId!] = c.MembersDone.GetValueOrDefault(row.ParentSessionId!) + 1;
+            if (RelayAlertRules.PushDone(c.Alerts, member)) return DoneFor(c, d);
+            c.MembersDone.Remove(d.SessionId);
+            Note($"done push withheld for member {(member ? "yes" : "no")} alerts={c.Alerts.DoneAlerts}");
+            return SealTo(c, "state", RelayCrypto.Ck(c.CkKey, d.SessionId), c.Stream.DeltaForPush(d));
         }
 
         // A push e sealed to this phone, or none when it could not fit the
@@ -738,10 +790,10 @@ namespace Orbweaver
         internal static string DoneLabel(string title, string machine) =>
             string.IsNullOrWhiteSpace(title) ? machine : $"{title} on {machine}";
 
-        internal static string DoneE(string sessionId, string title, string machine, PushPersona? persona = null)
+        internal static string DoneE(string sessionId, string title, string machine, PushPersona? persona = null, int membersSince = 0)
         {
             var j = new CanonicalJson().Num("v", 1).Str("t", "done").Str("session_id", sessionId)
-                .Str("label", DoneLabel(title, machine)).Str("title", title);
+                .Str("label", RelayAlertRules.WithMembersSince(DoneLabel(title, machine), membersSince)).Str("title", title);
             if (persona is not null) j.Raw("persona", persona.Canonical());
             return j.ToString();
         }
@@ -936,9 +988,13 @@ namespace Orbweaver
         {
             if (!Welcomed) return [];
             var frames = new List<string>();
+            var member = RelayAlertRules.IsMember(_book.Find(sessionId)?.ParentSessionId, id => _book.Find(id) is not null);
             foreach (var c in _channels.Values)
             {
-                var e = pushPlaintext is null ? null : PushSeal.Seal(c.Phone.KaPublic, System.Text.Encoding.UTF8.GetBytes(pushPlaintext));
+                // CB-358: the prompt itself always goes (it is blocked work); only
+                // a member's alert push can be withheld, by the phone's choice.
+                var withPush = pushPlaintext is not null && RelayAlertRules.PushAmber(c.Alerts, member);
+                var e = withPush ? PushSeal.Seal(c.Phone.KaPublic, System.Text.Encoding.UTF8.GetBytes(pushPlaintext!)) : null;
                 if (SealTo(c, "action", RelayCrypto.Ck(c.CkKey, sessionId), System.Text.Encoding.UTF8.GetBytes(prompt), requestId, "amber", e) is { } frame)
                     frames.Add(frame);
             }
