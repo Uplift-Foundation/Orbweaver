@@ -66,8 +66,17 @@ namespace Orbweaver
             profileDir = null;
             if (_seams.Accounts is not { } accounts) return f.Account.Length == 0;
             var cli = LaunchGate.CliFor(f.Cli);
-            return RelayAccounts.TryResolve(cli, f.Account, accounts.Choices(cli), accounts.Designated(cli), null, out profileDir);
+            if (!RelayAccounts.TryResolve(cli, f.Account, accounts.Choices(cli), accounts.Designated(cli), null, out profileDir)) return false;
+            // CB-397: the settings spelling (".claude-board") is relative, and
+            // the CLI would resolve it against the project folder it starts in.
+            // The local New Chat path makes it absolute against home first, and
+            // null (the CLI's own default folder) means no variable at all.
+            if (profileDir is not null)
+                profileDir = NewChatLauncher.ConfigDirFor(cli, (_seams.Launch.Home ?? UserHome)(), profileDir);
+            return true;
         }
+
+        private static string UserHome() => System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile);
 
         // Starts the CLI where the contract says — tmux on the Mac, its own
         // conhost on Windows — or names why it could not.
@@ -146,7 +155,8 @@ namespace Orbweaver
             Directory.Exists,
             () => System.Environment.GetEnvironmentVariable("SHELL") is { Length: > 0 } sh ? sh : "/bin/zsh",
             PlaceMac,
-            StartWindows);
+            StartWindows,
+            UserHome);
 
         // Looked up when the start is called, not when the seams are built:
         // PeerLaunchServer.Shared builds its seams once per process, so an

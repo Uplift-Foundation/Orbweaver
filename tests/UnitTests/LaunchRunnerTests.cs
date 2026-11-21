@@ -26,6 +26,8 @@ public class LaunchRunnerTests
         public List<NewChatAccounts.Choice> Choices = [new("Default", null), new("~/.claude-b", ".claude-b"), new("~/.claude%x", ".claude%x")];
         public string? Designated;
         public bool HasAccounts = true;
+        // Absolute on both rids, so the expected values are the same rule on each.
+        public string Home = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "cb397-home"));
 
         public RelayRemote.LaunchSeams Launch() => new(
             Windows,
@@ -33,7 +35,8 @@ public class LaunchRunnerTests
             _ => DirExists,
             () => "/bin/zsh",
             (command, cwd) => { MacStarts.Add((command, cwd)); return MacPlace; },
-            psi => { WindowsStarts.Add(psi); return WindowsPid; });
+            psi => { WindowsStarts.Add(psi); return WindowsPid; },
+            () => Home);
 
         public RelayRemote.AccountSeams Accounts() => new(_ => Choices, _ => Designated);
 
@@ -93,7 +96,10 @@ public class LaunchRunnerTests
         var named = new Desk();
         named.ChecksIn("new", Status());
         Assert.Equal("new", (await named.Runner().RunAsync(F(account: ".claude-b"))).SessionId);
-        Assert.Contains(".claude-b", named.MacStarts.Single().Command);
+        // CB-397: the exact absolute folder, not a spelling that merely contains the name.
+        var expected = Path.Combine(named.Home, ".claude-b");
+        Assert.True(Path.IsPathRooted(expected));
+        Assert.Equal(NewChatCommand.LaunchLine("/bin/zsh", "/bin/claude", [], (NewChatCli.ClaudeCode, expected)), named.MacStarts.Single().Command);
 
         var dflt = new Desk();
         dflt.ChecksIn("new", Status());
@@ -145,7 +151,73 @@ public class LaunchRunnerTests
         var account = new Desk { Windows = true, Binary = "C:\\c\\claude.exe" };
         account.ChecksIn("new", Status(cwd: "C:\\w"));
         Assert.Equal("new", (await account.Runner().RunAsync(F(cwd: "C:\\w", account: ".claude-b"))).SessionId);
-        Assert.Contains(account.WindowsStarts.Single().ArgumentList, a => a.Contains(".claude-b"));
+        var expected = Path.Combine(account.Home, ".claude-b");
+        Assert.Equal(
+            NewChatCommand.ConsoleStartInfoForAccount(NewChatCli.ClaudeCode, "C:\\c\\claude.exe", "C:\\w", [], expected, viaCmd: true)!.ArgumentList,
+            account.WindowsStarts.Single().ArgumentList);
+        Assert.Contains(account.WindowsStarts.Single().ArgumentList, a => a.Contains(expected));
+    }
+
+    // CB-397: every CLI's variable carries the absolute folder, a settings entry
+    // that is already absolute passes through, and naming the CLI's own default
+    // folder sets no variable at all.
+    public static TheoryData<string, string, string, string> HomeVariables() => new()
+    {
+        { "claude", ".claude-b", ".claude-b", "CLAUDE_CONFIG_DIR" },
+        { "codex", ".codex-b", ".codex-b", "CODEX_HOME" },
+        { "grok", ".grok-b", ".grok-b", "GROK_HOME" },
+    };
+
+    [Theory]
+    [MemberData(nameof(HomeVariables))]
+    public async Task A_relative_account_reaches_each_clis_variable_as_an_absolute_folder(string cli, string entry, string rel, string variable)
+    {
+        var d = new Desk { Choices = [new("Default", null), new("named", entry)] };
+        d.ChecksIn("new", Status(cli == "codex" ? SessionSource.Codex : cli == "grok" ? SessionSource.Grok : SessionSource.ClaudeCode, "/w"));
+        Assert.Equal("new", (await d.Runner().RunAsync(F(cli: cli, account: entry))).SessionId);
+
+        var command = d.MacStarts.Single().Command;
+        Assert.Contains("env " + variable + "=", command);
+        Assert.Equal(NewChatCommand.LaunchLine("/bin/zsh", "/bin/claude", NewChatCommand.LaunchArgs(LaunchGate.CliFor(cli), "", "", ""), (LaunchGate.CliFor(cli), Path.Combine(d.Home, rel))), command);
+    }
+
+    [Theory]
+    [InlineData("claude", ".claude")]
+    [InlineData("codex", ".codex")]
+    [InlineData("grok", ".grok")]
+    public async Task A_named_account_that_is_the_clis_default_folder_sets_no_variable(string cli, string entry)
+    {
+        var d = new Desk { Choices = [new("Default", null), new("named", entry)] };
+        d.ChecksIn("new", Status(cwd: "/w"));
+        await d.Runner().RunAsync(F(cli: cli, account: entry));
+        Assert.DoesNotContain("env ", d.MacStarts.Single().Command);
+        Assert.DoesNotContain("_CONFIG_DIR", d.MacStarts.Single().Command);
+        Assert.DoesNotContain("_HOME=", d.MacStarts.Single().Command);
+    }
+
+    [Fact]
+    public async Task An_absolute_settings_entry_passes_through_unchanged()
+    {
+        var d = new Desk();
+        var abs = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "elsewhere", ".claude-z"));
+        d.Choices = [new("Default", null), new("abs", abs)];
+        d.ChecksIn("new", Status(cwd: "/w"));
+        await d.Runner().RunAsync(F(account: abs));
+        Assert.Equal(NewChatCommand.LaunchLine("/bin/zsh", "/bin/claude", [], (NewChatCli.ClaudeCode, abs)), d.MacStarts.Single().Command);
+    }
+
+    // Without a Home seam the real user profile is what a relative entry resolves against.
+    [Fact]
+    public async Task Without_a_home_seam_the_user_profile_folder_is_used()
+    {
+        var d = new Desk();
+        var seams = d.Launch() with { Home = null };
+        d.ChecksIn("new", Status(cwd: "/w"));
+        var runner = new LaunchRunner(new LaunchRunner.Seams(seams, d.Accounts(), () => d.Sessions, () => d.Now, d.Delay));
+        await runner.RunAsync(F(account: ".claude-b"));
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        Assert.Equal(NewChatCommand.LaunchLine("/bin/zsh", "/bin/claude", [], (NewChatCli.ClaudeCode, Path.Combine(home, ".claude-b"))), d.MacStarts.Single().Command);
+        Assert.Equal(home, LaunchRunner.DefaultLaunchSeams().Home!());
     }
 
     [Fact]

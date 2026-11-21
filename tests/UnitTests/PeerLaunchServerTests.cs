@@ -202,6 +202,19 @@ public class PeerLaunchServerTests
         Assert.Single(w.Desk.MacStarts);
     }
 
+    // CB-397: a named account reaches the CLI as an absolute folder over the
+    // peer path too, never the settings spelling.
+    [Fact]
+    public async Task A_named_account_starts_the_cli_with_an_absolute_config_folder()
+    {
+        var w = new World();
+        w.ChecksIn();
+        Assert.True((await w.Handle(Body(w, account: ".claude-b"))).Ok);
+        var expected = Path.Combine(w.Desk.Home, ".claude-b");
+        Assert.True(Path.IsPathRooted(expected));
+        Assert.Equal(NewChatCommand.LaunchLine("/bin/zsh", "/bin/claude", [], (NewChatCli.ClaudeCode, expected)), w.Desk.MacStarts.Single().Command);
+    }
+
     // The gate's later rules and the runner's refusals reach the sender as
     // their own codes, with the runner's sentence where it has one.
     [Fact]
