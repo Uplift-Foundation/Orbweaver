@@ -1724,6 +1724,19 @@ namespace Orbweaver.Tests
                 ChatTranscript.ParseAskForm(PaneFixtures.TeamLeadNarrowForm) is { } untouched
                 && !ChatTranscript.IsEditingFreeText(untouched));
 
+            // QA round 2: no real form reads as being edited unless text is in
+            // its free-text row. Swept over every capture here, so a new
+            // fixture is held to it too: of the forms, only the two typed-text
+            // captures qualify (four multi-selects among the rest, cursor on
+            // various rows, all with "Type something" still drawn).
+            var editingForms = typeof(PaneFixtures)
+                .GetFields(System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)
+                .Where(f => f.GetValue(null) is string text && ChatTranscript.ParseAskForm(text) is { } f2 && ChatTranscript.IsEditingFreeText(f2))
+                .Select(f => f.Name).OrderBy(n => n, StringComparer.Ordinal).ToList();
+            Check("only the typed-text captures read as a free-text row being edited",
+                editingForms.SequenceEqual(new[] { "QaFreeTextTyped", "TeamLeadNarrowFreeTextTyped" }),
+                string.Join(",", editingForms));
+
             // QA round 1: the wrap test's boundary, on the real capture with only
             // the continuation's first word resized. The line above is 28 wide
             // on a 35-wide screen: a word of 5 would have fitted with room to
