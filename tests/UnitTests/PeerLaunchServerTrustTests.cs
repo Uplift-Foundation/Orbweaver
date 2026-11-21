@@ -32,6 +32,7 @@ public class PeerLaunchServerTrustTests
         public readonly LaunchRunnerTests.Desk Desk = new() { TrustOn = true };
         public string Screen = OnNo;
         public bool Enabled = true;
+        public Action? OnNow;
         public readonly List<string> Log = [];
         public readonly Dictionary<string, PeerIdentity.Peer> Paired = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -53,7 +54,7 @@ public class PeerLaunchServerTrustTests
                 () => Desk.Sessions,
                 Desk.Launch(),
                 Desk.Accounts(),
-                () => Desk.Now,
+                () => { var hook = OnNow; OnNow = null; hook?.Invoke(); return Desk.Now; },
                 Desk.Delay,
                 Log.Add)
             { TrustDelay = _ => Expiry.Task });
@@ -311,5 +312,100 @@ public class PeerLaunchServerTrustTests
         Assert.True(r.Trust!.Hooks);
         Assert.True(PeerLaunchWire.ParseResult(PeerLaunchWire.EncodeResult(r))!.Trust!.Hooks);
         Assert.DoesNotContain("hooks", PeerTrustAnswer.Body(new PeerTrustAnswer.Fields("t", "trust", "/w", "claude", "default", "n", "m", 1)));
+    }
+
+    // The machine is no longer paired when its answer arrives: no pin to believe, so the signature
+    // is refused. And an expiry further out than the gate's slack is refused as expired.
+    [Fact]
+    public async Task An_unpaired_machine_and_an_expiry_beyond_the_slack_are_refused()
+    {
+        var w = new World();
+        var (asked, nonce) = await w.Ask();
+
+        w.Paired.Remove("mbp");
+        Refused(await w.Server.HandleTrustAsync("mbp", w.Answer(asked.Trust!, nonce)), RelayReplies.BadSignature);
+        Assert.Equal(1, w.Server.PendingCount);
+
+        w.Paired["mbp"] = new(PeerIdentity.PinOf(Sender), "mbp");
+        var tooFar = w.Desk.Now.ToUnixTimeSeconds() + LaunchGate.TtlSlackSeconds + 1;
+        Refused(await w.Server.HandleTrustAsync("mbp", w.Answer(asked.Trust!, nonce, expires: tooFar)), RelayReplies.Expired);
+        var atTheEdge = w.Desk.Now.ToUnixTimeSeconds() + LaunchGate.TtlSlackSeconds;
+        Refused(await w.Server.HandleTrustAsync("mbp", w.Answer(asked.Trust!, nonce, "cancel", expires: atTheEdge)), PeerLaunchCodes.TrustCancelled);
+    }
+
+    // ---- the signature, one failure per case --------------------------------------------
+    // Each is refused as bad_signature and touches nothing: the question is still held, no key
+    // was pressed and no pane was closed. The ordered test above keeps its own copy.
+
+    private static void NothingTouched(World w)
+    {
+        Assert.Equal(1, w.Server.PendingCount);
+        Assert.Empty(w.Desk.Presses);
+        Assert.Empty(w.Desk.Closed);
+    }
+
+    [Theory]
+    [InlineData("trust", "cancel")]
+    [InlineData("cancel", "trust")]
+    public async Task A_flipped_answer_is_bad_signature_and_touches_nothing(string signed, string sent)
+    {
+        var w = new World();
+        var (asked, nonce) = await w.Ask();
+        Refused(await w.Server.HandleTrustAsync("mbp", w.Answer(asked.Trust!, nonce, signed, sentAnswer: sent)), RelayReplies.BadSignature);
+        NothingTouched(w);
+    }
+
+    [Fact]
+    public async Task Another_paired_peers_signature_is_bad_signature_and_touches_nothing()
+    {
+        var w = new World();
+        var (asked, nonce) = await w.Ask();
+        Refused(await w.Server.HandleTrustAsync("mbp", w.Answer(asked.Trust!, nonce, by: Other)), RelayReplies.BadSignature);
+        NothingTouched(w);
+    }
+
+    [Fact]
+    public async Task The_wrong_launch_nonce_is_bad_signature_and_touches_nothing()
+    {
+        var w = new World();
+        var (asked, _) = await w.Ask();
+        Refused(await w.Server.HandleTrustAsync("mbp", w.Answer(asked.Trust!, "not-the-launch-nonce")), RelayReplies.BadSignature);
+        NothingTouched(w);
+    }
+
+    [Fact]
+    public async Task A_short_nonce_is_bad_signature_and_touches_nothing()
+    {
+        var w = new World();
+        var (asked, nonce) = await w.Ask();
+        Refused(await w.Server.HandleTrustAsync("mbp", w.Answer(asked.Trust!, nonce, nonce: "short")), RelayReplies.BadSignature);
+        NothingTouched(w);
+    }
+
+    [Fact]
+    public async Task A_signature_for_a_different_token_is_bad_signature_and_touches_nothing()
+    {
+        var w = new World();
+        var (asked, nonce) = await w.Ask();
+        var other = asked.Trust! with { Token = "SOME-OTHER-TOKEN" };
+        Refused(await w.Server.HandleTrustAsync("mbp", w.Answer(other, nonce, token: asked.Trust!.Token)), RelayReplies.BadSignature);
+        NothingTouched(w);
+    }
+
+    // The record is taken by something else between the lookup and the take (a dropped link here):
+    // the answer finds nothing, and nothing is pressed or closed a second time.
+    [Fact]
+    public async Task A_record_taken_between_the_lookup_and_the_take_is_gone_and_acted_on_once()
+    {
+        var w = new World();
+        var (asked, nonce) = await w.Ask();
+        var answer = w.Answer(asked.Trust!, nonce);
+        w.OnNow = () => w.Server.OnDisconnectedAsync("mbp").GetAwaiter().GetResult();
+
+        Refused(await w.Server.HandleTrustAsync("mbp", answer), PeerLaunchCodes.TrustGone);
+
+        Assert.Equal(0, w.Server.PendingCount);
+        Assert.Equal(["%1"], w.Desk.Closed);
+        Assert.Empty(w.Desk.Presses);
     }
 }

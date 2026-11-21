@@ -323,4 +323,18 @@ public class PeerLaunchTrustWireClientTests
         Assert.True((await rig.Client.TrustAsync("mini", live, true, CancellationToken.None)).Ok);
 
     }
+
+    // A certificate the pin vouches for but that cannot be loaded, and one that loads but has no RSA key.
+    [Fact]
+    public void A_pinned_certificate_that_cannot_be_used_is_refused_not_a_crash()
+    {
+        var f = Fields();
+        var garbage = new byte[] { 1, 2, 3, 4 };
+        Assert.False(PeerTrustAnswer.Verify(PeerIdentity.PinOfDer(garbage), Receiver, garbage, f, "AAAA"));
+
+        using var ec = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var request = new CertificateRequest("CN=ec", ec, HashAlgorithmName.SHA256);
+        using var made = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(1));
+        Assert.False(PeerTrustAnswer.Verify(PeerIdentity.PinOf(made), Receiver, made.RawData, f, "AAAA"));
+    }
 }

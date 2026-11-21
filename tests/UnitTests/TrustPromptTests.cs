@@ -140,4 +140,20 @@ public class TrustPromptTests
     {
         Assert.True(FirstRunDialogs.Is(TrustScreens.Read(fixture)));
     }
+
+    // The question text ahead of the heading leaves no folder line between them to bind.
+    [Fact]
+    public void A_screen_whose_question_text_comes_before_the_heading_does_not_bind()
+    {
+        Assert.Equal(TrustPrompt.Kind.Unanswerable, Read("Quick safety check: earlier\n" + TrustScreens.OnNo).Kind);
+    }
+
+    // A launched folder of "/" alone keeps its slash: it is not trimmed to nothing.
+    [Fact]
+    public void A_launched_folder_of_just_a_slash_binds_to_a_prompt_for_it()
+    {
+        var root = TrustScreens.OnNo.Replace(TrustScreens.Folder, "/");
+        Assert.Equal(TrustPrompt.Kind.Answerable, Read(root, "/").Kind);
+        Assert.Equal(TrustPrompt.Kind.Unanswerable, Read(root, "/tmp").Kind);
+    }
 }

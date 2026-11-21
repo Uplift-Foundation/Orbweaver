@@ -40,7 +40,9 @@ public class LaunchRunnerTests
         public Func<string, string>? Resolve;
         public string? Current => Screen(Reads - 1);
 
-        public LaunchRunner.TrustSeams? Trust() => !TrustOn ? null : new(
+        public LaunchRunner.TrustSeams? TrustOverride;
+
+        public LaunchRunner.TrustSeams? Trust() => TrustOverride ?? (!TrustOn ? null : new(
             pane => { Reads++; return Task.FromResult(Screen(Reads - 1)); },
             (pane, key, approved) =>
             {
@@ -51,7 +53,7 @@ public class LaunchRunnerTests
                 OnPress?.Invoke(key);
                 return Task.FromResult((true, (string?)Screen(Reads)));
             },
-            pane => { Closed.Add(pane); return Task.CompletedTask; });
+            pane => { Closed.Add(pane); return Task.CompletedTask; }));
 
         public RelayRemote.LaunchSeams Launch() => new(
             Windows,

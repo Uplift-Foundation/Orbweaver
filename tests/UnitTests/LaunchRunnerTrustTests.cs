@@ -341,4 +341,66 @@ public class LaunchRunnerTrustTests
         Assert.Equal(TerminalTyping.Route.Tmux, TerminalTyping.RouteFor(status, onMacOS: true, onWindows: false, new TerminalTyping.Tools(true, false, false)));
         Assert.Equal(TerminalTyping.Route.Tmux, TerminalTyping.RouteFor(status, onMacOS: false, onWindows: false, new TerminalTyping.Tools(true, false, false)));
     }
+
+    // ---- the approvals each key press is made under ------------------------------------
+
+    private static readonly string OtherFolder = "/private/tmp/cb397-w/somebody-elses";
+    private static readonly string OtherOnNo = OnNo.Replace(Folder, OtherFolder);
+    private static readonly string OtherOnYes = OnYes.Replace(Folder, OtherFolder);
+
+    // Runs an answer far enough to hand over the approval a key is pressed under: a pane showing
+    // the marker on No is asked for Down, one showing it on Yes goes straight to Enter.
+    private static async Task<Func<string?, bool>> ApprovalFor(string key)
+    {
+        Func<string?, bool>? approval = null;
+        var shown = key == "Down" ? OnNo : OnYes;
+        var d = new LaunchRunnerTests.Desk
+        {
+            TrustOverride = new LaunchRunner.TrustSeams(
+                _ => Task.FromResult<string?>(shown),
+                (_, k, approved) => { if (k == key) approval = approved; return Task.FromResult((false, (string?)null)); },
+                _ => Task.CompletedTask)
+        };
+        await d.Runner().AnswerTrustAsync(F(), Held());
+        return approval!;
+    }
+
+    [Fact]
+    public async Task Down_is_approved_only_for_a_marker_on_no_for_this_folder()
+    {
+        var down = await ApprovalFor("Down");
+        Assert.True(down(OnNo));
+        Assert.False(down(OnYes));
+        Assert.False(down(OtherOnNo));
+        Assert.False(down(Idle));
+        Assert.False(down(null));
+    }
+
+    [Fact]
+    public async Task Enter_is_approved_only_for_a_marker_on_yes_for_this_folder()
+    {
+        var enter = await ApprovalFor("Enter");
+        Assert.True(enter(OnYes));
+        Assert.False(enter(OnNo));
+        Assert.False(enter(OtherOnYes));
+        Assert.False(enter(Idle));
+        Assert.False(enter(null));
+    }
+
+    // Between the Down and the marker reaching Yes, a read that is nothing or another folder's
+    // prompt never counts as Yes: no Enter, and a pane that is not ours is not killed.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_read_that_is_not_our_prompt_never_counts_as_yes(bool otherFolderPrompt)
+    {
+        var after = otherFolderPrompt ? OtherOnYes : null;
+        var d = new LaunchRunnerTests.Desk { TrustOn = true, Screen = n => n <= 1 ? OnNo : after };
+
+        var outcome = await d.Runner().AnswerTrustAsync(F(), Held());
+
+        Assert.Equal("Couldn't select Yes on that machine.", outcome.Why);
+        Assert.Equal(["Down"], d.Presses);
+        Assert.Empty(d.Closed);
+    }
 }

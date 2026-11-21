@@ -898,4 +898,25 @@ public class NewChatWindowMachineTests : IDisposable
         Assert.False(w.TrustHooks.IsVisible);
         Assert.Null(w.TrustHooks.Text);
     }
+
+    // The window's own OnClosed, run the way Avalonia runs it when the window closes (the
+    // suite never Show()s a window, so it is invoked directly): it answers Cancel to a
+    // question still being asked, once, and says nothing when nothing is asked.
+    [AvaloniaFact]
+    public void Closing_the_window_while_it_asks_sends_cancel_through_its_own_OnClosed()
+    {
+        var onClosed = typeof(NewChatWindow).GetMethod("OnClosed", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var f = Asking();
+        var w = StartAsked(f);
+        Assert.True(w.TrustPanel.IsVisible);
+
+        onClosed.Invoke(w, new object[] { EventArgs.Empty });
+
+        Assert.Equal([("mini", Asked, false)], f.Trusts);
+
+        var quiet = new FakeLauncher();
+        var w2 = Make(Ready());
+        onClosed.Invoke(w2, new object[] { EventArgs.Empty });
+        Assert.Empty(quiet.Trusts);
+    }
 }

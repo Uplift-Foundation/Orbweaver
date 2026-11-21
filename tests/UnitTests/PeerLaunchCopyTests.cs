@@ -80,6 +80,8 @@ public class PeerLaunchTrustCopyTests
     [InlineData(false, "link_lost", null, false, "Cancelled here. mini didn't confirm, and closes the session itself within two minutes.")]
     [InlineData(false, "no_answer", null, true, "mini didn't answer. It may be asleep, or running a version that can't start sessions for another desktop.")]
     [InlineData(false, "launch_failed", "gone", true, "mini could not start it (gone).")]
+    [InlineData(false, "launch_failed", "gone", false, "mini could not start it (gone).")]
+    [InlineData(false, "bad_signature", null, false, "mini could not verify this machine's signature. Nothing was started.")]
     public void An_answer_reads_as_one_sentence(bool ok, string code, string? why, bool trusted, string expected)
     {
         Assert.Equal(expected, PeerLaunchCopy.AfterAnswer(new PeerLaunchResult(ok, code, null, why), trusted, "claude", "mini"));
