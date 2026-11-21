@@ -667,7 +667,14 @@ namespace Orbweaver
             // which is the whole of how a peer learns it has cleared. An older
             // Buddy reading this ignores the member and draws the orb at full
             // brightness, which still beats the no-orb it got before.
-            [property: JsonPropertyName("parked")] bool? Parked = null);
+            [property: JsonPropertyName("parked")] bool? Parked = null,
+
+            // CB-404: the session's model and effort as the far Buddy's
+            // RunControlsHost reads them (MirrorRun). Its presence is how a near
+            // Buddy knows the far one understands the `run` INPUT flag. Null for
+            // a session that has no run controls there, and then omitted, so an
+            // ordinary roster keeps its CB-216 hash.
+            [property: JsonPropertyName("run")] PeerRun? Run = null);
 
         // The portable part of LocalPersona.Persona. Avatar is the already
         // bounded image bytes, never AvatarPath: the latter has meaning only
