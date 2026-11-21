@@ -1,0 +1,23 @@
+
+
+❯ x
+
+⏺ Both teammates are
+  still running their
+  sleep 900 commands,
+  and neither has
+  reported "done" yet.
+  What would you like me
+  to do with "x"? If
+  you meant to send a
+  different message, go
+  ahead and type it.
+
+────────────────────────
+❯ 
+────────────────────────
+  Haiku 5.5 | ~/throw…
+  ⏵⏵ bypass      · ↓ …
+
+  ⏺ main
+  ◯ scratch-two  2m 7s
