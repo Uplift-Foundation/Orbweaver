@@ -8,6 +8,19 @@ namespace Orbweaver.Tests;
 /// </summary>
 public class FolderResolverTests
 {
+    // The fake filesystem is keyed by POSIX paths, and the walk builds paths with
+    // Path.Combine, so on Windows every lookup would miss and the input come back
+    // unchanged. The resolver exists for /tmp to /private/tmp; the real link case is
+    // in the integration suite, so this shows as skipped on windows-latest instead of
+    // passing without checking anything.
+    private sealed class PosixPathsTheoryAttribute : TheoryAttribute
+    {
+        public PosixPathsTheoryAttribute()
+        {
+            if (OperatingSystem.IsWindows()) Skip = "the fake filesystem is keyed by POSIX paths";
+        }
+    }
+
     // A path is present when listed; a link has a target.
     private static Func<string, (bool, string?)> Fs(Dictionary<string, string?> entries) =>
         p => entries.TryGetValue(p, out var t) ? (true, t) : (false, null);
@@ -31,7 +44,7 @@ public class FolderResolverTests
         ["/plain"] = null,
     };
 
-    [Theory]
+    [PosixPathsTheory]
     [InlineData("/tmp/x", "/private/tmp/x")]
     [InlineData("/tmp/x/y", "/private/tmp/x/y")]
     [InlineData("/a/mid", "/private/tmp/x")]
