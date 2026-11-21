@@ -18,6 +18,14 @@ namespace Orbweaver.Tests
 
         internal static IReadOnlyList<string> HelpBody() => Rows(Help);
 
+        // /mcp's two levels and the idle prompt after the second Esc, for the multi-level case.
+        private static string Capture(string name) => File.ReadAllText(Path.Combine(
+            Path.GetDirectoryName(SourceFile())!, "Captures", "cb400", name + ".txt"));
+
+        internal static string McpList => Capture("mcp-list");
+        internal static string McpDetail => Capture("mcp-detail");
+        internal static string McpAfterEsc2 => Capture("mcp-after-esc2");
+
         // The rows as the reader would hand them over: trailing blanks off, bounded as the wire is.
         internal static IReadOnlyList<string> McpBody() => Rows(Mcp);
 

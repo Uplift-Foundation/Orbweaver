@@ -1258,8 +1258,23 @@ namespace Orbweaver
         public const int MaxBodyLines = 60;
         public const int MaxBodyChars = 200;
 
-        private static IReadOnlyList<string>? BoundedBody(IReadOnlyList<string>? body) =>
-            body?.Take(MaxBodyLines).Select(l => Clip(l, MaxBodyChars)).ToList();
+        // What the last row says when the body was cut, at rows or at columns, so a reader is
+        // never shown a screen that looks whole and is not. The reader (OverlayScreen) uses the
+        // same text for its own cut. A body already inside both bounds, a marked one included,
+        // passes unchanged, so cutting twice (reader, then wire, then decode) adds nothing.
+        public const string BodyCutMarker = "… (more in the terminal)";
+
+        private static IReadOnlyList<string>? BoundedBody(IReadOnlyList<string>? body)
+        {
+            if (body is null) return null;
+            var cut = body.Count > MaxBodyLines || body.Any(l => l.Length > MaxBodyChars);
+            if (!cut) return body.ToList();
+
+            // Room for the marker inside the row bound, so the result is still inside it.
+            var rows = body.Take(MaxBodyLines - 1).Select(l => Clip(l, MaxBodyChars)).ToList();
+            rows.Add(BodyCutMarker);
+            return rows;
+        }
 
         private static string Clip(string text, int max) => text.Length <= max ? text : text[..max];
 

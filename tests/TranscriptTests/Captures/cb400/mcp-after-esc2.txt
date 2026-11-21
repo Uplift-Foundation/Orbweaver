@@ -1,0 +1,50 @@
+
+ ▐▛███▛█   Claude Code v2.1.330
+▝▜██████▀  Fable 5.2 · Claude Team
+ ▝▝   ▝▝   /private/tmp/cb400qa-work · /rc
+
+  ⎿  SessionStart:startup says: 👋 here. Most recently touched: mcp.sh.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Fable 5.2 | ~/cb400qa-work | 41% (7d:28%) | [.claude-board]
+  ⏵⏵ bypass permissions on (shift+tab to cycle)

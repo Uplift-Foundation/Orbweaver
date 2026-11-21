@@ -2202,19 +2202,52 @@ public partial class MirrorRoundTripTests : IDisposable
         Assert.StartsWith("Handed to job-hunter for its next turn.", RemoteControlChatSession.DeliveredRemotelyNote("job-hunter", null));
     }
 
-    // The wire body is held to its bounds on the way in too: a far side that sends too
-    // many rows or rows that are too long cannot make this side draw an unbounded block.
+    private static MirrorProtocol.WirePrompt WithBody(IReadOnlyList<string> body) =>
+        new("t", new[] { new MirrorProtocol.WireOption("Escape", "Close") }, "fp", Body: body);
+
+    private static IReadOnlyList<string> RoundTrip(IReadOnlyList<string> body) =>
+        MirrorProtocol.DecodePrompt(MirrorProtocol.EncodePrompt(WithBody(body)))!.Body!;
+
+    // Cut at rows: 61 rows come out as 60, the last of them the marker, the first 59 verbatim.
     [Fact]
-    public void ABodyOnTheWireIsBoundedWhenItIsDecoded()
+    public void ASixtyOneRowBodyIsCutAndTheLastRowSaysSo()
     {
-        var rows = Enumerable.Range(0, MirrorProtocol.MaxBodyLines + 40)
-            .Select(i => new string('x', MirrorProtocol.MaxBodyChars + 50)).ToList();
-        var wire = new MirrorProtocol.WirePrompt("t", new[] { new MirrorProtocol.WireOption("Escape", "Close") }, "fp", Body: rows);
+        var rows = Enumerable.Range(1, 61).Select(i => "row " + i).ToList();
 
-        var decoded = MirrorProtocol.DecodePrompt(MirrorProtocol.EncodePrompt(wire))!;
+        var got = RoundTrip(rows);
 
-        Assert.Equal(MirrorProtocol.MaxBodyLines, decoded.Body!.Count);
-        Assert.All(decoded.Body, r => Assert.Equal(MirrorProtocol.MaxBodyChars, r.Length));
+        Assert.Equal(MirrorProtocol.MaxBodyLines, got.Count);
+        Assert.Equal(rows.Take(MirrorProtocol.MaxBodyLines - 1), got.Take(MirrorProtocol.MaxBodyLines - 1));
+        Assert.Equal(MirrorProtocol.BodyCutMarker, got[^1]);
+    }
+
+    // Cut at columns: a 201-character row is clipped to 200 and the last row says so.
+    [Fact]
+    public void ATwoHundredAndOneColumnRowIsClippedAndTheLastRowSaysSo()
+    {
+        var rows = new List<string> { "short", new string('x', MirrorProtocol.MaxBodyChars + 1), "after" };
+
+        var got = RoundTrip(rows);
+
+        Assert.Equal(new string('x', MirrorProtocol.MaxBodyChars), got[1]);
+        Assert.Equal("short", got[0]);
+        Assert.Equal("after", got[2]);
+        Assert.Equal(MirrorProtocol.BodyCutMarker, got[^1]);
+        Assert.Equal(4, got.Count);
+    }
+
+    // The controls: exactly at both bounds nothing is cut and nothing is added, and a body that
+    // already carries the marker (the reader's own cut) passes through unchanged, so cutting at the
+    // reader, the encoder and the decoder says it once.
+    [Fact]
+    public void ABodyAtBothBoundsIsNotCutAndAMarkedOneIsNotMarkedAgain()
+    {
+        var atBounds = Enumerable.Range(0, MirrorProtocol.MaxBodyLines).Select(_ => new string('y', MirrorProtocol.MaxBodyChars)).ToList();
+        Assert.Equal(atBounds, RoundTrip(atBounds));
+
+        var marked = Enumerable.Range(1, MirrorProtocol.MaxBodyLines - 1).Select(i => "row " + i)
+            .Append(MirrorProtocol.BodyCutMarker).ToList();
+        Assert.Equal(marked, RoundTrip(marked));
     }
 
     // Either direction of version skew: a frame with no body decodes with none, which is

@@ -2340,7 +2340,8 @@ public class LocalCliChatSessionTests : IDisposable
         OverlayPane pane, Func<SessionStatus, Task<string?>>? readAnyRoute = null, bool tmux = true,
         Func<SessionStatus, string, Func<string?, bool>, Task<(bool Pressed, string? Before)>>? press = null,
         Func<SessionStatus, string, Task<bool>>? plain = null,
-        Func<SessionStatus, Task<string?>>? capture = null)
+        Func<SessionStatus, Task<string?>>? capture = null,
+        Func<DateTime>? clock = null)
     {
         var session = new LocalCliChatSession("s1", new SessionStatus
         {
@@ -2351,6 +2352,7 @@ public class LocalCliChatSessionTests : IDisposable
             PressKey = plain ?? pane.Press,
             CaptureAndPress = press ?? pane.CaptureAndPress,
             ReadAnyRoute = readAnyRoute ?? (_ => Task.FromResult<string?>(null)),
+            Clock = clock ?? (() => DateTime.UtcNow),
         };
 
         session.UpdateStatus(new SessionStatus
@@ -2623,7 +2625,7 @@ public class LocalCliChatSessionTests : IDisposable
         Assert.Equal(ChatRole.System, note.Role);
         Assert.Equal(
             "Not sent: this session is showing \"Get the Claude app on your phone\". "
-            + "Close it above and send again. Your message is still in the box.",
+            + "Use the button above and send again. Your message is still in the box.",
             note.Text);
     }
 
@@ -2633,7 +2635,7 @@ public class LocalCliChatSessionTests : IDisposable
     [Fact]
     public void TheNoteReadsBackTheTitleOfTheReasonTypingGateBuilds() =>
         Assert.Equal(
-            "Not sent: this session is showing \"Some Screen\". Close it above and send again. Your message is still in the box.",
+            "Not sent: this session is showing \"Some Screen\". Use the button above and send again. Your message is still in the box.",
             LocalCliChatSession.NotAtPromptNote(TypingGate.OverlayWhy("Some Screen")));
 
     // A dialog's reason also starts "it is showing", and must keep its old wording.
@@ -2788,4 +2790,84 @@ public class LocalCliChatSessionTests : IDisposable
         Assert.NotEmpty(session.Prompt.Options);
         Assert.NotEqual("Escape", session.Prompt.Options[0].Key);
     }
+
+    // --- CB-400: multi-level screens and ordering -----------------------------------
+
+    // Another overlay: the same shape under a different title, which is what tells two screens
+    // apart (the fingerprint is the title plus the key and its label, not the body).
+    private static string AnotherOverlay =>
+        PaneFixtures.MobileOverlay80x50.Replace("Get the Claude app on your phone", "Another blocking screen");
+
+    // Pressed: the overlay just pressed, read again before the terminal redraws, is held back
+    // (no second box for a screen that is going away) until the settle window ends.
+    [AvaloniaFact]
+    public async Task TheOverlayJustPressedIsNotShownAgainUntilTheSettleWindowEnds()
+    {
+        await WithReplyOn(async () =>
+        {
+            var now = new DateTime(2026, 11, 21, 12, 0, 0, DateTimeKind.Utc);
+            var pane = new OverlayPane(PaneFixtures.MobileOverlay80x50);
+            var reads = 0;
+            var session = await OverlayWaitingOn(
+                pane, capture: s => { reads++; return pane.Capture(s); }, clock: () => now);
+
+            // The press lands but the redraw has not: the screen still reads as the overlay.
+            await session.AnswerAsync(session.Prompt!.Options[0]);
+            Assert.Null(session.Prompt);
+
+            await ScanAsync(session, () => reads);
+            Assert.Null(session.Prompt);
+
+            // Past the window the overlay is still there, so the press plainly did not take.
+            now += LocalCliChatSession.SettleAfterAnswer;
+            await ScanAsync(session, () => reads);
+            Assert.NotNull(session.Prompt);
+            Assert.NotNull(session.Prompt!.Body);
+        });
+    }
+
+    // The other half of "pressed": the press moved a multi-level screen to another overlay. The
+    // next scan shows it with its own prompt, with no note and no second click needed.
+    [AvaloniaFact]
+    public async Task APressThatLandsOnAnotherOverlayShowsItWithItsOwnButton()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new OverlayPane(PaneFixtures.MobileOverlay80x50) { AfterPress = _ => AnotherOverlay };
+            var reads = 0;
+            var session = await OverlayWaitingOn(pane, capture: s => { reads++; return pane.Capture(s); });
+            var first = session.Prompt!.Title;
+
+            await session.AnswerAsync(session.Prompt.Options[0]);
+            await ScanAsync(session, () => reads);
+
+            Assert.Equal(new[] { "Escape" }, pane.Pressed);
+            Assert.Empty(session.History);
+            Assert.NotNull(session.Prompt);
+            Assert.NotEqual(first, session.Prompt!.Title);
+            Assert.Single(session.Prompt.Options);
+        });
+    }
+
+    // Not pressed because the screen had already moved to another overlay: not "closed" and not
+    // a failure. It is shown with its own button and nothing is said.
+    [AvaloniaFact]
+    public async Task AClickOnAScreenThatBecameAnotherOverlayPressesNothingAndSaysNothing()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new OverlayPane(PaneFixtures.MobileOverlay80x50);
+            var session = await OverlayWaitingOn(pane);
+
+            pane.Screen = AnotherOverlay;
+            await session.AnswerAsync(session.Prompt!.Options[0]);
+            for (var i = 0; i < 10; i++) { Avalonia.Threading.Dispatcher.UIThread.RunJobs(); await Task.Delay(5); }
+
+            Assert.Empty(pane.Pressed);
+            Assert.Empty(session.History);
+            Assert.NotNull(session.Prompt);
+            Assert.Contains(session.Prompt!.Body!, r => r.Contains("Scan the QR code"));
+        });
+    }
+
 }
