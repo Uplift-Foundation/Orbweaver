@@ -221,3 +221,41 @@ public class AskFormNarrowLabelsTests
         foreach (var t in _temps) File.Delete(t);
     }
 }
+
+/// <summary>
+/// CB-407: the mirror host's status is the one the hook wrote, read the way the host reads it
+/// (SessionManager.HeadlessSnapshot, the route a locked machine serves from), not one built by
+/// hand with the transcript path already set. The path must survive that read, or no
+/// transcript-dependent form fix could work through the mirror.
+/// </summary>
+[Collection("Settings")]
+public class MirrorHostStatusCarriesTheTranscriptPathTests
+{
+    private static string Rows => Cb407Captures.PathOf("mirror-form-12col-transcript-row.jsonl");
+
+    [Fact]
+    public void A_status_file_read_the_way_the_host_reads_it_keeps_its_transcript_path_and_finds_the_call()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "cb407-host-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            // The hook's own shape: a JSON status with the transcript_path key, state waiting.
+            var json = "{\"state\":\"waiting\",\"title\":\"cb407-mini\",\"cwd\":\"/tmp/cb407-mini\",\"session_pid\":4242,"
+                       + "\"transcript_path\":" + System.Text.Json.JsonSerializer.Serialize(Rows) + "}";
+            File.WriteAllText(Path.Combine(dir, "d2bc3479-98d3-412f-a563-bbef27837afc.txt"), json);
+
+            var sessions = SessionManager.HeadlessSnapshot(dir, () => new Dictionary<string, string>(), isRunning: _ => true,
+                nowUtc: DateTime.UtcNow, honourOrbLifetime: false, onWindows: false, recordStatus: (_, _) => null);
+
+            var status = Assert.Single(sessions).Status;
+            Assert.Equal(Rows, status.TranscriptPath);
+
+            var screen = Cb407Captures.Screen("mirror-form-12col-pane");
+            var (call, why) = AskFormTranscript.CallForWhy(screen, status.TranscriptPath);
+            Assert.Equal(AskFormTranscript.CallFound, why);
+            Assert.Equal("Which fruit do you prefer?", MirrorProtocol.PromptFromScreen(screen, call)!.Title);
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+}
