@@ -762,6 +762,28 @@ public class RemoteMirrorChatSessionTests : IDisposable
         Assert.Equal("/color pink", Assert.Single(_slashRan));
     }
 
+    // CB-403: the whole refusal over the wire, with the real session on the
+    // near side. The far pane is on a dialog, so the typed line is refused
+    // (nothing typed there), the reply comes back as not-at-prompt, the panel
+    // says so in the words TypingRefusal gives it, and the send is Failed —
+    // which is what makes ChatPanel keep the draft (ChatPanelTests pins that).
+    [AvaloniaFact]
+    public async Task ATypedSendIntoADialogComesBackAsNotAtPromptAndFails()
+    {
+        _farScreen = PaneFixtures.PermissionsAllow;
+        Wire("a", "b");
+        Capture();
+        var session = await OpenAsync();
+
+        var outcome = await session.SendAsync("please carry on");
+
+        Assert.Equal(ChatSendOutcome.Failed, outcome);
+        Assert.Empty(_typed);
+        Assert.Contains("isn't at its prompt", NotesOf(session));
+        Assert.Contains("Nothing was typed", NotesOf(session));
+        Assert.Contains(_serverLog, l => l.StartsWith($"input n={Name} -> err code={MirrorProtocol.ErrNotAtPrompt} why=", StringComparison.Ordinal));
+    }
+
     [AvaloniaFact]
     public async Task AFarMachineThatRefusesTheRequestOutrightIsReportedAsATypingRefusal()
     {
@@ -2606,6 +2628,7 @@ public class RemoteMirrorChatSessionTests : IDisposable
             PeerAllowed: _ => true,
             // CB-252: never the developer's real persona files.
             UserConfigDirs: () => Array.Empty<string>(),
+            GateDelay: _ => Task.CompletedTask,
             CapturePane: _farScreen is null ? null : _ => Task.FromResult<string?>(_farScreen),
             CanReadPane: _farScreen is null ? null : _ => true,
             PressKey: _farScreen is null ? null : (_, key) => { _pressed.Add(key); return Task.FromResult(true); }));
