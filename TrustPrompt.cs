@@ -27,7 +27,7 @@ namespace Orbweaver
         internal enum Option { None, No, Yes }
 
         // Marker is which option the ❯ is on, meaningful only when Answerable.
-        internal sealed record Reading(Kind Kind, Option Marker = Option.None)
+        internal sealed record Reading(Kind Kind, Option Marker = Option.None, bool Hooks = false)
         {
             internal static readonly Reading Nothing = new(Kind.None);
         }
@@ -38,6 +38,7 @@ namespace Orbweaver
         private const string NoLine = "No, exit";
         private const string YesLine = "Yes, I trust this folder";
         private const string Marker = "❯";
+        private const string HooksWarning = "This folder configures hooks that can run commands without asking";
 
         // The trust wording FirstRunDialogs already knows for the other CLIs
         // and the older Claude phrasing: detected, reported, never answered.
@@ -49,7 +50,9 @@ namespace Orbweaver
             "Do you trust the files in this folder",
         };
 
-        internal static Reading Read(string? screen, string cwd, NewChatCli cli)
+        // `resolved` is the physical spelling of the launched folder, which is what
+        // Claude prints for a folder asked for through a link; either binds.
+        internal static Reading Read(string? screen, string cwd, NewChatCli cli, string? resolved = null)
         {
             if (string.IsNullOrWhiteSpace(screen)) return Reading.Nothing;
 
@@ -68,10 +71,10 @@ namespace Orbweaver
             var marker = MarkerOn(screen);
             if (marker is null) return Reading.Nothing;
 
-            if (cli != NewChatCli.ClaudeCode || !FolderBinds(screen, cwd))
+            if (cli != NewChatCli.ClaudeCode || !FolderBinds(screen, cwd, resolved))
                 return new Reading(Kind.Unanswerable);
 
-            return new Reading(Kind.Answerable, marker.Value);
+            return new Reading(Kind.Answerable, marker.Value, flat.Contains(HooksWarning, StringComparison.Ordinal));
         }
 
         // Exactly the two option lines, exactly one carrying the marker.
@@ -92,16 +95,20 @@ namespace Orbweaver
         // removed. Not "contains", because "/tmp/x" is inside "/private/tmp/x"
         // and Claude prints a symlinked path resolved, which is a different
         // folder to trust.
-        private static bool FolderBinds(string screen, string cwd)
+        private static bool FolderBinds(string screen, string cwd, string? resolved)
         {
             var all = Regex.Replace(screen, @"\s+", "");
             var from = all.IndexOf(Heading.Replace(" ", ""), StringComparison.Ordinal);
             var to = all.IndexOf("Quicksafetycheck", StringComparison.Ordinal);
             if (from < 0 || to < from) return false;
             var shown = all[(from + Heading.Replace(" ", "").Length)..to];
-            var wanted = Regex.Replace(cwd, @"\s+", "");
             static string Trim(string p) => p.Length > 1 ? p.TrimEnd('/') : p;
-            return wanted.Length > 0 && Trim(shown) == Trim(wanted);
+            bool Is(string? folder)
+            {
+                var wanted = Regex.Replace(folder ?? "", @"\s+", "");
+                return wanted.Length > 0 && Trim(shown) == Trim(wanted);
+            }
+            return Is(cwd) || Is(resolved);
         }
 
         private static string Strip(string line) =>

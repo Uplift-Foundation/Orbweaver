@@ -273,7 +273,8 @@ namespace Orbweaver
         // ReservedSlot), so showing it never changes the window's height.
         private readonly TextBlock _trustTitle = new() { FontWeight = FontWeight.SemiBold };
         private readonly TextBlock _trustFolder = new() { TextTrimming = TextTrimming.CharacterEllipsis, Opacity = 0.8 };
-        private readonly TextBlock _trustWarning = new() { TextWrapping = TextWrapping.Wrap, MaxLines = 3 };
+        private readonly TextBlock _trustWarning = new() { TextWrapping = TextWrapping.Wrap, MaxLines = 2 };
+        private readonly TextBlock _trustHooks = new() { TextWrapping = TextWrapping.Wrap, MaxLines = 2, IsVisible = false };
         private readonly Button _trustYes = new() { Content = "Trust" };
         private readonly Button _trustNo = new() { Content = "Cancel" };
         private readonly StackPanel _trustPanel = new() { Spacing = 6, IsVisible = false };
@@ -657,6 +658,7 @@ namespace Orbweaver
         internal TextBlock TrustTitle => _trustTitle;
         internal TextBlock TrustFolder => _trustFolder;
         internal TextBlock TrustWarning => _trustWarning;
+        internal TextBlock TrustHooks => _trustHooks;
         internal Button TrustYes => _trustYes;
         internal Button TrustNo => _trustNo;
         internal Button BrowseButton => _browseButton;
@@ -1733,6 +1735,7 @@ namespace Orbweaver
             _trustPanel.Children.Add(_trustTitle);
             _trustPanel.Children.Add(_trustFolder);
             _trustPanel.Children.Add(_trustWarning);
+            _trustPanel.Children.Add(_trustHooks);
             _trustPanel.Children.Add(buttons);
             _trustYes.Click += async (_, _) => await AnswerTrustAsync(true);
             _trustNo.Click += async (_, _) => await AnswerTrustAsync(false);
@@ -1744,10 +1747,15 @@ namespace Orbweaver
             _trustGhost.Children.Add(new TextBlock { Text = "/folder", Opacity = 0.8 });
             _trustGhost.Children.Add(new TextBlock
             {
-                Text = "Claude Code will be able to read, edit and run files there, and the folder's own hooks will run there.",
+                Text = "Claude Code will be able to read, edit and run files there.",
                 TextWrapping = TextWrapping.Wrap,
-                MaxLines = 3,
-                MinHeight = 3 * 18,
+                MaxLines = 2,
+            });
+            _trustGhost.Children.Add(new TextBlock
+            {
+                Text = "This folder declares hooks that run commands on this machine without asking.",
+                TextWrapping = TextWrapping.Wrap,
+                MaxLines = 2,
             });
             _trustGhost.Children.Add(new Button { Content = "Trust", IsEnabled = false, Focusable = false });
             AutomationProperties.SetAccessibilityView(_trustGhost, AccessibilityView.Raw);
@@ -1764,7 +1772,9 @@ namespace Orbweaver
             _trustTitle.Text = PeerLaunchCopy.TrustTitle(machine);
             _trustFolder.Text = question.Cwd;
             ToolTip.SetTip(_trustFolder, question.Cwd);
-            _trustWarning.Text = PeerLaunchCopy.TrustWarning(cli, machine);
+            _trustWarning.Text = PeerLaunchCopy.TrustWarning(cli);
+            _trustHooks.IsVisible = question.Hooks;
+            _trustHooks.Text = question.Hooks ? PeerLaunchCopy.TrustHooks(machine) : null;
             _trustYes.IsEnabled = true;
             _trustNo.IsEnabled = true;
             _trustPanel.IsVisible = true;

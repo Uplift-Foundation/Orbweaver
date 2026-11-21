@@ -11,7 +11,7 @@ namespace Orbweaver.Tests;
 /// </summary>
 public class PeerLaunchServerTrustTests
 {
-    private const string Folder = "/private/tmp/cb327-scratch/proj";
+    private const string Folder = TrustScreens.Folder;
     private static readonly X509Certificate2 Sender = Cert("mbp");
     private static readonly X509Certificate2 Other = Cert("other");
     private static readonly string OwnPin = new('b', 64);
@@ -23,11 +23,8 @@ public class PeerLaunchServerTrustTests
             .CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(1));
     }
 
-    private static string Fixture(string name) =>
-        File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "TrustFixtures", name + ".txt"));
-
-    private static readonly string OnNo = Fixture("tmux-claude-trustdialog");
-    private static readonly string OnYes = OnNo.Replace("❯ No, exit\n   Yes, I trust this folder", "  No, exit\n ❯ Yes, I trust this folder");
+    private static readonly string OnNo = TrustScreens.OnNo;
+    private static readonly string OnYes = TrustScreens.OnYes;
     private const string Idle = "$ ";
 
     private sealed class World
@@ -110,6 +107,7 @@ public class PeerLaunchServerTrustTests
         Assert.Equal(Folder, r.Trust.Cwd);
         Assert.Equal(w.Desk.Now.ToUnixTimeSeconds() + 120, r.Trust.ExpiresAt);
         Assert.Equal(22, r.Trust.Token.Length);
+        Assert.False(r.Trust.Hooks);
         Assert.Equal(1, w.Server.PendingCount);
         Assert.Contains($"peer-launch mbp trust_needed pane=%1", w.Log);
         Assert.DoesNotContain(w.Log, l => l.Contains("proj"));
@@ -295,5 +293,23 @@ public class PeerLaunchServerTrustTests
         // The default delay completes at once, so the question was expired and closed straight away.
         SpinWait.SpinUntil(() => server.PendingCount == 0, TimeSpan.FromSeconds(5));
         Assert.Equal(0, server.PendingCount);
+    }
+
+    // Display only: the hooks warning on the far screen rides in the question and is not signed.
+    [Fact]
+    public async Task The_hooks_warning_rides_in_the_question_and_is_not_part_of_the_signature()
+    {
+        var w = new World { Screen = TrustScreens.HooksOnNo };
+        var f = new LaunchFields(TrustScreens.HooksFolder, "claude", "", "", "", "", w.NextNonce(), w.Desk.Now.ToUnixTimeSeconds() + 120, "default");
+        var signed = PeerIdentity.Sign(Sender, LaunchGate.PeerMessage(OwnPin, LaunchGate.Body(f)));
+        var body = PeerLaunchWire.EncodeLaunch(new PeerLaunchWire.LaunchRequest(f.Cwd, f.Cli, "", "", f.Account, "", "", f.Nonce, f.ExpiresAt,
+            RelayCrypto.Base64Url(signed.Sig), Convert.ToBase64String(signed.CertificateDer), true));
+
+        var r = await w.Server.HandleAsync("mbp", body);
+
+        Assert.Equal(PeerLaunchCodes.TrustNeeded, r.Code);
+        Assert.True(r.Trust!.Hooks);
+        Assert.True(PeerLaunchWire.ParseResult(PeerLaunchWire.EncodeResult(r))!.Trust!.Hooks);
+        Assert.DoesNotContain("hooks", PeerTrustAnswer.Body(new PeerTrustAnswer.Fields("t", "trust", "/w", "claude", "default", "n", "m", 1)));
     }
 }

@@ -50,7 +50,11 @@ namespace Orbweaver
         [property: JsonPropertyName("token")] string Token,
         [property: JsonPropertyName("cli")] string Cli,
         [property: JsonPropertyName("cwd")] string Cwd,
-        [property: JsonPropertyName("expires_at")] long ExpiresAt);
+        [property: JsonPropertyName("expires_at")] long ExpiresAt,
+        // Display only and unsigned: the far screen carries the CLI's own
+        // warning that the folder configures hooks that run commands. It
+        // changes what the dialog says, never what an answer authorises.
+        [property: JsonPropertyName("hooks"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Hooks = false);
 
     // One folder in a far machine's listing. Path and Drive are set only at
     // the top level (the roots); below it a folder is reached by Name.

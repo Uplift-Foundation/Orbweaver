@@ -2,8 +2,7 @@
 ────────────────────────────────
  Accessing workspace:
 
- /private/tmp/cb327-scratch/pro
- j
+ /private/tmp/cb397-w/git-plain
 
  Quick safety check: Is this a
  project you created or one you
@@ -25,6 +24,17 @@
 
  Enter to confirm · Esc to
  cancel
+
+
+
+
+
+
+
+
+
+
+
 
 
 

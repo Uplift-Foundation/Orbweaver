@@ -43,8 +43,13 @@ namespace Orbweaver
 
         internal static string TrustTitle(string machine) => "Trust this folder on " + machine + "?";
 
-        internal static string TrustWarning(string cli, string machine) =>
-            CliName(cli) + " will be able to read, edit and run files there, and the folder's own hooks will run on " + machine + ".";
+        internal static string TrustWarning(string cli) =>
+            CliName(cli) + " will be able to read, edit and run files there.";
+
+        // Added under the body only when the far screen carried the CLI's own
+        // hooks warning (PeerLaunchTrust.Hooks).
+        internal static string TrustHooks(string machine) =>
+            "This folder declares hooks that run commands on " + machine + " without asking.";
 
         internal static string Trusting(string machine) => "Trusting it on " + machine + "…";
 

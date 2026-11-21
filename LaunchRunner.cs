@@ -26,7 +26,7 @@ namespace Orbweaver
         // is asking in and the roster as it was before the start.
         internal sealed record Outcome(string Code, string? Why, string? SessionId, HeldTrust? Held = null);
 
-        internal sealed record HeldTrust(string Pane, IReadOnlySet<string> Before);
+        internal sealed record HeldTrust(string Pane, IReadOnlySet<string> Before, bool Hooks = false);
 
         // CB-397: what to do when the pane the CLI was started in is asking
         // whether to trust the folder. None never reads the pane (Windows,
@@ -86,7 +86,7 @@ namespace Orbweaver
                 return new(RelayReplies.LaunchFailed, name + " is asking whether to trust that folder. Answer it on the desk.", null);
 
             if (prompt.Kind == TrustPrompt.Kind.Answerable && policy == TrustPolicy.Ask)
-                return new(PeerLaunchCodes.TrustNeeded, null, null, new HeldTrust(pane!, before));
+                return new(PeerLaunchCodes.TrustNeeded, null, null, new HeldTrust(pane!, before, prompt.Hooks));
 
             await CloseIfStillAskingAsync(f.Cwd, cli, pane!).ConfigureAwait(false);
             return new(RelayReplies.LaunchFailed, prompt.Kind == TrustPrompt.Kind.Answerable
@@ -94,8 +94,17 @@ namespace Orbweaver
                 : name + " is asking whether to trust that folder. Answer it once on that machine.", null);
         }
 
-        // Closes the pane only while it still shows a trust prompt. If the
-        // screen shows anything else, somebody answered it at that desk and
+        // The physical spelling of a folder, once per use; a resolver that
+        // throws or is absent leaves the string as asked. What is started is
+        // never changed: only the comparison gets a second spelling.
+        private string ResolveFolder(string cwd)
+        {
+            try { return _seams.Launch.Resolve?.Invoke(cwd) ?? cwd; }
+            catch (Exception) { return cwd; }
+        }
+
+        // Closes the pane only while it still shows a trust prompt for the
+        // launched folder. If the screen shows anything else, somebody answered it at that desk and
         // the session is theirs; the same look also guards a pane id reused
         // after a tmux server restart. Reads and kills are two processes
         // apart, which is the named residual window.
@@ -103,7 +112,10 @@ namespace Orbweaver
         {
             if (_seams.Launch.Trust is not { } trust) return;
             var screen = await trust.ReadPane(pane).ConfigureAwait(false);
-            if (TrustPrompt.Read(screen, cwd, cli).Kind != TrustPrompt.Kind.None)
+            // Narrower than "any trust prompt": the prompt for the launched
+            // folder, in either spelling. A reused pane id showing somebody
+            // else's prompt, or a CLI whose prompt is only reported, is left alone.
+            if (TrustPrompt.Read(screen, cwd, cli, ResolveFolder(cwd)).Kind == TrustPrompt.Kind.Answerable)
                 await trust.ClosePane(pane).ConfigureAwait(false);
         }
 
@@ -114,7 +126,8 @@ namespace Orbweaver
         {
             var trust = _seams.Launch.Trust!;
             var cli = LaunchGate.CliFor(f.Cli);
-            TrustPrompt.Reading Look(string? screen) => TrustPrompt.Read(screen, f.Cwd, cli);
+            var resolved = ResolveFolder(f.Cwd);
+            TrustPrompt.Reading Look(string? screen) => TrustPrompt.Read(screen, f.Cwd, cli, resolved);
             static Outcome Failed(string why) => new(RelayReplies.LaunchFailed, why, null);
 
             var first = Look(await trust.ReadPane(held.Pane).ConfigureAwait(false));
@@ -213,16 +226,18 @@ namespace Orbweaver
         {
             var deadline = _seams.Now() + RelayRemote.LaunchCheckIn;
             var cli = LaunchGate.CliFor(f.Cli);
+            var resolved = ResolveFolder(f.Cwd);
             for (var tick = 1; ; tick++)
             {
                 foreach (var (sid, status) in _seams.Snapshot())
                     if (!before.Contains(sid) && status.IsLocalCli && MirrorProtocol.CliFor(status.Source) == f.Cli
-                        && SameFolder(status.Cwd, f.Cwd, _seams.Launch.IsWindows))
+                        && (SameFolder(status.Cwd, f.Cwd, _seams.Launch.IsWindows)
+                            || SameFolder(status.Cwd, resolved, _seams.Launch.IsWindows)))
                         return (sid, null);
 
                 if (pane is not null && tick >= 3 && tick % 2 == 1)
                 {
-                    var reading = TrustPrompt.Read(await _seams.Launch.Trust!.ReadPane(pane).ConfigureAwait(false), f.Cwd, cli);
+                    var reading = TrustPrompt.Read(await _seams.Launch.Trust!.ReadPane(pane).ConfigureAwait(false), f.Cwd, cli, resolved);
                     if (reading.Kind != TrustPrompt.Kind.None) return (null, reading);
                 }
 
@@ -261,7 +276,8 @@ namespace Orbweaver
             PlaceMac,
             StartWindows,
             UserHome,
-            DefaultTrustSeams());
+            DefaultTrustSeams(),
+            FolderResolver.ResolveReal);
 
         // The three real calls: read a pane, press a key under CB-315's
         // approval, close a pane. A status carrying only a pane id routes to

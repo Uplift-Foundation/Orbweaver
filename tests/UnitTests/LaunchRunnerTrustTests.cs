@@ -9,16 +9,13 @@ namespace Orbweaver.Tests;
 /// </summary>
 public class LaunchRunnerTrustTests
 {
-    private const string Folder = "/private/tmp/cb327-scratch/proj";
-
-    private static string Trust(string name) =>
-        File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "TrustFixtures", name + ".txt"));
+    private const string Folder = TrustScreens.Folder;
 
     private static string Screens(string name) =>
         File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "ScreenReadFixtures", name + ".txt"));
 
-    private static readonly string OnNo = Trust("tmux-claude-trustdialog");
-    private static readonly string OnYes = OnNo.Replace("❯ No, exit\n   Yes, I trust this folder", "  No, exit\n ❯ Yes, I trust this folder");
+    private static readonly string OnNo = TrustScreens.OnNo;
+    private static readonly string OnYes = TrustScreens.OnYes;
     private static readonly string Idle = Screens("conhost-claude-none");
 
     private static LaunchRunnerTests.Desk Pane(string screen) =>
@@ -77,17 +74,16 @@ public class LaunchRunnerTrustTests
     [Theory]
     [InlineData("grok", "tmux-grok-trustdialog")]
     [InlineData("codex", "wt-codex-trustdialog")]
-    public async Task Other_clis_prompts_are_reported_never_answered_and_the_pane_is_closed(string cli, string fixture)
+    public async Task Other_clis_prompts_are_reported_never_answered_and_the_pane_is_left_for_that_machine(string cli, string fixture)
     {
         var d = Pane(Screens(fixture));
         foreach (var policy in new[] { LaunchRunner.TrustPolicy.Ask, LaunchRunner.TrustPolicy.Close })
         {
-            d.Closed.Clear();
             var outcome = await d.Runner().RunAsync(F(cli), policy);
             Assert.Equal(RelayReplies.LaunchFailed, outcome.Code);
             Assert.StartsWith(NewChatLauncher.DisplayName(LaunchGate.CliFor(cli)), outcome.Why);
             Assert.EndsWith("Answer it once on that machine.", outcome.Why);
-            Assert.Equal(["%1"], d.Closed);
+            Assert.Empty(d.Closed);
             Assert.Empty(d.Presses);
         }
     }
@@ -210,5 +206,87 @@ public class LaunchRunnerTrustTests
     public void Kill_pane_args_name_only_the_pane()
     {
         Assert.Equal(["kill-pane", "-t", "%12"], TerminalScripts.TmuxKillPaneArgs("%12"));
+    }
+
+    // ---- the narrower guard, hooks, and the symlinked folder ---------------------------
+
+    // The same pane id now shows somebody else's trust prompt: not ours to kill.
+    [Fact]
+    public async Task A_trust_prompt_for_another_folder_is_never_killed()
+    {
+        var d = Pane(OnNo.Replace(Folder, "/private/tmp/cb397-w/somebody-elses"));
+        await d.Runner().CloseIfStillAskingAsync(Folder, NewChatCli.ClaudeCode, "%1");
+        Assert.Empty(d.Closed);
+
+        var ours = Pane(OnNo);
+        await ours.Runner().CloseIfStillAskingAsync(Folder, NewChatCli.ClaudeCode, "%1");
+        Assert.Equal(["%1"], ours.Closed);
+
+        var none = new LaunchRunnerTests.Desk();
+        await none.Runner().CloseIfStillAskingAsync(Folder, NewChatCli.ClaudeCode, "%1");
+        Assert.Empty(none.Closed);
+    }
+
+    [Fact]
+    public async Task The_hooks_warning_travels_with_the_held_question()
+    {
+        var plain = await Pane(OnNo).Runner().RunAsync(F(), LaunchRunner.TrustPolicy.Ask);
+        Assert.False(plain.Held!.Hooks);
+
+        var d = Pane(TrustScreens.HooksOnNo);
+        var hooks = await d.Runner().RunAsync(F() with { Cwd = TrustScreens.HooksFolder }, LaunchRunner.TrustPolicy.Ask);
+        Assert.True(hooks.Held!.Hooks);
+    }
+
+    private const string Asked = "/tmp/cb397-lnk";
+    private const string Physical = "/private/tmp/cb397-lnk";
+
+    private static LaunchRunnerTests.Desk Linked(string status, Func<string, string>? resolve = null)
+    {
+        var d = new LaunchRunnerTests.Desk { TrustOn = true, Screen = _ => TrustScreens.Read("tmpfolder-w100-no"), Resolve = resolve };
+        d.ChecksIn("new", LaunchRunnerTests.Status(cwd: status));
+        return d;
+    }
+
+    [Theory]
+    [InlineData(Asked)]
+    [InlineData(Physical)]
+    public async Task A_session_reporting_either_spelling_of_a_linked_folder_checks_in(string reported)
+    {
+        var d = Linked(reported, p => p == Asked ? Physical : p);
+        var outcome = await d.Runner().RunAsync(F() with { Cwd = Asked });
+        Assert.Equal(new LaunchRunner.Outcome(RelayReplies.Launched, null, "new"), outcome);
+        // What is started is the folder as asked, never the resolved one.
+        Assert.Equal(Asked, d.MacStarts.Single().Cwd);
+    }
+
+    [Fact]
+    public async Task Without_a_resolver_or_with_one_that_throws_only_the_asked_spelling_checks_in()
+    {
+        foreach (Func<string, string>? resolve in new Func<string, string>?[] { null, p => p, p => throw new IOException() })
+        {
+            var d = Linked(Physical, resolve);
+            Assert.Equal(RelayReplies.NoSession, (await d.Runner().RunAsync(F() with { Cwd = Asked })).Code);
+
+            var same = Linked(Asked, resolve);
+            Assert.Equal(RelayReplies.Launched, (await same.Runner().RunAsync(F() with { Cwd = Asked })).Code);
+        }
+    }
+
+    [Fact]
+    public async Task A_prompt_that_prints_the_resolved_folder_is_answerable_and_answered()
+    {
+        var onNo = TrustScreens.Read("tmpfolder-w100-no");
+        var screen = onNo;
+        var d = new LaunchRunnerTests.Desk { TrustOn = true, Screen = _ => screen, Resolve = p => p == Asked ? Physical : p };
+        d.OnPress = key => { if (key == "Down") screen = onNo.Replace("❯ No, exit\n   Yes, I trust this folder", "  No, exit\n ❯ Yes, I trust this folder"); };
+
+        var asked = await d.Runner().RunAsync(F() with { Cwd = Asked }, LaunchRunner.TrustPolicy.Ask);
+        Assert.Equal(PeerLaunchCodes.TrustNeeded, asked.Code);
+
+        d.ChecksIn("new", LaunchRunnerTests.Status(cwd: Physical));
+        var answered = await d.Runner().AnswerTrustAsync(F() with { Cwd = Asked }, asked.Held!);
+        Assert.Equal("new", answered.SessionId);
+        Assert.Equal(["Down", "Enter"], d.Presses);
     }
 }

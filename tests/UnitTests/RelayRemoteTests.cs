@@ -483,9 +483,9 @@ public class RelayRemoteTests
     [Fact]
     public async Task A_phone_launch_that_lands_on_a_trust_prompt_says_so_and_leaves_the_pane()
     {
-        var screen = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "TrustFixtures", "tmux-claude-trustdialog.txt"));
+        var screen = TrustScreens.OnNo;
         var w = new World(paneShows: screen);
-        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, cwd: "/private/tmp/cb327-scratch/proj", message: ""));
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, cwd: TrustScreens.Folder, message: ""));
 
         var reply = w.Sent.Replies.Single().Body;
         Assert.Equal("launch_failed", reply.GetProperty("code").GetString());

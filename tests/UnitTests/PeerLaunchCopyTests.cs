@@ -66,7 +66,8 @@ public class PeerLaunchTrustCopyTests
     {
         Assert.Equal("Claude Code on mini is asking whether to trust this folder.", PeerLaunchCopy.TrustAsking("claude", "mini"));
         Assert.Equal("Trust this folder on mini?", PeerLaunchCopy.TrustTitle("mini"));
-        Assert.Equal("Codex will be able to read, edit and run files there, and the folder's own hooks will run on mini.", PeerLaunchCopy.TrustWarning("codex", "mini"));
+        Assert.Equal("Codex will be able to read, edit and run files there.", PeerLaunchCopy.TrustWarning("codex"));
+        Assert.Equal("This folder declares hooks that run commands on mini without asking.", PeerLaunchCopy.TrustHooks("mini"));
         Assert.Equal("Trusting it on mini…", PeerLaunchCopy.Trusting("mini"));
     }
 

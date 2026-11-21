@@ -37,6 +37,7 @@ public class LaunchRunnerTests
         public readonly List<string> Presses = [];
         public readonly List<string> Closed = [];
         public Action<string>? OnPress;
+        public Func<string, string>? Resolve;
         public string? Current => Screen(Reads - 1);
 
         public LaunchRunner.TrustSeams? Trust() => !TrustOn ? null : new(
@@ -60,7 +61,8 @@ public class LaunchRunnerTests
             (command, cwd) => { MacStarts.Add((command, cwd)); return MacPlace; },
             psi => { WindowsStarts.Add(psi); return WindowsPid; },
             () => Home,
-            Trust());
+            Trust(),
+            Resolve);
 
         public RelayRemote.AccountSeams Accounts() => new(_ => Choices, _ => Designated);
 

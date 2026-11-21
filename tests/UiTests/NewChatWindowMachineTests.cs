@@ -693,7 +693,8 @@ public class NewChatWindowMachineTests : IDisposable
         Assert.True(w.TrustPanel.IsVisible);
         Assert.Equal("Trust this folder on mini?", w.TrustTitle.Text);
         Assert.Equal("/srv/lib", w.TrustFolder.Text);
-        Assert.Equal("Claude Code will be able to read, edit and run files there, and the folder's own hooks will run on mini.", w.TrustWarning.Text);
+        Assert.Equal("Claude Code will be able to read, edit and run files there.", w.TrustWarning.Text);
+        Assert.False(w.TrustHooks.IsVisible);
         Assert.Equal("Claude Code on mini is asking whether to trust this folder.", w.StatusLine.Text);
         Assert.True(w.TrustYes.IsEnabled);
         Assert.True(w.TrustNo.IsEnabled);
@@ -873,5 +874,28 @@ public class NewChatWindowMachineTests : IDisposable
         Assert.False(w.TrustPanel.IsVisible);
         Assert.Equal("mini refused it (trust_needed).", w.StatusLine.Text);
         Assert.True(w.StartButton.IsEnabled);
+    }
+
+    [AvaloniaFact]
+    public void The_hooks_line_shows_only_when_the_far_screen_warned_of_hooks_and_the_height_holds()
+    {
+        var f = Ready();
+        f.Result = new PeerLaunchResult(false, PeerLaunchCodes.TrustNeeded, null, null, Asked with { Hooks = true });
+        var w = Make(f);
+        var opened = Height(w);
+        Pick(w, 1);
+        w.FolderCombo.SelectedIndex = 1;
+        Click(w.StartButton);
+
+        Assert.True(w.TrustHooks.IsVisible);
+        Assert.Equal("This folder declares hooks that run commands on mini without asking.", w.TrustHooks.Text);
+        Assert.Equal(opened, Height(w));
+
+        // A later question without the warning hides the line again.
+        Click(w.TrustNo);
+        f.Result = new PeerLaunchResult(false, PeerLaunchCodes.TrustNeeded, null, null, Asked);
+        Click(w.StartButton);
+        Assert.False(w.TrustHooks.IsVisible);
+        Assert.Null(w.TrustHooks.Text);
     }
 }

@@ -39,7 +39,8 @@ namespace Orbweaver
             Func<string, string, (string? Pane, string? Why)> PlaceMac,
             Func<ProcessStartInfo, int?> StartWindows,
             Func<string>? Home = null,
-            LaunchRunner.TrustSeams? Trust = null);
+            LaunchRunner.TrustSeams? Trust = null,
+            Func<string, string>? Resolve = null);
 
         internal sealed record Seams(
             Func<DateTimeOffset> Now,

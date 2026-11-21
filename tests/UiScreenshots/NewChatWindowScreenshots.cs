@@ -586,10 +586,10 @@ public class NewChatWindowScreenshots : IDisposable
 
     // CB-397: the far machine is asking whether to trust the folder; Start sends the
     // question's own folder, so the panel's text is what a person would read.
-    private static NewChatWindow AskedWindow(FakePeers peers)
+    private static NewChatWindow AskedWindow(FakePeers peers, bool hooks = false)
     {
         peers.Result = new PeerLaunchResult(false, PeerLaunchCodes.TrustNeeded, null, null,
-            new PeerLaunchTrust("TOKEN", "claude", "/Users/warren/Source/ledger", 1_800_000_000));
+            new PeerLaunchTrust("TOKEN", "claude", "/Users/warren/Source/ledger", 1_800_000_000, hooks));
         var window = PeerWindow(peers);
         window.Show();
         ScreenshotHelper.Flush();
@@ -615,6 +615,17 @@ public class NewChatWindowScreenshots : IDisposable
 
         Assert.True(window.TrustPanel.IsVisible);
         Assert.Equal("Trust this folder on mini?", window.TrustTitle.Text);
+    }
+
+    // The far screen carried Claude Code's own hooks warning: the body gains one line.
+    [AvaloniaFact]
+    public void TrustQuestionAskingWithAHooksWarning()
+    {
+        var window = AskedWindow(new FakePeers(), hooks: true);
+
+        ScreenshotHelper.CaptureAlreadyShown(window, "new-chat-window-trust-asking-hooks.png");
+
+        Assert.True(window.TrustHooks.IsVisible);
     }
 
     [AvaloniaFact]

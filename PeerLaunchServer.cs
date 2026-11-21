@@ -123,7 +123,7 @@ namespace Orbweaver
             _ = ExpireAsync(pending);
             _seams.Log($"peer-launch {machine} {PeerLaunchCodes.TrustNeeded} pane={held.Pane}");
             return new PeerLaunchResult(false, PeerLaunchCodes.TrustNeeded, null, null,
-                new PeerLaunchTrust(token, fields.Cli, fields.Cwd, expires));
+                new PeerLaunchTrust(token, fields.Cli, fields.Cwd, expires, held.Hooks));
         }
 
         private async Task ExpireAsync(Pending pending)
