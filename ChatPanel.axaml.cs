@@ -262,6 +262,10 @@ namespace Orbweaver
             // The overlay body is drawn in the transcript's own mono face (CB-400);
             // set here because the family is an internal static the XAML can't name.
             PromptBody.FontFamily = MonoFamily;
+
+            // The sideways scroll bar floats over the card's last row; give the row room under
+            // it, but only while the body can actually scroll sideways.
+            PromptBodyScroll.ScrollChanged += (_, _) => FitPromptBodyBar();
             HeartChipMark.Data = StreamGeometry.Parse(SymbolMarks.Heart);
             RunOptionsChip.PointerPressed += RunOptionsChip_PointerPressed;
 
@@ -3601,6 +3605,15 @@ namespace Orbweaver
             PromptOptions.IsVisible = offered.Count > 0;
 
             PromptBox.IsVisible = true;
+        }
+
+        // The height of the floating horizontal bar, in DIPs.
+        internal const double PromptBodyBarRoom = 14;
+
+        private void FitPromptBodyBar()
+        {
+            var room = PromptBodyScroll.Extent.Width > PromptBodyScroll.Viewport.Width ? PromptBodyBarRoom : 0;
+            if (PromptBody.Margin.Bottom != room) PromptBody.Margin = new Thickness(0, 0, 0, room);
         }
 
         private void PromptOption_PointerPressed(object? sender, PointerPressedEventArgs e)

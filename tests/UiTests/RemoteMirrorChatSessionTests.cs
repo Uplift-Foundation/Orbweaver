@@ -1016,6 +1016,22 @@ public class RemoteMirrorChatSessionTests : IDisposable
         Assert.EndsWith("answer that screen in the terminal and send again.", last.Text);
     }
 
+    // The far pane is simply a session at its input box after an Esc, which the overlay reader
+    // reads as null: nothing for the overlay path to name, and typing goes ahead.
+    [AvaloniaFact]
+    public async Task ASendToAFarPaneThatIsNeitherAPromptNorAnOverlayIsTypedNormally()
+    {
+        Assert.Null(OverlayScreen.Read(PaneFixtures.McpAfterEsc2));
+        _farScreen = PaneFixtures.McpAfterEsc2;
+        Wire("a", "b");
+
+        var session = await OpenAsync();
+        var outcome = await session.SendAsync("please carry on");
+
+        Assert.Equal(ChatSendOutcome.Sent, outcome);
+        Assert.Single(_typed);
+    }
+
     // CB-400: the far pane is on a screen only Esc leaves. The refusal names it, in the far
     // side's own words, so the person at this panel is told which screen to deal with.
     [AvaloniaFact]

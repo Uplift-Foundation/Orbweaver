@@ -137,6 +137,34 @@ public class ChatPanelPromptBodyTests : IDisposable
         Assert.NotEqual(Colors.White, ((ISolidColorBrush)text.Foreground!).Color);
     }
 
+    // The sideways bar floats over the last row: when the body can scroll sideways the row gets
+    // room under it.
+    [AvaloniaFact]
+    public void TheLastRowGetsRoomUnderTheSidewaysBarWhenTheBodyScrollsSideways()
+    {
+        var (panel, _) = Open(ChatTranscript.ParseDialog(PaneFixtures.McpDetail)!);
+        Flush();
+
+        var scroll = panel.FindControl<ScrollViewer>("PromptBodyScroll")!;
+        Assert.True(scroll.Extent.Width > scroll.Viewport.Width, "the detail page is wider than the card");
+        Assert.Equal(ChatPanel.PromptBodyBarRoom, BodyText(panel).Margin.Bottom);
+    }
+
+    // ...and when it cannot it gets none, so a body that fits across is not made taller (and so
+    // pushed into scrolling down) for a bar that is not there. A two-row body, because the
+    // headless font is not the real one and a real screen's width cannot be asserted here.
+    [AvaloniaFact]
+    public void TheLastRowGetsNoRoomWhenTheBodyFitsAcross()
+    {
+        var (panel, _) = Open(Overlay(new[] { "x", "y" }));
+        Flush();
+
+        var scroll = panel.FindControl<ScrollViewer>("PromptBodyScroll")!;
+        Assert.True(scroll.Extent.Width <= scroll.Viewport.Width, $"extent {scroll.Extent.Width} viewport {scroll.Viewport.Width}");
+        Assert.Equal(0, BodyText(panel).Margin.Bottom);
+        Assert.True(scroll.Extent.Height <= scroll.Viewport.Height + 0.5);
+    }
+
     [AvaloniaFact]
     public void TheBodyScrollsBothWaysInsteadOfWrapping()
     {
