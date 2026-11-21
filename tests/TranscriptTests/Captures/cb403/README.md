@@ -34,5 +34,13 @@ bracketed paste, on a selected teammate row, stopped that teammate (the hint
 row there reads `enter to view · x to stop`). The reading "prompt" for the
 `team-sel-*` screens holds for bracketed paste only.
 
-Not found: a screen that reads `no-prompt-mark`, which the same incident also
-logged once.
+Found later, by the lead on a throwaway session at 98x39 (no teammates needed):
+
+| file | how it was reached | typing into it | reads |
+| --- | --- | --- | --- |
+| `transcript-view-w98` | Ctrl+O at the idle prompt (Claude Code's transcript view) | a bracketed paste and Enter vanished: no turn, no draft, nothing after closing the view | unknown, `no-prompt-mark` |
+| `history-search-w98` | Ctrl+R at the idle prompt (history search) | not typed into; text would go to the search filter | unknown, `no-box-top` |
+
+The first is the incident's `no-prompt-mark` refusal (20:52): the gate was right,
+and under log-only the text was typed into a screen that drops it. How the pane
+came to be in the transcript view that evening is not known.

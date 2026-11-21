@@ -1,0 +1,39 @@
+
+ ▐▛███▛█   Claude Code v2.1.330
+▝▜██████▀  Opus 5.5 with medium effort · Claude Team
+ ▝▝   ▝▝   /private/tmp/npm-proj · /rc
+
+
+
+
+
+
+
+
+
+
+
+
+──────────────────────────────────────────────────────────────────────────────────────────────────
+  Search prompts · everywhere
+    ↑ 855 more
+    47m ago  Use the AskUserQuestion tool now, one question, header "QA", text "QA test, ignore…
+    46m ago  Use the AskUserQuestion tool once more: header "QA", text "QA test, ignore: second…
+    45m ago  Use the AskUserQuestion tool once: header "QA", text "QA test, ignore: peer answer…
+    40m ago  Use AskUserQuestion now: one question 'Which colour?' with exactly 2 options Red a…
+    27m ago  Use the AskUserQuestion tool once: header "QA", text "QA test, ignore: final", opt…
+    22m ago  Use the AskUserQuestion tool to ask which fruit I prefer, with options apple banan…
+  ❯ 11m ago  Use the AskUserQuestion tool to ask which fruit I prefer, with options apple banan…
+  ╭────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ Use the AskUserQuestion tool to ask which fruit I prefer, with options apple banana        │
+  │ cherry, each option description exactly the same word as its label. Nothing else.          │
+  │                                                                                            │
+  │                                                                                            │
+  │                                                                                            │
+  │                                                                                            │
+  ╰────────────────────────────────────────────────────────────────────────────────────────────╯
+  ╭────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ⌕ Filter history…                                                                          │
+  ╰────────────────────────────────────────────────────────────────────────────────────────────╯
+
+  ↑/↓ to navigate · ctrl+s to change scope · Enter to use · Esc to cancel

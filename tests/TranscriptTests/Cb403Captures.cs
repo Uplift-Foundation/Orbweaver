@@ -51,6 +51,19 @@ namespace Orbweaver.Tests
             var (dialog, check2) = PaneScreen.Read(Load("background-dialog-w24"));
             check("cb403 background-dialog-w24 reads as a dialog", dialog == PaneReading.Dialog, $"{dialog} ({check2})");
 
+            // The incident's other refusal, `no-prompt-mark` (20:52): Ctrl+O, the
+            // transcript view, draws no input box at all. A bracketed paste and
+            // Enter there were measured to vanish: no turn and no draft, and
+            // nothing left when the view was closed. So the refusal is right, and
+            // log-only typing there is what lost the message.
+            var (transcript, why1) = PaneScreen.Read(Load("transcript-view-w98"));
+            check("cb403 transcript-view-w98 is refused as no prompt",
+                transcript == PaneReading.Unknown && why1 == "no-prompt-mark", $"{transcript} ({why1})");
+
+            // Ctrl+R, history search: typing goes into its filter, not to Claude.
+            var (search, why2) = PaneScreen.Read(Load("history-search-w98"));
+            check("cb403 history-search-w98 is not a prompt", search != PaneReading.Prompt, $"{search} ({why2})");
+
             // Each signal on its own, cut out of a real capture so neither can
             // lean on the other: the footer without the `@` title, then the
             // title without the footer.
