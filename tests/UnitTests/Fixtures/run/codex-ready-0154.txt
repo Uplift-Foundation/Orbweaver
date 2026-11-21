@@ -1,0 +1,45 @@
+╭─────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ ✨ Update available! 0.154.0 -> 0.171.0                                                             │
+│ Run sh -c 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh' to update. │
+│                                                                                                     │
+│ See full release notes:                                                                             │
+│ https://github.com/openai/codex/releases/latest                                                     │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+⚠ `[features].codex_hooks` is deprecated. Use `[features].hooks` instead.
+Enable it with `--enable hooks` or `[features].hooks` in config.toml. See https://developers.openai.com/codex/config-basic#feature-flags for details.
+
+╭─────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.154.0)                      │
+│                                                 │
+│ model:     sonnet   /model to change            │
+│ directory: ~/src/demo │
+╰─────────────────────────────────────────────────╯
+
+  Tip: Use /statusline to configure which items appear in the status line.
+
+⚠ 1 MCP startup issue · ctrl + t for details
+
+• You have 3 usage limit resets available. Run /usage to use one.
+
+
+› Ask Codex to do anything
+
+  sonnet default · ~/src/demo
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

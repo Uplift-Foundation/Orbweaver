@@ -49,7 +49,11 @@ namespace Orbweaver
             Func<SessionStatus, Task<string?>>? CapturePane = null,
             Func<SessionStatus, bool>? CanReadPane = null,
             Func<bool>? Shadow = null,
-            Action<string, string>? Log = null);
+            Action<string, string>? Log = null,
+            // CB-404: one key into the pane (a digit, "Escape", "Enter"), for the
+            // picker route of a Codex before 0.164. Null leaves that route off.
+            Func<SessionStatus, string, Task<bool>>? PressKey = null,
+            Func<TimeSpan, Task>? Delay = null);
 
         private readonly Seams _seams;
         private readonly object _gate = new();
@@ -208,14 +212,43 @@ namespace Orbweaver
         private async Task<RunSetResult> TypedAsync(SessionStatus status, RunCli cli, RunRouteDecision route, RunField field, string value)
         {
             // An old Codex has no argument form: a typed "/model x" opens its
-            // full-screen picker instead. Its picker route is not driven yet.
-            if (cli == RunCli.Codex && route.SetsNewSessionDefault) return new(RunSetKind.Unavailable, OldCodexReason);
+            // full-screen picker instead, so the picker is driven (CodexPicker).
+            if (cli == RunCli.Codex && route.SetsNewSessionDefault)
+                return await PickerAsync(status, field, value).ConfigureAwait(false);
 
             var (typed, notAtPrompt, _) = await TypingGate.GuardedTypeAsync(status, TypedLine(cli, field, value),
                 _seams.TypeInto, _seams.RecordStatus, _seams.CapturePane, _seams.CanReadPane, _seams.Shadow,
                 _seams.Log ?? ((what, detail) => MirrorLog.Say(what, detail)), "run-host").ConfigureAwait(false);
             if (notAtPrompt is not null) return new(RunSetKind.Failed, TypingGate.NotAtPromptReason(notAtPrompt));
             return typed ? RunSetResult.Sent : new(RunSetKind.Failed, "the terminal refused the text");
+        }
+
+        private async Task<RunSetResult> PickerAsync(SessionStatus status, RunField field, string value)
+        {
+            if (_seams.PressKey is not { } press || _seams.CapturePane is not { } capture)
+                return new(RunSetKind.Unavailable, OldCodexReason);
+
+            var reading = _seams.ReadingFor(status) ?? RunReading.None;
+            string? gateRefusal = null;
+            var seams = new CodexPicker.Seams(
+                async line =>
+                {
+                    var (typed, notAtPrompt, _) = await TypingGate.GuardedTypeAsync(status, line,
+                        _seams.TypeInto, _seams.RecordStatus, _seams.CapturePane, _seams.CanReadPane, _seams.Shadow,
+                        _seams.Log ?? ((what, detail) => MirrorLog.Say(what, detail)), "run-host").ConfigureAwait(false);
+                    if (notAtPrompt is not null) gateRefusal = TypingGate.NotAtPromptReason(notAtPrompt);
+                    return typed && notAtPrompt is null;
+                },
+                key => press(status, key),
+                () => capture(status),
+                _seams.Delay ?? (d => Task.Delay(d)));
+
+            var failure = field == RunField.Model
+                ? await CodexPicker.SetAsync(seams, value, reading.Effort, effortRequired: false).ConfigureAwait(false)
+                : await CodexPicker.SetAsync(seams, reading.Model, value, effortRequired: true).ConfigureAwait(false);
+            // The gate's own sentence when it would not type "/model" at all.
+            if (failure == CodexPicker.TypeRefused && gateRefusal is not null) failure = gateRefusal;
+            return failure is null ? RunSetResult.Sent : new(RunSetKind.Failed, failure);
         }
     }
 
@@ -270,7 +303,8 @@ namespace Orbweaver
                     ? SessionPark.RecordStatus(status.SessionPid, status.SessionId) : null,
                 CapturePane: TerminalFocuser.CapturePane,
                 CanReadPane: TerminalFocuser.CanReadPane,
-                Log: (what, detail) => MirrorLog.Say(what, detail)));
+                Log: (what, detail) => MirrorLog.Say(what, detail),
+                PressKey: TerminalFocuser.PressKey));
         }
     }
 }
