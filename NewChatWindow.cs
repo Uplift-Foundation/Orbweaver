@@ -278,6 +278,7 @@ namespace Orbweaver
         private readonly Button _trustYes = new() { Content = "Trust" };
         private readonly Button _trustNo = new() { Content = "Cancel" };
         private readonly StackPanel _trustPanel = new() { Spacing = 6, IsVisible = false };
+        private Grid? _trustSlot;
         private readonly StackPanel _trustGhost = new() { Spacing = 6, Opacity = 0, IsHitTestVisible = false, IsEnabled = false, IsVisible = false };
         private PeerLaunchTrust? _trustAsked;
         private string? _trustMachine;
@@ -523,7 +524,12 @@ namespace Orbweaver
             root.Children.Add(_statusLine);
 
             BuildTrustPanel();
-            root.Children.Add(ReservedSlot(_trustGhost, _trustPanel));
+            // Hidden outright until a Machine row exists: an empty slot still takes the
+            // root panel's spacing, which is what pushed a window with no peers over the
+            // 720 work-area bound by a dip on Windows.
+            _trustSlot = ReservedSlot(_trustGhost, _trustPanel);
+            _trustSlot.IsVisible = _trustGhost.IsVisible;
+            root.Children.Add(_trustSlot);
 
             return root;
         }
@@ -750,6 +756,7 @@ namespace Orbweaver
                 _accountGhost.IsVisible = true;
                 _folderGhost.IsVisible = true;
                 _trustGhost.IsVisible = true;
+                if (_trustSlot is not null) _trustSlot.IsVisible = true;
             }
             _agentGhost.IsVisible = openClawUsable;
             _existingGhost.IsVisible = openClawUsable;
