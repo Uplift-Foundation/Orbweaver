@@ -18,6 +18,7 @@
     <Compile Include="Program.cs" />
     <Compile Include="Readers/*.cs" />
     <Compile Include="../../ChatTranscript.cs" />
+    <Compile Include="../../OverlayScreen.cs" />
     <Compile Include="../../PaneColumns.cs" />
     <Compile Include="../../GrokDialog.cs" />
     <Compile Include="../../FirstRunDialogs.cs" />

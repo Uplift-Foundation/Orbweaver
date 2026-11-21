@@ -258,6 +258,14 @@ namespace Orbweaver
             // background-job badge wears, which is the whole point of this
             // button's mark.
             AttachMark.Data = StreamGeometry.Parse(SymbolMarks.Gear);
+
+            // The overlay body is drawn in the transcript's own mono face (CB-400);
+            // set here because the family is an internal static the XAML can't name.
+            PromptBody.FontFamily = MonoFamily;
+
+            // The sideways scroll bar floats over the card's last row; give the row room under
+            // it, but only while the body can actually scroll sideways.
+            PromptBodyScroll.ScrollChanged += (_, _) => FitPromptBodyBar();
             HeartChipMark.Data = StreamGeometry.Parse(SymbolMarks.Heart);
             RunOptionsChip.PointerPressed += RunOptionsChip_PointerPressed;
 
@@ -2912,6 +2920,12 @@ namespace Orbweaver
             PromptTitle.LineHeight = Math.Ceiling(PromptTitle.FontSize * 1.25);
             PromptOptions.FontSize = 11 * scale;
             PromptProgress.FontSize = 10 * scale;
+
+            // CB-400: line height tracks the size exactly so a QR's half-block rows
+            // keep touching at every scale; the family is what makes columns line up.
+            PromptBody.FontSize = 8 * scale;
+            PromptBody.LineHeight = PromptBody.FontSize;
+            PromptBodyScroll.MaxHeight = 180 * scale;
             PromptFreeTextBox.FontSize = 11 * scale;
             PromptElsewhere.FontSize = 10.5 * scale;
 
@@ -3542,6 +3556,8 @@ namespace Orbweaver
                 _pressedPromptOption = null;
                 HideFreeText();
                 PromptProgress.IsVisible = false;
+                PromptBody.Text = null;
+                PromptBodyCard.IsVisible = false;
                 PromptBox.IsVisible = false;
                 PromptOptions.ItemsSource = null;
                 return;
@@ -3550,6 +3566,11 @@ namespace Orbweaver
             // The arming clock restarts whenever what is being asked changes, not
             // only when the box first appears: a new request replacing one under
             // the pointer is exactly the moment a click must not carry over.
+            // Not the body (CB-400): some overlays change while open (/resume's "1 minute
+            // ago", /usage's live figures), and a changed signature restarts the arming
+            // clock. The body is refreshed in place below; what is being asked is the
+            // title and the keys.
+            var body = prompt.Body is null ? null : string.Join("\n", prompt.Body);
             var signature = prompt.Title + "\n" + string.Join("\n",
                 prompt.Options.Select(o => o.Key + "|" + o.ApprovalId));
             if (signature != _promptSignature)
@@ -3567,6 +3588,8 @@ namespace Orbweaver
             _promptArmed = prompt.ArmedActivation;
 
             PromptTitle.Text = prompt.Title;
+            PromptBody.Text = body;
+            PromptBodyCard.IsVisible = body is not null;
             PromptElsewhere.Text = prompt.ElsewhereLabel ?? "Answer in the terminal";
 
             // No options means the screen couldn't be read. The box still
@@ -3582,6 +3605,15 @@ namespace Orbweaver
             PromptOptions.IsVisible = offered.Count > 0;
 
             PromptBox.IsVisible = true;
+        }
+
+        // The height of the floating horizontal bar, in DIPs.
+        internal const double PromptBodyBarRoom = 14;
+
+        private void FitPromptBodyBar()
+        {
+            var room = PromptBodyScroll.Extent.Width > PromptBodyScroll.Viewport.Width ? PromptBodyBarRoom : 0;
+            if (PromptBody.Margin.Bottom != room) PromptBody.Margin = new Thickness(0, 0, 0, room);
         }
 
         private void PromptOption_PointerPressed(object? sender, PointerPressedEventArgs e)
@@ -3970,6 +4002,8 @@ namespace Orbweaver
             // here is very unlikely to be waiting on the same dialog, and a
             // stale one would offer buttons that answer nothing.
             PromptBox.IsVisible = false;
+            PromptBody.Text = null;
+            PromptBodyCard.IsVisible = false;
             PromptOptions.ItemsSource = null;
 
             // Detached while hidden. The transient panel stays alive between

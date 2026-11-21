@@ -60,7 +60,8 @@ namespace Orbweaver
         {
             if (string.IsNullOrWhiteSpace(screen)) return (PaneReading.Unknown, "empty");
 
-            if (ChatTranscript.ParseDialog(screen) is not null) return (PaneReading.Dialog, "dialog");
+            if (ChatTranscript.ParseDialog(screen) is { } dialog)
+                return (PaneReading.Dialog, dialog.Body is null ? "dialog" : "overlay");
 
             var lines = ChatTranscript.ScreenLines(screen).Select(l => l.Trim()).ToArray();
             var from = ChatTranscript.WindowStart(lines);

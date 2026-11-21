@@ -20,6 +20,7 @@ internal static class PromptVectors
     private const string PhoneId = "ph_a1b2c3d4e5f60718";
     private const string RequestId = "01JC9R0A5N2Q7W8X3E4T6Y9ZBD";
     private const string SessionId = "0f6c4f2a";
+    private const string QuietRequestId = "01JC9R0A5N2Q7W8X3E4T6Y9ZBE";
     private const long ExpiresAt = 1794113592;
 
     private static byte[] Label(string label) => SHA256.HashData(Encoding.UTF8.GetBytes("orbweaver-vector:" + label));
@@ -166,6 +167,17 @@ internal static class PromptVectors
         var preview = string.Join("\n", fp.Preview);
         var prompt = PromptFrames.Prompt(RequestId, SessionId, "permission", "claude", "Bash", preview, opts, fp.Hash, ExpiresAt);
 
+        // CB-400: an overlay's prompt frame, the one a phone must not alert on. A question
+        // with one Escape/Close option, its preview the caption, and "quiet":true as the
+        // last key. Its own counter (11): prompt is 0, resolved 1-4, refusals 5-10, and no
+        // existing box moves. Not in `fingerprints`: the phone's checker derives those with
+        // its own numbered-dialog rule and has no overlay reader.
+        var overlayScreen = File.ReadAllText(Path.Combine("tools", "relay-vectors", "mobile-overlay-80x50.txt")).Replace("\r", "");
+        var overlay = PromptFingerprint.Of(overlayScreen)!;
+        var quietPrompt = PromptFrames.Prompt(QuietRequestId, SessionId, "question", "claude", "",
+            PromptPipeline.OverlayPreview(overlay.Preview),
+            [new PromptOption("Escape", "Close", OptionKinds.Option, null)], overlay.Hash, ExpiresAt, quiet: true);
+
         var resolved = new JsonArray();
         ulong counter = 1;
         foreach (var by in new[] { "desk", "phone:" + PhoneId, "gone", "unknown" })
@@ -185,7 +197,9 @@ internal static class PromptVectors
                          "The phone never computes this: it echoes the prompt's screen_hash in its answer. The fixtures are here so every screen reader " +
                          "(surface C) and the desktop agree. Fixture cases are regenerated when surface C's wrapped-label join lands; the hash rule does not change. " +
                          "Envelope for the prompt: class action, push amber, id = request_id, e from push-vectors.json. Resolved: push resolve, id = request_id, no e. " +
-                         "Refusals: class action, push none.",
+                         "Refusals: class action, push none. " +
+                         "A quiet prompt (prompt_quiet; an overlay such as /mobile's QR screen) is envelope class action, push none, no e, and its resolved is push none; " +
+                         "\"quiet\" is present only as true and is the last key of the frame.",
             ["inputs"] = new JsonObject
             {
                 ["desktop_id"] = DesktopId,
@@ -195,6 +209,7 @@ internal static class PromptVectors
             },
             ["fingerprints"] = fingerprints,
             ["prompt"] = Sealed(epochKey, DesktopId, PhoneId, DesktopToPhone, 0, prompt),
+            ["prompt_quiet"] = Sealed(epochKey, DesktopId, PhoneId, DesktopToPhone, 11, quietPrompt),
             ["resolved"] = resolved,
             ["refusals"] = refusals,
         };

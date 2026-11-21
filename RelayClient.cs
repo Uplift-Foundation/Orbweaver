@@ -306,6 +306,12 @@ namespace Orbweaver
         bool IPromptSender.Prompt(string requestId, string sessionId, string prompt, string? pushPlaintext) =>
             Dispatch(() => _link.SendPrompt(requestId, sessionId, prompt, pushPlaintext));
 
+        bool IPromptSender.PromptQuiet(string requestId, string sessionId, string prompt) =>
+            Dispatch(() => _link.SendPrompt(requestId, sessionId, prompt, null, quiet: true));
+
+        void IPromptSender.ResolvedQuiet(string requestId, string sessionId, string by) =>
+            Dispatch(() => _link.SendResolved(requestId, sessionId, by, null, quiet: true));
+
         bool IPromptSender.PromptTo(string phoneId, string requestId, string sessionId, string prompt) =>
             Dispatch(() => _link.SendPromptTo(phoneId, requestId, sessionId, prompt));
 
