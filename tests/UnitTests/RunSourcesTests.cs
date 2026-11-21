@@ -17,9 +17,11 @@ public class RunSourcesTests
         public DateTimeOffset Now = DateTimeOffset.FromUnixTimeSeconds(1_800_000_000);
         public Func<string?, Task<string?>> Claude = _ => Task.FromResult<string?>(null);
         public Func<string?, Task<string?>> Codex = _ => Task.FromResult<string?>(null);
-        public Func<Task<Version?>> CodexBinary = () => Task.FromResult<Version?>(null);
+        public Func<string, Task<Version?>> VersionOf = _ => Task.FromResult<Version?>(null);
+        public readonly Dictionary<int, string> Executables = new();
+        public readonly List<string> VersionAsked = [];
+        public int ExecutableLookups;
         public readonly List<string?> ClaudeAsked = [], CodexAsked = [];
-        public int BinaryAsks;
         public RunSources Sources;
 
         public Desk()
@@ -31,7 +33,8 @@ public class RunSourcesTests
                 p => { Reads++; return Files.TryGetValue(p, out var f) ? f.Text : null; },
                 root => { ClaudeAsked.Add(root); return Claude(root); },
                 home => { CodexAsked.Add(home); return Codex(home); },
-                () => { BinaryAsks++; return CodexBinary(); },
+                pid => { ExecutableLookups++; return Executables.GetValueOrDefault(pid); },
+                exe => { VersionAsked.Add(exe); return VersionOf(exe); },
                 () => "/home/u",
                 () => Now));
         }
@@ -40,8 +43,8 @@ public class RunSourcesTests
             Files[path] = (text, text.Length, DateTime.UnixEpoch.AddSeconds(stamp));
     }
 
-    private static SessionStatus Of(SessionSource source, string path = "") =>
-        new() { SessionId = "s", Source = source, TranscriptPath = path, Cwd = "/w" };
+    private static SessionStatus Of(SessionSource source, string path = "", int pid = 0) =>
+        new() { SessionId = "s", Source = source, TranscriptPath = path, Cwd = "/w", SessionPid = pid };
 
     private const string ClaudeRow =
         """{"type":"assistant","timestamp":"2026-11-21T10:00:00Z","effort":"high","message":{"role":"assistant","model":"claude-opus-5-5","content":[]}}""";
@@ -88,42 +91,80 @@ public class RunSourcesTests
         Assert.Equal(new Version(0, 154, 0), d.Sources.CodexVersionFor(s));
         d.Files.Clear();                                   // cached: the first line never changes
         Assert.Equal(new Version(0, 154, 0), d.Sources.CodexVersionFor(s));
-        Assert.Equal(0, d.BinaryAsks);
+        Assert.Empty(d.VersionAsked);
     }
 
     [Fact]
-    public async Task A_codex_with_no_rollout_yet_takes_the_installed_binarys_version_from_the_background()
+    public async Task Before_the_first_turn_the_version_is_asked_of_the_sessions_own_executable_in_the_background()
     {
         var d = new Desk();
+        d.Executables[4242] = "/opt/old/codex";
         var answer = new TaskCompletionSource<Version?>();
-        d.CodexBinary = () => answer.Task;
-        var s = Of(SessionSource.Codex);
+        d.VersionOf = _ => answer.Task;
+        var s = Of(SessionSource.Codex, pid: 4242);
 
-        Assert.Null(d.Sources.CodexVersionFor(s));         // never waits
+        Assert.Null(d.Sources.CodexVersionFor(s));                // never waits
         Assert.Null(d.Sources.CodexVersionFor(s));
-        Assert.Equal(1, d.BinaryAsks);                     // one ask in flight at a time
+        Assert.Equal(["/opt/old/codex"], d.VersionAsked);         // that file, once, never PATH's
+        Assert.Equal(1, d.ExecutableLookups);                     // the pid is resolved once
 
-        answer.SetResult(new Version(0, 167, 0));
+        answer.SetResult(new Version(0, 154, 0));
         await d.Sources.LastProbe;
-        Assert.Equal(new Version(0, 167, 0), d.Sources.CodexVersionFor(s));
+        Assert.Equal(new Version(0, 154, 0), d.Sources.CodexVersionFor(s));
 
-        // A rollout without session_meta falls back to the binary too.
+        // A rollout without session_meta falls back to the executable too.
         d.Write("/r.jsonl", CodexTurn);
-        Assert.Equal(new Version(0, 167, 0), d.Sources.CodexVersionFor(Of(SessionSource.Codex, "/r.jsonl")));
+        Assert.Equal(new Version(0, 154, 0), d.Sources.CodexVersionFor(Of(SessionSource.Codex, "/r.jsonl", 4242)));
+    }
+
+    [Theory]
+    [InlineData(0, null)]                                         // no pid recorded
+    [InlineData(4242, null)]                                      // the process is gone
+    [InlineData(4242, "/usr/local/bin/node")]                     // not a codex: would answer about itself
+    public void A_session_whose_codex_cannot_be_resolved_has_no_version_and_nothing_is_asked(int pid, string? exe)
+    {
+        var d = new Desk();
+        if (exe is not null) d.Executables[pid] = exe;
+
+        Assert.Null(d.Sources.CodexVersionFor(Of(SessionSource.Codex, pid: pid)));
+        Assert.Empty(d.VersionAsked);
     }
 
     [Fact]
-    public void A_binary_version_ask_that_fails_or_throws_is_retried_after_five_minutes()
+    public void A_process_the_os_missed_once_is_looked_up_again_rather_than_given_up_on()
     {
-        var d = new Desk { CodexBinary = () => throw new InvalidOperationException() };
-        Assert.Null(d.Sources.CodexVersionFor(Of(SessionSource.Codex)));
-        Assert.Null(d.Sources.CodexVersionFor(Of(SessionSource.Codex)));
-        Assert.Equal(1, d.BinaryAsks);
-
-        d.CodexBinary = () => Task.FromResult<Version?>(new Version(0, 164, 0));
-        d.Now += RunSources.RetryAfter + TimeSpan.FromSeconds(1);
-        Assert.Equal(new Version(0, 164, 0), d.Sources.CodexVersionFor(Of(SessionSource.Codex)));
+        var d = new Desk { VersionOf = _ => Task.FromResult<Version?>(new Version(0, 167, 0)) };
+        var s = Of(SessionSource.Codex, pid: 9);
+        Assert.Null(d.Sources.CodexVersionFor(s));
+        d.Executables[9] = "/bin/codex";
+        Assert.Equal(new Version(0, 167, 0), d.Sources.CodexVersionFor(s));
+        Assert.Equal(2, d.ExecutableLookups);
     }
+
+    [Fact]
+    public async Task A_version_ask_that_fails_or_throws_is_retried_after_five_minutes()
+    {
+        var d = new Desk { VersionOf = _ => throw new InvalidOperationException() };
+        d.Executables[7] = @"C:\Tools\codex.exe";
+        var s = Of(SessionSource.Codex, pid: 7);
+        Assert.Null(d.Sources.CodexVersionFor(s));
+        Assert.Null(d.Sources.CodexVersionFor(s));
+        Assert.Single(d.VersionAsked);
+
+        d.VersionOf = _ => Task.FromResult<Version?>(new Version(0, 164, 0));
+        d.Now += RunSources.RetryAfter + TimeSpan.FromSeconds(1);
+        d.Sources.CodexVersionFor(s);
+        await d.Sources.LastProbe;
+        Assert.Equal(new Version(0, 164, 0), d.Sources.CodexVersionFor(s));
+    }
+
+    [Theory]
+    [InlineData("/a/codex", "/a/codex")]
+    [InlineData(@"C:\x\codex.exe", @"C:\x\codex.exe")]
+    [InlineData("/a/node", null)]
+    [InlineData(null, null)]
+    public void Only_an_executable_named_codex_counts(string? path, string? expected) =>
+        Assert.Equal(expected, RunSources.CodexExecutable(path));
 
     [Theory]
     [InlineData("codex-cli 0.154.0", "0.154.0")]
