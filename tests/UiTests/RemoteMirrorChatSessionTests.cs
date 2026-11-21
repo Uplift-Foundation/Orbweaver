@@ -2021,9 +2021,46 @@ public class RemoteMirrorChatSessionTests : IDisposable
 
         var outcome = await _client.SendInputDetailedAsync(Name, Secret);
 
-        Assert.Equal(MirrorProtocol.ErrUnsupported, outcome.Error);
-        Assert.Contains($"input n={Name} -> err code={MirrorProtocol.ErrUnsupported}", _clientLog);
+        // CB-406: a stalled far side may have typed it, so no-reply; a frame
+        // that never left cannot have been, so still a failure.
+        var code = stall ? MirrorProtocol.ErrNoReply : MirrorProtocol.ErrUnsupported;
+        Assert.Equal(code, outcome.Error);
+        Assert.Contains($"input n={Name} -> err code={code}", _clientLog);
         AssertNoSecretLogged();
+    }
+
+    // CB-406, measured in CB-403's proof C: an INPUT the far side typed came
+    // back as a failure after the timeout. Now the panel says it may have been
+    // delivered, keeps the send (the box clears, the bubble stays), and does
+    // not call it a refusal.
+    [AvaloniaFact]
+    public async Task ASendThatTimesOutSaysItMayHaveBeenDeliveredRatherThanFailed()
+    {
+        Wire("a", "b");
+        var session = await OpenAsync();
+        _stallInput = true;
+        _client.TimeoutOverrideForTests = TimeSpan.FromMilliseconds(50);
+
+        var outcome = await session.SendAsync("hello there");
+
+        Assert.Equal(ChatSendOutcome.Sent, outcome);
+        Assert.Contains(RemoteControlChatSession.NoReplyNote(Name), NotesOf(session));
+        Assert.DoesNotContain("Couldn't type", NotesOf(session));
+    }
+
+    // And a slash line that got no answer: the same note, not a refusal.
+    [AvaloniaFact]
+    public async Task ASlashLineThatTimesOutSaysItMayHaveBeenDelivered()
+    {
+        Wire("a", "b");
+        var session = await OpenAsync();
+        var turn = new ChatTurn { Role = ChatRole.User, Text = "/color green", IsComplete = true };
+
+        var outcome = session.ApplySlashOutcome(turn, "/color green",
+            new RemoteMirrorClient.InputOutcome(MirrorProtocol.ErrNoReply, null, null));
+
+        Assert.Equal(ChatSendOutcome.Sent, outcome);
+        Assert.Contains(RemoteControlChatSession.NoReplyNote(Name), NotesOf(session));
     }
 
     // An OK where a window should be: no payload and no reason either.

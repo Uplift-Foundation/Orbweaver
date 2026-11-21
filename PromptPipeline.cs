@@ -150,6 +150,10 @@ namespace Orbweaver
         // a queue of captures behind a slow pane would only grow.
         private int _scanning;
 
+        // Counts presses decided, so an answer can tell a press it raced from
+        // one it came after (PendingPrompt.LastPress).
+        private long _pressSeq;
+
         internal async Task OnScannedAsync(IReadOnlyList<(string SessionId, SessionStatus Status)> snapshot)
         {
             if (Interlocked.Exchange(ref _scanning, 1) == 1) return;
@@ -373,10 +377,19 @@ namespace Orbweaver
         {
             // Gate (a)'s breakdown starts here: when the answer reached the desk.
             _seams.Log($"answer {answer.RequestId} from {phoneId}");
+            // Read before queueing on the gate: a no-effect outcome stamped after
+            // this is one the answer could not have seen (CB-406, see
+            // PendingPrompt.LastPress).
+            var arrivedAt = Interlocked.Read(ref _pressSeq);
             await _gate.WaitAsync().ConfigureAwait(false);
             try
             {
                 var live = _live.Values.FirstOrDefault(l => l.Pending.RequestId == answer.RequestId);
+                if (live is not null && live.Pending.LastPress > arrivedAt)
+                {
+                    Refuse(phoneId, answer, AnswerGate.NotPending);
+                    return;
+                }
                 var fresh = live is null ? null : await _seams.Capture(live.Status).ConfigureAwait(false);
                 var d = AnswerGate.Decide(live?.Pending, answer, fresh, phoneId, phoneIdPublic, _seams.Now(), _nonces, watchPublic,
                     AskFormTranscript.CallFor(fresh, live?.Status.TranscriptPath));
@@ -426,9 +439,23 @@ namespace Orbweaver
                 {
                     _seams.Log($"press-no-effect {answer.RequestId}");
                     _send.Refusal(phoneId, answer.RequestId, answer.SessionId, AnswerGate.StalePrompt);
-                    // Left in place, answered: the dialog is still up and is the
-                    // desk's to answer now. Not minted again while its hash
-                    // stands, and settled silently when the session moves on.
+                    // Left in place and NOT answered (CB-406). It used to stay
+                    // marked answered, "settled silently when the session moves
+                    // on" — but the refusal reaches only the phone that tapped,
+                    // and the phone keeps the card regardless, so nobody was
+                    // ever told the prompt was over. Measured: a typed answer
+                    // that failed its read-back, then a press that landed in the
+                    // still-open field, left two prompts on Warren's phone long
+                    // after the question had left the screen, every retry
+                    // refused not_pending. Unanswered, a retry is decided by the
+                    // gate like any answer (the screen must still be this
+                    // dialog), and the scan sends resolved when it moves on. Not
+                    // minted again while its hash stands, as before.
+                    pending.Answered = false;
+                    // Stamped when the outcome is known: an answer read before
+                    // this (queued behind the press) raced it and is refused; one
+                    // after it is a retry.
+                    pending.LastPress = Interlocked.Increment(ref _pressSeq);
                     return;
                 }
 
