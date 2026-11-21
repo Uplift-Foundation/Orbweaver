@@ -200,4 +200,24 @@ public class OverlayScreenTests
         Assert.Equal(3, o.Caption.Count);
         Assert.Null(OverlayScreen.Read(PaneFixtures.WinAfterEsc));
     }
+
+    // QA's captures of other screens that draw `Esc to close`. The reader keys on
+    // shape, so a short screen with a rule above its footer and no input box below
+    // (/ide, /memory) is an overlay too, and Esc does close each. A screen whose rule
+    // is more than twelve rows above the footer (/help) is not read, and neither is
+    // /resume, whose footer is not found as a segment. These pin what the reader
+    // does today so a change to the rules shows up here, not on a phone.
+    [Fact]
+    public void Other_short_Esc_to_close_screens_read_as_overlays_with_their_own_titles()
+    {
+        Assert.Equal("Connect to an IDE", OverlayScreen.Read(PaneFixtures.OtherIdeScreen)!.Title);
+        Assert.Equal("Memory", OverlayScreen.Read(PaneFixtures.OtherMemoryScreen)!.Title);
+    }
+
+    [Fact]
+    public void Tall_or_wrapped_Esc_to_close_screens_are_not_read()
+    {
+        Assert.Null(OverlayScreen.Read(PaneFixtures.OtherResumeScreen));
+        Assert.Null(OverlayScreen.Read(PaneFixtures.OtherHelpScreen));
+    }
 }

@@ -2083,5 +2083,221 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
   Sonnet 5.5 | ~/work | 18% (7d:41%) | [.claude]
   ⏵⏵ auto mode on (shift+tab to cycle)
 """"");
+
+        // CB-400, QA's capture of another Claude Code screen that draws an `Esc to close` footer. (cb400-captures/other-ide.txt)
+        internal static readonly string OtherIdeScreen = Lf("""""
+                                               ⛁ Memory files: 6.6k tokens (0.7%)
+                                               ⛁ Skills: 9.6k tokens (1%)
+                                               ⛁ Messages: 291 tokens (<0.1%)
+                                               ⛶ Free space: 921.5k tokens (92%)
+                                               ⛝ Autocompact buffer: 33k tokens (3%)
+
+     Auto-compact window:  1m tokens
+
+     MCP tools · /mcp (loaded on-demand)
+     └ 251 tools · 1k tokens
+
+     Custom agents · .claude/agents/
+     └ 2 agents · 150 tokens
+
+     Skills · /skills
+     └ 45 skills · 9.6k tokens
+
+     /context all to expand
+
+❯ /agents
+  ⎿  The /agents wizard has been removed.
+
+     Ask Claude to create or update subagents for you (e.g. "create a code-reviewer subagent that
+     ..."),
+     or edit the files directly:
+       • .claude/agents/       (this project)
+       • ~/.claude/agents/     (all projects)
+
+     Docs: https://code.claude.com/docs/en/sub-agents
+
+❯ /memory
+  ⎿  Closed memory
+
+❯ /model
+  ⎿  Kept model as Fable 5.2
+
+❯ /plugin
+
+❯ /resume
+  ⎿  Resume cancelled
+
+❯ /export
+  ⎿  Export cancelled
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Connect to an IDE
+
+  No available IDEs detected
+  Make sure your IDE has the Claude Code extension or plugin installed and is running.
+
+  Esc to close
+""""");
+
+        // CB-400, QA's capture of another Claude Code screen that draws an `Esc to close` footer. (cb400-captures/other-memory.txt)
+        internal static readonly string OtherMemoryScreen = Lf("""""
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   claude-fable-5-2
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   45.5k/1m tokens (5%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   Estimated usage by category
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ System prompt: 4.4k tokens (0.4%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ System tools: 17.7k tokens (2%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ MCP tools: 1k tokens (0.1%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ MCP server instructions: 5.8k tokens (0.6%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝   ⛁ Custom agents: 150 tokens (<0.1%)
+                                               ⛁ Memory files: 6.6k tokens (0.7%)
+                                               ⛁ Skills: 9.6k tokens (1%)
+                                               ⛁ Messages: 291 tokens (<0.1%)
+                                               ⛶ Free space: 921.5k tokens (92%)
+                                               ⛝ Autocompact buffer: 33k tokens (3%)
+
+     Auto-compact window:  1m tokens
+
+     MCP tools · /mcp (loaded on-demand)
+     └ 251 tools · 1k tokens
+
+     Custom agents · .claude/agents/
+     └ 2 agents · 150 tokens
+
+     Skills · /skills
+     └ 45 skills · 9.6k tokens
+
+     /context all to expand
+
+❯ /agents
+  ⎿  The /agents wizard has been removed.
+
+     Ask Claude to create or update subagents for you (e.g. "create a code-reviewer subagent that
+     ..."),
+     or edit the files directly:
+       • .claude/agents/       (this project)
+       • ~/.claude/agents/     (all projects)
+
+     Docs: https://code.claude.com/docs/en/sub-agents
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Memory
+
+  ❯ Auto-memory  on
+
+  ❯ User instructions      Saved in ~/.claude/CLAUDE.md
+    Project instructions   Saved in ./CLAUDE.md
+    Open auto-memory folder
+
+  Learn more: https://code.claude.com/docs/en/memory
+
+  ↑/↓ to navigate · Enter to select · Esc to close
+""""");
+
+        // CB-400, QA's capture of another Claude Code screen that draws an `Esc to close` footer. (cb400-captures/other-resume.txt)
+        internal static readonly string OtherResumeScreen = Lf("""""
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝   ⛁ Custom agents: 150 tokens (<0.1%)
+                                               ⛁ Memory files: 6.6k tokens (0.7%)
+                                               ⛁ Skills: 9.6k tokens (1%)
+                                               ⛁ Messages: 291 tokens (<0.1%)
+                                               ⛶ Free space: 921.5k tokens (92%)
+                                               ⛝ Autocompact buffer: 33k tokens (3%)
+
+     Auto-compact window:  1m tokens
+
+     MCP tools · /mcp (loaded on-demand)
+     └ 251 tools · 1k tokens
+
+     Custom agents · .claude/agents/
+     └ 2 agents · 150 tokens
+
+     Skills · /skills
+     └ 45 skills · 9.6k tokens
+
+     /context all to expand
+
+❯ /agents
+  ⎿  The /agents wizard has been removed.
+
+     Ask Claude to create or update subagents for you (e.g. "create a code-reviewer subagent that
+     ..."),
+     or edit the files directly:
+       • .claude/agents/       (this project)
+       • ~/.claude/agents/     (all projects)
+
+     Docs: https://code.claude.com/docs/en/sub-agents
+
+❯ /memory
+  ⎿  Closed memory
+
+❯ /model
+  ⎿  Kept model as Fable 5.2
+
+❯ /plugin
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Resume session
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ⌕ Search…                                                                                    │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+    cb400qa-work
+
+  ❯ Setup health check
+    1 minute ago · HEAD · 3.8MB
+
+  Ctrl+A to show all projects · Ctrl+B to only show current branch · Space to preview · Ctrl+R to
+  rename · Type to search · Enter to resume · Esc to close
+""""");
+
+        // CB-400, QA's capture of another Claude Code screen that draws an `Esc to close` footer. (cb400-captures/other-help.txt)
+        internal static readonly string OtherHelpScreen = Lf("""""
+
+ ▐▛███▛█   Claude Code v2.1.330
+▝▜██████▀  Fable 5.2 · Claude Team
+ ▝▝   ▝▝   /private/tmp/cb400qa-work · /rc
+
+  ⎿  SessionStart:startup says: 👋 here. Most recently touched: scan2.sh.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Help  General   Commands   Custom commands
+
+  Claude understands your codebase, makes edits with your permission, and runs commands — right
+  from your terminal.
+
+  New here? Run /powerup to learn the features most people miss.
+
+  Shortcuts
+  ! for shell mode        esc esc to clear input             ctrl+shift+_ to undo
+  / for commands          shift+tab to cycle modes           ctrl+z to suspend
+  @ for file paths        ctrl+x =/- to change effort        ctrl+v to paste images
+  /btw for side question  ctrl+o to see full transcript      opt+p to switch model
+                          ctrl+t to toggle tasks             ctrl+s to stash prompt
+                          \ then enter for newline           ctrl+g to edit in $EDITOR
+                                                             /keybindings to customize
+
+  For more help: https://code.claude.com/docs/en/overview
+
+  Something else? Use /feedback to report bugs or request features.
+
+  ←/→ to switch · Esc to close
+""""");
     }
 }
