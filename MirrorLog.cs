@@ -125,6 +125,28 @@ namespace Orbweaver
         // Says something that may repeat forever, without letting it fill the
         // log. The first occurrence always lands; identical ones after it are
         // counted and restated every RepeatEvery.
+        // CB-402: a route in the form a log line can carry, "sid:369c40f8e1..." as
+        // "369c40f8". Anything that is not a sid route keeps its first eight characters.
+        internal static string ShortKey(string key)
+        {
+            var at = key.LastIndexOf("sid:", StringComparison.Ordinal);
+            var tail = at >= 0 ? key[(at + 4)..] : key;
+            return tail.Length <= 8 ? tail : tail[..8];
+        }
+
+        // CB-402: what changed between two rosters from one peer, as the log
+        // fragment " added=a,b dropped=c", or "" for a steady roster so that the
+        // line is no louder than it was.
+        internal static string RosterDelta(IEnumerable<string> before, IEnumerable<string> after)
+        {
+            var was = new HashSet<string>(before, StringComparer.OrdinalIgnoreCase);
+            var now = new HashSet<string>(after, StringComparer.OrdinalIgnoreCase);
+            var added = now.Where(k => !was.Contains(k)).Select(ShortKey).Order(StringComparer.Ordinal).ToList();
+            var dropped = was.Where(k => !now.Contains(k)).Select(ShortKey).Order(StringComparer.Ordinal).ToList();
+            return (added.Count > 0 ? " added=" + string.Join(",", added) : "")
+                 + (dropped.Count > 0 ? " dropped=" + string.Join(",", dropped) : "");
+        }
+
         internal static void SayOnce(string what, string detail = "")
         {
             bool worth;
