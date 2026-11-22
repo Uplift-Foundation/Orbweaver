@@ -18,7 +18,7 @@ namespace Orbweaver
     {
         // Read a listing, and this session was not on it, and nothing says it is
         // alive: a subagent, or a status file that outlived its session. A live
-        // process with a fresh file is Unknown instead — see Phase.
+        // process is Unknown instead — see Phase.
         NotAJob,
 
         // Mid-turn. Indistinguishable from Parked on disk, which is the whole
@@ -220,44 +220,44 @@ namespace Orbweaver
             return JobPhase.Working;
         }
 
-        // How long a status file may sit untouched and still count as evidence
-        // that a session absent from the listing is alive. The same ten minutes
-        // as SessionManager.SweepGrace, deliberately: past it the sweep deletes
-        // the file, so an orb kept on this evidence goes when the file does and
-        // the two never disagree.
-        internal static readonly TimeSpan AbsentGrace = TimeSpan.FromMinutes(10);
-
         // Phase, corrected for what the listing cannot see.
         //
         // Absent from a listing means "not a job the daemon is running under
         // that id" and no more. It does not mean the session is over: the daemon
         // re-points a job to a newer conversation that shares its worker, so the
         // listing names the old session id while a second, entirely live session
-        // (same pid, fresh status file) is not named at all. Read as NotAJob,
-        // that session lost its orb on a machine where it was plainly running —
-        // CB-413, found because the user's own work vanished from the board.
+        // (same pid) is not named at all. Read as NotAJob, that session lost its
+        // orb on a machine where it was plainly running — CB-413, found because
+        // the user's own work vanished from the board.
         //
-        // So NotAJob is only believed of a session that is actually over: its
-        // process is gone or its file has gone quiet past AbsentGrace. A process
-        // that is alive and a file that is fresh read Unknown, which every rule
-        // built on Phase treats as "change nothing". A pid of 0 is a hook that
-        // recorded no process, which is no evidence either way, so it keeps the
-        // listing's word — the subagent and the leftover file the NotAJob rules
-        // exist for are exactly the pid-less ones. "done" stays Done: the daemon
-        // said so, and nothing here second-guesses a word it did say.
+        // So NotAJob is only believed of a session whose process is gone, or
+        // that recorded no process to ask. A live pid reads Unknown, which every
+        // rule built on Phase treats as "change nothing".
+        //
+        // The status file's age is deliberately not consulted. A lead waiting on
+        // a human, or a background session idle overnight, fires no hook and its
+        // file goes quiet while the process stays exactly as alive; an age
+        // threshold hid those orbs again after ten minutes (the first cut of this
+        // fix did). The pid is the strong signal. What still drops a stale file
+        // on a live pid is SessionManager.Superseded, which keeps only the
+        // newest per pid, so the /clear leftover is handled there.
+        //
+        // A pid of 0 is a hook that recorded no process, which is no evidence
+        // either way, so it keeps the listing's word — the subagent and the
+        // leftover file the NotAJob rules exist for are exactly the pid-less
+        // ones. "done" stays Done: the daemon said so, and nothing here
+        // second-guesses a word it did say.
         //
         // `isRunning` is a Func so the stat behind it is only paid for a session
         // the listing did not name.
         internal static JobPhase Phase(
             Dictionary<string, string>? states, string sessionId,
-            int pid, DateTime written, DateTime now, Func<int, bool> isRunning)
+            int pid, Func<int, bool> isRunning)
         {
             var phase = Phase(states, sessionId);
             if (phase != JobPhase.NotAJob) return phase;
 
-            return pid > 0 && now - written < AbsentGrace && isRunning(pid)
-                ? JobPhase.Unknown
-                : JobPhase.NotAJob;
+            return pid > 0 && isRunning(pid) ? JobPhase.Unknown : JobPhase.NotAJob;
         }
 
         private static bool Is(string? state, string word) =>

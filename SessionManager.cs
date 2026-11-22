@@ -1976,7 +1976,7 @@ namespace Orbweaver
                 var status = entry.Status;
                 var daemonCanAnswer = SessionPresence.LocalDaemonCanAnswerFor(status, windows);
                 var phase = status.Source == SessionSource.ClaudeCode && daemonCanAnswer
-                    ? BackgroundJobs.Phase(jobs, entry.SessionId, status.SessionPid, entry.Written, now, running)
+                    ? BackgroundJobs.Phase(jobs, entry.SessionId, status.SessionPid, running)
                     : JobPhase.Unknown;
 
                 Func<bool> handedToBackground = () =>
@@ -3261,7 +3261,7 @@ namespace Orbweaver
                 // SessionPresence.LocalDaemonCanAnswerFor.
                 var phase = worthAsking && status.Source == SessionSource.ClaudeCode
                             && SessionPresence.LocalDaemonCanAnswerFor(status, _onWindows)
-                    ? BackgroundJobs.Phase(jobs, sessionId, status.SessionPid, written, now, ProcessLiveness.IsRunning)
+                    ? BackgroundJobs.Phase(jobs, sessionId, status.SessionPid, ProcessLiveness.IsRunning)
                     : JobPhase.Unknown;
 
                 // Whether this file is the husk a handoff to a background job

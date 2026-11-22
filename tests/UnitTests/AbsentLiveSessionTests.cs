@@ -45,48 +45,43 @@ public class AbsentLiveSessionTests
 
     private const string Unlisted = "b1375106-f6f2-4a11-9c3d-5e5e5e5e5e5e";
     private const string Listed = "d7b7db77-0000-4000-8000-000000000000";
-    private static readonly DateTime Now = new(2026, 11, 22, 12, 0, 0, DateTimeKind.Utc);
     private static Dictionary<string, string>? Parsed => BackgroundJobs.Parse(Listing);
 
-    private static JobPhase Ask(string id, int pid, TimeSpan age, bool running, Dictionary<string, string>? states = null)
-        => BackgroundJobs.Phase(states ?? Parsed, id, pid, Now - age, Now, _ => running);
+    private static JobPhase Ask(string id, int pid, bool running, Dictionary<string, string>? states = null)
+        => BackgroundJobs.Phase(states ?? Parsed, id, pid, _ => running);
 
     [Fact]
     public void AbsentButAliveAndFresh_IsUnknown_NotAJob()
-        => Assert.Equal(JobPhase.Unknown, Ask(Unlisted, 85260, TimeSpan.FromSeconds(30), true));
+        => Assert.Equal(JobPhase.Unknown, Ask(Unlisted, 85260, true));
 
     [Fact]
     public void AbsentAndProcessDead_StaysNotAJob()
-        => Assert.Equal(JobPhase.NotAJob, Ask(Unlisted, 85260, TimeSpan.FromSeconds(30), false));
-
-    [Fact]
-    public void AbsentAliveButStale_StaysNotAJob()
-        => Assert.Equal(JobPhase.NotAJob, Ask(Unlisted, 85260, BackgroundJobs.AbsentGrace + TimeSpan.FromSeconds(1), true));
+        => Assert.Equal(JobPhase.NotAJob, Ask(Unlisted, 85260, false));
 
     [Fact]
     public void AbsentWithNoRecordedPid_KeepsTheListingsWord()
-        => Assert.Equal(JobPhase.NotAJob, Ask(Unlisted, 0, TimeSpan.FromSeconds(30), true));
+        => Assert.Equal(JobPhase.NotAJob, Ask(Unlisted, 0, true));
 
     [Fact]
     public void DoneStaysDone_EvenWhenAliveAndFresh()
-        => Assert.Equal(JobPhase.Done, Ask("e0e0e0e0-0000-4000-8000-000000000000", 85301, TimeSpan.Zero, true));
+        => Assert.Equal(JobPhase.Done, Ask("e0e0e0e0-0000-4000-8000-000000000000", 85301, true));
 
     [Fact]
     public void ListedRowsAreUnchanged()
     {
-        Assert.Equal(JobPhase.Working, Ask(Listed, 85260, TimeSpan.Zero, true));
-        Assert.Equal(JobPhase.Parked, Ask("f1f1f1f1-0000-4000-8000-000000000000", 85302, TimeSpan.Zero, true));
+        Assert.Equal(JobPhase.Working, Ask(Listed, 85260, true));
+        Assert.Equal(JobPhase.Parked, Ask("f1f1f1f1-0000-4000-8000-000000000000", 85302, true));
     }
 
     [Fact]
     public void UnreadableListing_IsStillUnknown()
-        => Assert.Equal(JobPhase.Unknown, BackgroundJobs.Phase(null, Unlisted, 85260, Now, Now, _ => false));
+        => Assert.Equal(JobPhase.Unknown, BackgroundJobs.Phase(null, Unlisted, 85260, _ => false));
 
     [Fact]
     public void LivenessIsOnlyAskedAboutASessionTheListingDidNotName()
     {
         var asked = false;
-        BackgroundJobs.Phase(Parsed, Listed, 85260, Now, Now, _ => { asked = true; return true; });
+        BackgroundJobs.Phase(Parsed, Listed, 85260, _ => { asked = true; return true; });
         Assert.False(asked);
     }
 
@@ -95,8 +90,8 @@ public class AbsentLiveSessionTests
     [Fact]
     public void TwoSessionsOneJob_UnlistedLiveOneIsNotRuledOut()
     {
-        var phase = Ask(Unlisted, 85260, TimeSpan.FromSeconds(5), true);
+        var phase = Ask(Unlisted, 85260, true);
         Assert.False(SessionPresence.RuledOutAsAJob(phase));
-        Assert.True(SessionPresence.RuledOutAsAJob(Ask(Unlisted, 85260, TimeSpan.FromSeconds(5), false)));
+        Assert.True(SessionPresence.RuledOutAsAJob(Ask(Unlisted, 85260, false)));
     }
 }

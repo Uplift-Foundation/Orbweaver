@@ -369,6 +369,34 @@ public class HeadlessSnapshotTests
         }
     }
 
+    // CB-413: a lead idle for hours, waiting on a human, fires no hook and its
+    // file goes quiet while the process stays alive. The listing does not name
+    // it. A live pid keeps it however old the file is; a dead one does not.
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public void AnUnlistedSessionIsKeptByItsLivePidWhateverTheAgeOfItsFile(bool alive, bool kept)
+    {
+        var dir = NewStatusDir();
+        try
+        {
+            var now = DateTime.UtcNow;
+            WriteStatus(dir, "idle-lead", new SessionStatus
+                { State = "idle", Title = "lead", Cwd = "/tmp/t", Source = SessionSource.ClaudeCode, SessionPid = 85260 });
+            File.SetLastWriteTimeUtc(Path.Combine(dir, "idle-lead.txt"), now.AddHours(-9));
+
+            var snapshot = SessionManager.HeadlessSnapshot(
+                dir, () => new Dictionary<string, string>(), isRunning: _ => alive, nowUtc: now,
+                honourOrbLifetime: false);
+
+            Assert.Equal(kept, snapshot.Any(k => k.SessionId == "idle-lead"));
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
     // Only Claude Code sessions are asked about: agent teams are Claude Code's,
     // and a Codex session kept beside a member is left out of the batch.
     [Fact]
