@@ -44,3 +44,9 @@ A panel on machine A for a session on machine B (MacBook viewing a mini session;
 ## Added check (Codex 0.154 picker timing, from juno)
 
 After a picker set on Codex 0.154 the host marks the change pending and waits for the rollout (thread_settings_applied). The picker already read "Model changed to <id> <level>" off the screen. If 0.154 writes thread_settings_applied slowly, the 15 s timeout would say "may not have applied" for a change that did. UNMEASURED: set via the picker on a 0.154 pane (not %242 without Warren), time the rollout row against the screen line. Neg: a picker set Esc-cancelled changes nothing and no pending shows.
+
+## Results recorded (real machines)
+
+- Model and effort set confirmed on build 9de638248 (mini and MacBook): Warren's set from the panel, `mirror-log.txt` `via=set run=model` not refused, and the next transcript row read `claude-sonnet-5-5` at `low`. The typed route also saved a default in `~/.claude/settings.json` (expected, F1).
+- Codex 0.154 picker timing: the screen line "Model changed to <id> <level>" and the rollout `thread_settings_applied` rows arrived together, within ~0.1 s (one run, one pane). Esc-cancel changed nothing. The picker rewrote `~/.codex/config.toml`, restored after.
+- Not measured by QA: M1, M2, M3, S1.
