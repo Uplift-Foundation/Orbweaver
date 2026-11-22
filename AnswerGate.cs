@@ -13,8 +13,9 @@ namespace Orbweaver
     internal sealed class PendingPrompt
     {
         internal PendingPrompt(string requestId, string sessionId, string kind, string screenHash, long expiresAt, bool deskOnly = false,
-            IReadOnlyList<string>? keys = null, bool multi = false, bool text = false)
+            IReadOnlyList<string>? keys = null, bool multi = false, bool text = false, bool code = false)
         {
+            Code = code;
             DeskOnly = deskOnly;
             Keys = keys;
             Multi = multi;
@@ -53,6 +54,10 @@ namespace Orbweaver
         // takes other (typed text).
         internal bool Multi { get; }
         internal bool Text { get; }
+
+        // CB-412 frames-v14-login: the prompt is /login's URL step and went out
+        // with login.code, so it takes the `code` action (and nothing else).
+        internal bool Code { get; }
 
         // A first-run screen (trust, update, hooks review: FirstRunDialogs) sent
         // as "Open on desk" with no options. Nothing about it is pressable from
@@ -151,12 +156,14 @@ namespace Orbweaver
         // a press). A press names what to press: Key alone (one option); Keys,
         // the boxes a multi-select question is to end up with ticked
         // (options:); or Text with Key the "Type something." row (other).
-        internal sealed record Decision(int Rule, string? Code, string? Key, IReadOnlyList<string>? Keys = null, string? Text = null)
+        internal sealed record Decision(int Rule, string? Code, string? Key, IReadOnlyList<string>? Keys = null, string? Text = null,
+            // CB-412: Text is a login code, typed and entered by LoginAnswer.
+            bool IsLoginCode = false)
         {
             internal bool Press => Code is null;
         }
 
-        internal const string Other = "other";
+        internal const string Other = "other", LoginCode = "code";
         internal const string OptionsPrefix = "options:";
         internal const int MaxNoteBytes = 1000;
         private static readonly System.Text.RegularExpressions.Regex OptionsShape =
@@ -188,7 +195,7 @@ namespace Orbweaver
             if (verifier is null || !AnswerSigning.Verify(verifier, body, answer.Sig)) return Refuse(1, BadSignature);
             // tell and other (CB-323) bind their note through scope; every other
             // action carries none.
-            var noted = answer.Action is "tell" or Other;
+            var noted = answer.Action is "tell" or Other or LoginCode;
             if (noted && answer.Scope != AnswerSigning.TellScope(answer.Note)) return Refuse(1, BadSignature);
             if (!noted && answer.Note.Length > 0) return Refuse(1, BadSignature);
             if (RelayCrypto.FromBase64Url(answer.Nonce) is not { Length: NonceLength }) return Refuse(1, BadSignature);
@@ -222,7 +229,7 @@ namespace Orbweaver
             if (pending.DeskOnly || FirstRunDialogs.Is(freshCapture)) return Refuse(7, ForbiddenOption);
             var form = AskFormTranscript.ReadForm(freshCapture!, call);
             var typeRow = form is { MultiSelect: false } ? form.FreeTextKey : null;
-            return Rule7(pending, answer, Classified(fresh, pending.Kind), typeRow);
+            return Rule7(pending, answer, Classified(fresh, pending.Kind), typeRow, fresh.Login);
         }
 
         // The fresh screen's options as the gate weighs them: classified for
@@ -244,8 +251,20 @@ namespace Orbweaver
         // other only on a text:true prompt whose screen still shows the row,
         // with a one-line note of 1–1000 bytes; and a single option:<k> is not
         // how a multi-select question is answered.
-        internal static Decision Rule7(PendingPrompt pending, PhoneAnswer answer, IReadOnlyList<PromptOption> fresh, string? typeRow)
+        internal static Decision Rule7(PendingPrompt pending, PhoneAnswer answer, IReadOnlyList<PromptOption> fresh, string? typeRow,
+            LoginScreen? login = null)
         {
+            // CB-412: code only on a prompt minted with login.code, while the fresh
+            // screen still reads as the URL step, with a note LoginAnswer allows
+            // (1–1000 bytes, no whitespace or control characters). The URL step
+            // offered no keys, so it takes nothing else.
+            if (answer.Action == LoginCode)
+            {
+                if (!pending.Code || login is not { Step: LoginStep.Url } || !LoginAnswer.CodeAllowed(answer.Note)) return Refuse(7, ForbiddenOption);
+                return new Decision(8, null, null, Text: answer.Note, IsLoginCode: true);
+            }
+            if (pending.Code) return Refuse(7, ForbiddenOption);
+
             if (answer.Action.StartsWith(OptionsPrefix, StringComparison.Ordinal))
             {
                 if (!pending.Multi || OptionKeys(answer.Action) is not { } keys) return Refuse(7, ForbiddenOption);
