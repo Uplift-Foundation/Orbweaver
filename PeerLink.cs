@@ -39,7 +39,22 @@ namespace Orbweaver
             // Awaited, and allowed to time out (CB-301): the certificate is
             // loaded once and shared, and a load stuck on a keychain prompt
             // must fail this handshake rather than hold the thread.
-            Func<CancellationToken, Task<X509Certificate2>> OwnCertificate);
+            Func<CancellationToken, Task<X509Certificate2>> OwnCertificate,
+            // The TLS handshakes themselves (CB-411). SslStream's Apple
+            // implementation calls into Security.framework, which can block on
+            // a locked login keychain or a pending keychain prompt and ignores
+            // the token it was handed. Behind a seam so a test can stand in
+            // a handshake that blocks its thread and ignores cancellation; null
+            // means the real SslStream call.
+            Func<SslStream, SslClientAuthenticationOptions, CancellationToken, Task>? ClientHandshake = null,
+            Func<SslStream, SslServerAuthenticationOptions, CancellationToken, Task>? ServerHandshake = null)
+        {
+            internal Func<SslStream, SslClientAuthenticationOptions, CancellationToken, Task> AsClient =>
+                ClientHandshake ?? ((tls, options, token) => tls.AuthenticateAsClientAsync(options, token));
+
+            internal Func<SslStream, SslServerAuthenticationOptions, CancellationToken, Task> AsServer =>
+                ServerHandshake ?? ((tls, options, token) => tls.AuthenticateAsServerAsync(options, token));
+        }
 
         // Chosen from the unassigned range and fixed rather than negotiated: a
         // port that moved would have to be discovered before it could be
@@ -453,7 +468,10 @@ namespace Orbweaver
                     break;
                 }
 
-                _ = HandshakeInboundAsync(client, ct);
+                // Task.Run so no synchronous stretch of a handshake can hold
+                // this loop (CB-411): a native call that blocks before its first
+                // await would otherwise stop every later connection being accepted.
+                _ = Task.Run(() => HandshakeInboundAsync(client, ct));
             }
         }
 
@@ -465,6 +483,12 @@ namespace Orbweaver
             // that connected and never sent a ClientHello held a task, a socket
             // and a descriptor for the life of the process. Adopt below keeps
             // `ct`: the link lives on the listener's token, never this one.
+            if (HandshakeBlocked("inbound"))
+            {
+                client.Dispose();
+                return;
+            }
+
             using var setup = CancellationTokenSource.CreateLinkedTokenSource(ct);
             setup.CancelAfter(InboundSetupTimeout);
 
@@ -479,13 +503,18 @@ namespace Orbweaver
                 var own = await _seams.OwnCertificate(setup.Token).ConfigureAwait(false);
                 tls = new SslStream(client.GetStream(), leaveInnerStreamOpen: false);
 
-                await tls.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+                var serverOptions = new SslServerAuthenticationOptions
                 {
                     ServerCertificate = own,
                     ClientCertificateRequired = true,
                     EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
                     RemoteCertificateValidationCallback = (_, cert, _, _) => cert is not null
-                }, setup.Token).ConfigureAwait(false);
+                };
+                var serving = tls;
+
+                await BoundedHandshakeAsync(
+                    () => _seams.AsServer(serving, serverOptions, setup.Token), ct, setup.Token,
+                    $"{InboundSetupTimeout.TotalSeconds:0.#}s").ConfigureAwait(false);
 
                 var offered = tls.RemoteCertificate is null
                     ? null
@@ -512,9 +541,11 @@ namespace Orbweaver
                 // SayOnce with a fixed key and no endpoint: a scanner or a flood
                 // of silent sockets collapses to one line and a restatement
                 // every so often, instead of evicting the log's history.
-                if (!adopted) { tls?.Dispose(); client.Dispose(); }
+                if (!adopted) Discard(tls, client, ex is HandshakeStalled);
 
-                var why = !adopted && setup.IsCancellationRequested && !ct.IsCancellationRequested
+                var why = ex is HandshakeStalled
+                    ? ex.Message
+                    : !adopted && setup.IsCancellationRequested && !ct.IsCancellationRequested
                     ? $"no handshake within {InboundSetupTimeout.TotalSeconds:0.#}s"
                     : $"{ex.GetType().Name}: {ex.Message}";
 
@@ -535,6 +566,16 @@ namespace Orbweaver
                 case DialStart.InFlight:
                     MirrorLog.SayOnce($"peer-dial-in-flight:{machine}", $"to={machine} already dialling");
                     return false;
+            }
+
+            // Before the socket and before the setup clock (CB-411): while an
+            // earlier handshake is still stuck in the keychain, another one would
+            // only strand a second thread, and the far side would be left holding
+            // a connection that is never going to speak.
+            if (HandshakeBlocked("dial", machine))
+            {
+                EndDial(machine);
+                return false;
             }
 
             // Bounded, and only the setup (CB-301). A far side that accepts
@@ -564,7 +605,7 @@ namespace Orbweaver
 
                 tls = new SslStream(client.GetStream(), leaveInnerStreamOpen: false);
 
-                await tls.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
+                var clientOptions = new SslClientAuthenticationOptions
                 {
                     TargetHost = machine,
                     ClientCertificates = new X509Certificate2Collection(own),
@@ -576,7 +617,12 @@ namespace Orbweaver
                     // against what we paired with rather than here against a
                     // chain that was never going to verify.
                     RemoteCertificateValidationCallback = (_, cert, _, _) => cert is not null
-                }, setup.Token).ConfigureAwait(false);
+                };
+                var dialling = tls;
+
+                await BoundedHandshakeAsync(
+                    () => _seams.AsClient(dialling, clientOptions, setup.Token), ct, setup.Token,
+                    $"{DialTimeout.TotalSeconds:0.#}s", machine).ConfigureAwait(false);
 
                 var offered = tls.RemoteCertificate is null
                     ? ""
@@ -649,13 +695,11 @@ namespace Orbweaver
                 // A socket that never became a link is closed here rather than
                 // left to a finalizer — a silent far side would otherwise cost
                 // one open connection per tick.
-                if (!adopted)
-                {
-                    tls?.Dispose();
-                    client?.Dispose();
-                }
+                if (!adopted) Discard(tls, client, ex is HandshakeStalled);
 
-                var why = !adopted && setup.IsCancellationRequested && !ct.IsCancellationRequested
+                var why = ex is HandshakeStalled
+                    ? ex.Message
+                    : !adopted && setup.IsCancellationRequested && !ct.IsCancellationRequested
                     ? $"no answer within {DialTimeout.TotalSeconds:0.#}s"
                     : OpenClawGateway.ExplainConnectFailure(ex, OperatingSystem.IsMacOS());
 
@@ -666,6 +710,89 @@ namespace Orbweaver
             {
                 EndDial(machine);
             }
+        }
+
+        // --- a handshake that cannot be cancelled (CB-411) ------------------------
+
+        // **A locked login keychain hung the peer link for over an hour.**
+        // SslStream's Apple handshake is a native call that never looks at its
+        // token, so `setup.Token` firing did nothing: ConnectAsync never
+        // returned, EndDial never ran, and every dial tick after it logged
+        // "previous tick still running" with connected=0.
+        //
+        // The handshake therefore runs on its own pool thread (so a blocking
+        // stretch before its first await cannot hold the caller) and is awaited
+        // through WaitAsync, which completes on the token whether or not the
+        // native call ever does. What cannot be recovered is the thread inside
+        // the native call, so the abandoned ones are counted: while any is
+        // still out, no new handshake starts (HandshakeBlocked), which bounds
+        // the leak to one thread instead of one per tick. When the keychain
+        // unlocks the stuck call returns, the count falls, and the next tick
+        // reconnects.
+        private int _stuckHandshakes;
+
+        // Abandoned handshakes whose native call has not returned yet.
+        internal int StuckHandshakes => Volatile.Read(ref _stuckHandshakes);
+
+        private sealed class HandshakeStalled(string message) : Exception(message);
+
+        private async Task BoundedHandshakeAsync(
+            Func<Task> start, CancellationToken outer, CancellationToken setup, string bound,
+            string? machine = null)
+        {
+            var handshake = Task.Run(start);
+
+            try
+            {
+                await handshake.WaitAsync(setup).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!handshake.IsCompleted)
+            {
+                Interlocked.Increment(ref _stuckHandshakes);
+
+                // Reading Exception observes it, so a stuck call that finally
+                // throws does not surface as an unobserved task exception.
+                _ = handshake.ContinueWith(
+                    t => { _ = t.Exception; Interlocked.Decrement(ref _stuckHandshakes); },
+                    TaskScheduler.Default);
+
+                // Shutdown is not a stall; leave it to the callers' own arm.
+                if (outer.IsCancellationRequested) throw;
+
+                throw new HandshakeStalled(
+                    (machine is null ? "" : $"to={machine} ")
+                    + $"tls handshake did not finish within {bound} "
+                    + "\u2014 a locked keychain or pending keychain prompt holds it");
+            }
+        }
+
+        // True, and logged, while an abandoned handshake is still out.
+        private bool HandshakeBlocked(string direction, string? machine = null)
+        {
+            if (StuckHandshakes < 1) return false;
+
+            MirrorLog.SayOnce("peer-handshake-blocked",
+                (machine is null ? "" : $"to={machine} ")
+                + $"{direction} refused: an earlier tls handshake is still stuck "
+                + "\u2014 a locked keychain or pending keychain prompt holds it");
+
+            return true;
+        }
+
+        // Closes a connection that never became a link. After a stall the
+        // SslStream is closed off this thread: it may be the very object the
+        // stuck native call holds, and disposing it must not take the caller down with it.
+        private static void Discard(SslStream? tls, TcpClient? client, bool stalled)
+        {
+            if (!stalled)
+            {
+                tls?.Dispose();
+                client?.Dispose();
+                return;
+            }
+
+            client?.Dispose();
+            if (tls is not null) _ = Task.Run(() => { try { tls.Dispose(); } catch { } });
         }
 
         // --- one dial per machine at a time (CB-301) ------------------------------

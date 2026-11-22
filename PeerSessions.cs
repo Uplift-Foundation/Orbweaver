@@ -367,9 +367,18 @@ namespace Orbweaver
             {
                 try
                 {
+                    // Bounded from outside as well (CB-411): ConnectAsync has its
+                    // own clock, but one dial that ever failed to come back would
+                    // hold the SingleFlight tick, and with it every later dial.
                     await host.Link
                         .ConnectAsync(peer.Machine, peer.Address, peer.Port)
+                        .WaitAsync(host.Link.DialTimeout + TimeSpan.FromSeconds(5))
                         .ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    MirrorLog.SayOnce($"peer-dial-abandoned:{peer.Machine}",
+                        $"to={peer.Machine} dial did not return within its bound; moving on");
                 }
                 catch (Exception ex)
                 {
