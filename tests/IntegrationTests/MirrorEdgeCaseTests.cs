@@ -23,7 +23,7 @@ public class MirrorEdgeCaseTests : IDisposable
     private const string Account = ".claude-board";
     private const string Name = "job-hunter";
 
-    private readonly string _dir;
+    private string _dir = "";   // assigned inside MirrorGate.Hold, so not readonly
     private readonly List<(string SessionId, SessionStatus Status)> _sessions = new();
     private readonly List<AgentRoster.Entry> _agents = new();
     private readonly List<string> _toClient = new();
@@ -42,15 +42,19 @@ public class MirrorEdgeCaseTests : IDisposable
 
     public MirrorEdgeCaseTests()
     {
-        _dir = Path.Combine(Path.GetTempPath(), "cb-edge-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_dir);
-        Build();
+        MirrorGate.Shared.Hold(() =>
+        {
+            _dir = Path.Combine(Path.GetTempPath(), "cb-edge-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(_dir);
+            Build();
+        });
     }
 
     public void Dispose()
     {
         RemoteControlSessions.ResetForTests();
         try { Directory.Delete(_dir, recursive: true); } catch { }
+        MirrorGate.Shared.Leave();
     }
 
     // --- asking about nothing --------------------------------------------------

@@ -27,20 +27,25 @@ namespace Orbweaver.Tests;
 [Collection("ConfigDirEnv")]
 public partial class MirrorRoundTripTests : IDisposable
 {
-    private readonly string _dir;
-    private readonly string? _previousConfigDir;
+    // Assigned inside MirrorGate.Hold, so not readonly.
+    private string _dir = "";
+    private string? _previousConfigDir;
 
     public MirrorRoundTripTests()
     {
-        _previousConfigDir = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
-        _dir = Path.Combine(Path.GetTempPath(), "cb-mirror-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_dir);
+        MirrorGate.Shared.Hold(() =>
+        {
+            _previousConfigDir = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
+            _dir = Path.Combine(Path.GetTempPath(), "cb-mirror-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(_dir);
+        });
     }
 
     public void Dispose()
     {
         Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", _previousConfigDir);
         try { Directory.Delete(_dir, recursive: true); } catch { }
+        MirrorGate.Shared.Leave();
     }
 
     // --- the claim ------------------------------------------------------------
@@ -2036,6 +2041,71 @@ public partial class MirrorRoundTripTests : IDisposable
         // Logged by key and fingerprint, never by what an option says.
         Assert.Contains(log, l => l.EndsWith("key=2 -> ok"));
         Assert.DoesNotContain(log, l => prompt.Options.Any(o => l.Contains(o.Label)));
+    }
+
+    // CB-407: a form squeezed to twelve columns with its top still on screen. Its free-text
+    // row wrapped ("Type somethi ng."), the form reader missed it and declined, and the far
+    // side served the screen as a plain dialog: title "prefer?", options "Apple Apple", "Type
+    // somethi ng.", "Chat". The question and labels are the transcript's, whole, at any width,
+    // and the fingerprint is the 80-column form's, so an answer made at either lands.
+    [Fact]
+    public async Task ATwelveColumnFormIsServedWithTheTranscriptsQuestionAndLabels()
+    {
+        var harness = new Harness(_dir) { Screen = Cb407Captures.Screen("mirror-form-12col-pane") };
+        harness.AddSession("evidence", Cb407Captures.PathOf("mirror-form-12col-transcript-row.jsonl"));
+        await harness.HandshakeAsync("evidence");
+
+        var (prompt, error) = await harness.Client.FetchPromptAsync("evidence");
+
+        Assert.Null(error);
+        Assert.Equal("Which fruit do you prefer?", prompt!.Title);
+        Assert.Equal(["Apple", "Banana", "Cherry", "Type something.", "Chat about this"], prompt.Options.Select(o => o.Label));
+        Assert.Equal(["1", "2", "3", "4", "5"], prompt.Options.Select(o => o.Key));
+        Assert.Equal("4", prompt.FreeTextKey);
+
+        // The same question at 80 columns, with its own transcript row, is the same prompt.
+        harness.Screen = Cb407Captures.Screen("mirror-form-80col-pane");
+        var wide = (await harness.Client.FetchPromptAsync("evidence")).Prompt!;
+        Assert.Equal(wide.Fingerprint, prompt.Fingerprint);
+
+        harness.Screen = Cb407Captures.Screen("mirror-form-12col-pane");
+        Assert.Null(await harness.Client.AnswerPromptAsync("evidence", "2", prompt.Fingerprint));
+        Assert.Equal(new[] { "2" }, harness.Pressed);
+    }
+
+    // CB-407: the prompt log line says whether a transcript call was found, and when not which
+    // condition failed, as a fixed word and never any content, on the ok line and the err line.
+    [Theory]
+    [InlineData("mirror-form-12col-pane", "mirror-form-12col-transcript-row.jsonl", true, "call=yes")]
+    [InlineData("mirror-form-12col-pane", null, true, "call=no:no-pending-call")]        // a transcript with no pending call: served as the plain dialog
+    public async Task The_prompt_log_line_names_whether_a_call_was_found(string screen, string? rows, bool ok, string expected)
+    {
+        var harness = new Harness(_dir) { Screen = Cb407Captures.Screen(screen) };
+        var log = new List<string>();
+        harness.Server.AnswerLog = (_, detail) => log.Add(detail);
+        harness.AddSession("evidence", rows is null ? WriteTranscript("plain.jsonl", Conversation(2)) : Cb407Captures.PathOf(rows));
+        await harness.HandshakeAsync("evidence");
+
+        await harness.Client.FetchPromptAsync("evidence");
+
+        var line = Assert.Single(log, l => l.Contains("-> ok") || l.Contains("-> err"));
+        Assert.Equal(ok, line.Contains("-> ok"));
+        Assert.EndsWith(" " + expected, line);
+        Assert.DoesNotContain("Apple", line);
+    }
+
+    [Fact]
+    public async Task The_err_line_for_no_prompt_names_why_no_call_was_found()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MacPromptAfterEsc };
+        var log = new List<string>();
+        harness.Server.AnswerLog = (_, detail) => log.Add(detail);
+        harness.AddSession("evidence", WriteTranscript("plain2.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+
+        await harness.Client.FetchPromptAsync("evidence");
+
+        Assert.EndsWith($"-> err code={MirrorProtocol.ErrNoPrompt} call=no:no-footer", Assert.Single(log));
     }
 
     // CB-353: a far pane with the jira-board mod docked beside the chat serves the clean

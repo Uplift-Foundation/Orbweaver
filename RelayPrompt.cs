@@ -57,6 +57,12 @@ namespace Orbweaver
                 return OfOverlay(screen);
             }
 
+            // CB-407: the transcript says this screen is an AskUserQuestion and neither form
+            // reader could place it, so its numbered reading (labels glued to their
+            // description rows, one row of a wrapped title) is not a prompt to offer. It
+            // looks plausible, which is the hazard. Null sends the person to the terminal.
+            if (call is not null && AskFormTranscript.HasFormFooter(screen) && AskFormTranscript.ReadForm(screen, call) is null) return null;
+
             var start = DialogStart(ChatTranscript.ScreenLines(screen), cleaned, firstOption);
 
             var preview = new List<string>();
