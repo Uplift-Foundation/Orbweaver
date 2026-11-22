@@ -379,6 +379,10 @@ namespace Orbweaver
             }
 
             await AskWhatTheyHaveAsync(host).ConfigureAwait(false);
+
+            // CB-402: the drawn rows converge on what the client knows within
+            // one tick, even when no roster reply registered a change.
+            RemoteControlSessions.RepublishIfOutOfStep();
         }
 
         // Asks every connected machine what sessions it has.
