@@ -430,6 +430,8 @@ public class RunControlsHostTests
         var before = d.Host.RouteFor(Claude(), RunCli.Claude);
         Assert.Equal((RunRoute.Control, true), (before.Route, before.SetsNewSessionDefault));
         Assert.NotNull(d.Host.Options(Claude())!.DefaultWarning);
+        // The probe starts off the caller's thread, so it is waited for, not assumed.
+        Assert.True(SpinWait.SpinUntil(() => d.Probes >= 1, TimeSpan.FromSeconds(5)));
         Assert.Equal(1, d.Probes);                              // asked once, not per read
 
         answer.SetResult(true);

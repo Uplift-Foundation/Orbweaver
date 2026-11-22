@@ -115,9 +115,13 @@ namespace Orbweaver
             return route.Route == RunRoute.Control && usable is null ? route with { SetsNewSessionDefault = true } : route;
         }
 
-        // Per session: the bridge id last judged, and whether it can be posted
-        // to (null while the probe is out).
-        private readonly Dictionary<string, (string Bridge, bool? Usable)> _bridges = new(StringComparer.Ordinal);
+        // Per bridge id: whether it can be posted to (null while the probe is
+        // out). Keyed by the bridge, not the session: usability is the bridge's,
+        // and per-session entries livelocked the UI thread when two sessions
+        // shared a key with different bridges — each overwrote the other's,
+        // each overwrite probed again, and each answer re-announced both (CI,
+        // 4ff18dbf: the UI suite never finished on either rid).
+        private readonly Dictionary<string, bool?> _bridges = new(StringComparer.Ordinal);
 
         internal const string ProbeSubtype = "cb404_probe";
 
@@ -125,14 +129,14 @@ namespace Orbweaver
         {
             lock (_gate)
             {
-                if (_bridges.TryGetValue(Key(status), out var known) && known.Bridge == bridge) return known.Usable;
+                if (_bridges.TryGetValue(bridge, out var known)) return known;
                 // No probe wired: usable until a post proves otherwise.
                 if (_seams.ProbeBridge is null) return true;
-                _bridges[Key(status)] = (bridge, null);
+                _bridges[bridge] = null;
             }
             LastProbe = ProbeAsync(status, bridge, _seams.ProbeBridge);
             // A probe that answered at once has already settled it.
-            lock (_gate) return _bridges.TryGetValue(Key(status), out var now) && now.Bridge == bridge ? now.Usable : null;
+            lock (_gate) return _bridges.TryGetValue(bridge, out var now) ? now : null;
         }
 
         private async Task ProbeAsync(SessionStatus status, string bridge, Func<SessionStatus, string, Task<bool>> probe)
@@ -140,7 +144,12 @@ namespace Orbweaver
             bool usable;
             try
             {
-                var ask = probe(status, bridge);
+                // Off the caller's thread: the caller is a panel reading its
+                // options on the UI thread, and the live probe reads a
+                // credential before its first await — in a context nobody can
+                // answer a Keychain prompt in, that read never returns, and on
+                // the UI thread it froze everything (CI, 4ff18dbf).
+                var ask = Task.Run(() => probe(status, bridge));
                 usable = await Task.WhenAny(ask, Wait(ControlBudget)).ConfigureAwait(false) == ask && await ask.ConfigureAwait(false);
             }
             catch { usable = false; }
@@ -152,8 +161,8 @@ namespace Orbweaver
         {
             lock (_gate)
             {
-                if (_bridges.TryGetValue(Key(status), out var known) && known.Bridge == bridge && known.Usable == usable) return;
-                _bridges[Key(status)] = (bridge, usable);
+                if (_bridges.TryGetValue(bridge, out var known) && known == usable) return;
+                _bridges[bridge] = usable;
             }
             Changed?.Invoke(Key(status));
         }
@@ -310,6 +319,39 @@ namespace Orbweaver
             return result;
         }
 
+        // A control post that gives up within `budget` and lets go of what it
+        // held. The credential read under it takes CloudAccounts' per-account
+        // gate; with the 45 s unmeasured budget and no token, one post that
+        // nobody's Keychain answered held that gate for 45 s, every probe of a
+        // newly seen bridge queued another, and usage and cloud reads waited
+        // behind them all (wren, reading the CB-404 UI-suite hang). The read
+        // gets `budget` as its own budget, and the whole post a token cancelled
+        // at `budget`, so queued waiters are dropped too. Cancelled is answered
+        // as not reached.
+        internal static Func<SessionStatus, string, JsonObject, Task<CloudTurnSender.ControlAttempt>> BoundedPost(
+            ICloudApi api, Func<SessionStatus, ICloudCredentialSource> credentials, TimeSpan budget,
+            Func<TimeSpan, CancellationToken, Task> delay) =>
+            async (status, bridgeId, request) =>
+            {
+                using var cts = new CancellationTokenSource(budget);
+                try
+                {
+                    return await CloudTurnSender.PostControlAndReadAnswerAsync(
+                        api, credentials(status), CredentialBudget.Of(budget), bridgeId, request, delay, cts.Token)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cts.IsCancellationRequested)
+                {
+                    return new CloudTurnSender.ControlAttempt(ControlNoAnswer, null);
+                }
+            };
+
+        // Under the suites' switch the live host never posts a control request:
+        // no real bridge, no real credential read, nothing any test can wait on
+        // a Keychain for. Refused rather than unreached, so no set falls back to
+        // typing into a real pane either.
+        internal const string ControlOffInTests = "control requests are off in the test suites";
+
         internal static JsonObject? ControlFor(RunField field, string value, out string? problem) =>
             field == RunField.Model
                 ? SlashRouting.ControlRequest("set_model", value, out problem)
@@ -459,15 +501,17 @@ namespace Orbweaver
         private static RunControlsHost Build()
         {
             var cloudApi = new HttpCloudApi();
-            var gated = MirrorSlashHost.GatedPost(
+            var real = MirrorSlashHost.GatedPost(
                 () => OrbweaverSettings.BridgeCommandsEnabled,
                 BridgeIdFor,
                 status => RemoteMirrorServer.RegistryEntryFor(status)?.Version,
-                (status, bridgeId, request) => CloudTurnSender.PostControlAndReadAnswerAsync(
-                    cloudApi,
-                    CloudAccounts.SourceFor(ClaudeConfigRoots.RootOfTranscript(status.TranscriptPath)),
-                    CredentialBudget.Unmeasured, bridgeId, request, Task.Delay,
-                    CancellationToken.None));
+                RunControlsHost.BoundedPost(cloudApi,
+                    status => CloudAccounts.SourceFor(ClaudeConfigRoots.RootOfTranscript(status.TranscriptPath)),
+                    RunControlsHost.ControlBudget, Task.Delay));
+            Func<SessionStatus, string, System.Text.Json.Nodes.JsonObject, Task<MirrorSlashHost.ControlVerdict>> gated =
+                RunSourcesLive.ProbesOffForTests
+                    ? (_, _, _) => Task.FromResult(MirrorSlashHost.ControlVerdict.Refused(RunControlsHost.ControlOffInTests))
+                    : real;
             return new RunControlsHost(new RunControlsHost.Seams(
                 TerminalFocuser.CanSendQuietly,
                 BridgeIdFor,
@@ -487,10 +531,12 @@ namespace Orbweaver
                 // A request the CLI does not handle: answered "does not handle"
                 // by a bridge that is there (measured, remote-control-findings),
                 // and never reached by one this machine cannot post to.
-                ProbeBridge: async (status, _) =>
+                // Unwired under the suites' switch: "usable until a post proves
+                // otherwise", which is what every test expected before the probe.
+                ProbeBridge: RunSourcesLive.ProbesOffForTests ? null : async (status, _) =>
                 {
                     var probe = new System.Text.Json.Nodes.JsonObject { ["subtype"] = RunControlsHost.ProbeSubtype };
-                    return (await gated(status, RunControlsHost.ProbeSubtype, probe).ConfigureAwait(false)).Reached;
+                    return (await real(status, RunControlsHost.ProbeSubtype, probe).ConfigureAwait(false)).Reached;
                 }));
         }
     }
