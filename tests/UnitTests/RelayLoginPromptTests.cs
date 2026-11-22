@@ -357,6 +357,25 @@ public class RelayLoginPromptTests
     }
 
     [Fact]
+    public async Task The_urls_query_is_only_in_login_url_never_in_a_log_activity_push_or_refusal()
+    {
+        const string Opaque = "EXAMPLEexampleEXAMPLEexample";
+        _pane.Screen = Capture("login-url-w100");
+        await _p.OnScannedAsync(Snap());
+        // A refusal too, so there is one to look in: an action the URL step does not take.
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo("approve"));
+        var raw = _sent.Prompts[0].Prompt;
+        // The control: it is in login.url, and that is the one place in the frame.
+        Assert.Contains(Opaque, Sent().GetProperty("login").GetProperty("url").GetString());
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(raw, Opaque));
+        var activity = _p.ActivityFor("s1")!;
+        Assert.DoesNotContain(Opaque, activity.RequestId + activity.Tool + activity.Command);
+        Assert.Null(_sent.Prompts[0].Push);
+        Assert.Equal([AnswerGate.ForbiddenOption], _sent.Refusals);
+        Assert.DoesNotContain(Opaque, string.Join("\n", _log) + string.Join("\n", _sent.Refusals) + string.Join("\n", _sent.Resolved.Select(r => r.By)));
+    }
+
+    [Fact]
     public async Task A_code_answered_for_an_earlier_sign_in_attempt_is_stale()
     {
         _pane.Screen = Capture("login-url-w100");
