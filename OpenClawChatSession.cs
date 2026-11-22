@@ -1637,15 +1637,19 @@ namespace Orbweaver
                 // has been told.
                 Observe(OpenClawSessions.NativeOf(GatewayKey));
 
-                if (Route != OpenClawSendRoute.Native) return null;
-                if (!OrbweaverSettings.OpenClawReplyEnabled) return null;
+                // CB-404: where the gateway has said what this conversation is,
+                // a control that cannot be used is shown disabled with the reason,
+                // not hidden. Before it has said, there is nothing true to show.
+                if (Native is null) return null;
+                if (Route != OpenClawSendRoute.Native) return Disabled(OpenClawRunText.SurfaceReason);
+                if (!OrbweaverSettings.OpenClawReplyEnabled) return Disabled(OpenClawRunText.ReplyOffReason);
 
                 var context = OpenClawSessions.CapabilitiesFor(SessionId);
-                if (!context.Connected || context.SessionId is null
-                    || !context.Methods.Contains(OpenClawOrbActions.PatchMethod)
+                if (!context.Connected || context.SessionId is null) return null;
+                if (!context.Methods.Contains(OpenClawOrbActions.PatchMethod)
                     || !context.Scopes.Contains(OpenClawOrbActions.WriteScope))
                 {
-                    return null;
+                    return Disabled(OpenClawRunText.NoPatchReason);
                 }
 
                 if (OpenClawSessions.RunStateOf(GatewayKey) is not { Model: { } modelId } state) return null;
@@ -1685,6 +1689,26 @@ namespace Orbweaver
                     true,
                     OpenClawRunText.Chip(modelName, state.EffectiveThinkingLabel, state.EffectiveFastMode));
             }
+        }
+
+        // The chip and a disabled flyout for a conversation whose controls
+        // cannot be used, naming the model when the gateway has listed it.
+        private RemoteRunOptions Disabled(string reason)
+        {
+            var modelId = OpenClawSessions.RunStateOf(GatewayKey)?.Model;
+            var label = modelId is null ? null : OpenClawSessions.OfferedModels.FirstOrDefault(m => m.Id == modelId)?.Name ?? modelId;
+            return new RemoteRunOptions(
+                modelId,
+                modelId is null ? Array.Empty<RemoteRunChoice>() : new[] { new RemoteRunChoice(modelId, label!) },
+                null, null, Array.Empty<RemoteRunChoice>(),
+                false, false, false, false,
+                label ?? RunText.ModelUnknown)
+            {
+                ModelDisabledReason = reason,
+                EffortDisabledReason = reason,
+                HasFast = false,
+                HasTimeLimit = false,
+            };
         }
 
         public async Task<string?> SetModelAsync(string? id) =>

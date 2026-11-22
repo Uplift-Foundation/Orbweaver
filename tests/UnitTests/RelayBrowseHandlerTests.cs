@@ -16,6 +16,7 @@ public class RelayBrowseHandlerTests
         public void Reply(string phoneId, string? sessionId, string plaintext) { lock (this) Replies.Add((phoneId, sessionId, JsonDocument.Parse(plaintext).RootElement)); }
         public void Window(string phoneId, string sessionId, string plaintext) { }
         public bool ImageWindow(string phoneId, string hash, string plaintext) => false;
+        public void Run(string phoneId, string sessionId, string plaintext) { }
     }
 
     private sealed class Harness

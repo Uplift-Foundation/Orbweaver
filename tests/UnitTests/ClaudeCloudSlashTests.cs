@@ -82,7 +82,7 @@ public partial class ClaudeCloudEventsTests
     {
         var catalogue = CloudSlashCatalog.Catalogue(new[] { "compact", "my-skill" }, new[] { "color" });
 
-        Assert.Equal(new[] { "/rename", "/model", "/permissions", "/think" },
+        Assert.Equal(new[] { "/rename", "/model", "/permissions", "/think", "/effort" },
             ChatPanel.OfferedCommands(catalogue).Select(c => c.Name));
         Assert.Contains(catalogue, c => c.Name == "/compact" && c.Route == SlashRouteKind.Unavailable);
     }
@@ -94,7 +94,7 @@ public partial class ClaudeCloudEventsTests
             new[] { "compact", "rename", "model", "color", "permissions", "think", "my-skill" },
             new[] { "color" });
 
-        Assert.Equal(new[] { "/rename", "/model", "/permissions", "/think" },
+        Assert.Equal(new[] { "/rename", "/model", "/permissions", "/think", "/effort" },
             ChatPanel.OfferedCommands(catalogue).Select(c => c.Name));
     }
 
@@ -114,7 +114,7 @@ public partial class ClaudeCloudEventsTests
         // Before any init: the built-ins are known (so /compact is refused, not
         // sent as prose) and the four the routing table runs are offered.
         Assert.True(Knows(chat, "/compact"));
-        Assert.Equal(new[] { "/rename", "/model", "/permissions", "/think" },
+        Assert.Equal(new[] { "/rename", "/model", "/permissions", "/think", "/effort" },
             ChatPanel.OfferedCommands(chat.SlashCommands).Select(c => c.Name));
         Assert.False(Knows(chat, "/first-skill"));
 

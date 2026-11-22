@@ -1110,7 +1110,7 @@ public class CloudChatPanelTests : IDisposable
         FlushRender();
 
         // init listed eight; terminal-only ones, /compact and a skill are not here.
-        Assert.Equal(new[] { "/rename", "/model", "/permissions", "/think" }, Suggested(panel));
+        Assert.Equal(new[] { "/rename", "/model", "/permissions", "/think", "/effort" }, Suggested(panel));
     }
 
     [AvaloniaFact]

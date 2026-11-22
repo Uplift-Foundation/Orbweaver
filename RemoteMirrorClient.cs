@@ -905,8 +905,11 @@ namespace Orbweaver
         // messaging socket also carries which channel was used and that
         // session's own agent status, which the composer hint and the
         // delivered-note both need to say something honest.
+        //
+        // CB-404: Kind is a refused run change's frames-v13 word (bad_value,
+        // unavailable, failed); null on everything else.
         internal readonly record struct InputOutcome(string? Error, string? Via, string? AgentStatus, string? Why = null,
-            string? Verdict = null);
+            string? Verdict = null, string? Kind = null);
 
         // Types a line into the far session's own terminal, or — since
         // CB-105 — hands it to that session's own messaging socket when
@@ -919,7 +922,7 @@ namespace Orbweaver
         // exactly as it would locally. A delivered send has no such
         // guarantee — see MirrorProtocol's note on why there is no ack on
         // this wire at all.
-        public async Task<InputOutcome> SendInputDetailedAsync(string name, string text, bool slash = false)
+        public async Task<InputOutcome> SendInputDetailedAsync(string name, string text, bool slash = false, string? run = null)
         {
             string relay;
 
@@ -936,7 +939,7 @@ namespace Orbweaver
 
             var reply = await RequestAsync(
                 relay, MirrorProtocol.Input,
-                SlashFields(name, slash),
+                SlashFields(name, slash, run),
                 System.Text.Encoding.UTF8.GetBytes(text),
                 TimeSpan.FromSeconds(MirrorProtocol.InputTimeoutSeconds))
                 .ConfigureAwait(false);
@@ -971,8 +974,16 @@ namespace Orbweaver
                 reply.Fields is not null && reply.Fields.TryGetValue("why", out var why)
                     ? MirrorProtocol.Decode(why) : null,
                 reply.Fields is not null && reply.Fields.TryGetValue(MirrorProtocol.VerdictField, out var verdict)
-                    ? verdict : null);
+                    ? verdict : null,
+                reply.Fields is not null && reply.Fields.TryGetValue(MirrorRun.KindField, out var kind) ? kind : null);
         }
+
+        // CB-404: change a far session's model or effort. The near panel only
+        // offers this for an entry whose roster carried `run`, so an older far
+        // Buddy — which would type the value as prose — is never sent one.
+        internal async Task<RunSetResult> SetRunAsync(string name, RunField field, string value) =>
+            MirrorRun.ResultOf(await SendInputDetailedAsync(name, value, run: field == RunField.Effort
+                ? RunFrames.FieldEffort : RunFrames.FieldModel).ConfigureAwait(false));
 
         // --- answering a dialog (CB-307 addendum item 3) -----------------------
 
@@ -1187,10 +1198,12 @@ namespace Orbweaver
 
         // CB-306: the INPUT's fields, with the slash flag only when it is set,
         // so an ordinary send is byte-for-byte the frame it always was.
-        internal static Dictionary<string, string> SlashFields(string name, bool slash)
+        // CB-404: and the run flag likewise, naming the field being changed.
+        internal static Dictionary<string, string> SlashFields(string name, bool slash, string? run = null)
         {
             var fields = new Dictionary<string, string> { ["n"] = MirrorProtocol.Encode(name) };
             if (slash) fields[MirrorProtocol.SlashField] = "1";
+            if (run is not null) fields[MirrorRun.Field] = run;
             return fields;
         }
 
