@@ -170,6 +170,7 @@ public class PeerLinkKeychainHangTests
             // gated open, fails on its own terms rather than being refused).
             Assert.False(await link.ConnectAsync("kc-dial-three", "127.0.0.1", port).WaitAsync(TimeSpan.FromSeconds(10)));
             Assert.Equal(2, keychain.Entered);
+            await Within(TimeSpan.FromSeconds(5), () => accepted() >= 2); // the listener counts asynchronously
             Assert.Equal(2, accepted());
         }
         finally { listener.Stop(); }
