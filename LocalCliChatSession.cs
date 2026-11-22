@@ -43,7 +43,7 @@ namespace Orbweaver
     //    boundary row read before it. The contract's "TurnUpdated carries the whole turn" holds
     //    trivially, since the whole turn is all there ever is.
     internal sealed class LocalCliChatSession :
-        IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatPrompts, IRemoteChatFreeText,
+        IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatPrompts, IRemoteChatFreeText, IRemoteChatLoginCode,
         IRemoteChatImages, IRemoteChatSlashCommands, IRemoteChatSlashRunner, IRemoteChatElsewhere, IRemoteChatReadOnly,
         IRemoteChatPeerInbound, IRemoteChatFiles, IRemoteChatRunOptions, IDisposable
     {
@@ -278,7 +278,10 @@ namespace Orbweaver
             // these screens change while open (/status tabs, /usage's live figures),
             // and a snapshot left in the panel would go on showing what the desk
             // no longer does.
-            if ((Prompt is null || _overlayHash is not null) && !_refreshing) _ = RefreshPromptAsync();
+            // A `/login` screen is read again on every scan as well (CB-412): the picker
+            // becomes the sign-in URL, the URL becomes an error, and a prompt left on
+            // the first would offer buttons for a screen that is gone.
+            if ((Prompt is null || _overlayHash is not null || _loginHash is not null) && !_refreshing) _ = RefreshPromptAsync();
         }
 
         // Idempotent, and called from both construction-time binding and every
@@ -1767,6 +1770,37 @@ namespace Orbweaver
                 var formAsk = screen is null ? null : AskFormTranscript.CallFor(screen, _status.TranscriptPath);
                 var isForm = screen is not null && AskFormTranscript.ReadForm(screen, formAsk) is not null;
 
+                // CB-412: `/login`, before the overlay and the dialog readers, which
+                // would otherwise take its picker for a permission dialog. Remembered
+                // by hash the way an overlay is, so a press is verified against it.
+                if (!isForm && LoginScreen.Read(overlayScreen) is { } login)
+                {
+                    if (_closedLoginHash is not null)
+                    {
+                        if (login.Hash == _closedLoginHash && Clock() - _closedLoginAt < SettleAfterAnswer) return;
+                        _closedLoginHash = null;
+                    }
+
+                    _overlayHash = null;
+                    _formFingerprint = null;
+                    _loginHash = login.Hash;
+                    _loginCodeEntry = login.Step == LoginStep.Url && CanPress(_status);
+
+                    // Only when the screen changed: typing a code must not rebuild
+                    // the panel's prompt under the field.
+                    if (Prompt is null || _shownLoginHash != login.Hash)
+                    {
+                        _shownLoginHash = login.Hash;
+                        SetPrompt(LoginScreen.ToPrompt(login, CanPress(_status)));
+                    }
+
+                    return;
+                }
+
+                _loginHash = null;
+                _shownLoginHash = null;
+                _closedLoginHash = null;
+
                 if (!isForm && OverlayScreen.Read(overlayScreen) is { } overlay)
                 {
                     // The same screen reads as an overlay twice over (Read here, Of
@@ -1836,6 +1870,9 @@ namespace Orbweaver
                     _answeredFingerprint = null;
                 }
 
+                // The ordinary dialog's own fingerprint, for the verified press above.
+                _dialogHash = parsed is { Options.Count: > 0 } && screen is not null ? PromptFingerprint.Of(screen)?.Hash : null;
+
                 SetPrompt(parsed ?? new ChatPrompt("Waiting for input", Array.Empty<ChatPromptOption>()));
             }
             finally
@@ -1846,9 +1883,35 @@ namespace Orbweaver
 
         // The pane seams, so a test can hand over a screen and count what an
         // answer sends. The defaults are the real tmux/terminal reads and presses.
-        internal Func<SessionStatus, string, Task<bool>> PressKey { get; init; } = TerminalFocuser.SendPaneKey;
-        internal Func<SessionStatus, Task<string?>> Capture { get; init; } = TerminalFocuser.CapturePane;
-        internal Func<SessionStatus, string, Task<bool>> TypeLiteral { get; init; } = TerminalFocuser.SendPaneText;
+        //
+        // CB-412: route-aware, so `/login` (and any ordinary dialog) in iTerm2, kitty,
+        // WezTerm or a Windows console is read and pressed, not only one in tmux.
+        // tmux stays on exactly the calls it always made, so those sessions behave
+        // byte for byte as before. The typing gate is a separate seam and still reads
+        // the tmux pane directly.
+        internal Func<SessionStatus, string, Task<bool>> PressKey { get; init; } =
+            (s, key) => PickPress(TerminalFocuser.RouteFor(s))(s, key);
+        internal Func<SessionStatus, Task<string?>> Capture { get; init; } =
+            s => PickCapture(TerminalFocuser.RouteFor(s))(s);
+        internal Func<SessionStatus, string, Task<bool>> TypeLiteral { get; init; } =
+            (s, text) => PickType(TerminalFocuser.RouteFor(s))(s, text);
+
+        internal static Func<SessionStatus, Task<string?>> PickCapture(TerminalTyping.Route route) =>
+            route == TerminalTyping.Route.Tmux ? TerminalFocuser.CapturePane : RealReadAnyRoute;
+
+        internal static Func<SessionStatus, string, Task<bool>> PickPress(TerminalTyping.Route route) =>
+            route == TerminalTyping.Route.Tmux ? TerminalFocuser.SendPaneKey : (s, key) => TerminalFocuser.PressKey(s, key);
+
+        internal static Func<SessionStatus, string, Task<bool>> PickType(TerminalTyping.Route route) =>
+            route == TerminalTyping.Route.Tmux ? TerminalFocuser.SendPaneText : (s, text) => TerminalFocuser.TypeQuietly(s, text);
+
+        // Whether a key can be pressed here without bringing the terminal forward
+        // (Terminal.app cannot), and the wait between read-backs of a typed code.
+        internal Func<SessionStatus, TerminalTyping.Route> RouteOf { get; init; } = s => TerminalFocuser.RouteFor(s);
+        internal static bool IsVerifiedRoute(TerminalTyping.Route route) =>
+            route is not (TerminalTyping.Route.Tmux or TerminalTyping.Route.None);
+        internal Func<SessionStatus, bool> CanPress { get; init; } = s => TerminalFocuser.CanPressSilently(s);
+        internal Func<TimeSpan, Task> LoginDelay { get; init; } = t => Task.Delay(t);
 
         // CB-400: the overlay's two seams. ReadAnyRoute is the route-aware reader
         // (tmux, kitty, WezTerm, a Windows console), used only to notice an
@@ -1865,6 +1928,14 @@ namespace Orbweaver
         private static bool SameOverlay(ChatPrompt? shown, ChatPrompt next) =>
             shown is { Body: { } body } && shown.Title == next.Title && body.SequenceEqual(next.Body!)
             && shown.Options.Select(o => o.Label).SequenceEqual(next.Options.Select(o => o.Label));
+
+        // CB-412: the `/login` screen on show, by hash, and whether it takes a code.
+        // _shownLoginHash is the one the panel's prompt was built from; the pair
+        // _closedLoginHash/_closedLoginAt hold back the screen just pressed until it
+        // moves on, as the overlay's do.
+        private string? _loginHash, _shownLoginHash, _closedLoginHash, _dialogHash;
+        private bool _loginCodeEntry;
+        private DateTime _closedLoginAt;
 
         // The fingerprint of the overlay on show, or null when the prompt is anything else.
         private string? _overlayHash;
@@ -1904,7 +1975,7 @@ namespace Orbweaver
         {
             // A cleared prompt is no overlay, so a later ordinary dialog is never
             // answered as one.
-            if (prompt is null) _overlayHash = null;
+            if (prompt is null) { _overlayHash = null; _loginHash = null; _shownLoginHash = null; _loginCodeEntry = false; }
             Prompt = prompt;
             Dispatcher.UIThread.Post(() => PromptChanged?.Invoke());
         }
@@ -1928,6 +1999,12 @@ namespace Orbweaver
             if (_overlayHash is { } overlayHash)
             {
                 await AnswerOverlayAsync(overlayHash);
+                return;
+            }
+
+            if (_loginHash is { } loginHash)
+            {
+                await AnswerLoginAsync(option.Key, loginHash);
                 return;
             }
 
@@ -1958,8 +2035,18 @@ namespace Orbweaver
             // A capture already in flight saw the screen before this key, and is
             // dropped when it returns; bumped again once the key is down.
             _generation++;
+            // CB-412: a route that had no dialog buttons before this (iTerm2, kitty,
+            // WezTerm, a Windows console) does not start with a blind press: the key
+            // goes only if the screen re-read just before it is still the dialog that
+            // was shown. tmux presses exactly as it always did.
             bool pressed;
-            try { pressed = await PressKey(_status, option.Key); }
+            var verified = _dialogHash is { } shownHash && IsVerifiedRoute(RouteOf(_status));
+            try
+            {
+                pressed = verified
+                    ? (await CaptureAndPress(_status, option.Key, seen => PromptFingerprint.Of(seen)?.Hash == _dialogHash)).Pressed
+                    : await PressKey(_status, option.Key);
+            }
             finally { _generation++; }
 
             if (pressed) return;
@@ -2019,6 +2106,82 @@ namespace Orbweaver
                 Note(changed ? OverlayClosedNote : OverlayCloseFailedNote);
             }
 
+            if (_waiting) await RefreshPromptAsync();
+        }
+
+        internal const string LoginChangedNote = "That sign-in screen had changed, so nothing was pressed. Here is the current one.";
+        internal const string LoginGoneNote = "That sign-in screen has already closed.";
+        internal const string LoginFailedNote = "Couldn't answer that in the terminal. Finish signing in there.";
+        internal const string LoginNotEmptyNote = "The code field in the terminal isn't empty, so nothing was typed. Clear it there first.";
+        internal const string LoginUnverifiedNote = "Couldn't confirm the code was typed, so it was not sent. Finish in the terminal.";
+
+        internal static string LoginRefusalNote(string code) => code switch
+        {
+            LoginAnswer.PromptChanged => LoginChangedNote,
+            LoginAnswer.NoPrompt => LoginGoneNote,
+            LoginAnswer.NotEmpty => LoginNotEmptyNote,
+            LoginAnswer.Unverified => LoginUnverifiedNote,
+            _ => LoginFailedNote,
+        };
+
+        // Every login answer is a verified press: the key goes only if the screen
+        // re-read just before it is still the one that was shown.
+        private async Task AnswerLoginAsync(string key, string hash)
+        {
+            SetPrompt(null);
+            _generation++;
+
+            string? code;
+            try { code = await LoginAnswer.PressAsync(_status, (s, k, ok) => CaptureAndPress(s, k, ok), hash, key); }
+            catch (Exception) { code = LoginAnswer.PressFailed; }
+            finally { _generation++; }
+
+            await FinishLoginAnswerAsync(code, hash);
+        }
+
+        // The code goes from the panel's control to the type call in this one
+        // parameter. It is never stored, logged, noted or put in an exception message.
+        public async Task SubmitLoginCodeAsync(string code)
+        {
+            if (!_format.ReplyEnabled())
+            {
+                Note("Replying is off, so this can only be answered in the terminal.");
+                return;
+            }
+
+            if (_loginHash is not { } hash || !_loginCodeEntry)
+            {
+                Note(LoginGoneNote);
+                return;
+            }
+
+            SetPrompt(null);
+            _generation++;
+
+            string? result;
+            try
+            {
+                result = await LoginAnswer.SubmitCodeAsync(
+                    _status, s => Capture(s), (s, text) => TypeLiteral(s, text), (s, k, ok) => CaptureAndPress(s, k, ok), LoginDelay, hash, code);
+            }
+            catch (Exception) { result = LoginAnswer.TypeFailed; }
+            finally { _generation++; }
+
+            await FinishLoginAnswerAsync(result, hash);
+        }
+
+        private async Task FinishLoginAnswerAsync(string? code, string hash)
+        {
+            if (code is null)
+            {
+                // Pressed: the next scan shows what is there, and the screen just
+                // answered is not shown again while the terminal redraws.
+                _closedLoginHash = hash;
+                _closedLoginAt = Clock();
+                return;
+            }
+
+            Note(LoginRefusalNote(code));
             if (_waiting) await RefreshPromptAsync();
         }
 
