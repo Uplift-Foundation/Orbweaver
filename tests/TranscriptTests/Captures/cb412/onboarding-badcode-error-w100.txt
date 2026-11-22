@@ -1,0 +1,40 @@
+Welcome to Claude Code v2.1.330
+..........................................................
+
+     *                                       █████▓▓░
+                                 *         ███▓░     ░░
+            ░░░░░░                        ███▓░
+    ░░░   ░░░░░░░░░░                      ███▓░
+   ░░░░░░░░░░░░░░░░░░░    *                ██▓░░      ▓
+                                             ░▓▓███▓▓░
+ *                                 ░░░░
+                                 ░░░░░░░░
+                               ░░░░░░░░░░░░░░░░
+       █████████                                        *
+      ██▄█████▄██                        *
+       █████████      *
+.......█ █   █ █..........................................
+
+ ✘ OAuth error: That code wasn't accepted. It may be incomplete, expired, already used, or from an
+   earlier sign-in attempt. Sign in again to get a new code.
+
+ Press Enter to retry (Esc to continue without logging in)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
