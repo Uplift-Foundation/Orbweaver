@@ -53,7 +53,13 @@ namespace Orbweaver
             // CB-404: one key into the pane (a digit, "Escape", "Enter"), for the
             // picker route of a Codex before 0.164. Null leaves that route off.
             Func<SessionStatus, string, Task<bool>>? PressKey = null,
-            Func<TimeSpan, Task>? Delay = null);
+            Func<TimeSpan, Task>? Delay = null,
+
+            // Whether a session's Remote Control bridge can be posted to from
+            // here at all (a credential, an answering bridge), asked once per
+            // (session, bridge id) in the background. Null assumes it can, which
+            // is every harness built before this.
+            Func<SessionStatus, string, Task<bool>>? ProbeBridge = null);
 
         private readonly Seams _seams;
         private readonly object _gate = new();
@@ -85,15 +91,75 @@ namespace Orbweaver
         // safely: "/model x" opens the old picker and a digit means nothing to
         // the new one. So the controls are off and nothing is typed (lead's
         // ruling on F4).
-        internal RunRouteDecision RouteFor(SessionStatus status, RunCli cli) =>
-            cli == RunCli.Codex && _seams.CodexVersionFor(status) is null
-                ? RunRouteDecision.Unavailable(CheckingCodexVersion)
-                : RunRoutes.For(cli,
+        // The route, decided so the "also saves a default" warning is right
+        // before anything is chosen (F1). A bridge this app has found it cannot
+        // post to is treated as no bridge — the typed route, warned — until the
+        // app restarts or the bridge id changes. One not yet probed is warned
+        // about too: an unneeded warning beats an unwarned default change.
+        internal RunRouteDecision RouteFor(SessionStatus status, RunCli cli)
+        {
+            if (cli == RunCli.Codex && _seams.CodexVersionFor(status) is null)
+                return RunRouteDecision.Unavailable(CheckingCodexVersion);
+
+            var enabled = _seams.BridgeCommandsEnabled();
+            var bridge = _seams.BridgeIdFor(status);
+            bool? usable = cli == RunCli.Claude && enabled && bridge is not null ? BridgeUsable(status, bridge) : true;
+            if (usable == false) bridge = null;
+
+            var route = RunRoutes.For(cli,
                 hasPane: !status.IsDesktopHosted && _seams.CanType(status),
-                bridgeId: _seams.BridgeIdFor(status),
-                bridgeSlashOn: _seams.BridgeCommandsEnabled(),
+                bridgeId: bridge,
+                bridgeSlashOn: enabled,
                 codexVersion: cli == RunCli.Codex ? _seams.CodexVersionFor(status) : null,
                 noBridgeReason: status.IsDesktopHosted ? SlashRouting.DesktopNoBridgeReason : SlashRouting.PeerSocketReason);
+            return route.Route == RunRoute.Control && usable is null ? route with { SetsNewSessionDefault = true } : route;
+        }
+
+        // Per session: the bridge id last judged, and whether it can be posted
+        // to (null while the probe is out).
+        private readonly Dictionary<string, (string Bridge, bool? Usable)> _bridges = new(StringComparer.Ordinal);
+
+        internal const string ProbeSubtype = "cb404_probe";
+
+        private bool? BridgeUsable(SessionStatus status, string bridge)
+        {
+            lock (_gate)
+            {
+                if (_bridges.TryGetValue(Key(status), out var known) && known.Bridge == bridge) return known.Usable;
+                // No probe wired: usable until a post proves otherwise.
+                if (_seams.ProbeBridge is null) return true;
+                _bridges[Key(status)] = (bridge, null);
+            }
+            LastProbe = ProbeAsync(status, bridge, _seams.ProbeBridge);
+            // A probe that answered at once has already settled it.
+            lock (_gate) return _bridges.TryGetValue(Key(status), out var now) && now.Bridge == bridge ? now.Usable : null;
+        }
+
+        private async Task ProbeAsync(SessionStatus status, string bridge, Func<SessionStatus, string, Task<bool>> probe)
+        {
+            bool usable;
+            try
+            {
+                var ask = probe(status, bridge);
+                usable = await Task.WhenAny(ask, Wait(ControlBudget)).ConfigureAwait(false) == ask && await ask.ConfigureAwait(false);
+            }
+            catch { usable = false; }
+            MarkBridge(status, bridge, usable);
+        }
+
+        // Sticky: only a new bridge id, or a restart, asks again.
+        private void MarkBridge(SessionStatus status, string bridge, bool usable)
+        {
+            lock (_gate)
+            {
+                if (_bridges.TryGetValue(Key(status), out var known) && known.Bridge == bridge && known.Usable == usable) return;
+                _bridges[Key(status)] = (bridge, usable);
+            }
+            Changed?.Invoke(Key(status));
+        }
+
+        // The last background probe, for tests to wait on. Nothing in production reads it.
+        internal Task LastProbe { get; private set; } = Task.CompletedTask;
 
         // What the panel draws for this session, or null for a session this
         // host does not serve (anything but a local Claude, Codex or Grok).
@@ -255,6 +321,11 @@ namespace Orbweaver
         internal static readonly TimeSpan SetBudget = TimeSpan.FromSeconds(8);
         internal static readonly TimeSpan ControlBudget = TimeSpan.FromSeconds(4);
 
+        // A set that went by typing after the bridge failed mid-flight: sent,
+        // and the panel shows this as information, not as a failure.
+        internal const string FellBackToTyping =
+            "Sent by typing it, because the Remote Control connection didn't answer; Claude Code also saved it as your default for new sessions.";
+
         internal const string NoAnswerInTime = "the session didn't take the change in time; try again in a moment";
         internal const string ControlNoAnswer = "the Remote Control bridge didn't answer in time";
 
@@ -275,8 +346,13 @@ namespace Orbweaver
             // nobody is at, the bridge setting off, no answer in time): a session
             // with a pane is typed into instead, which is the route F1 already
             // settled for a session with no usable bridge.
+            if (!verdict.Reached && _seams.BridgeIdFor(status) is { } bridge) MarkBridge(status, bridge, usable: false);
             if (!verdict.Reached && !status.IsDesktopHosted && _seams.CanType(status))
-                return await TypedAsync(status, cli, new RunRouteDecision(RunRoute.Typed, null, true), field, value).ConfigureAwait(false);
+            {
+                var typed = await TypedAsync(status, cli, new RunRouteDecision(RunRoute.Typed, null, true), field, value).ConfigureAwait(false);
+                // Sent, with what the asker was not warned of beforehand.
+                return typed.Kind == RunSetKind.Sent ? new(RunSetKind.Sent, FellBackToTyping) : typed;
+            }
             return new(RunSetKind.Failed, refusal);
         }
 
@@ -383,6 +459,15 @@ namespace Orbweaver
         private static RunControlsHost Build()
         {
             var cloudApi = new HttpCloudApi();
+            var gated = MirrorSlashHost.GatedPost(
+                () => OrbweaverSettings.BridgeCommandsEnabled,
+                BridgeIdFor,
+                status => RemoteMirrorServer.RegistryEntryFor(status)?.Version,
+                (status, bridgeId, request) => CloudTurnSender.PostControlAndReadAnswerAsync(
+                    cloudApi,
+                    CloudAccounts.SourceFor(ClaudeConfigRoots.RootOfTranscript(status.TranscriptPath)),
+                    CredentialBudget.Unmeasured, bridgeId, request, Task.Delay,
+                    CancellationToken.None));
             return new RunControlsHost(new RunControlsHost.Seams(
                 TerminalFocuser.CanSendQuietly,
                 BridgeIdFor,
@@ -391,22 +476,22 @@ namespace Orbweaver
                 status => CatalogueFor(status),
                 status => CodexVersionFor(status),
                 (status, text) => TerminalFocuser.SendTextAndSubmit(status, text),
-                MirrorSlashHost.GatedPost(
-                    () => OrbweaverSettings.BridgeCommandsEnabled,
-                    BridgeIdFor,
-                    status => RemoteMirrorServer.RegistryEntryFor(status)?.Version,
-                    (status, bridgeId, request) => CloudTurnSender.PostControlAndReadAnswerAsync(
-                        cloudApi,
-                        CloudAccounts.SourceFor(ClaudeConfigRoots.RootOfTranscript(status.TranscriptPath)),
-                        CredentialBudget.Unmeasured, bridgeId, request, Task.Delay,
-                        CancellationToken.None)),
+                gated,
                 () => DateTimeOffset.UtcNow,
                 RecordStatus: status => status.SessionPid > 0 && status.SessionId.Length > 0
                     ? SessionPark.RecordStatus(status.SessionPid, status.SessionId) : null,
                 CapturePane: TerminalFocuser.CapturePane,
                 CanReadPane: TerminalFocuser.CanReadPane,
                 Log: (what, detail) => MirrorLog.Say(what, detail),
-                PressKey: TerminalFocuser.PressKey));
+                PressKey: TerminalFocuser.PressKey,
+                // A request the CLI does not handle: answered "does not handle"
+                // by a bridge that is there (measured, remote-control-findings),
+                // and never reached by one this machine cannot post to.
+                ProbeBridge: async (status, _) =>
+                {
+                    var probe = new System.Text.Json.Nodes.JsonObject { ["subtype"] = RunControlsHost.ProbeSubtype };
+                    return (await gated(status, RunControlsHost.ProbeSubtype, probe).ConfigureAwait(false)).Reached;
+                }));
         }
     }
 }

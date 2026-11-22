@@ -238,16 +238,19 @@ public partial class MirrorRoundTripTests
         harness.AddSession("job-hunter", WriteTranscript("run-hang.jsonl", Conversation(2)));
         await harness.HandshakeAsync("job-hunter");
 
+        // The first went by typing after the post failed: sent, with the note,
+        // carried across the link to the near side.
         var first = harness.Client.SetRunAsync("job-hunter", RunField.Model, "sonnet");
         await harness.Server.RunInFlight;
-        Assert.Equal(RunSetResult.Sent, await first);
+        Assert.Equal(new RunSetResult(RunSetKind.Sent, RunControlsHost.FellBackToTyping), await first);
 
+        // The bridge is now known unusable: the second is typed with no post, and no note.
         var second = harness.Client.SetRunAsync("job-hunter", RunField.Effort, "low");
         await harness.Server.RunInFlight;
         Assert.Equal(RunSetResult.Sent, await second);
 
         Assert.Equal(["/model sonnet", "/effort low"], typed);
-        Assert.Equal(2, posts);
+        Assert.Equal(1, posts);
         Assert.Contains(log, l => l.EndsWith("via=set run=model"));
     }
 
@@ -302,13 +305,16 @@ public partial class MirrorRoundTripTests
         using var local = new LocalCliChatSession(status.SessionId, status,
             findRegistry: _ => null, runControls: host);
 
-        Assert.Null(await local.SetModelAsync("sonnet"));
-        Assert.Null(await local.SetThinkingAsync("low"));
+        // What the local panel is handed back (a note, or null once the panel turns
+        // it into an information line) is the panel's; the route is what is pinned.
+        await local.SetModelAsync("sonnet");
+        await local.SetThinkingAsync("low");
 
         // The peer's route, right after, into the same host.
         var peer = harness.Client.SetRunAsync("job-hunter", RunField.Model, "opus");
         await harness.Server.RunInFlight;
-        Assert.Equal(RunSetResult.Sent, await peer);
+        // Sent, by typing (its own session's first post failed too, so it carries the note).
+        Assert.Equal(RunSetKind.Sent, (await peer).Kind);
 
         Assert.Equal(["/model sonnet", "/effort low", "/model opus"], typed);
         Assert.False(host.IsRunning(status));

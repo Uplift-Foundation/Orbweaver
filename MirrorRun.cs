@@ -115,9 +115,15 @@ namespace Orbweaver
         }
 
         // The reply fields for a refusal or a route's answer, on the far side.
-        internal static Dictionary<string, string> ReplyFields(string? code, string? why)
+        // A set that went carries its note, when it has one (it went by typing
+        // after the bridge failed, CB-404), in the same `why` field: via=set says
+        // it went, so an older near Buddy reading only `via` still reads success.
+        internal static Dictionary<string, string> ReplyFields(string? code, string? why, string? note = null)
         {
-            if (code is null) return new() { ["via"] = ViaSet };
+            if (code is null)
+                return note is null
+                    ? new() { ["via"] = ViaSet }
+                    : new() { ["via"] = ViaSet, ["why"] = MirrorProtocol.Encode(note) };
             var fields = new Dictionary<string, string> { ["via"] = MirrorProtocol.ViaRefused, [KindField] = code };
             fields["why"] = MirrorProtocol.Encode(why ?? (code == RunFrames.BadValue
                 ? "that isn't one of this session's choices" : "it can't be changed there"));
@@ -130,7 +136,8 @@ namespace Orbweaver
         internal static RunSetResult ResultOf(RemoteMirrorClient.InputOutcome outcome)
         {
             if (outcome.Error is { } error) return new(RunSetKind.Failed, outcome.Why ?? error);
-            if (outcome.Via != MirrorProtocol.ViaRefused) return RunSetResult.Sent;
+            if (outcome.Via != MirrorProtocol.ViaRefused)
+                return outcome.Why is { } note ? new(RunSetKind.Sent, note) : RunSetResult.Sent;
             var k = outcome.Kind switch
             {
                 RunFrames.BadValue => RunSetKind.BadValue,

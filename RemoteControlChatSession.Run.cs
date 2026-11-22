@@ -22,6 +22,10 @@ namespace Orbweaver
         private RemoteMirrorClient? _runClient;
         private Action? _runOptionsChanged;
 
+        // The far side's note on the last set that went, until the next set of
+        // either field (RunControlsHost.FellBackToTyping), for RemoteRunOptions.Note.
+        internal string? RunNote { get; private set; }
+
         internal const string RosterNotYet = "not known until the other machine answers";
 
         private MirrorProtocol.MirrorRosterEntry? RunEntry() =>
@@ -100,9 +104,13 @@ namespace Orbweaver
             if (Link() is not { } client || RunEntry() is not { } entry) return RosterNotYet;
             if (entry.Run is null) return MirrorRun.TooOldReason(FarMachine);
 
+            RunNote = null;
             var result = await client.SetRunAsync(_remoteName, field, value).ConfigureAwait(true);
             if (result.Kind != RunSetKind.Sent) return result.Why ?? "it can't be changed there";
 
+            // Sent with something to say (it went by typing on the far machine):
+            // information for the panel, never a failure.
+            RunNote = result.Why;
             _sentRun = (field, value);
             _runOptionsChanged?.Invoke();
             return null;
