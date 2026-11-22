@@ -216,15 +216,127 @@ public class RunControlsTests
         Assert.Empty(failures);
     }
 
+    // An alias is the family it names even with no catalogue at all (the
+    // CB-404 hand check: this used to be reported as "didn't change").
     [Fact]
-    public void WithoutACatalogueAnAliasIsADifferentModel()
+    public void WithoutACatalogueAnAliasStillConfirmsItsFamily()
     {
         var pending = new[] { new RunPending(RunField.Model, "opus", T0) };
         var reading = new RunReading("claude-opus-5-5", null, T0.AddSeconds(2), RunReadingSource.Transcript);
 
-        var (_, failures) = RunPendingRules.Reconcile(pending, reading, T0, TimeSpan.FromMinutes(1));
+        var (still, failures) = RunPendingRules.Reconcile(pending, reading, T0, TimeSpan.FromMinutes(1));
 
-        Assert.Equal(new[] { new RunFailure(RunField.Model, RunText.Contradicted(RunField.Model, "opus", "claude-opus-5-5")) }, failures);
+        Assert.Empty(still);
+        Assert.Empty(failures);
+    }
+
+    [Fact]
+    public void DefaultWithAResolvedIdIsDecidedByIt()
+    {
+        var full = new RunCatalogue(new[] { new RunModel("default", "Default", "claude-opus-5-5", Five), new RunModel("sonnet", "Sonnet 5.5", "claude-sonnet-5-5", Five) });
+
+        Assert.True(RunPendingRules.Same(RunField.Model, "default", "claude-opus-5-5", full));
+        Assert.False(RunPendingRules.Same(RunField.Model, "default", "Sonnet 5.5", full));
+    }
+
+    // --- CB-404 hand check: a model goes by three names ---
+
+    // The alias fallback Claude Code's catalogue falls back to when list_models
+    // has not answered: no display names with versions, no resolved ids.
+    private static readonly RunCatalogue Aliases = new(new[]
+    {
+        new RunModel("default", "Default", null, Five),
+        new RunModel("opus", "Opus", null, Five),
+        new RunModel("sonnet", "Sonnet", null, Five),
+        new RunModel("haiku", "Haiku", null, Five),
+    });
+
+    [Theory]
+    [InlineData("haiku", "claude-haiku-5-5")]   // alias → API id
+    [InlineData("haiku", "Haiku 5.5")]          // alias → display name
+    [InlineData("HAIKU", "haiku 5.5")]          // case-insensitive
+    [InlineData("claude-haiku-5-5", "haiku")]   // either way round
+    [InlineData("opus", "Opus 5.5 (1M context)")]
+    public void AnAliasIsTheSameModelAsItsDisplayNameAndId(string wanted, string actual)
+    {
+        Assert.True(RunPendingRules.Same(RunField.Model, wanted, actual, Aliases));
+        Assert.True(RunPendingRules.Same(RunField.Model, wanted, actual, null));
+        Assert.True(RunPendingRules.Same(RunField.Model, wanted, actual, RunCatalogue.Empty));
+    }
+
+    [Theory]
+    [InlineData("opus", "Sonnet 5.5")]
+    [InlineData("opus", "claude-sonnet-5-5")]
+    [InlineData("haiku", "claude-opus-5-5")]
+    [InlineData("gpt-6-luna", "gpt-6.2-sol")]
+    public void ADifferentModelIsStillADifferentModel(string wanted, string actual)
+    {
+        Assert.False(RunPendingRules.Same(RunField.Model, wanted, actual, Aliases));
+        Assert.False(RunPendingRules.Same(RunField.Model, wanted, actual, Claude));
+        Assert.False(RunPendingRules.Same(RunField.Model, wanted, actual, null));
+    }
+
+    [Fact]
+    public void TheFullCatalogueStillDecidesByResolvedId()
+    {
+        Assert.True(RunPendingRules.Same(RunField.Model, "haiku", "Haiku 4.5", Claude));
+        Assert.True(RunPendingRules.Same(RunField.Model, "opus", "claude-opus-5-5", Claude));
+        Assert.False(RunPendingRules.Same(RunField.Model, "opus", "Sonnet 5.5", Claude));
+    }
+
+    [Fact]
+    public void DefaultIsNotContradictedByWhateverItResolvedTo()
+    {
+        Assert.True(RunPendingRules.Same(RunField.Model, "default", "claude-opus-5-5", Aliases));
+        Assert.True(RunPendingRules.Same(RunField.Model, "default", "Sonnet 5.5", null));
+    }
+
+    [Fact]
+    public void EffortLevelsAreStillComparedAsLevels()
+    {
+        Assert.True(RunPendingRules.Same(RunField.Effort, "high", "HIGH", null));
+        Assert.False(RunPendingRules.Same(RunField.Effort, "high", "xhigh", Claude));
+    }
+
+    // Warren's sequence: "/model haiku" sent, the transcript's own
+    // "Set model to `Haiku 5.5`" row read back, no turn in between.
+    [Fact]
+    public void TheHandChecksSequenceIsConfirmedNotFailed()
+    {
+        var pending = new[] { new RunPending(RunField.Model, "haiku", T0) };
+        var reading = RunReadings.FromClaudeTranscript(new[]
+        {
+            """{"type":"user","timestamp":"2026-11-21T12:00:03Z","message":{"role":"user","content":"<local-command-stdout>Set model to `Haiku 5.5` and saved as your default for new sessions</local-command-stdout>"}}""",
+        });
+
+        var (still, failures) = RunPendingRules.Reconcile(pending, reading, T0.AddSeconds(3), TimeSpan.FromMinutes(10), Aliases);
+
+        Assert.Empty(still);
+        Assert.Empty(failures);
+    }
+
+    // The catalogue finds an alias entry from a display name or API id, so the
+    // chip names "Haiku" rather than inserting a second "Haiku 5.5" choice.
+    [Theory]
+    [InlineData("Haiku 5.5", "haiku")]
+    [InlineData("claude-sonnet-5-5", "sonnet")]
+    public void AnAliasCatalogueFindsTheFamily(string name, string id)
+    {
+        Assert.Equal(id, Aliases.Find(name)!.Id);
+    }
+
+    [Theory]
+    [InlineData("claude-fable-5-2")]           // no such family
+    [InlineData("Default (recommended)")]      // "default" is not a family
+    public void NoFamilyIsNotGuessed(string name)
+    {
+        Assert.Null(Aliases.Find(name));
+    }
+
+    [Fact]
+    public void TwoFamiliesInOneNameMatchNeither()
+    {
+        Assert.Null(Aliases.Find("opus-sonnet-blend"));
     }
 
     [Fact]

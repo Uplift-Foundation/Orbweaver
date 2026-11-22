@@ -120,8 +120,28 @@ namespace Orbweaver
             return Models.FirstOrDefault(m => string.Equals(m.Id, model, StringComparison.OrdinalIgnoreCase))
                 ?? resolved.FirstOrDefault(m => !string.Equals(m.Id, "default", StringComparison.OrdinalIgnoreCase))
                 ?? resolved.FirstOrDefault()
-                ?? Models.FirstOrDefault(m => string.Equals(m.Label, model, StringComparison.OrdinalIgnoreCase));
+                ?? Models.FirstOrDefault(m => string.Equals(m.Label, model, StringComparison.OrdinalIgnoreCase))
+                ?? ByFamily(model);
         }
+
+        // Claude Code's aliases are model families: "haiku" is what was asked
+        // for, and the transcript says "Haiku 5.5" ("Set model to `Haiku 5.5`")
+        // or "claude-haiku-5-5". When nothing matched exactly — the alias
+        // fallback catalogue has neither the display name nor a resolved id —
+        // the one alias entry whose name is a word of the given name is it.
+        // "default" is not a family and never matches this way.
+        private RunModel? ByFamily(string model)
+        {
+            var words = Words(model);
+            var hits = Models.Where(m => IsAlias(m.Id) && words.Contains(m.Id.ToLowerInvariant())).ToList();
+            return hits.Count == 1 ? hits[0] : null;
+        }
+
+        internal static bool IsAlias(string id) =>
+            id.Length > 0 && id.All(char.IsAsciiLetter) && !string.Equals(id, "default", StringComparison.OrdinalIgnoreCase);
+
+        internal static IReadOnlyList<string> Words(string name) =>
+            name.ToLowerInvariant().Split(new[] { ' ', '-', '_', '.', '(', ')', '/', '[', ']' }, StringSplitOptions.RemoveEmptyEntries);
     }
 
     // A change this app made that no reading has confirmed yet. Success from
@@ -272,15 +292,33 @@ namespace Orbweaver
         public static IReadOnlyList<RunPending> With(IReadOnlyList<RunPending> pending, RunPending set) =>
             pending.Where(p => p.Field != set.Field).Append(set).ToList();
 
+        // Whether a reading names the model or level that was asked for. A
+        // model goes by three names — the alias or catalogue id that was sent
+        // ("haiku"), the display name Claude Code confirms with ("Haiku 5.5"),
+        // and the API id the next assistant row carries ("claude-haiku-5-5") —
+        // and all three are the same model (CB-404 hand check: a confirmed
+        // change was reported as "didn't change" because they were compared
+        // as strings).
         internal static bool Same(RunField field, string wanted, string actual, RunCatalogue? catalogue)
         {
             if (string.Equals(wanted, actual, StringComparison.OrdinalIgnoreCase)) return true;
-            if (field != RunField.Model || catalogue is null) return false;
-            // "opus" was asked for and "claude-opus-5-5" is what the transcript
-            // says: the same model under its two names.
-            var a = catalogue.Find(wanted);
-            var b = catalogue.Find(actual);
-            return a is not null && b is not null && string.Equals(a.ResolvedId ?? a.Id, b.ResolvedId ?? b.Id, StringComparison.OrdinalIgnoreCase);
+            if (field != RunField.Model) return false;
+
+            // "default" resolves to whatever the account's default is, which a
+            // catalogue without a resolved id for it cannot say; a fresh reading
+            // after asking for it is then not evidence it failed.
+            if (string.Equals(wanted, "default", StringComparison.OrdinalIgnoreCase)
+                && catalogue?.Find(wanted)?.ResolvedId is null) return true;
+
+            // Through the catalogue: both names to one entry.
+            if (catalogue is not null && catalogue.Find(wanted) is { } a && catalogue.Find(actual) is { } b)
+                return string.Equals(a.ResolvedId ?? a.Id, b.ResolvedId ?? b.Id, StringComparison.OrdinalIgnoreCase);
+
+            // No catalogue entry for one side: an alias is a family, and the
+            // other name carries it as a word ("haiku" in "Haiku 5.5" or
+            // "claude-haiku-5-5"). Either way round.
+            return (RunCatalogue.IsAlias(wanted) && RunCatalogue.Words(actual).Contains(wanted.ToLowerInvariant()))
+                || (RunCatalogue.IsAlias(actual) && RunCatalogue.Words(wanted).Contains(actual.ToLowerInvariant()));
         }
     }
 
