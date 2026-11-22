@@ -3735,6 +3735,8 @@ namespace Orbweaver
                 return;
             }
 
+            // HideLoginEntry empties everything, including the link; a prompt with a link but no
+            // field (an unpressable route) still wants the link, so it is put back.
             HideLoginEntry();
             _loginLinkUrl = prompt.Link;
             PromptLoginLink.IsVisible = prompt.Link is not null;
@@ -3761,7 +3763,7 @@ namespace Orbweaver
         private void PromptLoginCodeBox_TextChanged(object? sender, TextChangedEventArgs e) => UpdateLoginCodeSend();
 
         private void UpdateLoginCodeSend() =>
-            PromptLoginCodeSend.IsEnabled = !string.IsNullOrWhiteSpace(PromptLoginCodeBox.Text);
+            PromptLoginCodeSend.IsEnabled = LoginAnswer.CodeAllowed((PromptLoginCodeBox.Text ?? "").Trim());
 
         private void PromptLoginCodeBox_KeyDown(object? sender, KeyEventArgs e)
         {
@@ -3783,11 +3785,32 @@ namespace Orbweaver
         {
             var session = _loginCodeSession;
             var code = (PromptLoginCodeBox.Text ?? "").Trim();
-            if (session is null || code.Length == 0) return;
+
+            // Refused here rather than emptied and then refused downstream: a paste with a space
+            // or a newline in it would otherwise vanish with no word said. The field keeps it.
+            if (session is null || !LoginAnswer.CodeAllowed(code)) return;
 
             PromptLoginCodeBox.Text = "";
             UpdateLoginCodeSend();
-            _ = session.SubmitLoginCodeAsync(code);
+            _ = SendLoginCodeAsync(session, code);
+        }
+
+        internal const string LoginCodeFailedNote =
+            "Couldn't send the code. Paste it again, or finish in the terminal.";
+
+        // A faulted send says so in fixed words. The exception is never read: its message could
+        // carry the code, and the field is already empty, so silence would lose the paste unseen.
+        private async Task SendLoginCodeAsync(IRemoteChatLoginCode session, string code)
+        {
+            try
+            {
+                await session.SubmitLoginCodeAsync(code);
+            }
+            catch (Exception)
+            {
+                Dispatcher.UIThread.Post(() =>
+                    OnTurnAdded(new ChatTurn { Role = ChatRole.System, Text = LoginCodeFailedNote }));
+            }
         }
 
         // Whether the body on show is drawn with block glyphs (U+2580 to U+259F: the half

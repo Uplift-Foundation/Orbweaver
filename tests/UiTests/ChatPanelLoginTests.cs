@@ -69,9 +69,12 @@ public class ChatPanelLoginTests : IDisposable
 
         public void AnswerElsewhere() => ElsewhereCalls++;
 
+        public Exception? Fault { get; set; }
+
         public Task SubmitLoginCodeAsync(string code)
         {
             Codes.Add(code);
+            if (Fault is not null) return Task.FromException(Fault);
             FieldAtSend = FieldProbe?.Invoke();
             return Task.CompletedTask;
         }
@@ -315,6 +318,52 @@ public class ChatPanelLoginTests : IDisposable
         Assert.False(panel.FindControl<ItemsControl>("PromptOptions")!.IsVisible);
         Assert.False(Link(panel).IsVisible);
         Assert.False(CodeRow(panel).IsVisible);
+    }
+
+    [AvaloniaFact]
+    public void ACodeWithInnerWhitespaceIsNotSentAndIsNotCleared()
+    {
+        var (panel, session) = Open(UrlStep());
+        Box(panel).Text = "ab cd\nef";
+        Flush();
+
+        Assert.False(Send(panel).IsEnabled);
+        Enter(Box(panel));
+
+        Assert.Empty(session.Codes);
+        Assert.Equal("ab cd\nef", Box(panel).Text);
+    }
+
+    [AvaloniaFact]
+    public void AFaultedSendSaysSoInFixedWordsAndNeverQuotesTheException()
+    {
+        var (panel, session) = Open(UrlStep());
+        session.Fault = new InvalidOperationException("QA-CANARY-9f3a typed CODE-123");
+        Box(panel).Text = "CODE-123";
+
+        Enter(Box(panel));
+        Flush();
+
+        var texts = panel.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text ?? "")
+            .Concat(panel.GetVisualDescendants().OfType<SelectableTextBlock>().Select(t => t.Text ?? "")).ToList();
+        Assert.Contains(texts, t => t.Contains(ChatPanel.LoginCodeFailedNote));
+        Assert.DoesNotContain(texts, t => t.Contains("QA-CANARY") || t.Contains("CODE-123"));
+        Assert.Equal("", Box(panel).Text);
+    }
+
+    [AvaloniaFact]
+    public void SwappingTheSessionEmptiesTheField()
+    {
+        var (panel, _) = Open(UrlStep());
+        Box(panel).Text = "half-typed";
+
+        var other = new PlainSession();
+        _toClean.Add(other.SessionId);
+        ChatPanel.OpenFor(new OrbWindow(Guid.NewGuid().ToString()), other);
+        Flush();
+
+        Assert.Equal("", Box(ChatPanelTestAccess.Instance!).Text);
+        Assert.False(CodeRow(ChatPanelTestAccess.Instance!).IsVisible);
     }
 
     private sealed class PlainSession : IRemoteChatSession, IRemoteChatPrompts
