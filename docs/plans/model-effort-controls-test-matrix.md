@@ -36,3 +36,7 @@ Also: contract checker + 126 mutations run in relay-tests.yml; confirm it ran gr
 ## Added check (S1, Codex version)
 
 Before the first turn, Codex controls must leave "checking Codex version..." within a few seconds (Windows box and the mini). The version is read from the session process image and must resolve to a binary named codex. Neg: if it stays on "checking...", npm node launcher is probably the recorded pid; capture what the pid resolves to and report it.
+
+## Added row (linked desktop panel, found by Warren, not by QA)
+
+A panel on machine A for a session on machine B (MacBook viewing a mini session; the session id is rc:...). The chip, flyout, set and read must work on this panel exactly as on a local one: it is RemoteControlChatSession, not LocalCliChatSession, and must implement IRemoteChatRunOptions. Check for EVERY session class the app can open a panel on: local CLI, cloud, OpenClaw, remote-control (rc:), phone-relay. Neg: a peer too old to change this shows "the Orbweaver on <machine> is too old to change this" (disabled with reason, not hidden). The first matrix row read only "panel on A for session on B | same | mirrored" and was never run; that gap let the hidden chip through.
