@@ -2509,6 +2509,7 @@ namespace Orbweaver
             string field, string value)
         {
             (string Code, string? Why)? answer;
+            string? note = null;
             if (!RunFrames.FieldOk(field) || !RunFrames.IdOk(value))
                 answer = (RunFrames.BadValue, "that can't be passed to the CLI");
             else if (_seams.RunControls is not { } run || run.Read(status) is not { } state)
@@ -2521,9 +2522,10 @@ namespace Orbweaver
                 try { result = await run.SetAsync(status, field, value).ConfigureAwait(false); }
                 catch { result = new(RunSetKind.Failed, "that machine failed while changing it"); }
                 answer = result.Kind == RunSetKind.Sent ? null : RunFrames.Answer(result);
+                if (result.Kind == RunSetKind.Sent) note = result.Why;
             }
 
-            var fields = MirrorRun.ReplyFields(answer?.Code, answer?.Why);
+            var fields = MirrorRun.ReplyFields(answer?.Code, answer?.Why, note);
             // The code a refusal carried, never its sentence or the value: what a
             // hand check needs to tell busy from bad_value from a failed route.
             InputLog("input", $"n={frame.Text("n")} -> ok via={fields["via"]} run={field}"

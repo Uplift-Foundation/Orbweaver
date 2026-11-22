@@ -31,12 +31,14 @@ public class RunControlsHostTests
         public readonly List<string> Changed = [];
         public TaskCompletionSource<bool>? TypeGate;
         public TaskCompletionSource<MirrorSlashHost.ControlVerdict>? PostGate;
+        public Func<Task<bool>>? Probe;
+        public int Probes;
 
         // The two clocks a set is bounded by, each released by the test.
         public readonly TaskCompletionSource ControlTimer = new(), SetTimer = new(), StepTimer = new();
         public RunControlsHost Host = null!;
 
-        public Desk()
+        public Desk(bool probe = false)
         {
             Host = new RunControlsHost(new RunControlsHost.Seams(
                 _ => CanType,
@@ -59,6 +61,12 @@ public class RunControlsHostTests
                 () => Now,
                 RecordStatus: _ => Record,
                 Log: (_, _) => { },
+                // Read at call time: the initializer sets Probe after this constructor runs.
+                ProbeBridge: !probe ? null : (_, _) =>
+                {
+                    Probes++;
+                    return Probe!();
+                },
                 Delay: d => d == RunControlsHost.ControlBudget ? ControlTimer.Task
                     : d == RunControlsHost.SetBudget ? SetTimer.Task
                     : d == RunControlsHost.StepBudget ? StepTimer.Task
@@ -323,7 +331,7 @@ public class RunControlsHostTests
         Assert.Empty(d.Typed);
         d.ControlTimer.SetResult();
 
-        Assert.Equal(RunSetResult.Sent, await set);
+        Assert.Equal(new RunSetResult(RunSetKind.Sent, RunControlsHost.FellBackToTyping), await set);
         Assert.Equal("/model sonnet", d.Typed.Single());
         Assert.False(d.Host.IsRunning(Claude()));
         Assert.True(d.Host.Options(Claude())!.ModelPending);
@@ -333,7 +341,7 @@ public class RunControlsHostTests
     public async Task A_post_refused_before_the_cli_types_where_there_is_a_pane_and_fails_where_there_is_none()
     {
         var d = new Desk { Bridge = "b", Verdict = MirrorSlashHost.ControlVerdict.Unreached("no usable credential") };
-        Assert.Equal(RunSetResult.Sent, await d.Host.SetAsync(Claude(), RunField.Effort, "high"));
+        Assert.Equal(new RunSetResult(RunSetKind.Sent, RunControlsHost.FellBackToTyping), await d.Host.SetAsync(Claude(), RunField.Effort, "high"));
         Assert.Equal("/effort high", d.Typed.Single());
 
         var paneless = new Desk { Bridge = "b", CanType = false, Verdict = MirrorSlashHost.ControlVerdict.Unreached("no usable credential") };
@@ -388,4 +396,91 @@ public class RunControlsHostTests
         Assert.True(done());
     }
 
+
+    // ---- the route known before the first choice (F1) -------------------------
+
+    [Fact]
+    public async Task A_bridge_that_failed_once_is_typed_from_then_on_and_warned_before_the_next_choice()
+    {
+        var d = new Desk { Bridge = "b", Verdict = MirrorSlashHost.ControlVerdict.Unreached("no usable credential") };
+        Assert.Null(d.Host.Options(Claude())!.DefaultWarning);
+
+        Assert.Equal(new RunSetResult(RunSetKind.Sent, RunControlsHost.FellBackToTyping), await d.Host.SetAsync(Claude(), RunField.Model, "sonnet"));
+
+        // Sticky: the warning is up before the next choice, and the next set is typed with no post.
+        var route = d.Host.RouteFor(Claude(), RunCli.Claude);
+        Assert.Equal((RunRoute.Typed, true), (route.Route, route.SetsNewSessionDefault));
+        Assert.Equal(RunText.ClaudeTypedDefault, d.Host.Options(Claude())!.DefaultWarning);
+        Assert.Equal(RunSetResult.Sent, await d.Host.SetAsync(Claude(), RunField.Effort, "low"));
+        Assert.Single(d.Posted);
+        Assert.Equal(["/model sonnet", "/effort low"], d.Typed);
+
+        // A new bridge id is judged afresh.
+        d.Bridge = "b2";
+        d.Verdict = MirrorSlashHost.ControlVerdict.Done;
+        Assert.Equal(RunRoute.Control, d.Host.RouteFor(Claude(), RunCli.Claude).Route);
+    }
+
+    [Fact]
+    public async Task A_bridge_not_yet_probed_is_warned_about_and_the_probe_settles_it_once()
+    {
+        var answer = new TaskCompletionSource<bool>();
+        var d = new Desk(probe: true) { Bridge = "b", Probe = () => answer.Task };
+
+        var before = d.Host.RouteFor(Claude(), RunCli.Claude);
+        Assert.Equal((RunRoute.Control, true), (before.Route, before.SetsNewSessionDefault));
+        Assert.NotNull(d.Host.Options(Claude())!.DefaultWarning);
+        Assert.Equal(1, d.Probes);                              // asked once, not per read
+
+        answer.SetResult(true);
+        await d.Host.LastProbe;
+        Assert.Contains("s1", d.Changed);
+        Assert.False(d.Host.RouteFor(Claude(), RunCli.Claude).SetsNewSessionDefault);
+        Assert.Null(d.Host.Options(Claude())!.DefaultWarning);
+        Assert.Equal(1, d.Probes);
+    }
+
+    [Theory]
+    [InlineData("no")]
+    [InlineData("throws")]
+    [InlineData("late")]
+    public async Task A_bridge_the_probe_cannot_reach_is_typed_and_warned(string how)
+    {
+        var d = new Desk(probe: true)
+        {
+            Bridge = "b",
+            Probe = how switch
+            {
+                "no" => () => Task.FromResult(false),
+                "throws" => () => throw new InvalidOperationException("keychain"),
+                _ => () => new TaskCompletionSource<bool>().Task,
+            },
+        };
+        if (how == "late") d.ControlTimer.SetResult();
+
+        d.Host.RouteFor(Claude(), RunCli.Claude);
+        await d.Host.LastProbe;
+
+        var route = d.Host.RouteFor(Claude(), RunCli.Claude);
+        Assert.Equal((RunRoute.Typed, true), (route.Route, route.SetsNewSessionDefault));
+        Assert.Equal(RunSetResult.Sent, await d.Host.SetAsync(Claude(), RunField.Model, "sonnet"));
+        Assert.Empty(d.Posted);
+    }
+
+    [Fact]
+    public void No_probe_runs_when_bridge_commands_are_off_or_there_is_no_bridge()
+    {
+        var off = new Desk(probe: true) { Bridge = "b", BridgeCommands = false, Probe = () => Task.FromResult(true) };
+        off.Host.RouteFor(Claude(), RunCli.Claude);
+        var none = new Desk(probe: true) { Probe = () => Task.FromResult(true) };
+        none.Host.RouteFor(Claude(), RunCli.Claude);
+        Assert.Equal((0, 0), (off.Probes, none.Probes));
+    }
+
+    [Fact]
+    public async Task A_fallback_that_fails_to_type_is_failed_not_sent_with_a_note()
+    {
+        var d = new Desk { Bridge = "b", Types = false, Verdict = MirrorSlashHost.ControlVerdict.Unreached("no usable credential") };
+        Assert.Equal(new RunSetResult(RunSetKind.Failed, "the terminal refused the text"), await d.Host.SetAsync(Claude(), RunField.Model, "sonnet"));
+    }
 }

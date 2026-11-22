@@ -191,4 +191,21 @@ public partial class RemoteMirrorChatSessionTests
         Assert.Null(await session.SetThinkingAsync("high"));
         Assert.Equal("Opus 5.5 · High", session.RunOptions!.ChipText);
     }
+
+    [AvaloniaFact]
+    public async Task A_set_the_far_side_sent_by_typing_is_kept_as_a_note_not_a_failure()
+    {
+        _farRun = new FarRunControls { Result = new RunSetResult(RunSetKind.Sent, RunControlsHost.FellBackToTyping) };
+        Wire("a", "b");
+        var session = await OpenAsync();
+
+        Assert.Null(await session.SetModelAsync("sonnet"));
+        Assert.Equal(RunControlsHost.FellBackToTyping, session.RunNote);
+        Assert.True(session.RunOptions!.ModelPending);
+
+        // The next set of either field clears it.
+        _farRun.Result = RunSetResult.Sent;
+        Assert.Null(await session.SetThinkingAsync("low"));
+        Assert.Null(session.RunNote);
+    }
 }
