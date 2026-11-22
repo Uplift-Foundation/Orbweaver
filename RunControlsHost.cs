@@ -100,7 +100,7 @@ namespace Orbweaver
         internal RemoteRunOptions? Options(SessionStatus status)
         {
             if (CliFor(status) is not { } cli) return null;
-            var reading = _seams.ReadingFor(status) ?? RunReading.None;
+            var reading = ReadingOf(status);
             var catalogue = _seams.CatalogueFor(status) ?? RunCatalogue.Empty;
             var pending = Reconcile(status, cli, reading, catalogue);
             IReadOnlyList<RunFailure> failures;
@@ -183,7 +183,7 @@ namespace Orbweaver
             var route = RouteFor(status, cli);
             if (route.Route == RunRoute.None) return new(RunSetKind.Unavailable, route.DisabledReason ?? RunText.NoRoute);
 
-            var reading = _seams.ReadingFor(status) ?? RunReading.None;
+            var reading = ReadingOf(status);
             var catalogue = _seams.CatalogueFor(status) ?? RunCatalogue.Empty;
             if (RunControlsResolver.Validate(cli, field, value, reading, catalogue) is { } problem)
                 return new(RunSetKind.BadValue, problem);
@@ -196,9 +196,13 @@ namespace Orbweaver
             {
                 lock (_gate)
                 {
-                    _pending[Key(status)] = RunPendingRules.With(
-                        _pending.GetValueOrDefault(Key(status)) ?? [], new RunPending(field, value, _seams.Now()));
+                    var set = new RunPending(field, value, _seams.Now());
+                    _pending[Key(status)] = RunPendingRules.With(_pending.GetValueOrDefault(Key(status)) ?? [], set);
                     _failures.Remove((Key(status), field));
+                    // What the picker read off the screen confirms this set:
+                    // stamped with the set's own time, so it settles it now and
+                    // the next rollout row still wins after it.
+                    if (_screenSeen.Remove(Key(status), out var seen)) _screen[Key(status)] = seen with { At = set.At };
                 }
                 Changed?.Invoke(Key(status));
             }
@@ -246,12 +250,28 @@ namespace Orbweaver
             return typed ? RunSetResult.Sent : new(RunSetKind.Failed, "the terminal refused the text");
         }
 
+        // CB-404: a Codex before 0.164 writes the effort to its rollout only
+        // once one is set, and nobody has measured how soon after a picker set,
+        // so the picker's own on-screen confirmation is a reading too (lead's
+        // call). _screenSeen holds it between the picker and the pending it
+        // confirms; _screen is the reading merged under the files' one.
+        private readonly Dictionary<string, RunReading> _screenSeen = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, RunReading> _screen = new(StringComparer.Ordinal);
+
+        private RunReading ReadingOf(SessionStatus status)
+        {
+            var files = _seams.ReadingFor(status) ?? RunReading.None;
+            RunReading? screen;
+            lock (_gate) screen = _screen.GetValueOrDefault(Key(status));
+            return screen is null ? files : RunReading.Merge(screen, files);
+        }
+
         private async Task<RunSetResult> PickerAsync(SessionStatus status, RunField field, string value)
         {
             if (_seams.PressKey is not { } press || _seams.CapturePane is not { } capture)
                 return new(RunSetKind.Unavailable, OldCodexReason);
 
-            var reading = _seams.ReadingFor(status) ?? RunReading.None;
+            var reading = ReadingOf(status);
             string? gateRefusal = null;
             var seams = new CodexPicker.Seams(
                 async line =>
@@ -266,12 +286,15 @@ namespace Orbweaver
                 () => capture(status),
                 _seams.Delay ?? (d => Task.Delay(d)));
 
-            var failure = field == RunField.Model
-                ? await CodexPicker.SetAsync(seams, value, reading.Effort, effortRequired: false).ConfigureAwait(false)
-                : await CodexPicker.SetAsync(seams, reading.Model, value, effortRequired: true).ConfigureAwait(false);
+            var outcome = field == RunField.Model
+                ? await CodexPicker.RunAsync(seams, value, reading.Effort, effortRequired: false).ConfigureAwait(false)
+                : await CodexPicker.RunAsync(seams, reading.Model, value, effortRequired: true).ConfigureAwait(false);
+            var failure = outcome.Failure;
             // The gate's own sentence when it would not type "/model" at all.
             if (failure == CodexPicker.TypeRefused && gateRefusal is not null) failure = gateRefusal;
-            return failure is null ? RunSetResult.Sent : new(RunSetKind.Failed, failure);
+            if (failure is not null) return new(RunSetKind.Failed, failure);
+            if (outcome.Confirmed is { } seen) lock (_gate) _screenSeen[Key(status)] = seen;
+            return RunSetResult.Sent;
         }
     }
 

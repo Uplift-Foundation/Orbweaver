@@ -45,7 +45,6 @@ namespace Orbweaver
         internal const string NoPicker = "Codex's /model picker did not open";
         internal const string Unreadable = "the terminal can't be read, so the picker can't be driven safely";
         internal const string KeyRefused = "the terminal refused a key";
-        internal const string NotConfirmed = "Codex didn't confirm the change";
 
         internal static string NotListed(string what) =>
             $"{what} isn't on the first screen of this Codex's /model picker, so it wasn't chosen";
@@ -57,15 +56,28 @@ namespace Orbweaver
         // model change), effort is only a preference — the level the session
         // was on — and a model without it takes the highlighted level instead.
         // Null on a confirmed change, or the sentence to show.
-        internal static async Task<string?> SetAsync(Seams seams, string? model, string? effort, bool effortRequired)
+        internal static async Task<string?> SetAsync(Seams seams, string? model, string? effort, bool effortRequired) =>
+            (await RunAsync(seams, model, effort, effortRequired).ConfigureAwait(false)).Failure;
+
+        // How a picker set came out: the sentence when it failed, and when Codex
+        // confirmed it on screen, what it said it changed to. Neither means the
+        // keys went and no confirmation line was seen in time, which stays a
+        // pending change for the rollout to settle — not a failure, because
+        // the picker closed on the level's digit.
+        internal sealed record Outcome(string? Failure, RunReading? Confirmed)
         {
-            if (!await seams.TypeLine("/model").ConfigureAwait(false)) return TypeRefused;
+            internal static Outcome Failed(string why) => new(why, null);
+        }
+
+        internal static async Task<Outcome> RunAsync(Seams seams, string? model, string? effort, bool effortRequired)
+        {
+            if (!await seams.TypeLine("/model").ConfigureAwait(false)) return Outcome.Failed(TypeRefused);
 
             // Screen one: the models.
             var first = await WaitFor(seams, s => s.Stage == RunReadings.CodexPickerStage.Models).ConfigureAwait(false);
             // An unreadable pane gets no key at all: Esc is a way out of a screen
             // that was read, not a blind keystroke.
-            if (first.Failure is { } f1) return await Out(seams, f1 == Unreadable ? 0 : 1, f1).ConfigureAwait(false);
+            if (first.Failure is { } f1) return Outcome.Failed(await Out(seams, f1 == Unreadable ? 0 : 1, f1).ConfigureAwait(false));
             var models = first.Screen!;
 
             // On an effort change the model is only a preference (the one the
@@ -73,22 +85,22 @@ namespace Orbweaver
             // picker's own idea of the current model — as the fallback.
             var modelRow = (model is null ? null : models.Rows.FirstOrDefault(r => string.Equals(r.Id, model, StringComparison.OrdinalIgnoreCase)))
                 ?? (effortRequired || model is null ? models.Rows.FirstOrDefault(r => r.Highlighted) : null);
-            if (modelRow is null) return await Out(seams, 1, NotListed(model ?? "the current model")).ConfigureAwait(false);
+            if (modelRow is null) return Outcome.Failed(await Out(seams, 1, NotListed(model ?? "the current model")).ConfigureAwait(false));
 
-            if (!await seams.Press(modelRow.Digit.ToString()).ConfigureAwait(false)) return await Out(seams, 1, KeyRefused).ConfigureAwait(false);
+            if (!await seams.Press(modelRow.Digit.ToString()).ConfigureAwait(false)) return Outcome.Failed(await Out(seams, 1, KeyRefused).ConfigureAwait(false));
 
             // Screen two: the levels, for that model and no other.
             var second = await WaitFor(seams, s => s.Stage == RunReadings.CodexPickerStage.Levels).ConfigureAwait(false);
-            if (second.Failure is { } f2) return await Out(seams, f2 == Unreadable ? 0 : 2, f2).ConfigureAwait(false);
+            if (second.Failure is { } f2) return Outcome.Failed(await Out(seams, f2 == Unreadable ? 0 : 2, f2).ConfigureAwait(false));
             var levels = second.Screen!;
             if (!string.Equals(levels.ForModel, modelRow.Id, StringComparison.OrdinalIgnoreCase))
-                return await Out(seams, 2, WrongScreen(modelRow.Id)).ConfigureAwait(false);
+                return Outcome.Failed(await Out(seams, 2, WrongScreen(modelRow.Id)).ConfigureAwait(false));
 
             var levelRow = (effort is null ? null : levels.Rows.FirstOrDefault(r => string.Equals(r.Id, effort, StringComparison.OrdinalIgnoreCase)))
                 ?? (effortRequired && effort is not null ? null : levels.Rows.FirstOrDefault(r => r.Highlighted));
-            if (levelRow is null) return await Out(seams, 2, NotListed(effort ?? "the current level")).ConfigureAwait(false);
+            if (levelRow is null) return Outcome.Failed(await Out(seams, 2, NotListed(effort ?? "the current level")).ConfigureAwait(false));
 
-            if (!await seams.Press(levelRow.Digit.ToString()).ConfigureAwait(false)) return await Out(seams, 2, KeyRefused).ConfigureAwait(false);
+            if (!await seams.Press(levelRow.Digit.ToString()).ConfigureAwait(false)) return Outcome.Failed(await Out(seams, 2, KeyRefused).ConfigureAwait(false));
 
             // The confirmation line, naming the model chosen.
             for (var i = 0; i < Attempts; i++)
@@ -97,11 +109,11 @@ namespace Orbweaver
                 var changed = RunReadings.FromCodexChanged(screen);
                 if (string.Equals(changed.Model, modelRow.Id, StringComparison.OrdinalIgnoreCase)
                     && (changed.Effort is null || string.Equals(changed.Effort, levelRow.Id, StringComparison.OrdinalIgnoreCase)))
-                    return null;
+                    return new Outcome(null, new RunReading(modelRow.Id, levelRow.Id, null, RunReadingSource.PaneFooter));
                 await seams.Delay(Poll).ConfigureAwait(false);
             }
 
-            return NotConfirmed;
+            return new Outcome(null, null);
         }
 
         private sealed record Wait(RunReadings.CodexPickerScreen? Screen, string? Failure);

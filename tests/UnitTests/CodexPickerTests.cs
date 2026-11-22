@@ -266,12 +266,29 @@ public class CodexPickerTests
         Assert.Equal(escapes, pane.Log.Count(l => l == "press Escape"));
     }
 
+    // The picker closed on the level's digit but no "Model changed to" line
+    // was seen in time: not a failure, and no confirmed reading — it stays a
+    // pending change for the rollout to settle.
     [Fact]
-    public async Task NoConfirmationLineIsAFailure()
+    public async Task NoConfirmationLineLeavesItPendingNotFailed()
     {
         var pane = new Pane { Confirms = false };
 
-        Assert.Equal(CodexPicker.NotConfirmed, await CodexPicker.SetAsync(pane.Seams, "gpt-5.6-terra", "low", effortRequired: true));
+        var outcome = await CodexPicker.RunAsync(pane.Seams, "gpt-5.6-terra", "low", effortRequired: true);
+
+        Assert.Null(outcome.Failure);
+        Assert.Null(outcome.Confirmed);
+    }
+
+    [Fact]
+    public async Task TheConfirmationLineIsReturnedAsAReading()
+    {
+        var pane = new Pane();
+
+        var outcome = await CodexPicker.RunAsync(pane.Seams, "gpt-5.6-terra", "xhigh", effortRequired: true);
+
+        Assert.Null(outcome.Failure);
+        Assert.Equal(new RunReading("gpt-5.6-terra", "xhigh", null, RunReadingSource.PaneFooter), outcome.Confirmed);
     }
 
     [Fact]
@@ -281,7 +298,9 @@ public class CodexPickerTests
         var seams = pane.Seams;
         var lying = seams with { ReadScreen = async () => pane.At == Pane.Where.Prompt && pane.LastChanged is not null ? "• Model changed to gpt-5.6-terra high\n" : await seams.ReadScreen() };
 
-        Assert.Equal(CodexPicker.NotConfirmed, await CodexPicker.SetAsync(lying, "gpt-5.6-terra", "low", effortRequired: true));
+        var outcome = await CodexPicker.RunAsync(lying, "gpt-5.6-terra", "low", effortRequired: true);
+        Assert.Null(outcome.Failure);
+        Assert.Null(outcome.Confirmed);
     }
 
     [Fact]
@@ -316,7 +335,10 @@ public class CodexPickerTests
 
         Assert.Equal(RunSetResult.Sent, await host.SetAsync(codex, RunField.Effort, "high"));
         Assert.Equal(new[] { "/model" }, typed);
-        Assert.True(host.Options(codex)!.EffortPending);
+        // Codex confirmed it on screen ("Model changed to gpt-5.6-terra high"):
+        // that is a reading, so nothing is left pending and the dial shows it.
+        Assert.False(host.Options(codex)!.EffortPending);
+        Assert.Equal("high", host.Options(codex)!.ThinkingId);
         Assert.True(host.Options(codex)!.SavesDefault);
         Assert.Equal(RunText.CodexPickerDefault, host.Options(codex)!.DefaultWarning);
 
@@ -334,6 +356,59 @@ public class CodexPickerTests
             (_, _) => Task.FromResult(true), (_, _, _) => Task.FromResult(MirrorSlashHost.ControlVerdict.Done),
             () => DateTimeOffset.UnixEpoch, Log: (_, _) => { }));
         Assert.Equal(new RunSetResult(RunSetKind.Unavailable, RunControlsHost.OldCodexReason), await noKeys.SetAsync(codex, RunField.Model, "x"));
+    }
+
+    // The paired case: the same set where the screen never confirms stays
+    // pending under the host until a reading settles it.
+    [Fact]
+    public async Task TheHostKeepsAnUnconfirmedPickerSetPending()
+    {
+        var pane = new Pane { Confirms = false };
+        var seams = pane.Seams;
+        var host = new RunControlsHost(new RunControlsHost.Seams(
+            _ => true, _ => null, () => true, _ => new RunReading("gpt-5.6-terra", "medium", null, RunReadingSource.PaneFooter), _ => null,
+            _ => new Version(0, 154, 0),
+            (_, text) => seams.TypeLine(text),
+            (_, _, _) => Task.FromResult(MirrorSlashHost.ControlVerdict.Done),
+            () => DateTimeOffset.FromUnixTimeSeconds(1_800_000_000),
+            Log: (_, _) => { },
+            PressKey: (_, key) => seams.Press(key),
+            Delay: _ => Task.CompletedTask,
+            CapturePane: _ => seams.ReadScreen()));
+        var codex = new SessionStatus { SessionId = "c2", Source = SessionSource.Codex, Cwd = "/w" };
+
+        Assert.Equal(RunSetResult.Sent, await host.SetAsync(codex, RunField.Effort, "high"));
+
+        var o = host.Options(codex)!;
+        Assert.True(o.EffortPending);
+        Assert.Equal("medium", o.ConfirmedEffortId);
+    }
+
+    // A rollout row newer than the screen's confirmation wins over it.
+    [Fact]
+    public async Task ANewerRolloutRowWinsOverThePickersConfirmation()
+    {
+        var pane = new Pane();
+        var seams = pane.Seams;
+        var now = DateTimeOffset.FromUnixTimeSeconds(1_800_000_000);
+        RunReading files = new("gpt-5.6-terra", "medium", now.AddSeconds(-60), RunReadingSource.Rollout);
+        var host = new RunControlsHost(new RunControlsHost.Seams(
+            _ => true, _ => null, () => true, _ => files, _ => null,
+            _ => new Version(0, 154, 0),
+            (_, text) => seams.TypeLine(text),
+            (_, _, _) => Task.FromResult(MirrorSlashHost.ControlVerdict.Done),
+            () => now,
+            Log: (_, _) => { },
+            PressKey: (_, key) => seams.Press(key),
+            Delay: _ => Task.CompletedTask,
+            CapturePane: _ => seams.ReadScreen()));
+        var codex = new SessionStatus { SessionId = "c3", Source = SessionSource.Codex, Cwd = "/w" };
+
+        await host.SetAsync(codex, RunField.Effort, "low");
+        Assert.Equal("low", host.Options(codex)!.ThinkingId);
+
+        files = new RunReading("gpt-5.6-terra", "xhigh", now.AddSeconds(30), RunReadingSource.Rollout);
+        Assert.Equal("xhigh", host.Options(codex)!.ThinkingId);
     }
 
     [Fact]
