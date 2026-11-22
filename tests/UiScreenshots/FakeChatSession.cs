@@ -9,8 +9,11 @@ internal sealed class FakeChatSession :
     IRemoteChatSession, IRemoteChatComposer, IRemoteChatElsewhere, IRemoteChatRoom,
     IRemoteChatReadOnly, IRemoteChatInterrupt,
     IRemoteChatMachine, IRemoteChatPeerInbound, IRemoteChatRunOptions, IRemoteChatPrompts,
-    IRemoteChatSlashCommands, IRemoteChatFiles
+    IRemoteChatSlashCommands, IRemoteChatFiles, IRemoteChatLoginCode
 {
+    // CB-412: the /login code field draws only for a session that can take a code.
+    public Task SubmitLoginCodeAsync(string code) => Task.CompletedTask;
+
     // CB-306: commands posed for a capture of the slash box. See the UiTests copy.
     public IReadOnlyList<SlashCommand> SlashCommands { get; set; } = Array.Empty<SlashCommand>();
 

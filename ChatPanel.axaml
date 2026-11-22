@@ -724,6 +724,30 @@
                             <TextBlock Text="Send" Foreground="#EEFFFFFF" FontSize="11"/>
                         </Border>
                     </Grid>
+                    <!-- CB-412: the sign-in URL of /login, drawn as a link the
+                         existing link handler opens, and the code field the
+                         browser's page hands back. The field is one line, is
+                         cleared before the send is awaited and is never bound to
+                         anything that persists. Visible only for a prompt whose
+                         Link / CodeEntry say so. -->
+                    <TextBlock x:Name="PromptLoginLink" IsVisible="False"
+                               TextWrapping="Wrap" FontSize="11" Cursor="Hand"
+                               TextDecorations="Underline" Foreground="#FF7FB8FF"
+                               PointerPressed="PromptLoginLink_PointerPressed"/>
+                    <Grid x:Name="PromptLoginCode" IsVisible="False" ColumnDefinitions="*,Auto">
+                        <TextBox x:Name="PromptLoginCodeBox" Grid.Column="0"
+                                 AcceptsReturn="False" FontSize="11"
+                                 PlaceholderText="Paste the code here"
+                                 KeyDown="PromptLoginCodeBox_KeyDown"
+                                 TextChanged="PromptLoginCodeBox_TextChanged"/>
+                        <Border x:Name="PromptLoginCodeSend" Grid.Column="1"
+                                Margin="4,0,0,0" Padding="9,4" CornerRadius="6"
+                                Background="#33FFFFFF" BorderBrush="#40FFFFFF"
+                                BorderThickness="1" Cursor="Hand" IsEnabled="False"
+                                PointerPressed="PromptLoginCodeSend_PointerPressed">
+                            <TextBlock Text="Send" Foreground="#EEFFFFFF" FontSize="11"/>
+                        </Border>
+                    </Grid>
                     <!-- Always offered, not only as a fall back: the dialog's
                          last option is usually "no, and tell Claude what to do
                          differently", which needs a sentence typed rather than
