@@ -68,6 +68,7 @@
     <Compile Include="..\TranscriptTests\Cb330Captures.cs" />
     <Compile Include="..\TranscriptTests\Cb356Captures.cs" />
     <Compile Include="..\TranscriptTests\Cb407Captures.cs" />
+    <Compile Include="..\TranscriptTests\Cb412Captures.cs" />
     <Compile Include="..\TranscriptTests\Cb403Captures.cs" />
     <Compile Include="..\TranscriptTests\AskFormFixtures.cs" />
     <!-- CB-316: the desktop's v4 vector generator, so the unit suite proves it
