@@ -69,18 +69,22 @@ namespace Orbweaver
         internal const string ForbiddenPath = "forbidden_path", UnknownPath = "unknown_path",
             Unreadable = "unreadable", RateLimited = "rate_limited";
 
-        internal static readonly string[] OkCodes = [Watching, Unwatched, Typed, Launched];
+        internal static readonly string[] OkCodes = [Watching, Unwatched, Typed, Launched, RunFrames.SetOk];
 
         internal static readonly string[] ErrCodes =
         [
             BadFrame, UnknownSession, NotAtPrompt, Untypeable, TypingFailed, BadInput, BadSignature, Expired, Replayed,
             UnknownCli, UnknownCwd, BadModel, UnsupportedPersona, UnknownParent, UnsupportedParent, NoTerminal,
             LaunchFailed, NoSession, UnknownImage, UnknownAccount, ForbiddenPath, UnknownPath, Unreadable, RateLimited,
+            // CB-404 (frames-v13 set_run).
+            RunFrames.BadValue, RunFrames.Unavailable, RunFrames.SetFailed,
         ];
 
-        // Only these four carry the desktop's own sentence; every other code's
+        // Only these carry the desktop's own sentence; every other code's
         // copy is the phone's (frames-v4 err.rules).
-        internal static readonly string[] CodesWithWhy = [NotAtPrompt, TypingFailed, NoTerminal, LaunchFailed];
+        // frames-v13 adds two: a set the desk cannot make here, and one the CLI refused.
+        internal static readonly string[] CodesWithWhy =
+            [NotAtPrompt, TypingFailed, NoTerminal, LaunchFailed, RunFrames.Unavailable, RunFrames.SetFailed];
 
         internal static string Ok(string reference, string code, string sessionId, long? total = null)
         {
@@ -126,7 +130,7 @@ namespace Orbweaver
 
     internal static class RelayRequests
     {
-        internal static readonly string[] Types = ["watch", "unwatch", "input", "launch", "persona_image", "list_dir"];
+        internal static readonly string[] Types = ["watch", "unwatch", "input", "launch", "persona_image", "list_dir", "set_run"];
 
         // Null when the plaintext is not a v4 request at all (an answer, or a
         // type this desktop does not know) — those keep their existing paths.
@@ -168,6 +172,17 @@ namespace Orbweaver
                     }
                     var path = Str(f, "path");
                     return new ListDirRequest(reference, shapeOk && path is not null && BrowseRules.PathShapeOk(path) ? path : null, hidden);
+                // CB-404 (frames-v13 set_run.rules): every shape fault is bad_frame,
+                // carrying the session_id only when it was a non-empty string. The
+                // value must be an ID, which is what keeps a newline or a quote away
+                // from a typed route.
+                case "set_run":
+                    if (string.IsNullOrEmpty(sid)) return new BadFrameRequest(reference, null);
+                    var field = Str(f, "field");
+                    var value = Str(f, "value");
+                    return RunFrames.FieldOk(field) && RunFrames.IdOk(value)
+                        ? new SetRunRequest(reference, sid, field!, value!)
+                        : new BadFrameRequest(reference, sid);
                 default:
                     return ParseLaunch(f, reference);
             }

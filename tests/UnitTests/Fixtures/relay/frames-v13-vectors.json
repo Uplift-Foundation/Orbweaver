@@ -1,0 +1,4950 @@
+{
+ "_source": {
+  "generated_by": "Orbweaver-Mobile contracts/make_v13_vectors.py (architect, CB-404); to be reproduced by Uplift-Foundation/Orbweaver tools/relay-vectors",
+  "orbweaver_sha": "hand-authored",
+  "spec": "CB-404, Orbweaver docs/plans/model-effort-controls-plan.md section 4.4 and Warren's decisions F1-F4; contracts/frames-v13.json",
+  "encoding": "hex is lowercase; ct is standard base64 with padding of nonce(12) || ciphertext || tag(16) as in session-vectors.json; every plaintext is the canonical form (keys in frames-v13.json's order, the shared escaper, bare integers, no whitespace)"
+ },
+ "_rules": "Sealed with session-vectors.json's epoch-0 key and ck key, direction 0 = desktop to phone, 1 = phone to desktop, counters from 500. `serialise.cases` gives a session's resolved options as the desk holds them (per field: id, pending, choices as [id, label] pairs, off, failed; null or missing is unset) and the `run` frame and plaintext the desk sends for them. `set.cases` names one of those states (null: a session the desk does not know), the request, whether the desk is running another change to that session at that moment (`running`), what the route answered (`ok`, a failure sentence, or null when no route may be reached) and the one reply. `phone.decode.cases` gives a received plaintext and what the phone holds for it (null: ignored); `off` in a decoded field is the sentence the phone shows. `phone.display.cases` gives, for a held frame and a field, what the phone draws; the machine is named in `phone.display.machine`.",
+ "inputs": {
+  "desktop_id": "dsk_5f3c9a0e1b7d2468",
+  "phone_id": "ph_a1b2c3d4e5f60718",
+  "session_id": "0f6c4f2a",
+  "session_key_epoch0": "fd29e2fccfc9b572152a029f7daa4d30428fe4cd7e04a08aa4a2ad96e5dc2e52",
+  "ck_key": "92437d33c0840b762b12fb611f649fa9eb368478d7480db5965c5c69eea3e8cf",
+  "ck_caps": "ZLlV0_-3SYMctwpoRcSPDA",
+  "ck_run": "7eo4fq4NSFg2cdcGdKUqmw",
+  "ck_session": "_APVA4tadxC7cR0g6HWoxg",
+  "_note": "session_key_epoch0 and ck_key are session-vectors.json's. ck_caps = Ck(ck_key, \"caps\"), ck_run = Ck(ck_key, \"run:\" + session_id), ck_session = Ck(ck_key, session_id)."
+ },
+ "limits": {
+  "max_choices": 50,
+  "max_id_chars": 64,
+  "max_label_utf16": 64,
+  "max_reason_utf16": 200,
+  "reply_timeout_seconds": 10
+ },
+ "copy": {
+  "generic_off": "Not available for this session.",
+  "model_not_known": "Model not known yet",
+  "effort_not_known": "Effort not known yet",
+  "saves_default": "Changing this also changes the default for new sessions on <machine>.",
+  "applying": "applying…",
+  "bad_value": "That choice isn't offered for this session any more.",
+  "set_failed": "The desk could not change it (<why>).",
+  "unavailable": "<why>",
+  "no_answer": "No answer from <machine>."
+ },
+ "serialise": {
+  "cases": [
+   {
+    "name": "claude_enabled",
+    "_note": "A Claude Code session on its control route: both values known, both controls enabled.",
+    "options": {
+     "model": {
+      "id": "opus",
+      "choices": [
+       [
+        "default",
+        "Default (recommended)"
+       ],
+       [
+        "opus",
+        "Opus 5.5"
+       ],
+       [
+        "sonnet",
+        "Sonnet 5.5"
+       ],
+       [
+        "haiku",
+        "Haiku 5.5"
+       ]
+      ]
+     },
+     "effort": {
+      "id": "high",
+      "choices": [
+       [
+        "low",
+        "low"
+       ],
+       [
+        "medium",
+        "medium"
+       ],
+       [
+        "high",
+        "high"
+       ],
+       [
+        "xhigh",
+        "xhigh"
+       ],
+       [
+        "max",
+        "max"
+       ]
+      ]
+     }
+    },
+    "frame": {
+     "t": "run",
+     "session_id": "0f6c4f2a",
+     "model": {
+      "id": "opus",
+      "choices": [
+       {
+        "id": "default",
+        "label": "Default (recommended)"
+       },
+       {
+        "id": "opus",
+        "label": "Opus 5.5"
+       },
+       {
+        "id": "sonnet",
+        "label": "Sonnet 5.5"
+       },
+       {
+        "id": "haiku",
+        "label": "Haiku 5.5"
+       }
+      ]
+     },
+     "effort": {
+      "id": "high",
+      "choices": [
+       {
+        "id": "low",
+        "label": "low"
+       },
+       {
+        "id": "medium",
+        "label": "medium"
+       },
+       {
+        "id": "high",
+        "label": "high"
+       },
+       {
+        "id": "xhigh",
+        "label": "xhigh"
+       },
+       {
+        "id": "max",
+        "label": "max"
+       }
+      ]
+     }
+    },
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"default\",\"label\":\"Default (recommended)\"},{\"id\":\"opus\",\"label\":\"Opus 5.5\"},{\"id\":\"sonnet\",\"label\":\"Sonnet 5.5\"},{\"id\":\"haiku\",\"label\":\"Haiku 5.5\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"medium\",\"label\":\"medium\"},{\"id\":\"high\",\"label\":\"high\"},{\"id\":\"xhigh\",\"label\":\"xhigh\"},{\"id\":\"max\",\"label\":\"max\"}]}}",
+    "plaintext_bytes": 405
+   },
+   {
+    "name": "claude_typed",
+    "_note": "The same on the typed route (decision F1): the frame says the change also saves a default.",
+    "options": {
+     "model": {
+      "id": "opus",
+      "choices": [
+       [
+        "default",
+        "Default (recommended)"
+       ],
+       [
+        "opus",
+        "Opus 5.5"
+       ],
+       [
+        "sonnet",
+        "Sonnet 5.5"
+       ],
+       [
+        "haiku",
+        "Haiku 5.5"
+       ]
+      ]
+     },
+     "effort": {
+      "id": "high",
+      "choices": [
+       [
+        "low",
+        "low"
+       ],
+       [
+        "medium",
+        "medium"
+       ],
+       [
+        "high",
+        "high"
+       ],
+       [
+        "xhigh",
+        "xhigh"
+       ],
+       [
+        "max",
+        "max"
+       ]
+      ]
+     },
+     "saves_default": true
+    },
+    "frame": {
+     "t": "run",
+     "session_id": "0f6c4f2a",
+     "model": {
+      "id": "opus",
+      "choices": [
+       {
+        "id": "default",
+        "label": "Default (recommended)"
+       },
+       {
+        "id": "opus",
+        "label": "Opus 5.5"
+       },
+       {
+        "id": "sonnet",
+        "label": "Sonnet 5.5"
+       },
+       {
+        "id": "haiku",
+        "label": "Haiku 5.5"
+       }
+      ]
+     },
+     "effort": {
+      "id": "high",
+      "choices": [
+       {
+        "id": "low",
+        "label": "low"
+       },
+       {
+        "id": "medium",
+        "label": "medium"
+       },
+       {
+        "id": "high",
+        "label": "high"
+       },
+       {
+        "id": "xhigh",
+        "label": "xhigh"
+       },
+       {
+        "id": "max",
+        "label": "max"
+       }
+      ]
+     },
+     "saves_default": true
+    },
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"default\",\"label\":\"Default (recommended)\"},{\"id\":\"opus\",\"label\":\"Opus 5.5\"},{\"id\":\"sonnet\",\"label\":\"Sonnet 5.5\"},{\"id\":\"haiku\",\"label\":\"Haiku 5.5\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"medium\",\"label\":\"medium\"},{\"id\":\"high\",\"label\":\"high\"},{\"id\":\"xhigh\",\"label\":\"xhigh\"},{\"id\":\"max\",\"label\":\"max\"}]},\"saves_default\":true}",
+    "plaintext_bytes": 426
+   },
+   {
+    "name": "not_known_yet",
+    "_note": "A session with no reading yet: no id on either field, the choices are still offered.",
+    "options": {
+     "model": {
+      "id": null,
+      "choices": [
+       [
+        "default",
+        "Default (recommended)"
+       ],
+       [
+        "opus",
+        "Opus 5.5"
+       ],
+       [
+        "sonnet",
+        "Sonnet 5.5"
+       ],
+       [
+        "haiku",
+        "Haiku 5.5"
+       ]
+      ]
+     },
+     "effort": {
+      "id": null,
+      "choices": [
+       [
+        "low",
+        "low"
+       ],
+       [
+        "medium",
+        "medium"
+       ],
+       [
+        "high",
+        "high"
+       ],
+       [
+        "xhigh",
+        "xhigh"
+       ],
+       [
+        "max",
+        "max"
+       ]
+      ]
+     }
+    },
+    "frame": {
+     "t": "run",
+     "session_id": "0f6c4f2a",
+     "model": {
+      "choices": [
+       {
+        "id": "default",
+        "label": "Default (recommended)"
+       },
+       {
+        "id": "opus",
+        "label": "Opus 5.5"
+       },
+       {
+        "id": "sonnet",
+        "label": "Sonnet 5.5"
+       },
+       {
+        "id": "haiku",
+        "label": "Haiku 5.5"
+       }
+      ]
+     },
+     "effort": {
+      "choices": [
+       {
+        "id": "low",
+        "label": "low"
+       },
+       {
+        "id": "medium",
+        "label": "medium"
+       },
+       {
+        "id": "high",
+        "label": "high"
+       },
+       {
+        "id": "xhigh",
+        "label": "xhigh"
+       },
+       {
+        "id": "max",
+        "label": "max"
+       }
+      ]
+     }
+    },
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"choices\":[{\"id\":\"default\",\"label\":\"Default (recommended)\"},{\"id\":\"opus\",\"label\":\"Opus 5.5\"},{\"id\":\"sonnet\",\"label\":\"Sonnet 5.5\"},{\"id\":\"haiku\",\"label\":\"Haiku 5.5\"}]},\"effort\":{\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"medium\",\"label\":\"medium\"},{\"id\":\"high\",\"label\":\"high\"},{\"id\":\"xhigh\",\"label\":\"xhigh\"},{\"id\":\"max\",\"label\":\"max\"}]}}",
+    "plaintext_bytes": 381
+   },
+   {
+    "name": "model_pending",
+    "_note": "The desk is applying sonnet; opus is still the confirmed value.",
+    "options": {
+     "model": {
+      "id": "opus",
+      "choices": [
+       [
+        "default",
+        "Default (recommended)"
+       ],
+       [
+        "opus",
+        "Opus 5.5"
+       ],
+       [
+        "sonnet",
+        "Sonnet 5.5"
+       ],
+       [
+        "haiku",
+        "Haiku 5.5"
+       ]
+      ],
+      "pending": "sonnet"
+     },
+     "effort": {
+      "id": "high",
+      "choices": [
+       [
+        "low",
+        "low"
+       ],
+       [
+        "medium",
+        "medium"
+       ],
+       [
+        "high",
+        "high"
+       ],
+       [
+        "xhigh",
+        "xhigh"
+       ],
+       [
+        "max",
+        "max"
+       ]
+      ]
+     }
+    },
+    "frame": {
+     "t": "run",
+     "session_id": "0f6c4f2a",
+     "model": {
+      "id": "opus",
+      "pending": "sonnet",
+      "choices": [
+       {
+        "id": "default",
+        "label": "Default (recommended)"
+       },
+       {
+        "id": "opus",
+        "label": "Opus 5.5"
+       },
+       {
+        "id": "sonnet",
+        "label": "Sonnet 5.5"
+       },
+       {
+        "id": "haiku",
+        "label": "Haiku 5.5"
+       }
+      ]
+     },
+     "effort": {
+      "id": "high",
+      "choices": [
+       {
+        "id": "low",
+        "label": "low"
+       },
+       {
+        "id": "medium",
+        "label": "medium"
+       },
+       {
+        "id": "high",
+        "label": "high"
+       },
+       {
+        "id": "xhigh",
+        "label": "xhigh"
+       },
+       {
+        "id": "max",
+        "label": "max"
+       }
+      ]
+     }
+    },
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"opus\",\"pending\":\"sonnet\",\"choices\":[{\"id\":\"default\",\"label\":\"Default (recommended)\"},{\"id\":\"opus\",\"label\":\"Opus 5.5\"},{\"id\":\"sonnet\",\"label\":\"Sonnet 5.5\"},{\"id\":\"haiku\",\"label\":\"Haiku 5.5\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"medium\",\"label\":\"medium\"},{\"id\":\"high\",\"label\":\"high\"},{\"id\":\"xhigh\",\"label\":\"xhigh\"},{\"id\":\"max\",\"label\":\"max\"}]}}",
+    "plaintext_bytes": 424
+   },
+   {
+    "name": "effort_pending",
+    "_note": "The desk is applying xhigh; high is still confirmed.",
+    "options": {
+     "model": {
+      "id": "opus",
+      "choices": [
+       [
+        "default",
+        "Default (recommended)"
+       ],
+       [
+        "opus",
+        "Opus 5.5"
+       ],
+       [
+        "sonnet",
+        "Sonnet 5.5"
+       ],
+       [
+        "haiku",
+        "Haiku 5.5"
+       ]
+      ]
+     },
+     "effort": {
+      "id": "high",
+      "choices": [
+       [
+        "low",
+        "low"
+       ],
+       [
+        "medium",
+        "medium"
+       ],
+       [
+        "high",
+        "high"
+       ],
+       [
+        "xhigh",
+        "xhigh"
+       ],
+       [
+        "max",
+        "max"
+       ]
+      ],
+      "pending": "xhigh"
+     }
+    },
+    "frame": {
+     "t": "run",
+     "session_id": "0f6c4f2a",
+     "model": {
+      "id": "opus",
+      "choices": [
+       {
+        "id": "default",
+        "label": "Default (recommended)"
+       },
+       {
+        "id": "opus",
+        "label": "Opus 5.5"
+       },
+       {
+        "id": "sonnet",
+        "label": "Sonnet 5.5"
+       },
+       {
+        "id": "haiku",
+        "label": "Haiku 5.5"
+       }
+      ]
+     },
+     "effort": {
+      "id": "high",
+      "pending": "xhigh",
+      "choices": [
+       {
+        "id": "low",
+        "label": "low"
+       },
+       {
+        "id": "medium",
+        "label": "medium"
+       },
+       {
+        "id": "high",
+        "label": "high"
+       },
+       {
+        "id": "xhigh",
+        "label": "xhigh"
+       },
+       {
+        "id": "max",
+        "label": "max"
+       }
+      ]
+     }
+    },
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"default\",\"label\":\"Default (recommended)\"},{\"id\":\"opus\",\"label\":\"Opus 5.5\"},{\"id\":\"sonnet\",\"label\":\"Sonnet 5.5\"},{\"id\":\"haiku\",\"label\":\"Haiku 5.5\"}]},\"effort\":{\"id\":\"high\",\"pending\":\"xhigh\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"medium\",\"label\":\"medium\"},{\"id\":\"high\",\"label\":\"high\"},{\"id\":\"xhigh\",\"label\":\"xhigh\"},{\"id\":\"max\",\"label\":\"max\"}]}}",
+    "plaintext_bytes": 423
+   },
+   {
+    "name": "effort_confirmed",
+    "_note": "The reading that confirms it: id is xhigh and pending is gone.",
+    "options": {
+     "model": {
+      "id": "opus",
+      "choices": [
+       [
+        "default",
+        "Default (recommended)"
+       ],
+       [
+        "opus",
+        "Opus 5.5"
+       ],
+       [
+        "sonnet",
+        "Sonnet 5.5"
+       ],
+       [
+        "haiku",
+        "Haiku 5.5"
+       ]
+      ]
+     },
+     "effort": {
+      "id": "xhigh",
+      "choices": [
+       [
+        "low",
+        "low"
+       ],
+       [
+        "medium",
+        "medium"
+       ],
+       [
+        "high",
+        "high"
+       ],
+       [
+        "xhigh",
+        "xhigh"
+       ],
+       [
+        "max",
+        "max"
+       ]
+      ]
+     }
+    },
+    "frame": {
+     "t": "run",
+     "session_id": "0f6c4f2a",
+     "model": {
+      "id": "opus",
+      "choices": [
+       {
+        "id": "default",
+        "label": "Default (recommended)"
+       },
+       {
+        "id": "opus",
+        "label": "Opus 5.5"
+       },
+       {
+        "id": "sonnet",
+        "label": "Sonnet 5.5"
+       },
+       {
+        "id": "haiku",
+        "label": "Haiku 5.5"
+       }
+      ]
+     },
+     "effort": {
+      "id": "xhigh",
+      "choices": [
+       {
+        "id": "low",
+        "label": "low"
+       },
+       {
+        "id": "medium",
+        "label": "medium"
+       },
+       {
+        "id": "high",
+        "label": "high"
+       },
+       {
+        "id": "xhigh",
+        "label": "xhigh"
+       },
+       {
+        "id": "max",
+        "label": "max"
+       }
+      ]
+     }
+    },
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"default\",\"label\":\"Default (recommended)\"},{\"id\":\"opus\",\"label\":\"Opus 5.5\"},{\"id\":\"sonnet\",\"label\":\"Sonnet 5.5\"},{\"id\":\"haiku\",\"label\":\"Haiku 5.5\"}]},\"effort\":{\"id\":\"xhigh\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"medium\",\"label\":\"medium\"},{\"id\":\"high\",\"label\":\"high\"},{\"id\":\"xhigh\",\"label\":\"xhigh\"},{\"id\":\"max\",\"label\":\"max\"}]}}",
+    "plaintext_bytes": 406
+   },
+   {
+    "name": "effort_failed",
+    "_note": "The change was not confirmed: the old value, and the desk's sentence.",
+    "options": {
+     "model": {
+      "id": "opus",
+      "choices": [
+       [
+        "default",
+        "Default (recommended)"
+       ],
+       [
+        "opus",
+        "Opus 5.5"
+       ],
+       [
+        "sonnet",
+        "Sonnet 5.5"
+       ],
+       [
+        "haiku",
+        "Haiku 5.5"
+       ]
+      ]
+     },
+     "effort": {
+      "id": "high",
+      "choices": [
+       [
+        "low",
+        "low"
+       ],
+       [
+        "medium",
+        "medium"
+       ],
+       [
+        "high",
+        "high"
+       ],
+       [
+        "xhigh",
+        "xhigh"
+       ],
+       [
+        "max",
+        "max"
+       ]
+      ],
+      "failed": "The session is still on high. xhigh was not applied."
+     }
+    },
+    "frame": {
+     "t": "run",
+     "session_id": "0f6c4f2a",
+     "model": {
+      "id": "opus",
+      "choices": [
+       {
+        "id": "default",
+        "label": "Default (recommended)"
+       },
+       {
+        "id": "opus",
+        "label": "Opus 5.5"
+       },
+       {
+        "id": "sonnet",
+        "label": "Sonnet 5.5"
+       },
+       {
+        "id": "haiku",
+        "label": "Haiku 5.5"
+       }
+      ]
+     },
+     "effort": {
+      "id": "high",
+      "choices": [
+       {
+        "id": "low",
+        "label": "low"
+       },
+       {
+        "id": "medium",
+        "label": "medium"
+       },
+       {
+        "id": "high",
+        "label": "high"
+       },
+       {
+        "id": "xhigh",
+        "label": "xhigh"
+       },
+       {
+        "id": "max",
+        "label": "max"
+       }
+      ],
+      "failed": "The session is still on high. xhigh was not applied."
+     }
+    },
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"default\",\"label\":\"Default (recommended)\"},{\"id\":\"opus\",\"label\":\"Opus 5.5\"},{\"id\":\"sonnet\",\"label\":\"Sonnet 5.5\"},{\"id\":\"haiku\",\"label\":\"Haiku 5.5\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"medium\",\"label\":\"medium\"},{\"id\":\"high\",\"label\":\"high\"},{\"id\":\"xhigh\",\"label\":\"xhigh\"},{\"id\":\"max\",\"label\":\"max\"}],\"failed\":\"The session is still on high. xhigh was not applied.\"}}",
+    "plaintext_bytes": 469
+   },
+   {
+    "name": "no_route",
+    "_note": "No way to set either: both controls shown disabled with the reason, values and choices still listed.",
+    "options": {
+     "model": {
+      "id": "opus",
+      "choices": [
+       [
+        "default",
+        "Default (recommended)"
+       ],
+       [
+        "opus",
+        "Opus 5.5"
+       ],
+       [
+        "sonnet",
+        "Sonnet 5.5"
+       ],
+       [
+        "haiku",
+        "Haiku 5.5"
+       ]
+      ],
+      "off": "This session has no terminal to type into, and its Remote Control bridge is off."
+     },
+     "effort": {
+      "id": "high",
+      "choices": [
+       [
+        "low",
+        "low"
+       ],
+       [
+        "medium",
+        "medium"
+       ],
+       [
+        "high",
+        "high"
+       ],
+       [
+        "xhigh",
+        "xhigh"
+       ],
+       [
+        "max",
+        "max"
+       ]
+      ],
+      "off": "This session has no terminal to type into, and its Remote Control bridge is off."
+     }
+    },
+    "frame": {
+     "t": "run",
+     "session_id": "0f6c4f2a",
+     "model": {
+      "id": "opus",
+      "choices": [
+       {
+        "id": "default",
+        "label": "Default (recommended)"
+       },
+       {
+        "id": "opus",
+        "label": "Opus 5.5"
+       },
+       {
+        "id": "sonnet",
+        "label": "Sonnet 5.5"
+       },
+       {
+        "id": "haiku",
+        "label": "Haiku 5.5"
+       }
+      ],
+      "off": "This session has no terminal to type into, and its Remote Control bridge is off."
+     },
+     "effort": {
+      "id": "high",
+      "choices": [
+       {
+        "id": "low",
+        "label": "low"
+       },
+       {
+        "id": "medium",
+        "label": "medium"
+       },
+       {
+        "id": "high",
+        "label": "high"
+       },
+       {
+        "id": "xhigh",
+        "label": "xhigh"
+       },
+       {
+        "id": "max",
+        "label": "max"
+       }
+      ],
+      "off": "This session has no terminal to type into, and its Remote Control bridge is off."
+     }
+    },
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"default\",\"label\":\"Default (recommended)\"},{\"id\":\"opus\",\"label\":\"Opus 5.5\"},{\"id\":\"sonnet\",\"label\":\"Sonnet 5.5\"},{\"id\":\"haiku\",\"label\":\"Haiku 5.5\"}],\"off\":\"This session has no terminal to type into, and its Remote Control bridge is off.\"},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"medium\",\"label\":\"medium\"},{\"id\":\"high\",\"label\":\"high\"},{\"id\":\"xhigh\",\"label\":\"xhigh\"},{\"id\":\"max\",\"label\":\"max\"}],\"off\":\"This session has no terminal to type into, and its Remote Control bridge is off.\"}}",
+    "plaintext_bytes": 583
+   },
+   {
+    "name": "no_effort_model",
+    "_note": "A model with no effort setting: the dial is off with that reason and has no levels; the model list still works.",
+    "options": {
+     "model": {
+      "id": "haiku",
+      "choices": [
+       [
+        "default",
+        "Default (recommended)"
+       ],
+       [
+        "opus",
+        "Opus 5.5"
+       ],
+       [
+        "sonnet",
+        "Sonnet 5.5"
+       ],
+       [
+        "haiku",
+        "Haiku 5.5"
+       ]
+      ]
+     },
+     "effort": {
+      "choices": [],
+      "off": "This model has no effort setting."
+     }
+    },
+    "frame": {
+     "t": "run",
+     "session_id": "0f6c4f2a",
+     "model": {
+      "id": "haiku",
+      "choices": [
+       {
+        "id": "default",
+        "label": "Default (recommended)"
+       },
+       {
+        "id": "opus",
+        "label": "Opus 5.5"
+       },
+       {
+        "id": "sonnet",
+        "label": "Sonnet 5.5"
+       },
+       {
+        "id": "haiku",
+        "label": "Haiku 5.5"
+       }
+      ]
+     },
+     "effort": {
+      "choices": [],
+      "off": "This model has no effort setting."
+     }
+    },
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"haiku\",\"choices\":[{\"id\":\"default\",\"label\":\"Default (recommended)\"},{\"id\":\"opus\",\"label\":\"Opus 5.5\"},{\"id\":\"sonnet\",\"label\":\"Sonnet 5.5\"},{\"id\":\"haiku\",\"label\":\"Haiku 5.5\"}]},\"effort\":{\"choices\":[],\"off\":\"This model has no effort setting.\"}}",
+    "plaintext_bytes": 290
+   },
+   {
+    "name": "codex",
+    "_note": "Codex 0.164 or later: six effort levels.",
+    "options": {
+     "model": {
+      "id": "gpt-6.2-sol",
+      "choices": [
+       [
+        "gpt-6.2-sol",
+        "GPT-6.2 Sol"
+       ],
+       [
+        "gpt-6.1-terra",
+        "GPT-6.1 Terra"
+       ],
+       [
+        "gpt-6-luna",
+        "GPT-6 Luna"
+       ]
+      ]
+     },
+     "effort": {
+      "id": "high",
+      "choices": [
+       [
+        "low",
+        "low"
+       ],
+       [
+        "medium",
+        "medium"
+       ],
+       [
+        "high",
+        "high"
+       ],
+       [
+        "xhigh",
+        "xhigh"
+       ],
+       [
+        "max",
+        "max"
+       ],
+       [
+        "ultra",
+        "ultra"
+       ]
+      ]
+     }
+    },
+    "frame": {
+     "t": "run",
+     "session_id": "0f6c4f2a",
+     "model": {
+      "id": "gpt-6.2-sol",
+      "choices": [
+       {
+        "id": "gpt-6.2-sol",
+        "label": "GPT-6.2 Sol"
+       },
+       {
+        "id": "gpt-6.1-terra",
+        "label": "GPT-6.1 Terra"
+       },
+       {
+        "id": "gpt-6-luna",
+        "label": "GPT-6 Luna"
+       }
+      ]
+     },
+     "effort": {
+      "id": "high",
+      "choices": [
+       {
+        "id": "low",
+        "label": "low"
+       },
+       {
+        "id": "medium",
+        "label": "medium"
+       },
+       {
+        "id": "high",
+        "label": "high"
+       },
+       {
+        "id": "xhigh",
+        "label": "xhigh"
+       },
+       {
+        "id": "max",
+        "label": "max"
+       },
+       {
+        "id": "ultra",
+        "label": "ultra"
+       }
+      ]
+     }
+    },
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"gpt-6.2-sol\",\"choices\":[{\"id\":\"gpt-6.2-sol\",\"label\":\"GPT-6.2 Sol\"},{\"id\":\"gpt-6.1-terra\",\"label\":\"GPT-6.1 Terra\"},{\"id\":\"gpt-6-luna\",\"label\":\"GPT-6 Luna\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"medium\",\"label\":\"medium\"},{\"id\":\"high\",\"label\":\"high\"},{\"id\":\"xhigh\",\"label\":\"xhigh\"},{\"id\":\"max\",\"label\":\"max\"},{\"id\":\"ultra\",\"label\":\"ultra\"}]}}",
+    "plaintext_bytes": 420
+   },
+   {
+    "name": "codex_old",
+    "_note": "Codex before 0.164.0, set through its picker, which saves a default.",
+    "options": {
+     "model": {
+      "id": "gpt-6.2-sol",
+      "choices": [
+       [
+        "gpt-6.2-sol",
+        "GPT-6.2 Sol"
+       ],
+       [
+        "gpt-6.1-terra",
+        "GPT-6.1 Terra"
+       ],
+       [
+        "gpt-6-luna",
+        "GPT-6 Luna"
+       ]
+      ]
+     },
+     "effort": {
+      "id": "medium",
+      "choices": [
+       [
+        "low",
+        "low"
+       ],
+       [
+        "medium",
+        "medium"
+       ],
+       [
+        "high",
+        "high"
+       ],
+       [
+        "xhigh",
+        "xhigh"
+       ]
+      ]
+     },
+     "saves_default": true
+    },
+    "frame": {
+     "t": "run",
+     "session_id": "0f6c4f2a",
+     "model": {
+      "id": "gpt-6.2-sol",
+      "choices": [
+       {
+        "id": "gpt-6.2-sol",
+        "label": "GPT-6.2 Sol"
+       },
+       {
+        "id": "gpt-6.1-terra",
+        "label": "GPT-6.1 Terra"
+       },
+       {
+        "id": "gpt-6-luna",
+        "label": "GPT-6 Luna"
+       }
+      ]
+     },
+     "effort": {
+      "id": "medium",
+      "choices": [
+       {
+        "id": "low",
+        "label": "low"
+       },
+       {
+        "id": "medium",
+        "label": "medium"
+       },
+       {
+        "id": "high",
+        "label": "high"
+       },
+       {
+        "id": "xhigh",
+        "label": "xhigh"
+       }
+      ]
+     },
+     "saves_default": true
+    },
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"gpt-6.2-sol\",\"choices\":[{\"id\":\"gpt-6.2-sol\",\"label\":\"GPT-6.2 Sol\"},{\"id\":\"gpt-6.1-terra\",\"label\":\"GPT-6.1 Terra\"},{\"id\":\"gpt-6-luna\",\"label\":\"GPT-6 Luna\"}]},\"effort\":{\"id\":\"medium\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"medium\",\"label\":\"medium\"},{\"id\":\"high\",\"label\":\"high\"},{\"id\":\"xhigh\",\"label\":\"xhigh\"}]},\"saves_default\":true}",
+    "plaintext_bytes": 385
+   },
+   {
+    "name": "grok",
+    "_note": "Grok: labels that differ from the ids.",
+    "options": {
+     "model": {
+      "id": "grok-4.7-build",
+      "choices": [
+       [
+        "grok-4.7-build",
+        "Grok 4.7 Build"
+       ],
+       [
+        "grok-4.7",
+        "Grok 4.7"
+       ]
+      ]
+     },
+     "effort": {
+      "id": "high",
+      "choices": [
+       [
+        "low",
+        "Low"
+       ],
+       [
+        "medium",
+        "Medium"
+       ],
+       [
+        "high",
+        "High"
+       ],
+       [
+        "xhigh",
+        "Extra high"
+       ]
+      ]
+     }
+    },
+    "frame": {
+     "t": "run",
+     "session_id": "0f6c4f2a",
+     "model": {
+      "id": "grok-4.7-build",
+      "choices": [
+       {
+        "id": "grok-4.7-build",
+        "label": "Grok 4.7 Build"
+       },
+       {
+        "id": "grok-4.7",
+        "label": "Grok 4.7"
+       }
+      ]
+     },
+     "effort": {
+      "id": "high",
+      "choices": [
+       {
+        "id": "low",
+        "label": "Low"
+       },
+       {
+        "id": "medium",
+        "label": "Medium"
+       },
+       {
+        "id": "high",
+        "label": "High"
+       },
+       {
+        "id": "xhigh",
+        "label": "Extra high"
+       }
+      ]
+     }
+    },
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"grok-4.7-build\",\"choices\":[{\"id\":\"grok-4.7-build\",\"label\":\"Grok 4.7 Build\"},{\"id\":\"grok-4.7\",\"label\":\"Grok 4.7\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"Low\"},{\"id\":\"medium\",\"label\":\"Medium\"},{\"id\":\"high\",\"label\":\"High\"},{\"id\":\"xhigh\",\"label\":\"Extra high\"}]}}",
+    "plaintext_bytes": 325
+   },
+   {
+    "name": "running_outside_catalogue",
+    "_note": "The desk lists the running model though its catalogue lacks it; the id has brackets, which launch.model's grammar would refuse.",
+    "options": {
+     "model": {
+      "id": "claude-opus-4-1[1m]",
+      "choices": [
+       [
+        "default",
+        "Default (recommended)"
+       ],
+       [
+        "opus",
+        "Opus 5.5"
+       ],
+       [
+        "sonnet",
+        "Sonnet 5.5"
+       ],
+       [
+        "haiku",
+        "Haiku 5.5"
+       ],
+       [
+        "claude-opus-4-1[1m]",
+        "claude-opus-4-1[1m]"
+       ]
+      ]
+     },
+     "effort": {
+      "id": "medium",
+      "choices": [
+       [
+        "low",
+        "low"
+       ],
+       [
+        "medium",
+        "medium"
+       ],
+       [
+        "high",
+        "high"
+       ],
+       [
+        "xhigh",
+        "xhigh"
+       ],
+       [
+        "max",
+        "max"
+       ]
+      ]
+     }
+    },
+    "frame": {
+     "t": "run",
+     "session_id": "0f6c4f2a",
+     "model": {
+      "id": "claude-opus-4-1[1m]",
+      "choices": [
+       {
+        "id": "default",
+        "label": "Default (recommended)"
+       },
+       {
+        "id": "opus",
+        "label": "Opus 5.5"
+       },
+       {
+        "id": "sonnet",
+        "label": "Sonnet 5.5"
+       },
+       {
+        "id": "haiku",
+        "label": "Haiku 5.5"
+       },
+       {
+        "id": "claude-opus-4-1[1m]",
+        "label": "claude-opus-4-1[1m]"
+       }
+      ]
+     },
+     "effort": {
+      "id": "medium",
+      "choices": [
+       {
+        "id": "low",
+        "label": "low"
+       },
+       {
+        "id": "medium",
+        "label": "medium"
+       },
+       {
+        "id": "high",
+        "label": "high"
+       },
+       {
+        "id": "xhigh",
+        "label": "xhigh"
+       },
+       {
+        "id": "max",
+        "label": "max"
+       }
+      ]
+     }
+    },
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"claude-opus-4-1[1m]\",\"choices\":[{\"id\":\"default\",\"label\":\"Default (recommended)\"},{\"id\":\"opus\",\"label\":\"Opus 5.5\"},{\"id\":\"sonnet\",\"label\":\"Sonnet 5.5\"},{\"id\":\"haiku\",\"label\":\"Haiku 5.5\"},{\"id\":\"claude-opus-4-1[1m]\",\"label\":\"claude-opus-4-1[1m]\"}]},\"effort\":{\"id\":\"medium\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"medium\",\"label\":\"medium\"},{\"id\":\"high\",\"label\":\"high\"},{\"id\":\"xhigh\",\"label\":\"xhigh\"},{\"id\":\"max\",\"label\":\"max\"}]}}",
+    "plaintext_bytes": 481
+   },
+   {
+    "name": "ids_dropped",
+    "_note": "Choices whose id is not an ID are left out, a repeated id is left out, and an id that names a dropped choice is absent.",
+    "options": {
+     "model": {
+      "id": "has space",
+      "pending": "opus",
+      "choices": [
+       [
+        "opus",
+        "Opus 5.5"
+       ],
+       [
+        "has space",
+        "A"
+       ],
+       [
+        "quo\"te",
+        "B"
+       ],
+       [
+        "back\\slash",
+        "C"
+       ],
+       [
+        "",
+        "D"
+       ],
+       [
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "E"
+       ],
+       [
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "F"
+       ],
+       [
+        "modèle",
+        "G"
+       ],
+       [
+        "opus",
+        "Opus again"
+       ],
+       [
+        "tab\tid",
+        "H"
+       ]
+      ]
+     },
+     "effort": {
+      "id": "high",
+      "choices": [
+       [
+        "low",
+        "low"
+       ],
+       [
+        "high",
+        "high"
+       ]
+      ]
+     }
+    },
+    "frame": {
+     "t": "run",
+     "session_id": "0f6c4f2a",
+     "model": {
+      "pending": "opus",
+      "choices": [
+       {
+        "id": "opus",
+        "label": "Opus 5.5"
+       },
+       {
+        "id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "label": "F"
+       }
+      ]
+     },
+     "effort": {
+      "id": "high",
+      "choices": [
+       {
+        "id": "low",
+        "label": "low"
+       },
+       {
+        "id": "high",
+        "label": "high"
+       }
+      ]
+     }
+    },
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"pending\":\"opus\",\"choices\":[{\"id\":\"opus\",\"label\":\"Opus 5.5\"},{\"id\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"label\":\"F\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"high\",\"label\":\"high\"}]}}",
+    "plaintext_bytes": 284
+   },
+   {
+    "name": "labels",
+    "_note": "A blank label becomes the id, controls become spaces (and a label of nothing else becomes the id), a long label is cut, and a cut never splits a surrogate pair.",
+    "options": {
+     "model": {
+      "id": "a",
+      "choices": [
+       [
+        "a",
+        "  "
+       ],
+       [
+        "b",
+        "Line\none\ttab"
+       ],
+       [
+        "c",
+        "Résumé 日本"
+       ],
+       [
+        "d",
+        "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL"
+       ],
+       [
+        "e",
+        "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm😀z"
+       ],
+       [
+        "f",
+        "say \"hi\" \\ there"
+       ],
+       [
+        "g",
+        "\u0001\u0002"
+       ]
+      ]
+     },
+     "effort": {
+      "choices": [
+       [
+        "low",
+        ""
+       ]
+      ]
+     }
+    },
+    "frame": {
+     "t": "run",
+     "session_id": "0f6c4f2a",
+     "model": {
+      "id": "a",
+      "choices": [
+       {
+        "id": "a",
+        "label": "a"
+       },
+       {
+        "id": "b",
+        "label": "Line one tab "
+       },
+       {
+        "id": "c",
+        "label": "Résumé 日本"
+       },
+       {
+        "id": "d",
+        "label": "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL…"
+       },
+       {
+        "id": "e",
+        "label": "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm…"
+       },
+       {
+        "id": "f",
+        "label": "say \"hi\" \\ there"
+       },
+       {
+        "id": "g",
+        "label": "g"
+       }
+      ]
+     },
+     "effort": {
+      "choices": [
+       {
+        "id": "low",
+        "label": "low"
+       }
+      ]
+     }
+    },
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"a\",\"choices\":[{\"id\":\"a\",\"label\":\"a\"},{\"id\":\"b\",\"label\":\"Line one tab \"},{\"id\":\"c\",\"label\":\"Résumé 日本\"},{\"id\":\"d\",\"label\":\"LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL…\"},{\"id\":\"e\",\"label\":\"mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm…\"},{\"id\":\"f\",\"label\":\"say \\\"hi\\\" \\\\ there\"},{\"id\":\"g\",\"label\":\"g\"}]},\"effort\":{\"choices\":[{\"id\":\"low\",\"label\":\"low\"}]}}",
+    "plaintext_bytes": 450
+   },
+   {
+    "name": "capped",
+    "_note": "Sixty models: the two the frame names and the earliest forty-eight others, in their original order.",
+    "options": {
+     "model": {
+      "id": "model-57",
+      "pending": "model-59",
+      "choices": [
+       [
+        "model-00",
+        "Model 00"
+       ],
+       [
+        "model-01",
+        "Model 01"
+       ],
+       [
+        "model-02",
+        "Model 02"
+       ],
+       [
+        "model-03",
+        "Model 03"
+       ],
+       [
+        "model-04",
+        "Model 04"
+       ],
+       [
+        "model-05",
+        "Model 05"
+       ],
+       [
+        "model-06",
+        "Model 06"
+       ],
+       [
+        "model-07",
+        "Model 07"
+       ],
+       [
+        "model-08",
+        "Model 08"
+       ],
+       [
+        "model-09",
+        "Model 09"
+       ],
+       [
+        "model-10",
+        "Model 10"
+       ],
+       [
+        "model-11",
+        "Model 11"
+       ],
+       [
+        "model-12",
+        "Model 12"
+       ],
+       [
+        "model-13",
+        "Model 13"
+       ],
+       [
+        "model-14",
+        "Model 14"
+       ],
+       [
+        "model-15",
+        "Model 15"
+       ],
+       [
+        "model-16",
+        "Model 16"
+       ],
+       [
+        "model-17",
+        "Model 17"
+       ],
+       [
+        "model-18",
+        "Model 18"
+       ],
+       [
+        "model-19",
+        "Model 19"
+       ],
+       [
+        "model-20",
+        "Model 20"
+       ],
+       [
+        "model-21",
+        "Model 21"
+       ],
+       [
+        "model-22",
+        "Model 22"
+       ],
+       [
+        "model-23",
+        "Model 23"
+       ],
+       [
+        "model-24",
+        "Model 24"
+       ],
+       [
+        "model-25",
+        "Model 25"
+       ],
+       [
+        "model-26",
+        "Model 26"
+       ],
+       [
+        "model-27",
+        "Model 27"
+       ],
+       [
+        "model-28",
+        "Model 28"
+       ],
+       [
+        "model-29",
+        "Model 29"
+       ],
+       [
+        "model-30",
+        "Model 30"
+       ],
+       [
+        "model-31",
+        "Model 31"
+       ],
+       [
+        "model-32",
+        "Model 32"
+       ],
+       [
+        "model-33",
+        "Model 33"
+       ],
+       [
+        "model-34",
+        "Model 34"
+       ],
+       [
+        "model-35",
+        "Model 35"
+       ],
+       [
+        "model-36",
+        "Model 36"
+       ],
+       [
+        "model-37",
+        "Model 37"
+       ],
+       [
+        "model-38",
+        "Model 38"
+       ],
+       [
+        "model-39",
+        "Model 39"
+       ],
+       [
+        "model-40",
+        "Model 40"
+       ],
+       [
+        "model-41",
+        "Model 41"
+       ],
+       [
+        "model-42",
+        "Model 42"
+       ],
+       [
+        "model-43",
+        "Model 43"
+       ],
+       [
+        "model-44",
+        "Model 44"
+       ],
+       [
+        "model-45",
+        "Model 45"
+       ],
+       [
+        "model-46",
+        "Model 46"
+       ],
+       [
+        "model-47",
+        "Model 47"
+       ],
+       [
+        "model-48",
+        "Model 48"
+       ],
+       [
+        "model-49",
+        "Model 49"
+       ],
+       [
+        "model-50",
+        "Model 50"
+       ],
+       [
+        "model-51",
+        "Model 51"
+       ],
+       [
+        "model-52",
+        "Model 52"
+       ],
+       [
+        "model-53",
+        "Model 53"
+       ],
+       [
+        "model-54",
+        "Model 54"
+       ],
+       [
+        "model-55",
+        "Model 55"
+       ],
+       [
+        "model-56",
+        "Model 56"
+       ],
+       [
+        "model-57",
+        "Model 57"
+       ],
+       [
+        "model-58",
+        "Model 58"
+       ],
+       [
+        "model-59",
+        "Model 59"
+       ]
+      ]
+     },
+     "effort": {
+      "id": "high",
+      "choices": [
+       [
+        "low",
+        "low"
+       ],
+       [
+        "medium",
+        "medium"
+       ],
+       [
+        "high",
+        "high"
+       ],
+       [
+        "xhigh",
+        "xhigh"
+       ],
+       [
+        "max",
+        "max"
+       ]
+      ]
+     }
+    },
+    "frame": {
+     "t": "run",
+     "session_id": "0f6c4f2a",
+     "model": {
+      "id": "model-57",
+      "pending": "model-59",
+      "choices": [
+       {
+        "id": "model-00",
+        "label": "Model 00"
+       },
+       {
+        "id": "model-01",
+        "label": "Model 01"
+       },
+       {
+        "id": "model-02",
+        "label": "Model 02"
+       },
+       {
+        "id": "model-03",
+        "label": "Model 03"
+       },
+       {
+        "id": "model-04",
+        "label": "Model 04"
+       },
+       {
+        "id": "model-05",
+        "label": "Model 05"
+       },
+       {
+        "id": "model-06",
+        "label": "Model 06"
+       },
+       {
+        "id": "model-07",
+        "label": "Model 07"
+       },
+       {
+        "id": "model-08",
+        "label": "Model 08"
+       },
+       {
+        "id": "model-09",
+        "label": "Model 09"
+       },
+       {
+        "id": "model-10",
+        "label": "Model 10"
+       },
+       {
+        "id": "model-11",
+        "label": "Model 11"
+       },
+       {
+        "id": "model-12",
+        "label": "Model 12"
+       },
+       {
+        "id": "model-13",
+        "label": "Model 13"
+       },
+       {
+        "id": "model-14",
+        "label": "Model 14"
+       },
+       {
+        "id": "model-15",
+        "label": "Model 15"
+       },
+       {
+        "id": "model-16",
+        "label": "Model 16"
+       },
+       {
+        "id": "model-17",
+        "label": "Model 17"
+       },
+       {
+        "id": "model-18",
+        "label": "Model 18"
+       },
+       {
+        "id": "model-19",
+        "label": "Model 19"
+       },
+       {
+        "id": "model-20",
+        "label": "Model 20"
+       },
+       {
+        "id": "model-21",
+        "label": "Model 21"
+       },
+       {
+        "id": "model-22",
+        "label": "Model 22"
+       },
+       {
+        "id": "model-23",
+        "label": "Model 23"
+       },
+       {
+        "id": "model-24",
+        "label": "Model 24"
+       },
+       {
+        "id": "model-25",
+        "label": "Model 25"
+       },
+       {
+        "id": "model-26",
+        "label": "Model 26"
+       },
+       {
+        "id": "model-27",
+        "label": "Model 27"
+       },
+       {
+        "id": "model-28",
+        "label": "Model 28"
+       },
+       {
+        "id": "model-29",
+        "label": "Model 29"
+       },
+       {
+        "id": "model-30",
+        "label": "Model 30"
+       },
+       {
+        "id": "model-31",
+        "label": "Model 31"
+       },
+       {
+        "id": "model-32",
+        "label": "Model 32"
+       },
+       {
+        "id": "model-33",
+        "label": "Model 33"
+       },
+       {
+        "id": "model-34",
+        "label": "Model 34"
+       },
+       {
+        "id": "model-35",
+        "label": "Model 35"
+       },
+       {
+        "id": "model-36",
+        "label": "Model 36"
+       },
+       {
+        "id": "model-37",
+        "label": "Model 37"
+       },
+       {
+        "id": "model-38",
+        "label": "Model 38"
+       },
+       {
+        "id": "model-39",
+        "label": "Model 39"
+       },
+       {
+        "id": "model-40",
+        "label": "Model 40"
+       },
+       {
+        "id": "model-41",
+        "label": "Model 41"
+       },
+       {
+        "id": "model-42",
+        "label": "Model 42"
+       },
+       {
+        "id": "model-43",
+        "label": "Model 43"
+       },
+       {
+        "id": "model-44",
+        "label": "Model 44"
+       },
+       {
+        "id": "model-45",
+        "label": "Model 45"
+       },
+       {
+        "id": "model-46",
+        "label": "Model 46"
+       },
+       {
+        "id": "model-47",
+        "label": "Model 47"
+       },
+       {
+        "id": "model-57",
+        "label": "Model 57"
+       },
+       {
+        "id": "model-59",
+        "label": "Model 59"
+       }
+      ]
+     },
+     "effort": {
+      "id": "high",
+      "choices": [
+       {
+        "id": "low",
+        "label": "low"
+       },
+       {
+        "id": "medium",
+        "label": "medium"
+       },
+       {
+        "id": "high",
+        "label": "high"
+       },
+       {
+        "id": "xhigh",
+        "label": "xhigh"
+       },
+       {
+        "id": "max",
+        "label": "max"
+       }
+      ]
+     }
+    },
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"model-57\",\"pending\":\"model-59\",\"choices\":[{\"id\":\"model-00\",\"label\":\"Model 00\"},{\"id\":\"model-01\",\"label\":\"Model 01\"},{\"id\":\"model-02\",\"label\":\"Model 02\"},{\"id\":\"model-03\",\"label\":\"Model 03\"},{\"id\":\"model-04\",\"label\":\"Model 04\"},{\"id\":\"model-05\",\"label\":\"Model 05\"},{\"id\":\"model-06\",\"label\":\"Model 06\"},{\"id\":\"model-07\",\"label\":\"Model 07\"},{\"id\":\"model-08\",\"label\":\"Model 08\"},{\"id\":\"model-09\",\"label\":\"Model 09\"},{\"id\":\"model-10\",\"label\":\"Model 10\"},{\"id\":\"model-11\",\"label\":\"Model 11\"},{\"id\":\"model-12\",\"label\":\"Model 12\"},{\"id\":\"model-13\",\"label\":\"Model 13\"},{\"id\":\"model-14\",\"label\":\"Model 14\"},{\"id\":\"model-15\",\"label\":\"Model 15\"},{\"id\":\"model-16\",\"label\":\"Model 16\"},{\"id\":\"model-17\",\"label\":\"Model 17\"},{\"id\":\"model-18\",\"label\":\"Model 18\"},{\"id\":\"model-19\",\"label\":\"Model 19\"},{\"id\":\"model-20\",\"label\":\"Model 20\"},{\"id\":\"model-21\",\"label\":\"Model 21\"},{\"id\":\"model-22\",\"label\":\"Model 22\"},{\"id\":\"model-23\",\"label\":\"Model 23\"},{\"id\":\"model-24\",\"label\":\"Model 24\"},{\"id\":\"model-25\",\"label\":\"Model 25\"},{\"id\":\"model-26\",\"label\":\"Model 26\"},{\"id\":\"model-27\",\"label\":\"Model 27\"},{\"id\":\"model-28\",\"label\":\"Model 28\"},{\"id\":\"model-29\",\"label\":\"Model 29\"},{\"id\":\"model-30\",\"label\":\"Model 30\"},{\"id\":\"model-31\",\"label\":\"Model 31\"},{\"id\":\"model-32\",\"label\":\"Model 32\"},{\"id\":\"model-33\",\"label\":\"Model 33\"},{\"id\":\"model-34\",\"label\":\"Model 34\"},{\"id\":\"model-35\",\"label\":\"Model 35\"},{\"id\":\"model-36\",\"label\":\"Model 36\"},{\"id\":\"model-37\",\"label\":\"Model 37\"},{\"id\":\"model-38\",\"label\":\"Model 38\"},{\"id\":\"model-39\",\"label\":\"Model 39\"},{\"id\":\"model-40\",\"label\":\"Model 40\"},{\"id\":\"model-41\",\"label\":\"Model 41\"},{\"id\":\"model-42\",\"label\":\"Model 42\"},{\"id\":\"model-43\",\"label\":\"Model 43\"},{\"id\":\"model-44\",\"label\":\"Model 44\"},{\"id\":\"model-45\",\"label\":\"Model 45\"},{\"id\":\"model-46\",\"label\":\"Model 46\"},{\"id\":\"model-47\",\"label\":\"Model 47\"},{\"id\":\"model-57\",\"label\":\"Model 57\"},{\"id\":\"model-59\",\"label\":\"Model 59\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"medium\",\"label\":\"medium\"},{\"id\":\"high\",\"label\":\"high\"},{\"id\":\"xhigh\",\"label\":\"xhigh\"},{\"id\":\"max\",\"label\":\"max\"}]}}",
+    "plaintext_bytes": 2126
+   },
+   {
+    "name": "capped_plain",
+    "_note": "Sixty models with the running one early: the first fifty.",
+    "options": {
+     "model": {
+      "id": "model-03",
+      "choices": [
+       [
+        "model-00",
+        "Model 00"
+       ],
+       [
+        "model-01",
+        "Model 01"
+       ],
+       [
+        "model-02",
+        "Model 02"
+       ],
+       [
+        "model-03",
+        "Model 03"
+       ],
+       [
+        "model-04",
+        "Model 04"
+       ],
+       [
+        "model-05",
+        "Model 05"
+       ],
+       [
+        "model-06",
+        "Model 06"
+       ],
+       [
+        "model-07",
+        "Model 07"
+       ],
+       [
+        "model-08",
+        "Model 08"
+       ],
+       [
+        "model-09",
+        "Model 09"
+       ],
+       [
+        "model-10",
+        "Model 10"
+       ],
+       [
+        "model-11",
+        "Model 11"
+       ],
+       [
+        "model-12",
+        "Model 12"
+       ],
+       [
+        "model-13",
+        "Model 13"
+       ],
+       [
+        "model-14",
+        "Model 14"
+       ],
+       [
+        "model-15",
+        "Model 15"
+       ],
+       [
+        "model-16",
+        "Model 16"
+       ],
+       [
+        "model-17",
+        "Model 17"
+       ],
+       [
+        "model-18",
+        "Model 18"
+       ],
+       [
+        "model-19",
+        "Model 19"
+       ],
+       [
+        "model-20",
+        "Model 20"
+       ],
+       [
+        "model-21",
+        "Model 21"
+       ],
+       [
+        "model-22",
+        "Model 22"
+       ],
+       [
+        "model-23",
+        "Model 23"
+       ],
+       [
+        "model-24",
+        "Model 24"
+       ],
+       [
+        "model-25",
+        "Model 25"
+       ],
+       [
+        "model-26",
+        "Model 26"
+       ],
+       [
+        "model-27",
+        "Model 27"
+       ],
+       [
+        "model-28",
+        "Model 28"
+       ],
+       [
+        "model-29",
+        "Model 29"
+       ],
+       [
+        "model-30",
+        "Model 30"
+       ],
+       [
+        "model-31",
+        "Model 31"
+       ],
+       [
+        "model-32",
+        "Model 32"
+       ],
+       [
+        "model-33",
+        "Model 33"
+       ],
+       [
+        "model-34",
+        "Model 34"
+       ],
+       [
+        "model-35",
+        "Model 35"
+       ],
+       [
+        "model-36",
+        "Model 36"
+       ],
+       [
+        "model-37",
+        "Model 37"
+       ],
+       [
+        "model-38",
+        "Model 38"
+       ],
+       [
+        "model-39",
+        "Model 39"
+       ],
+       [
+        "model-40",
+        "Model 40"
+       ],
+       [
+        "model-41",
+        "Model 41"
+       ],
+       [
+        "model-42",
+        "Model 42"
+       ],
+       [
+        "model-43",
+        "Model 43"
+       ],
+       [
+        "model-44",
+        "Model 44"
+       ],
+       [
+        "model-45",
+        "Model 45"
+       ],
+       [
+        "model-46",
+        "Model 46"
+       ],
+       [
+        "model-47",
+        "Model 47"
+       ],
+       [
+        "model-48",
+        "Model 48"
+       ],
+       [
+        "model-49",
+        "Model 49"
+       ],
+       [
+        "model-50",
+        "Model 50"
+       ],
+       [
+        "model-51",
+        "Model 51"
+       ],
+       [
+        "model-52",
+        "Model 52"
+       ],
+       [
+        "model-53",
+        "Model 53"
+       ],
+       [
+        "model-54",
+        "Model 54"
+       ],
+       [
+        "model-55",
+        "Model 55"
+       ],
+       [
+        "model-56",
+        "Model 56"
+       ],
+       [
+        "model-57",
+        "Model 57"
+       ],
+       [
+        "model-58",
+        "Model 58"
+       ],
+       [
+        "model-59",
+        "Model 59"
+       ]
+      ]
+     },
+     "effort": {
+      "id": "high",
+      "choices": [
+       [
+        "low",
+        "low"
+       ],
+       [
+        "medium",
+        "medium"
+       ],
+       [
+        "high",
+        "high"
+       ],
+       [
+        "xhigh",
+        "xhigh"
+       ],
+       [
+        "max",
+        "max"
+       ]
+      ]
+     }
+    },
+    "frame": {
+     "t": "run",
+     "session_id": "0f6c4f2a",
+     "model": {
+      "id": "model-03",
+      "choices": [
+       {
+        "id": "model-00",
+        "label": "Model 00"
+       },
+       {
+        "id": "model-01",
+        "label": "Model 01"
+       },
+       {
+        "id": "model-02",
+        "label": "Model 02"
+       },
+       {
+        "id": "model-03",
+        "label": "Model 03"
+       },
+       {
+        "id": "model-04",
+        "label": "Model 04"
+       },
+       {
+        "id": "model-05",
+        "label": "Model 05"
+       },
+       {
+        "id": "model-06",
+        "label": "Model 06"
+       },
+       {
+        "id": "model-07",
+        "label": "Model 07"
+       },
+       {
+        "id": "model-08",
+        "label": "Model 08"
+       },
+       {
+        "id": "model-09",
+        "label": "Model 09"
+       },
+       {
+        "id": "model-10",
+        "label": "Model 10"
+       },
+       {
+        "id": "model-11",
+        "label": "Model 11"
+       },
+       {
+        "id": "model-12",
+        "label": "Model 12"
+       },
+       {
+        "id": "model-13",
+        "label": "Model 13"
+       },
+       {
+        "id": "model-14",
+        "label": "Model 14"
+       },
+       {
+        "id": "model-15",
+        "label": "Model 15"
+       },
+       {
+        "id": "model-16",
+        "label": "Model 16"
+       },
+       {
+        "id": "model-17",
+        "label": "Model 17"
+       },
+       {
+        "id": "model-18",
+        "label": "Model 18"
+       },
+       {
+        "id": "model-19",
+        "label": "Model 19"
+       },
+       {
+        "id": "model-20",
+        "label": "Model 20"
+       },
+       {
+        "id": "model-21",
+        "label": "Model 21"
+       },
+       {
+        "id": "model-22",
+        "label": "Model 22"
+       },
+       {
+        "id": "model-23",
+        "label": "Model 23"
+       },
+       {
+        "id": "model-24",
+        "label": "Model 24"
+       },
+       {
+        "id": "model-25",
+        "label": "Model 25"
+       },
+       {
+        "id": "model-26",
+        "label": "Model 26"
+       },
+       {
+        "id": "model-27",
+        "label": "Model 27"
+       },
+       {
+        "id": "model-28",
+        "label": "Model 28"
+       },
+       {
+        "id": "model-29",
+        "label": "Model 29"
+       },
+       {
+        "id": "model-30",
+        "label": "Model 30"
+       },
+       {
+        "id": "model-31",
+        "label": "Model 31"
+       },
+       {
+        "id": "model-32",
+        "label": "Model 32"
+       },
+       {
+        "id": "model-33",
+        "label": "Model 33"
+       },
+       {
+        "id": "model-34",
+        "label": "Model 34"
+       },
+       {
+        "id": "model-35",
+        "label": "Model 35"
+       },
+       {
+        "id": "model-36",
+        "label": "Model 36"
+       },
+       {
+        "id": "model-37",
+        "label": "Model 37"
+       },
+       {
+        "id": "model-38",
+        "label": "Model 38"
+       },
+       {
+        "id": "model-39",
+        "label": "Model 39"
+       },
+       {
+        "id": "model-40",
+        "label": "Model 40"
+       },
+       {
+        "id": "model-41",
+        "label": "Model 41"
+       },
+       {
+        "id": "model-42",
+        "label": "Model 42"
+       },
+       {
+        "id": "model-43",
+        "label": "Model 43"
+       },
+       {
+        "id": "model-44",
+        "label": "Model 44"
+       },
+       {
+        "id": "model-45",
+        "label": "Model 45"
+       },
+       {
+        "id": "model-46",
+        "label": "Model 46"
+       },
+       {
+        "id": "model-47",
+        "label": "Model 47"
+       },
+       {
+        "id": "model-48",
+        "label": "Model 48"
+       },
+       {
+        "id": "model-49",
+        "label": "Model 49"
+       }
+      ]
+     },
+     "effort": {
+      "id": "high",
+      "choices": [
+       {
+        "id": "low",
+        "label": "low"
+       },
+       {
+        "id": "medium",
+        "label": "medium"
+       },
+       {
+        "id": "high",
+        "label": "high"
+       },
+       {
+        "id": "xhigh",
+        "label": "xhigh"
+       },
+       {
+        "id": "max",
+        "label": "max"
+       }
+      ]
+     }
+    },
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"model-03\",\"choices\":[{\"id\":\"model-00\",\"label\":\"Model 00\"},{\"id\":\"model-01\",\"label\":\"Model 01\"},{\"id\":\"model-02\",\"label\":\"Model 02\"},{\"id\":\"model-03\",\"label\":\"Model 03\"},{\"id\":\"model-04\",\"label\":\"Model 04\"},{\"id\":\"model-05\",\"label\":\"Model 05\"},{\"id\":\"model-06\",\"label\":\"Model 06\"},{\"id\":\"model-07\",\"label\":\"Model 07\"},{\"id\":\"model-08\",\"label\":\"Model 08\"},{\"id\":\"model-09\",\"label\":\"Model 09\"},{\"id\":\"model-10\",\"label\":\"Model 10\"},{\"id\":\"model-11\",\"label\":\"Model 11\"},{\"id\":\"model-12\",\"label\":\"Model 12\"},{\"id\":\"model-13\",\"label\":\"Model 13\"},{\"id\":\"model-14\",\"label\":\"Model 14\"},{\"id\":\"model-15\",\"label\":\"Model 15\"},{\"id\":\"model-16\",\"label\":\"Model 16\"},{\"id\":\"model-17\",\"label\":\"Model 17\"},{\"id\":\"model-18\",\"label\":\"Model 18\"},{\"id\":\"model-19\",\"label\":\"Model 19\"},{\"id\":\"model-20\",\"label\":\"Model 20\"},{\"id\":\"model-21\",\"label\":\"Model 21\"},{\"id\":\"model-22\",\"label\":\"Model 22\"},{\"id\":\"model-23\",\"label\":\"Model 23\"},{\"id\":\"model-24\",\"label\":\"Model 24\"},{\"id\":\"model-25\",\"label\":\"Model 25\"},{\"id\":\"model-26\",\"label\":\"Model 26\"},{\"id\":\"model-27\",\"label\":\"Model 27\"},{\"id\":\"model-28\",\"label\":\"Model 28\"},{\"id\":\"model-29\",\"label\":\"Model 29\"},{\"id\":\"model-30\",\"label\":\"Model 30\"},{\"id\":\"model-31\",\"label\":\"Model 31\"},{\"id\":\"model-32\",\"label\":\"Model 32\"},{\"id\":\"model-33\",\"label\":\"Model 33\"},{\"id\":\"model-34\",\"label\":\"Model 34\"},{\"id\":\"model-35\",\"label\":\"Model 35\"},{\"id\":\"model-36\",\"label\":\"Model 36\"},{\"id\":\"model-37\",\"label\":\"Model 37\"},{\"id\":\"model-38\",\"label\":\"Model 38\"},{\"id\":\"model-39\",\"label\":\"Model 39\"},{\"id\":\"model-40\",\"label\":\"Model 40\"},{\"id\":\"model-41\",\"label\":\"Model 41\"},{\"id\":\"model-42\",\"label\":\"Model 42\"},{\"id\":\"model-43\",\"label\":\"Model 43\"},{\"id\":\"model-44\",\"label\":\"Model 44\"},{\"id\":\"model-45\",\"label\":\"Model 45\"},{\"id\":\"model-46\",\"label\":\"Model 46\"},{\"id\":\"model-47\",\"label\":\"Model 47\"},{\"id\":\"model-48\",\"label\":\"Model 48\"},{\"id\":\"model-49\",\"label\":\"Model 49\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"medium\",\"label\":\"medium\"},{\"id\":\"high\",\"label\":\"high\"},{\"id\":\"xhigh\",\"label\":\"xhigh\"},{\"id\":\"max\",\"label\":\"max\"}]}}",
+    "plaintext_bytes": 2105
+   },
+   {
+    "name": "long_reason",
+    "_note": "A sentence over 200 UTF-16 units is cut; one that would end on half a pair loses the pair.",
+    "options": {
+     "model": {
+      "id": "opus",
+      "choices": [
+       [
+        "default",
+        "Default (recommended)"
+       ],
+       [
+        "opus",
+        "Opus 5.5"
+       ],
+       [
+        "sonnet",
+        "Sonnet 5.5"
+       ],
+       [
+        "haiku",
+        "Haiku 5.5"
+       ]
+      ],
+      "off": "It can't be changed because the bridge is off and the bridge is off and the bridge is off and the bridge is off and the bridge is off and the bridge is off and the bridge is off and the bridge is off and the bridge is off and the bridge is off and the bridge is off and the bridge is off and that is all."
+     },
+     "effort": {
+      "id": "high",
+      "choices": [
+       [
+        "low",
+        "low"
+       ],
+       [
+        "medium",
+        "medium"
+       ],
+       [
+        "high",
+        "high"
+       ],
+       [
+        "xhigh",
+        "xhigh"
+       ],
+       [
+        "max",
+        "max"
+       ]
+      ],
+      "failed": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx😀"
+     }
+    },
+    "frame": {
+     "t": "run",
+     "session_id": "0f6c4f2a",
+     "model": {
+      "id": "opus",
+      "choices": [
+       {
+        "id": "default",
+        "label": "Default (recommended)"
+       },
+       {
+        "id": "opus",
+        "label": "Opus 5.5"
+       },
+       {
+        "id": "sonnet",
+        "label": "Sonnet 5.5"
+       },
+       {
+        "id": "haiku",
+        "label": "Haiku 5.5"
+       }
+      ],
+      "off": "It can't be changed because the bridge is off and the bridge is off and the bridge is off and the bridge is off and the bridge is off and the bridge is off and the bridge is off and the bridge is off…"
+     },
+     "effort": {
+      "id": "high",
+      "choices": [
+       {
+        "id": "low",
+        "label": "low"
+       },
+       {
+        "id": "medium",
+        "label": "medium"
+       },
+       {
+        "id": "high",
+        "label": "high"
+       },
+       {
+        "id": "xhigh",
+        "label": "xhigh"
+       },
+       {
+        "id": "max",
+        "label": "max"
+       }
+      ],
+      "failed": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+     }
+    },
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"default\",\"label\":\"Default (recommended)\"},{\"id\":\"opus\",\"label\":\"Opus 5.5\"},{\"id\":\"sonnet\",\"label\":\"Sonnet 5.5\"},{\"id\":\"haiku\",\"label\":\"Haiku 5.5\"}],\"off\":\"It can't be changed because the bridge is off and the bridge is off and the bridge is off and the bridge is off and the bridge is off and the bridge is off and the bridge is off and the bridge is off…\"},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"medium\",\"label\":\"medium\"},{\"id\":\"high\",\"label\":\"high\"},{\"id\":\"xhigh\",\"label\":\"xhigh\"},{\"id\":\"max\",\"label\":\"max\"}],\"failed\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…\"}}",
+    "plaintext_bytes": 830
+   },
+   {
+    "name": "id_not_offered",
+    "_note": "An id or a pending value that is not among the choices is not written.",
+    "options": {
+     "model": {
+      "id": "ghost",
+      "pending": "phantom",
+      "choices": [
+       [
+        "default",
+        "Default (recommended)"
+       ],
+       [
+        "opus",
+        "Opus 5.5"
+       ],
+       [
+        "sonnet",
+        "Sonnet 5.5"
+       ],
+       [
+        "haiku",
+        "Haiku 5.5"
+       ]
+      ]
+     },
+     "effort": {
+      "id": "high",
+      "choices": [
+       [
+        "low",
+        "low"
+       ],
+       [
+        "medium",
+        "medium"
+       ],
+       [
+        "high",
+        "high"
+       ],
+       [
+        "xhigh",
+        "xhigh"
+       ],
+       [
+        "max",
+        "max"
+       ]
+      ]
+     }
+    },
+    "frame": {
+     "t": "run",
+     "session_id": "0f6c4f2a",
+     "model": {
+      "choices": [
+       {
+        "id": "default",
+        "label": "Default (recommended)"
+       },
+       {
+        "id": "opus",
+        "label": "Opus 5.5"
+       },
+       {
+        "id": "sonnet",
+        "label": "Sonnet 5.5"
+       },
+       {
+        "id": "haiku",
+        "label": "Haiku 5.5"
+       }
+      ]
+     },
+     "effort": {
+      "id": "high",
+      "choices": [
+       {
+        "id": "low",
+        "label": "low"
+       },
+       {
+        "id": "medium",
+        "label": "medium"
+       },
+       {
+        "id": "high",
+        "label": "high"
+       },
+       {
+        "id": "xhigh",
+        "label": "xhigh"
+       },
+       {
+        "id": "max",
+        "label": "max"
+       }
+      ]
+     }
+    },
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"choices\":[{\"id\":\"default\",\"label\":\"Default (recommended)\"},{\"id\":\"opus\",\"label\":\"Opus 5.5\"},{\"id\":\"sonnet\",\"label\":\"Sonnet 5.5\"},{\"id\":\"haiku\",\"label\":\"Haiku 5.5\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"medium\",\"label\":\"medium\"},{\"id\":\"high\",\"label\":\"high\"},{\"id\":\"xhigh\",\"label\":\"xhigh\"},{\"id\":\"max\",\"label\":\"max\"}]}}",
+    "plaintext_bytes": 393
+   }
+  ]
+ },
+ "set": {
+  "busy_why": "Another change to this session is being made right now.",
+  "_note": "busy_why is the sentence this model desk uses for a request that arrives while it is running another change to the same session (`running` true on the case); the real desk's wording is its own.",
+  "shape": {
+   "_note": "Requests as received text. `err` is bad_frame, or null when the shape is good. `session_id` is what the err then carries (null: none, and an empty ck).",
+   "cases": [
+    {
+     "plaintext": "{\"t\":\"set_run\",\"session_id\":\"0f6c4f2a\",\"field\":\"effort\",\"value\":\"xhigh\"}",
+     "err": null,
+     "session_id": null,
+     "_note": "good"
+    },
+    {
+     "plaintext": "{\"t\":\"set_run\",\"session_id\":\"0f6c4f2a\",\"field\":\"model\",\"value\":\"claude-opus-4-1[1m]\"}",
+     "err": null,
+     "session_id": null,
+     "_note": "good: brackets are ID characters"
+    },
+    {
+     "plaintext": "{\"value\":\"xhigh\",\"field\":\"effort\",\"session_id\":\"0f6c4f2a\",\"t\":\"set_run\",\"extra\":1}",
+     "err": null,
+     "session_id": null,
+     "_note": "good: order and unknown keys do not matter"
+    },
+    {
+     "plaintext": "{\"t\":\"set_run\",\"session_id\":\"0f6c4f2a\",\"field\":\"effort\",\"value\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}",
+     "err": null,
+     "session_id": null,
+     "_note": "good: 64 characters"
+    },
+    {
+     "plaintext": "{\"t\":\"set_run\",\"session_id\":\"0f6c4f2a\",\"field\":\"effort\",\"value\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}",
+     "err": "bad_frame",
+     "session_id": "0f6c4f2a",
+     "_note": "65 characters"
+    },
+    {
+     "plaintext": "{\"t\":\"set_run\",\"session_id\":\"0f6c4f2a\",\"field\":\"effort\",\"value\":\"\"}",
+     "err": "bad_frame",
+     "session_id": "0f6c4f2a",
+     "_note": "an empty value"
+    },
+    {
+     "plaintext": "{\"t\":\"set_run\",\"session_id\":\"0f6c4f2a\",\"field\":\"effort\",\"value\":\"x high\"}",
+     "err": "bad_frame",
+     "session_id": "0f6c4f2a",
+     "_note": "a space"
+    },
+    {
+     "plaintext": "{\"t\":\"set_run\",\"session_id\":\"0f6c4f2a\",\"field\":\"effort\",\"value\":\"high\\n/model opus\"}",
+     "err": "bad_frame",
+     "session_id": "0f6c4f2a",
+     "_note": "a newline: what a typed route must never see"
+    },
+    {
+     "plaintext": "{\"t\":\"set_run\",\"session_id\":\"0f6c4f2a\",\"field\":\"effort\",\"value\":\"a\\\"b\"}",
+     "err": "bad_frame",
+     "session_id": "0f6c4f2a",
+     "_note": "a double quote"
+    },
+    {
+     "plaintext": "{\"t\":\"set_run\",\"session_id\":\"0f6c4f2a\",\"field\":\"effort\",\"value\":\"a\\\\b\"}",
+     "err": "bad_frame",
+     "session_id": "0f6c4f2a",
+     "_note": "a backslash"
+    },
+    {
+     "plaintext": "{\"t\":\"set_run\",\"session_id\":\"0f6c4f2a\",\"field\":\"effort\",\"value\":\"é\"}",
+     "err": "bad_frame",
+     "session_id": "0f6c4f2a",
+     "_note": "non-ASCII"
+    },
+    {
+     "plaintext": "{\"t\":\"set_run\",\"session_id\":\"0f6c4f2a\",\"field\":\"effort\",\"value\":7}",
+     "err": "bad_frame",
+     "session_id": "0f6c4f2a",
+     "_note": "value not a string"
+    },
+    {
+     "plaintext": "{\"t\":\"set_run\",\"session_id\":\"0f6c4f2a\",\"field\":\"effort\"}",
+     "err": "bad_frame",
+     "session_id": "0f6c4f2a",
+     "_note": "no value"
+    },
+    {
+     "plaintext": "{\"t\":\"set_run\",\"session_id\":\"0f6c4f2a\",\"field\":\"thinking\",\"value\":\"high\"}",
+     "err": "bad_frame",
+     "session_id": "0f6c4f2a",
+     "_note": "a field that is neither word (the plan's bad_field)"
+    },
+    {
+     "plaintext": "{\"t\":\"set_run\",\"session_id\":\"0f6c4f2a\",\"field\":\"Model\",\"value\":\"opus\"}",
+     "err": "bad_frame",
+     "session_id": "0f6c4f2a",
+     "_note": "the field is case-sensitive"
+    },
+    {
+     "plaintext": "{\"t\":\"set_run\",\"session_id\":\"0f6c4f2a\",\"value\":\"opus\"}",
+     "err": "bad_frame",
+     "session_id": "0f6c4f2a",
+     "_note": "no field"
+    },
+    {
+     "plaintext": "{\"t\":\"set_run\",\"field\":\"model\",\"value\":\"opus\"}",
+     "err": "bad_frame",
+     "session_id": null,
+     "_note": "no session_id: the err then carries none"
+    },
+    {
+     "plaintext": "{\"t\":\"set_run\",\"session_id\":\"\",\"field\":\"model\",\"value\":\"opus\"}",
+     "err": "bad_frame",
+     "session_id": null,
+     "_note": "an empty session_id: the err carries none"
+    },
+    {
+     "plaintext": "{\"t\":\"set_run\",\"session_id\":7,\"field\":\"model\",\"value\":\"opus\"}",
+     "err": "bad_frame",
+     "session_id": null,
+     "_note": "session_id not a string: the err carries none"
+    }
+   ]
+  },
+  "cases": [
+   {
+    "name": "effort_ok",
+    "_note": "the route ran",
+    "state": "claude_enabled",
+    "envelope_id": "01JCD0SETRUN00000000000001",
+    "request": {
+     "t": "set_run",
+     "session_id": "0f6c4f2a",
+     "field": "effort",
+     "value": "xhigh"
+    },
+    "running": false,
+    "route": "ok",
+    "reply": {
+     "t": "ok",
+     "ref": "01JCD0SETRUN00000000000001",
+     "code": "set",
+     "session_id": "0f6c4f2a"
+    }
+   },
+   {
+    "name": "model_ok",
+    "_note": "the route ran",
+    "state": "claude_enabled",
+    "envelope_id": "01JCD0SETRUN00000000000002",
+    "request": {
+     "t": "set_run",
+     "session_id": "0f6c4f2a",
+     "field": "model",
+     "value": "sonnet"
+    },
+    "running": false,
+    "route": "ok",
+    "reply": {
+     "t": "ok",
+     "ref": "01JCD0SETRUN00000000000002",
+     "code": "set",
+     "session_id": "0f6c4f2a"
+    }
+   },
+   {
+    "name": "same_value",
+    "_note": "the value already confirmed is run like any other: the desk's reading may be behind",
+    "state": "claude_enabled",
+    "envelope_id": "01JCD0SETRUN00000000000003",
+    "request": {
+     "t": "set_run",
+     "session_id": "0f6c4f2a",
+     "field": "effort",
+     "value": "high"
+    },
+    "running": false,
+    "route": "ok",
+    "reply": {
+     "t": "ok",
+     "ref": "01JCD0SETRUN00000000000003",
+     "code": "set",
+     "session_id": "0f6c4f2a"
+    }
+   },
+   {
+    "name": "unknown_session",
+    "_note": "not in the book, or not a local CLI session",
+    "state": null,
+    "envelope_id": "01JCD0SETRUN00000000000004",
+    "request": {
+     "t": "set_run",
+     "session_id": "0f6c4f2a",
+     "field": "effort",
+     "value": "xhigh"
+    },
+    "running": false,
+    "route": null,
+    "reply": {
+     "t": "err",
+     "ref": "01JCD0SETRUN00000000000004",
+     "code": "unknown_session",
+     "session_id": "0f6c4f2a"
+    }
+   },
+   {
+    "name": "off_model",
+    "_note": "the control is off: why is its sentence",
+    "state": "no_route",
+    "envelope_id": "01JCD0SETRUN00000000000005",
+    "request": {
+     "t": "set_run",
+     "session_id": "0f6c4f2a",
+     "field": "model",
+     "value": "sonnet"
+    },
+    "running": false,
+    "route": null,
+    "reply": {
+     "t": "err",
+     "ref": "01JCD0SETRUN00000000000005",
+     "code": "unavailable",
+     "session_id": "0f6c4f2a",
+     "why": "This session has no terminal to type into, and its Remote Control bridge is off."
+    }
+   },
+   {
+    "name": "off_effort_other_on",
+    "_note": "effort is off for this model; unavailable is checked before bad_value",
+    "state": "no_effort_model",
+    "envelope_id": "01JCD0SETRUN00000000000006",
+    "request": {
+     "t": "set_run",
+     "session_id": "0f6c4f2a",
+     "field": "effort",
+     "value": "high"
+    },
+    "running": false,
+    "route": null,
+    "reply": {
+     "t": "err",
+     "ref": "01JCD0SETRUN00000000000006",
+     "code": "unavailable",
+     "session_id": "0f6c4f2a",
+     "why": "This model has no effort setting."
+    }
+   },
+   {
+    "name": "on_model_other_off",
+    "_note": "the model list still works beside a dial that is off",
+    "state": "no_effort_model",
+    "envelope_id": "01JCD0SETRUN00000000000007",
+    "request": {
+     "t": "set_run",
+     "session_id": "0f6c4f2a",
+     "field": "model",
+     "value": "opus"
+    },
+    "running": false,
+    "route": "ok",
+    "reply": {
+     "t": "ok",
+     "ref": "01JCD0SETRUN00000000000007",
+     "code": "set",
+     "session_id": "0f6c4f2a"
+    }
+   },
+   {
+    "name": "busy_same_field",
+    "_note": "the desk is running another change to this session right now",
+    "state": "claude_enabled",
+    "envelope_id": "01JCD0SETRUN00000000000008",
+    "request": {
+     "t": "set_run",
+     "session_id": "0f6c4f2a",
+     "field": "effort",
+     "value": "max"
+    },
+    "running": true,
+    "route": null,
+    "reply": {
+     "t": "err",
+     "ref": "01JCD0SETRUN00000000000008",
+     "code": "unavailable",
+     "session_id": "0f6c4f2a",
+     "why": "Another change to this session is being made right now."
+    }
+   },
+   {
+    "name": "busy_other_field",
+    "_note": "whichever field the other change is for",
+    "state": "claude_enabled",
+    "envelope_id": "01JCD0SETRUN00000000000009",
+    "request": {
+     "t": "set_run",
+     "session_id": "0f6c4f2a",
+     "field": "model",
+     "value": "sonnet"
+    },
+    "running": true,
+    "route": null,
+    "reply": {
+     "t": "err",
+     "ref": "01JCD0SETRUN00000000000009",
+     "code": "unavailable",
+     "session_id": "0f6c4f2a",
+     "why": "Another change to this session is being made right now."
+    }
+   },
+   {
+    "name": "pending_same_field",
+    "_note": "a change that only waits for a reading does not block the next: this one replaces it",
+    "state": "effort_pending",
+    "envelope_id": "01JCD0SETRUN00000000000010",
+    "request": {
+     "t": "set_run",
+     "session_id": "0f6c4f2a",
+     "field": "effort",
+     "value": "max"
+    },
+    "running": false,
+    "route": "ok",
+    "reply": {
+     "t": "ok",
+     "ref": "01JCD0SETRUN00000000000010",
+     "code": "set",
+     "session_id": "0f6c4f2a"
+    }
+   },
+   {
+    "name": "pending_other_field",
+    "_note": "nor a change of the other field",
+    "state": "effort_pending",
+    "envelope_id": "01JCD0SETRUN00000000000011",
+    "request": {
+     "t": "set_run",
+     "session_id": "0f6c4f2a",
+     "field": "model",
+     "value": "sonnet"
+    },
+    "running": false,
+    "route": "ok",
+    "reply": {
+     "t": "ok",
+     "ref": "01JCD0SETRUN00000000000011",
+     "code": "set",
+     "session_id": "0f6c4f2a"
+    }
+   },
+   {
+    "name": "bad_value",
+    "_note": "an ID, but not one of this field's choices",
+    "state": "claude_enabled",
+    "envelope_id": "01JCD0SETRUN00000000000012",
+    "request": {
+     "t": "set_run",
+     "session_id": "0f6c4f2a",
+     "field": "effort",
+     "value": "ultra"
+    },
+    "running": false,
+    "route": null,
+    "reply": {
+     "t": "err",
+     "ref": "01JCD0SETRUN00000000000012",
+     "code": "bad_value",
+     "session_id": "0f6c4f2a"
+    }
+   },
+   {
+    "name": "bad_value_other_field",
+    "_note": "a choice of the other field",
+    "state": "claude_enabled",
+    "envelope_id": "01JCD0SETRUN00000000000013",
+    "request": {
+     "t": "set_run",
+     "session_id": "0f6c4f2a",
+     "field": "model",
+     "value": "high"
+    },
+    "running": false,
+    "route": null,
+    "reply": {
+     "t": "err",
+     "ref": "01JCD0SETRUN00000000000013",
+     "code": "bad_value",
+     "session_id": "0f6c4f2a"
+    }
+   },
+   {
+    "name": "dropped_choice",
+    "_note": "a choice the cap left out is not offered, though the catalogue held it",
+    "state": "capped_plain",
+    "envelope_id": "01JCD0SETRUN00000000000014",
+    "request": {
+     "t": "set_run",
+     "session_id": "0f6c4f2a",
+     "field": "model",
+     "value": "model-50"
+    },
+    "running": false,
+    "route": null,
+    "reply": {
+     "t": "err",
+     "ref": "01JCD0SETRUN00000000000014",
+     "code": "bad_value",
+     "session_id": "0f6c4f2a"
+    }
+   },
+   {
+    "name": "route_failed",
+    "_note": "the typing gate refused; why is its sentence",
+    "state": "claude_enabled",
+    "envelope_id": "01JCD0SETRUN00000000000015",
+    "request": {
+     "t": "set_run",
+     "session_id": "0f6c4f2a",
+     "field": "effort",
+     "value": "xhigh"
+    },
+    "running": false,
+    "route": "It is showing a dialog: Bash command",
+    "reply": {
+     "t": "err",
+     "ref": "01JCD0SETRUN00000000000015",
+     "code": "set_failed",
+     "session_id": "0f6c4f2a",
+     "why": "It is showing a dialog: Bash command"
+    }
+   },
+   {
+    "name": "route_failed_long",
+    "_note": "a why over 200 UTF-16 units is cut",
+    "state": "codex",
+    "envelope_id": "01JCD0SETRUN00000000000016",
+    "request": {
+     "t": "set_run",
+     "session_id": "0f6c4f2a",
+     "field": "model",
+     "value": "gpt-6-luna"
+    },
+    "running": false,
+    "route": "The picker did not show that model. The picker did not show that model. The picker did not show that model. The picker did not show that model. The picker did not show that model. The picker did not show that model. The picker did not show that model. The picker did not show that model. ",
+    "reply": {
+     "t": "err",
+     "ref": "01JCD0SETRUN00000000000016",
+     "code": "set_failed",
+     "session_id": "0f6c4f2a",
+     "why": "The picker did not show that model. The picker did not show that model. The picker did not show that model. The picker did not show that model. The picker did not show that model. The picker did not …"
+    }
+   },
+   {
+    "name": "codex_ok",
+    "_note": "Codex's sixth level",
+    "state": "codex",
+    "envelope_id": "01JCD0SETRUN00000000000017",
+    "request": {
+     "t": "set_run",
+     "session_id": "0f6c4f2a",
+     "field": "effort",
+     "value": "ultra"
+    },
+    "running": false,
+    "route": "ok",
+    "reply": {
+     "t": "ok",
+     "ref": "01JCD0SETRUN00000000000017",
+     "code": "set",
+     "session_id": "0f6c4f2a"
+    }
+   }
+  ]
+ },
+ "phone": {
+  "decode": {
+   "_note": "phone_rules.decode. Every serialise plaintext also decodes to its own frame (with saves_default false when absent); the checker holds the file to that.",
+   "cases": [
+    {
+     "plaintext": "{\"t\":\"run\",\"session_id\":\"s1\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"opus\",\"label\":\"Opus 5.5\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"high\",\"label\":\"high\"}]}}",
+     "_note": "the plain frame",
+     "decoded": {
+      "session_id": "s1",
+      "model": {
+       "id": "opus",
+       "choices": [
+        {
+         "id": "opus",
+         "label": "Opus 5.5"
+        }
+       ]
+      },
+      "effort": {
+       "id": "high",
+       "choices": [
+        {
+         "id": "low",
+         "label": "low"
+        },
+        {
+         "id": "high",
+         "label": "high"
+        }
+       ]
+      },
+      "saves_default": false
+     }
+    },
+    {
+     "plaintext": "{\"t\":\"run\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"opus\",\"label\":\"Opus 5.5\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"high\",\"label\":\"high\"}]}}",
+     "_note": "no session_id: ignored whole",
+     "decoded": null
+    },
+    {
+     "plaintext": "{\"t\":\"run\",\"session_id\":7,\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"opus\",\"label\":\"Opus 5.5\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"high\",\"label\":\"high\"}]}}",
+     "_note": "session_id not a string: ignored",
+     "decoded": null
+    },
+    {
+     "plaintext": "{\"t\":\"run\",\"session_id\":\"\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"opus\",\"label\":\"Opus 5.5\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"high\",\"label\":\"high\"}]}}",
+     "_note": "an empty session_id: ignored",
+     "decoded": null
+    },
+    {
+     "plaintext": "{\"t\":\"run\",\"session_id\":\"s1\",\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"high\",\"label\":\"high\"}]}}",
+     "_note": "no model object: ignored",
+     "decoded": null
+    },
+    {
+     "plaintext": "{\"t\":\"run\",\"session_id\":\"s1\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"opus\",\"label\":\"Opus 5.5\"}]},\"effort\":\"high\"}",
+     "_note": "effort not an object: ignored",
+     "decoded": null
+    },
+    {
+     "plaintext": "{\"t\":\"run\",\"session_id\":\"s1\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"opus\",\"label\":\"Opus 5.5\"}]},\"effort\":{}}",
+     "_note": "an empty field: no value, no choices, and so not enabled",
+     "decoded": {
+      "session_id": "s1",
+      "model": {
+       "id": "opus",
+       "choices": [
+        {
+         "id": "opus",
+         "label": "Opus 5.5"
+        }
+       ]
+      },
+      "effort": {
+       "choices": []
+      },
+      "saves_default": false
+     }
+    },
+    {
+     "plaintext": "{\"t\":\"run\",\"session_id\":\"s1\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"opus\",\"label\":\"Opus 5.5\"}]},\"effort\":{\"id\":\"high\",\"choices\":\"low\"}}",
+     "_note": "choices not an array reads as empty, and the id then names nothing",
+     "decoded": {
+      "session_id": "s1",
+      "model": {
+       "id": "opus",
+       "choices": [
+        {
+         "id": "opus",
+         "label": "Opus 5.5"
+        }
+       ]
+      },
+      "effort": {
+       "choices": []
+      },
+      "saves_default": false
+     }
+    },
+    {
+     "plaintext": "{\"t\":\"run\",\"session_id\":\"s1\",\"model\":{\"id\":\"b\",\"choices\":[\"a\",{\"id\":\"a b\",\"label\":\"x\"},{\"id\":\"b\",\"label\":7},{\"id\":\"c\",\"label\":\"  \"},{\"label\":\"x\"},{\"id\":\"d\",\"label\":\"D\"},{\"id\":\"d\",\"label\":\"D again\"},{\"id\":\"e\\\"q\",\"label\":\"x\"},{\"id\":\"é\",\"label\":\"x\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"high\",\"label\":\"high\"}]}}",
+     "_note": "bad entries are skipped one by one: not an object, an id with a space, a label that is not a string, a blank label, no id, a repeat, a quote, non-ASCII; `id` named a skipped one",
+     "decoded": {
+      "session_id": "s1",
+      "model": {
+       "choices": [
+        {
+         "id": "d",
+         "label": "D"
+        }
+       ]
+      },
+      "effort": {
+       "id": "high",
+       "choices": [
+        {
+         "id": "low",
+         "label": "low"
+        },
+        {
+         "id": "high",
+         "label": "high"
+        }
+       ]
+      },
+      "saves_default": false
+     }
+    },
+    {
+     "plaintext": "{\"t\":\"run\",\"session_id\":\"s1\",\"model\":{\"id\":\"m51\",\"pending\":\"m3\",\"choices\":[{\"id\":\"m0\",\"label\":\"M0\"},{\"id\":\"m1\",\"label\":\"M1\"},{\"id\":\"m2\",\"label\":\"M2\"},{\"id\":\"m3\",\"label\":\"M3\"},{\"id\":\"m4\",\"label\":\"M4\"},{\"id\":\"m5\",\"label\":\"M5\"},{\"id\":\"m6\",\"label\":\"M6\"},{\"id\":\"m7\",\"label\":\"M7\"},{\"id\":\"m8\",\"label\":\"M8\"},{\"id\":\"m9\",\"label\":\"M9\"},{\"id\":\"m10\",\"label\":\"M10\"},{\"id\":\"m11\",\"label\":\"M11\"},{\"id\":\"m12\",\"label\":\"M12\"},{\"id\":\"m13\",\"label\":\"M13\"},{\"id\":\"m14\",\"label\":\"M14\"},{\"id\":\"m15\",\"label\":\"M15\"},{\"id\":\"m16\",\"label\":\"M16\"},{\"id\":\"m17\",\"label\":\"M17\"},{\"id\":\"m18\",\"label\":\"M18\"},{\"id\":\"m19\",\"label\":\"M19\"},{\"id\":\"m20\",\"label\":\"M20\"},{\"id\":\"m21\",\"label\":\"M21\"},{\"id\":\"m22\",\"label\":\"M22\"},{\"id\":\"m23\",\"label\":\"M23\"},{\"id\":\"m24\",\"label\":\"M24\"},{\"id\":\"m25\",\"label\":\"M25\"},{\"id\":\"m26\",\"label\":\"M26\"},{\"id\":\"m27\",\"label\":\"M27\"},{\"id\":\"m28\",\"label\":\"M28\"},{\"id\":\"m29\",\"label\":\"M29\"},{\"id\":\"m30\",\"label\":\"M30\"},{\"id\":\"m31\",\"label\":\"M31\"},{\"id\":\"m32\",\"label\":\"M32\"},{\"id\":\"m33\",\"label\":\"M33\"},{\"id\":\"m34\",\"label\":\"M34\"},{\"id\":\"m35\",\"label\":\"M35\"},{\"id\":\"m36\",\"label\":\"M36\"},{\"id\":\"m37\",\"label\":\"M37\"},{\"id\":\"m38\",\"label\":\"M38\"},{\"id\":\"m39\",\"label\":\"M39\"},{\"id\":\"m40\",\"label\":\"M40\"},{\"id\":\"m41\",\"label\":\"M41\"},{\"id\":\"m42\",\"label\":\"M42\"},{\"id\":\"m43\",\"label\":\"M43\"},{\"id\":\"m44\",\"label\":\"M44\"},{\"id\":\"m45\",\"label\":\"M45\"},{\"id\":\"m46\",\"label\":\"M46\"},{\"id\":\"m47\",\"label\":\"M47\"},{\"id\":\"m48\",\"label\":\"M48\"},{\"id\":\"m49\",\"label\":\"M49\"},{\"id\":\"m50\",\"label\":\"M50\"},{\"id\":\"m51\",\"label\":\"M51\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"high\",\"label\":\"high\"}]}}",
+     "_note": "fifty-two choices: the first fifty are kept, so an id naming the fifty-second is absent",
+     "decoded": {
+      "session_id": "s1",
+      "model": {
+       "pending": "m3",
+       "choices": [
+        {
+         "id": "m0",
+         "label": "M0"
+        },
+        {
+         "id": "m1",
+         "label": "M1"
+        },
+        {
+         "id": "m2",
+         "label": "M2"
+        },
+        {
+         "id": "m3",
+         "label": "M3"
+        },
+        {
+         "id": "m4",
+         "label": "M4"
+        },
+        {
+         "id": "m5",
+         "label": "M5"
+        },
+        {
+         "id": "m6",
+         "label": "M6"
+        },
+        {
+         "id": "m7",
+         "label": "M7"
+        },
+        {
+         "id": "m8",
+         "label": "M8"
+        },
+        {
+         "id": "m9",
+         "label": "M9"
+        },
+        {
+         "id": "m10",
+         "label": "M10"
+        },
+        {
+         "id": "m11",
+         "label": "M11"
+        },
+        {
+         "id": "m12",
+         "label": "M12"
+        },
+        {
+         "id": "m13",
+         "label": "M13"
+        },
+        {
+         "id": "m14",
+         "label": "M14"
+        },
+        {
+         "id": "m15",
+         "label": "M15"
+        },
+        {
+         "id": "m16",
+         "label": "M16"
+        },
+        {
+         "id": "m17",
+         "label": "M17"
+        },
+        {
+         "id": "m18",
+         "label": "M18"
+        },
+        {
+         "id": "m19",
+         "label": "M19"
+        },
+        {
+         "id": "m20",
+         "label": "M20"
+        },
+        {
+         "id": "m21",
+         "label": "M21"
+        },
+        {
+         "id": "m22",
+         "label": "M22"
+        },
+        {
+         "id": "m23",
+         "label": "M23"
+        },
+        {
+         "id": "m24",
+         "label": "M24"
+        },
+        {
+         "id": "m25",
+         "label": "M25"
+        },
+        {
+         "id": "m26",
+         "label": "M26"
+        },
+        {
+         "id": "m27",
+         "label": "M27"
+        },
+        {
+         "id": "m28",
+         "label": "M28"
+        },
+        {
+         "id": "m29",
+         "label": "M29"
+        },
+        {
+         "id": "m30",
+         "label": "M30"
+        },
+        {
+         "id": "m31",
+         "label": "M31"
+        },
+        {
+         "id": "m32",
+         "label": "M32"
+        },
+        {
+         "id": "m33",
+         "label": "M33"
+        },
+        {
+         "id": "m34",
+         "label": "M34"
+        },
+        {
+         "id": "m35",
+         "label": "M35"
+        },
+        {
+         "id": "m36",
+         "label": "M36"
+        },
+        {
+         "id": "m37",
+         "label": "M37"
+        },
+        {
+         "id": "m38",
+         "label": "M38"
+        },
+        {
+         "id": "m39",
+         "label": "M39"
+        },
+        {
+         "id": "m40",
+         "label": "M40"
+        },
+        {
+         "id": "m41",
+         "label": "M41"
+        },
+        {
+         "id": "m42",
+         "label": "M42"
+        },
+        {
+         "id": "m43",
+         "label": "M43"
+        },
+        {
+         "id": "m44",
+         "label": "M44"
+        },
+        {
+         "id": "m45",
+         "label": "M45"
+        },
+        {
+         "id": "m46",
+         "label": "M46"
+        },
+        {
+         "id": "m47",
+         "label": "M47"
+        },
+        {
+         "id": "m48",
+         "label": "M48"
+        },
+        {
+         "id": "m49",
+         "label": "M49"
+        }
+       ]
+      },
+      "effort": {
+       "id": "high",
+       "choices": [
+        {
+         "id": "low",
+         "label": "low"
+        },
+        {
+         "id": "high",
+         "label": "high"
+        }
+       ]
+      },
+      "saves_default": false
+     }
+    },
+    {
+     "plaintext": "{\"t\":\"run\",\"session_id\":\"s1\",\"model\":{\"id\":7,\"pending\":\"ghost\",\"choices\":[{\"id\":\"opus\",\"label\":\"Opus 5.5\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"high\",\"label\":\"high\"}]}}",
+     "_note": "id not a string, pending not among the choices: both absent",
+     "decoded": {
+      "session_id": "s1",
+      "model": {
+       "choices": [
+        {
+         "id": "opus",
+         "label": "Opus 5.5"
+        }
+       ]
+      },
+      "effort": {
+       "id": "high",
+       "choices": [
+        {
+         "id": "low",
+         "label": "low"
+        },
+        {
+         "id": "high",
+         "label": "high"
+        }
+       ]
+      },
+      "saves_default": false
+     }
+    },
+    {
+     "plaintext": "{\"t\":\"run\",\"session_id\":\"s1\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"opus\",\"label\":\"Opus 5.5\"}],\"off\":\"\"},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"high\",\"label\":\"high\"}]}}",
+     "_note": "an empty off still disables, with the phone's own sentence",
+     "decoded": {
+      "session_id": "s1",
+      "model": {
+       "id": "opus",
+       "choices": [
+        {
+         "id": "opus",
+         "label": "Opus 5.5"
+        }
+       ],
+       "off": "Not available for this session."
+      },
+      "effort": {
+       "id": "high",
+       "choices": [
+        {
+         "id": "low",
+         "label": "low"
+        },
+        {
+         "id": "high",
+         "label": "high"
+        }
+       ]
+      },
+      "saves_default": false
+     }
+    },
+    {
+     "plaintext": "{\"t\":\"run\",\"session_id\":\"s1\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"opus\",\"label\":\"Opus 5.5\"}],\"off\":7},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"high\",\"label\":\"high\"}]}}",
+     "_note": "an off that is not a string still disables",
+     "decoded": {
+      "session_id": "s1",
+      "model": {
+       "id": "opus",
+       "choices": [
+        {
+         "id": "opus",
+         "label": "Opus 5.5"
+        }
+       ],
+       "off": "Not available for this session."
+      },
+      "effort": {
+       "id": "high",
+       "choices": [
+        {
+         "id": "low",
+         "label": "low"
+        },
+        {
+         "id": "high",
+         "label": "high"
+        }
+       ]
+      },
+      "saves_default": false
+     }
+    },
+    {
+     "plaintext": "{\"t\":\"run\",\"session_id\":\"s1\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"opus\",\"label\":\"Opus 5.5\"}],\"off\":null},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"high\",\"label\":\"high\"}]}}",
+     "_note": "a null off still disables: the key is present",
+     "decoded": {
+      "session_id": "s1",
+      "model": {
+       "id": "opus",
+       "choices": [
+        {
+         "id": "opus",
+         "label": "Opus 5.5"
+        }
+       ],
+       "off": "Not available for this session."
+      },
+      "effort": {
+       "id": "high",
+       "choices": [
+        {
+         "id": "low",
+         "label": "low"
+        },
+        {
+         "id": "high",
+         "label": "high"
+        }
+       ]
+      },
+      "saves_default": false
+     }
+    },
+    {
+     "plaintext": "{\"t\":\"run\",\"session_id\":\"s1\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"opus\",\"label\":\"LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL\"}],\"off\":\"rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr\",\"failed\":\"fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\"},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"high\",\"label\":\"high\"}]}}",
+     "_note": "the phone cuts an over-long label and sentence itself",
+     "decoded": {
+      "session_id": "s1",
+      "model": {
+       "id": "opus",
+       "choices": [
+        {
+         "id": "opus",
+         "label": "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL…"
+        }
+       ],
+       "off": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr…",
+       "failed": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff…"
+      },
+      "effort": {
+       "id": "high",
+       "choices": [
+        {
+         "id": "low",
+         "label": "low"
+        },
+        {
+         "id": "high",
+         "label": "high"
+        }
+       ]
+      },
+      "saves_default": false
+     }
+    },
+    {
+     "plaintext": "{\"t\":\"run\",\"session_id\":\"s1\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"opus\",\"label\":\"Opus 5.5\"}],\"failed\":7},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"high\",\"label\":\"high\"}],\"failed\":\"   \"}}",
+     "_note": "a failed that is not a string, or is blank, is absent",
+     "decoded": {
+      "session_id": "s1",
+      "model": {
+       "id": "opus",
+       "choices": [
+        {
+         "id": "opus",
+         "label": "Opus 5.5"
+        }
+       ]
+      },
+      "effort": {
+       "id": "high",
+       "choices": [
+        {
+         "id": "high",
+         "label": "high"
+        }
+       ]
+      },
+      "saves_default": false
+     }
+    },
+    {
+     "plaintext": "{\"t\":\"run\",\"session_id\":\"s1\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"opus\",\"label\":\"Opus 5.5\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"high\",\"label\":\"high\"}]},\"saves_default\":\"true\"}",
+     "_note": "saves_default is true only for the boolean",
+     "decoded": {
+      "session_id": "s1",
+      "model": {
+       "id": "opus",
+       "choices": [
+        {
+         "id": "opus",
+         "label": "Opus 5.5"
+        }
+       ]
+      },
+      "effort": {
+       "id": "high",
+       "choices": [
+        {
+         "id": "low",
+         "label": "low"
+        },
+        {
+         "id": "high",
+         "label": "high"
+        }
+       ]
+      },
+      "saves_default": false
+     }
+    },
+    {
+     "plaintext": "{\"t\":\"run\",\"session_id\":\"s1\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"opus\",\"label\":\"Opus 5.5\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"high\",\"label\":\"high\"}]},\"saves_default\":1}",
+     "_note": "nor for 1",
+     "decoded": {
+      "session_id": "s1",
+      "model": {
+       "id": "opus",
+       "choices": [
+        {
+         "id": "opus",
+         "label": "Opus 5.5"
+        }
+       ]
+      },
+      "effort": {
+       "id": "high",
+       "choices": [
+        {
+         "id": "low",
+         "label": "low"
+        },
+        {
+         "id": "high",
+         "label": "high"
+        }
+       ]
+      },
+      "saves_default": false
+     }
+    },
+    {
+     "plaintext": "{\"t\":\"run\",\"session_id\":\"s1\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"opus\",\"label\":\"Opus 5.5\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"high\",\"label\":\"high\"}]},\"saves_default\":true}",
+     "_note": "the boolean",
+     "decoded": {
+      "session_id": "s1",
+      "model": {
+       "id": "opus",
+       "choices": [
+        {
+         "id": "opus",
+         "label": "Opus 5.5"
+        }
+       ]
+      },
+      "effort": {
+       "id": "high",
+       "choices": [
+        {
+         "id": "low",
+         "label": "low"
+        },
+        {
+         "id": "high",
+         "label": "high"
+        }
+       ]
+      },
+      "saves_default": true
+     }
+    },
+    {
+     "plaintext": "{\"saves_default\":true,\"later\":{\"x\":1},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"high\",\"label\":\"high\"}]},\"session_id\":\"s1\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"opus\",\"label\":\"Opus 5.5\"}]},\"t\":\"run\"}",
+     "_note": "another key order and a key from a later contract",
+     "decoded": {
+      "session_id": "s1",
+      "model": {
+       "id": "opus",
+       "choices": [
+        {
+         "id": "opus",
+         "label": "Opus 5.5"
+        }
+       ]
+      },
+      "effort": {
+       "id": "high",
+       "choices": [
+        {
+         "id": "low",
+         "label": "low"
+        },
+        {
+         "id": "high",
+         "label": "high"
+        }
+       ]
+      },
+      "saves_default": true
+     }
+    },
+    {
+     "plaintext": "{\"t\":\"run\",\"session_id\":\"s1\",\"model\":[],\"effort\":{}}",
+     "_note": "model an array: ignored",
+     "decoded": null
+    },
+    {
+     "plaintext": "not json",
+     "_note": "not JSON: ignored",
+     "decoded": null
+    }
+   ]
+  },
+  "offer": {
+   "_note": "phone_rules.offer. caps is the desk's latest caps list, or null when it has sent none; held says whether a run frame is held for the session.",
+   "cases": [
+    {
+     "online": true,
+     "caps": [
+      "list_dir",
+      "run_options"
+     ],
+     "held": true,
+     "controls": "shown"
+    },
+    {
+     "online": true,
+     "caps": [
+      "run_options"
+     ],
+     "held": true,
+     "controls": "shown"
+    },
+    {
+     "online": true,
+     "caps": [
+      "list_dir",
+      "run_options",
+      "something_newer"
+     ],
+     "held": true,
+     "controls": "shown"
+    },
+    {
+     "online": true,
+     "caps": [
+      "list_dir",
+      "run_options"
+     ],
+     "held": false,
+     "controls": "absent"
+    },
+    {
+     "online": true,
+     "caps": [
+      "list_dir"
+     ],
+     "held": true,
+     "controls": "absent"
+    },
+    {
+     "online": true,
+     "caps": [],
+     "held": true,
+     "controls": "absent"
+    },
+    {
+     "online": true,
+     "caps": null,
+     "held": true,
+     "controls": "absent"
+    },
+    {
+     "online": false,
+     "caps": [
+      "list_dir",
+      "run_options"
+     ],
+     "held": true,
+     "controls": "absent"
+    }
+   ]
+  },
+  "accept": {
+   "_note": "phone_rules.accept, for one session. Events in order; `accepted` has one entry per `run` event; `held` is whether a frame is held after the last event.",
+   "cases": [
+    {
+     "events": [
+      "watch_sent",
+      "ok_watching",
+      "run"
+     ],
+     "_note": "the ordinary order",
+     "accepted": [
+      true
+     ],
+     "held": true
+    },
+    {
+     "events": [
+      "run"
+     ],
+     "_note": "a leftover the relay stored, delivered before any watch",
+     "accepted": [
+      false
+     ],
+     "held": false
+    },
+    {
+     "events": [
+      "watch_sent",
+      "run",
+      "ok_watching",
+      "run"
+     ],
+     "_note": "a leftover that arrives between the watch and its ok is ignored; the fresh one after it is held",
+     "accepted": [
+      false,
+      true
+     ],
+     "held": true
+    },
+    {
+     "events": [
+      "watch_sent",
+      "ok_watching",
+      "run",
+      "run"
+     ],
+     "_note": "a later frame replaces the held one",
+     "accepted": [
+      true,
+      true
+     ],
+     "held": true
+    },
+    {
+     "events": [
+      "watch_sent",
+      "ok_watching",
+      "run",
+      "unwatch_sent",
+      "run"
+     ],
+     "_note": "after unwatch: dropped, and a late frame is ignored",
+     "accepted": [
+      true,
+      false
+     ],
+     "held": false
+    },
+    {
+     "events": [
+      "watch_sent",
+      "ok_watching",
+      "run",
+      "socket_closed",
+      "run"
+     ],
+     "_note": "after the socket closes",
+     "accepted": [
+      true,
+      false
+     ],
+     "held": false
+    },
+    {
+     "events": [
+      "watch_sent",
+      "ok_watching",
+      "run",
+      "session_removed",
+      "run"
+     ],
+     "_note": "after the session leaves the roster",
+     "accepted": [
+      true,
+      false
+     ],
+     "held": false
+    },
+    {
+     "events": [
+      "watch_sent",
+      "ok_watching",
+      "run",
+      "socket_closed",
+      "watch_sent",
+      "run",
+      "ok_watching",
+      "run"
+     ],
+     "_note": "a reconnect: nothing is held until the new watch is answered",
+     "accepted": [
+      true,
+      false,
+      true
+     ],
+     "held": true
+    },
+    {
+     "events": [
+      "ok_watching",
+      "run"
+     ],
+     "_note": "an ok for a watch this phone did not send does not open the window",
+     "accepted": [
+      false
+     ],
+     "held": false
+    },
+    {
+     "events": [
+      "watch_sent",
+      "ok_watching",
+      "watch_sent",
+      "run"
+     ],
+     "_note": "re-sending watch while watching keeps the window open",
+     "accepted": [
+      true
+     ],
+     "held": true
+    }
+   ]
+  },
+  "display": {
+   "_note": "phone_rules.display, for the frame serialise.cases[state] decodes to. `text` is the value shown; `below` the sentences under the control, in order; `index` and `pending_index` are the positions of id and pending in the field's choices (the dial's confirmed mark and its pointer), null when absent.",
+   "machine": "Studio",
+   "cases": [
+    {
+     "state": "claude_enabled",
+     "field": "model",
+     "text": "Opus 5.5",
+     "applying": false,
+     "enabled": true,
+     "below": [],
+     "index": 1,
+     "pending_index": null
+    },
+    {
+     "state": "claude_enabled",
+     "field": "effort",
+     "text": "high",
+     "applying": false,
+     "enabled": true,
+     "below": [],
+     "index": 2,
+     "pending_index": null
+    },
+    {
+     "state": "claude_typed",
+     "field": "model",
+     "text": "Opus 5.5",
+     "applying": false,
+     "enabled": true,
+     "below": [
+      "Changing this also changes the default for new sessions on Studio."
+     ],
+     "index": 1,
+     "pending_index": null
+    },
+    {
+     "state": "claude_typed",
+     "field": "effort",
+     "text": "high",
+     "applying": false,
+     "enabled": true,
+     "below": [
+      "Changing this also changes the default for new sessions on Studio."
+     ],
+     "index": 2,
+     "pending_index": null
+    },
+    {
+     "state": "not_known_yet",
+     "field": "model",
+     "text": "Model not known yet",
+     "applying": false,
+     "enabled": true,
+     "below": [],
+     "index": null,
+     "pending_index": null
+    },
+    {
+     "state": "not_known_yet",
+     "field": "effort",
+     "text": "Effort not known yet",
+     "applying": false,
+     "enabled": true,
+     "below": [],
+     "index": null,
+     "pending_index": null
+    },
+    {
+     "state": "model_pending",
+     "field": "model",
+     "text": "Sonnet 5.5",
+     "applying": true,
+     "enabled": true,
+     "below": [],
+     "index": 1,
+     "pending_index": 2
+    },
+    {
+     "state": "model_pending",
+     "field": "effort",
+     "text": "high",
+     "applying": false,
+     "enabled": true,
+     "below": [],
+     "index": 2,
+     "pending_index": null
+    },
+    {
+     "state": "effort_pending",
+     "field": "model",
+     "text": "Opus 5.5",
+     "applying": false,
+     "enabled": true,
+     "below": [],
+     "index": 1,
+     "pending_index": null
+    },
+    {
+     "state": "effort_pending",
+     "field": "effort",
+     "text": "xhigh",
+     "applying": true,
+     "enabled": true,
+     "below": [],
+     "index": 2,
+     "pending_index": 3
+    },
+    {
+     "state": "effort_confirmed",
+     "field": "model",
+     "text": "Opus 5.5",
+     "applying": false,
+     "enabled": true,
+     "below": [],
+     "index": 1,
+     "pending_index": null
+    },
+    {
+     "state": "effort_confirmed",
+     "field": "effort",
+     "text": "xhigh",
+     "applying": false,
+     "enabled": true,
+     "below": [],
+     "index": 3,
+     "pending_index": null
+    },
+    {
+     "state": "effort_failed",
+     "field": "model",
+     "text": "Opus 5.5",
+     "applying": false,
+     "enabled": true,
+     "below": [],
+     "index": 1,
+     "pending_index": null
+    },
+    {
+     "state": "effort_failed",
+     "field": "effort",
+     "text": "high",
+     "applying": false,
+     "enabled": true,
+     "below": [
+      "The session is still on high. xhigh was not applied."
+     ],
+     "index": 2,
+     "pending_index": null
+    },
+    {
+     "state": "no_route",
+     "field": "model",
+     "text": "Opus 5.5",
+     "applying": false,
+     "enabled": false,
+     "below": [
+      "This session has no terminal to type into, and its Remote Control bridge is off."
+     ],
+     "index": 1,
+     "pending_index": null
+    },
+    {
+     "state": "no_route",
+     "field": "effort",
+     "text": "high",
+     "applying": false,
+     "enabled": false,
+     "below": [
+      "This session has no terminal to type into, and its Remote Control bridge is off."
+     ],
+     "index": 2,
+     "pending_index": null
+    },
+    {
+     "state": "no_effort_model",
+     "field": "model",
+     "text": "Haiku 5.5",
+     "applying": false,
+     "enabled": true,
+     "below": [],
+     "index": 3,
+     "pending_index": null
+    },
+    {
+     "state": "no_effort_model",
+     "field": "effort",
+     "text": "Effort not known yet",
+     "applying": false,
+     "enabled": false,
+     "below": [
+      "This model has no effort setting."
+     ],
+     "index": null,
+     "pending_index": null
+    },
+    {
+     "state": "codex",
+     "field": "model",
+     "text": "GPT-6.2 Sol",
+     "applying": false,
+     "enabled": true,
+     "below": [],
+     "index": 0,
+     "pending_index": null
+    },
+    {
+     "state": "codex",
+     "field": "effort",
+     "text": "high",
+     "applying": false,
+     "enabled": true,
+     "below": [],
+     "index": 2,
+     "pending_index": null
+    },
+    {
+     "state": "codex_old",
+     "field": "model",
+     "text": "GPT-6.2 Sol",
+     "applying": false,
+     "enabled": true,
+     "below": [
+      "Changing this also changes the default for new sessions on Studio."
+     ],
+     "index": 0,
+     "pending_index": null
+    },
+    {
+     "state": "codex_old",
+     "field": "effort",
+     "text": "medium",
+     "applying": false,
+     "enabled": true,
+     "below": [
+      "Changing this also changes the default for new sessions on Studio."
+     ],
+     "index": 1,
+     "pending_index": null
+    },
+    {
+     "state": "grok",
+     "field": "model",
+     "text": "Grok 4.7 Build",
+     "applying": false,
+     "enabled": true,
+     "below": [],
+     "index": 0,
+     "pending_index": null
+    },
+    {
+     "state": "grok",
+     "field": "effort",
+     "text": "High",
+     "applying": false,
+     "enabled": true,
+     "below": [],
+     "index": 2,
+     "pending_index": null
+    },
+    {
+     "state": "running_outside_catalogue",
+     "field": "model",
+     "text": "claude-opus-4-1[1m]",
+     "applying": false,
+     "enabled": true,
+     "below": [],
+     "index": 4,
+     "pending_index": null
+    },
+    {
+     "state": "running_outside_catalogue",
+     "field": "effort",
+     "text": "medium",
+     "applying": false,
+     "enabled": true,
+     "below": [],
+     "index": 1,
+     "pending_index": null
+    },
+    {
+     "state": "ids_dropped",
+     "field": "model",
+     "text": "Opus 5.5",
+     "applying": true,
+     "enabled": true,
+     "below": [],
+     "index": null,
+     "pending_index": 0
+    },
+    {
+     "state": "ids_dropped",
+     "field": "effort",
+     "text": "high",
+     "applying": false,
+     "enabled": true,
+     "below": [],
+     "index": 1,
+     "pending_index": null
+    },
+    {
+     "state": "labels",
+     "field": "model",
+     "text": "a",
+     "applying": false,
+     "enabled": true,
+     "below": [],
+     "index": 0,
+     "pending_index": null
+    },
+    {
+     "state": "labels",
+     "field": "effort",
+     "text": "Effort not known yet",
+     "applying": false,
+     "enabled": true,
+     "below": [],
+     "index": null,
+     "pending_index": null
+    },
+    {
+     "state": "capped",
+     "field": "model",
+     "text": "Model 59",
+     "applying": true,
+     "enabled": true,
+     "below": [],
+     "index": 48,
+     "pending_index": 49
+    },
+    {
+     "state": "capped",
+     "field": "effort",
+     "text": "high",
+     "applying": false,
+     "enabled": true,
+     "below": [],
+     "index": 2,
+     "pending_index": null
+    },
+    {
+     "state": "capped_plain",
+     "field": "model",
+     "text": "Model 03",
+     "applying": false,
+     "enabled": true,
+     "below": [],
+     "index": 3,
+     "pending_index": null
+    },
+    {
+     "state": "capped_plain",
+     "field": "effort",
+     "text": "high",
+     "applying": false,
+     "enabled": true,
+     "below": [],
+     "index": 2,
+     "pending_index": null
+    },
+    {
+     "state": "long_reason",
+     "field": "model",
+     "text": "Opus 5.5",
+     "applying": false,
+     "enabled": false,
+     "below": [
+      "It can't be changed because the bridge is off and the bridge is off and the bridge is off and the bridge is off and the bridge is off and the bridge is off and the bridge is off and the bridge is off…"
+     ],
+     "index": 1,
+     "pending_index": null
+    },
+    {
+     "state": "long_reason",
+     "field": "effort",
+     "text": "high",
+     "applying": false,
+     "enabled": true,
+     "below": [
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+     ],
+     "index": 2,
+     "pending_index": null
+    },
+    {
+     "state": "id_not_offered",
+     "field": "model",
+     "text": "Model not known yet",
+     "applying": false,
+     "enabled": true,
+     "below": [],
+     "index": null,
+     "pending_index": null
+    },
+    {
+     "state": "id_not_offered",
+     "field": "effort",
+     "text": "high",
+     "applying": false,
+     "enabled": true,
+     "below": [],
+     "index": 2,
+     "pending_index": null
+    }
+   ]
+  }
+ },
+ "sealed": {
+  "caps": {
+   "from": "dsk_5f3c9a0e1b7d2468",
+   "to": "ph_a1b2c3d4e5f60718",
+   "class": "state",
+   "push": "none",
+   "ck": "ZLlV0_-3SYMctwpoRcSPDA",
+   "plaintext": "{\"t\":\"caps\",\"caps\":[\"list_dir\",\"run_options\"]}",
+   "plaintext_bytes": 46,
+   "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
+   "nonce": "0000000000000000000001f4",
+   "ct": "AAAAAAAAAAAAAAH0iteyMH0c5VzFKao7yJ8XaC5EDCQlUZ4FkcINL5Ze+1YtnGZlVhJTWcpTDUM6AY1LqIuEHnr8OxvmEwTQ4o0="
+  },
+  "caps_v11": {
+   "from": "dsk_5f3c9a0e1b7d2468",
+   "to": "ph_a1b2c3d4e5f60718",
+   "class": "state",
+   "push": "none",
+   "ck": "ZLlV0_-3SYMctwpoRcSPDA",
+   "plaintext": "{\"t\":\"caps\",\"caps\":[\"list_dir\"]}",
+   "plaintext_bytes": 32,
+   "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
+   "nonce": "0000000000000000000001f5",
+   "ct": "AAAAAAAAAAAAAAH1xpmM+bgdFo2Hf57T3yRUutnptEGC/ZPNSoOhZ8G2pP1jS9ZoOO9uUfc7PVS313Ql"
+  },
+  "run": {
+   "claude_enabled": {
+    "from": "dsk_5f3c9a0e1b7d2468",
+    "to": "ph_a1b2c3d4e5f60718",
+    "class": "state",
+    "push": "none",
+    "ck": "7eo4fq4NSFg2cdcGdKUqmw",
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"default\",\"label\":\"Default (recommended)\"},{\"id\":\"opus\",\"label\":\"Opus 5.5\"},{\"id\":\"sonnet\",\"label\":\"Sonnet 5.5\"},{\"id\":\"haiku\",\"label\":\"Haiku 5.5\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"medium\",\"label\":\"medium\"},{\"id\":\"high\",\"label\":\"high\"},{\"id\":\"xhigh\",\"label\":\"xhigh\"},{\"id\":\"max\",\"label\":\"max\"}]}}",
+    "plaintext_bytes": 405,
+    "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
+    "nonce": "0000000000000000000001f6",
+    "ct": "AAAAAAAAAAAAAAH2gq63m8vKyq3kEmOcDoH8olXTP6RSj2NKoiU+JUIw29wXc8Wzvl7VppiCpRrIaz41oeWQX1beEih2w64LLoM9g8sRjyIOePXBo6/fHozxs0Di61nmqUHpsG+ozsCPekbGYtzzWpFAE5AB752K4/uglpjreQmKSv9+T7aFoZO4VpDTdlO+aJM9nagTCr1/q4kbpq03Q31MEzs4M5odpmj7QDitUCTwMCyvfZTeFZBLTOj3Wd9kEs8LCVphC3xk5nHObtQlgRx08NZ0ceTL/LkfXgSvxxDkIHwieGm83i+iicMxsWcYMKIvs7uUyUOfjIu0ZiYqi54TRE4xmZOGROsZGQ7INOE0iE7Z1ayMHwVZo5WYtD7L1R1bymHg3772XqfxmCtj7NXvdZgYE1hB3bLH0AAZ4NlECSbAkd6uRfHmav6ZnJPifmvQ6LYkchR5hvMMkI2W7At8A+AYP5tMzzCHCxlj8hvK5VHxrzINYiWe1YHCKzJuOuZP9efqR/jtebTILlZcgTFIqt5V3IJTaFnqvKUZ/0UkQtYCS0C/XN5WJsz+ZvgF4g=="
+   },
+   "claude_typed": {
+    "from": "dsk_5f3c9a0e1b7d2468",
+    "to": "ph_a1b2c3d4e5f60718",
+    "class": "state",
+    "push": "none",
+    "ck": "7eo4fq4NSFg2cdcGdKUqmw",
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"default\",\"label\":\"Default (recommended)\"},{\"id\":\"opus\",\"label\":\"Opus 5.5\"},{\"id\":\"sonnet\",\"label\":\"Sonnet 5.5\"},{\"id\":\"haiku\",\"label\":\"Haiku 5.5\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"medium\",\"label\":\"medium\"},{\"id\":\"high\",\"label\":\"high\"},{\"id\":\"xhigh\",\"label\":\"xhigh\"},{\"id\":\"max\",\"label\":\"max\"}]},\"saves_default\":true}",
+    "plaintext_bytes": 426,
+    "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
+    "nonce": "0000000000000000000001f7",
+    "ct": "AAAAAAAAAAAAAAH3f012dIFwOjzPogsO+/dyOWgeqcjVb6CaxVrWPKMJxiqfhPsEtABLleHozDOaChYtpsxChlP8txswcJm05/Sbb5v3TLSQAq9JfXl/bbBB4wSbvyx/WcE6Jd0s8SOgZNMpfM0ILEoqWlUfmfz7AMHSqSomVzULs9nHRg+MQ39wP9lNgzxkafMd1kYQDqhzQbkWuphca1MJyYL2TsUlAbZt90KK6l8sWWV1J4uyysyZT0AMYyWOcHesjKs0+GDe/4JHRfxtaTPSJ5W392qpMqm/smUcHH50tZMXMAUCbuWezpoSL59527S29hchzfHEzL2+MCYzaBcGmqvmQl8SzaJdVIWVDnnMQ9oOLgggBsgSULMA7t9sYcg02l7LiKZ/FFozF5C3bTy58EkCdY09hZvhA8hs1pIMBH5imOWO5UQQIa8atH4lAkVwjbXlmKAfXZUGDZwHxAOGX9fBLdUOIARhCWF4OCduckQaoOlZ5WWGb+24po8g4gEdPaWWheyKnP5QPlhzH4vhg04HH7QemRzfQABh8u54295Kt3WvXRo+wSZcqSvDcd4haj9tzr52SYx9J9lBdOr3kPlluw=="
+   },
+   "not_known_yet": {
+    "from": "dsk_5f3c9a0e1b7d2468",
+    "to": "ph_a1b2c3d4e5f60718",
+    "class": "state",
+    "push": "none",
+    "ck": "7eo4fq4NSFg2cdcGdKUqmw",
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"choices\":[{\"id\":\"default\",\"label\":\"Default (recommended)\"},{\"id\":\"opus\",\"label\":\"Opus 5.5\"},{\"id\":\"sonnet\",\"label\":\"Sonnet 5.5\"},{\"id\":\"haiku\",\"label\":\"Haiku 5.5\"}]},\"effort\":{\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"medium\",\"label\":\"medium\"},{\"id\":\"high\",\"label\":\"high\"},{\"id\":\"xhigh\",\"label\":\"xhigh\"},{\"id\":\"max\",\"label\":\"max\"}]}}",
+    "plaintext_bytes": 381,
+    "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
+    "nonce": "0000000000000000000001f8",
+    "ct": "AAAAAAAAAAAAAAH4ND6xN+XEHLIQOBKub8afzcrHfxmE0Z84M+bfb/josD3IlnK0HD2Z7bOfRJIRitNYgGBBeuUKHUgcbAlvNnGpQDCWBF9tbNmrJtJgigabe2WwW9Hl+Y+ssbfYXjrKo60XPJWRiOuqsqMPBVtFsb+Iy18eGNHyuFEYvapuUdTS01uNWNkfPfpj/tTdaVA11BW3ezRHHiWKILwDPSQbOUwIhacUZqE6u2BwAvgIbU8lJJPpmaX76I++49PHTgAWxMxdPiKbgwlhsDFS9GiuXRu9aW0QeiYfCq4VrZcb3/xPsqZCu6EJ0W7PEyFOqXDJvkthGub8so73tJyfAixwXekzg5zCLY6VZW9c/QX5hp1ujzW0DSfgxRveeDY7j7PTCXqQptBIPLR+ciYBpfUT6883f9YQoC/xuqcYowea0PCTtYYxpe5zweS2RH1CUwD6VuySTnYXx41byLl07ynAVfBm2O8sPdcVaNYGBod9hUrG0BUnmnyIOf3h/tKD/L0RurvvsSOtghjrdHERooD1mw=="
+   },
+   "effort_pending": {
+    "from": "dsk_5f3c9a0e1b7d2468",
+    "to": "ph_a1b2c3d4e5f60718",
+    "class": "state",
+    "push": "none",
+    "ck": "7eo4fq4NSFg2cdcGdKUqmw",
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"default\",\"label\":\"Default (recommended)\"},{\"id\":\"opus\",\"label\":\"Opus 5.5\"},{\"id\":\"sonnet\",\"label\":\"Sonnet 5.5\"},{\"id\":\"haiku\",\"label\":\"Haiku 5.5\"}]},\"effort\":{\"id\":\"high\",\"pending\":\"xhigh\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"medium\",\"label\":\"medium\"},{\"id\":\"high\",\"label\":\"high\"},{\"id\":\"xhigh\",\"label\":\"xhigh\"},{\"id\":\"max\",\"label\":\"max\"}]}}",
+    "plaintext_bytes": 423,
+    "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
+    "nonce": "0000000000000000000001f9",
+    "ct": "AAAAAAAAAAAAAAH5v9tAz9+aRRCrgsqRqDLZHKJVUFfsgTMB29Q1Zoq/t1XFI8dTzmrDIhpH95khUHRvBOXmksQDyhOqqAt1MXuQkk6Dji9GIV3PP0ge9SUXGNzer/8ZfPzsqG91HXobLW8c9escTNxq7anuzwHf2IlFmXVtvO44nqK49Ae5xMvUUmWdlQocJplrVtuHrxUYvdJY4y8C9Iib22Q1bF4EEGQH9XBqfZbME8tKsBKJipv5YPV53spPDxS4Bs/yrFylYg048Ovtlzr5af/+FFtSLID8ajCbHMCnUsPfwPHMR6RDwox8oY9i2JasCH8DK+7Urki8RmHvJxK48OcFa+ge4Y8ZNKjglwLsRha0lIxGh7cJTc0tCvKjoJ1aghQ6OFnW8eqZBFOrD0Peij6Jh+KkLEW7rm8WheR1wf2pnnHHsdSJII/tg0l20fVkADS3gxfQcTw3uubsOmGPhjY+V9zYcjmiq9Q/RHUNqNuaQd5lhrlQzgM76Hn+j8JvzMOUbjEpKiqNXpo2aQB9E93LBRre+qRQA9LgbGhLryTgQL1zrr334BZm2OTWs69bUYLoF3x2I2cnVDmAcxta+w=="
+   },
+   "effort_confirmed": {
+    "from": "dsk_5f3c9a0e1b7d2468",
+    "to": "ph_a1b2c3d4e5f60718",
+    "class": "state",
+    "push": "none",
+    "ck": "7eo4fq4NSFg2cdcGdKUqmw",
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"default\",\"label\":\"Default (recommended)\"},{\"id\":\"opus\",\"label\":\"Opus 5.5\"},{\"id\":\"sonnet\",\"label\":\"Sonnet 5.5\"},{\"id\":\"haiku\",\"label\":\"Haiku 5.5\"}]},\"effort\":{\"id\":\"xhigh\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"medium\",\"label\":\"medium\"},{\"id\":\"high\",\"label\":\"high\"},{\"id\":\"xhigh\",\"label\":\"xhigh\"},{\"id\":\"max\",\"label\":\"max\"}]}}",
+    "plaintext_bytes": 406,
+    "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
+    "nonce": "0000000000000000000001fa",
+    "ct": "AAAAAAAAAAAAAAH6AHgtQHyOpELkNgYJzcgfACzc0rFf43pExDcrd9gKMIT0DECrit8emUjOqaPsmIeO/4sOTuDGYKNQUamYuaKz1gGa6c+B2+LXi4bP6DZqhrmonKrEZuGZnl2DPk7SjZ/QdDegcp2JWxcf5PwgITwPB5LTdnCmdGLuss9tRhL/zEJszAUiTy5sq0lAocEByiV2ra20xru1M32pPPmlRG5UbGN5T3g49a32SFvXknFKBqsYV39gnau4ItrHmTC3fsaIFzFi2OdFoVE02YSAIPQJoLh42qJSWfgALD6GAwy+7JBjEhDwxhmcmrdDEAY4/YFZnhFOc75BxumfMNfvCfzIVwvJlnkuGE9/t584SUlj1ryMKBAcX2M/jUs+ljH+HxfWjRuXaY7x5MgUKRyruHGeRFAY/T0mn6G/dkzeLBqKVSdBLynDqHZZkS75uQpx4pJ/Sl1jA55CQOzYPGlxFNogQPBv0tsHxT2XGX4lFFdIShUhOQ1I4tugiM+QRO1JFBZEDmXy7loB7huhRJIIMhtoyl/KHU5Byxp4s9AAn8VQGGiANgCs6Oc="
+   },
+   "effort_failed": {
+    "from": "dsk_5f3c9a0e1b7d2468",
+    "to": "ph_a1b2c3d4e5f60718",
+    "class": "state",
+    "push": "none",
+    "ck": "7eo4fq4NSFg2cdcGdKUqmw",
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"default\",\"label\":\"Default (recommended)\"},{\"id\":\"opus\",\"label\":\"Opus 5.5\"},{\"id\":\"sonnet\",\"label\":\"Sonnet 5.5\"},{\"id\":\"haiku\",\"label\":\"Haiku 5.5\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"medium\",\"label\":\"medium\"},{\"id\":\"high\",\"label\":\"high\"},{\"id\":\"xhigh\",\"label\":\"xhigh\"},{\"id\":\"max\",\"label\":\"max\"}],\"failed\":\"The session is still on high. xhigh was not applied.\"}}",
+    "plaintext_bytes": 469,
+    "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
+    "nonce": "0000000000000000000001fb",
+    "ct": "AAAAAAAAAAAAAAH7BGcjtlkkuA6wZs4UPpBa/FTi886iuUv6dVvQZBccl6G/HDaNwNTxM08t1zGCwbvnsySIQ9LGPM22xienQD4bixw9+aq4bfoNDVHAGSSqTnRY1y0w7ciSzpCOH3RMPiwo19HijAi5NQ59fNnx1UsM4ylqJWR8RbNOAhOP5J9o2ygmgdhLhKjRT5Xz+UMV5Z8H3lQpIQVrfjBoqy9A7eWZ8ViyNPiAe45PfykNppDZdwXLIqr52CG4rYIRSckUpE0V6ZY3ZZeA9PdLMqofTZubQr09HZFlQSjyvVJL24XX39wYaNuEBED8hmS+BUdL0K5Vn29GJ58IHxSWE22fpq6fDvEXQB7cMdA9w+8ttkJeLt0C9J1VaFPqeVEis8oIP7VLyuY3TFbhxWnXonhLWvcE37wBYXQ6mkSqT5O5EbppN5b19/LKXOg8Vp6KuyiM9bqPj5cmLRATRNxZWVeSyH/hInFRbv5Hl2RWQnxW1onili52KvKXQDbrza/l9SIhUCIxzImddayjGpJHJ+iB+rEpl+kB0uaw9NkRBFOrTDTvOroikDwh5ARuFXWxZwKBfxclnF2axRHgi8KRLEDKFIrbB9NN34BE/6tuMOCrv44sGFrooHpce/PUYZUYuBN1+vXNsBatCGQ="
+   },
+   "no_route": {
+    "from": "dsk_5f3c9a0e1b7d2468",
+    "to": "ph_a1b2c3d4e5f60718",
+    "class": "state",
+    "push": "none",
+    "ck": "7eo4fq4NSFg2cdcGdKUqmw",
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"opus\",\"choices\":[{\"id\":\"default\",\"label\":\"Default (recommended)\"},{\"id\":\"opus\",\"label\":\"Opus 5.5\"},{\"id\":\"sonnet\",\"label\":\"Sonnet 5.5\"},{\"id\":\"haiku\",\"label\":\"Haiku 5.5\"}],\"off\":\"This session has no terminal to type into, and its Remote Control bridge is off.\"},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"medium\",\"label\":\"medium\"},{\"id\":\"high\",\"label\":\"high\"},{\"id\":\"xhigh\",\"label\":\"xhigh\"},{\"id\":\"max\",\"label\":\"max\"}],\"off\":\"This session has no terminal to type into, and its Remote Control bridge is off.\"}}",
+    "plaintext_bytes": 583,
+    "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
+    "nonce": "0000000000000000000001fc",
+    "ct": "AAAAAAAAAAAAAAH8rpDV69bZUgGC5bgW5Og0eyhrYJQXbK1lpfC85oPn89iI+Ysu7XQwj8nN3FllCTbvWPDwjY4OKZDvI2I9SmtiBIwtXmMn+AjnY+mBC59UB6Z+ZeZUbSp0uPxJqJ3cyT2oHOvn29iDERUp++9qrROfiTCoPrigj4X7B8F2RyNU3GN+N44uD52reTgWiNDR7lCF6k4yWhzcpoFHY6CLX3p5pRZo2c3/nmyMS2GEFHX69bqrpGDn+5IICi3KNxZXWexc3yujjIgB/vMGIbSi+KLxUynf7eFbc/8+IvZeO3kyojC0QebmJ3afzizbBHDPCiYiWfcTDgIPFlpMd1WIauxseQARlwt8SepErknIMXSPiy7mH28mUWzMqUSPCpv0dtWkj9ETwnM2c6wRvrnO0zrwIU+FmYUodt3eYVlukSSDIIoAh0ovNv2XBwARfzRLU0VFEc/i+eRDvYajzWGHVU4SijqjSJOqmXpEn3S4eYZgSkn54FShaVu8AWOz6kYKBoMJSmL0W+p7YfoUlqxrX+od+mahN7uEmelRr2ruBoj633v2g/vXEfrKYZe3NNUkUfLRo9hCY5lnEBz4Mt4gVPAVa09nBoDf9UbSrcl2xgDNMp5gq9yC7rmYnCpapaRbkcwPLYmf9V4ymHnMLqLFcovMHNQgO8LgazWGeOHj2mOhBYOLuInWQb4Ocx0oDPf/ILOSxlPdX0bqcvYPnsE+VkrPjtllyYsWznhle4avnNOCW2a8ESfT4Ep5ECn/rvSvLDp8COumiLQXn3yoLuvG+Z7r+s1N+hyUfB4="
+   },
+   "no_effort_model": {
+    "from": "dsk_5f3c9a0e1b7d2468",
+    "to": "ph_a1b2c3d4e5f60718",
+    "class": "state",
+    "push": "none",
+    "ck": "7eo4fq4NSFg2cdcGdKUqmw",
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"haiku\",\"choices\":[{\"id\":\"default\",\"label\":\"Default (recommended)\"},{\"id\":\"opus\",\"label\":\"Opus 5.5\"},{\"id\":\"sonnet\",\"label\":\"Sonnet 5.5\"},{\"id\":\"haiku\",\"label\":\"Haiku 5.5\"}]},\"effort\":{\"choices\":[],\"off\":\"This model has no effort setting.\"}}",
+    "plaintext_bytes": 290,
+    "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
+    "nonce": "0000000000000000000001fd",
+    "ct": "AAAAAAAAAAAAAAH9PNKiHKJ4LKwT/1ThRFZMyl6LctrU+evD6iTjRtAtBgtM7LtGvC3y/1FGdNUQtxopILm3QBoUJAXit8/ROTiVoFWexVHpytw7aIO8+gifUQXqhvbxpL62QQCaeLd13b04tnWLcyq4cdvSuD9+RQuhP5RDnZZUuAcXQtvi1Cz2VXumev7OSMvwHd6Up/1ZrjoHOnABfF84VAC+Jdx4mGzvMhHSiUONV6gYgKv5UJ8TniHVh0TrgcFhvZkIBSSyjw+cnhINwUHUfRkChoJUXXDlML8Bwnxx76O4SJWjWh00z6SvAlXin8j2VCxSoLNEa32Qs9B7HzxssEUkGJ0/yl7pYJQ8+xw9NBLxH6/P2ATv4gKs1Qtp370y2UekIvDIQfWyxPQzj36yeqGIWtFNXiEk5hR+"
+   },
+   "codex": {
+    "from": "dsk_5f3c9a0e1b7d2468",
+    "to": "ph_a1b2c3d4e5f60718",
+    "class": "state",
+    "push": "none",
+    "ck": "7eo4fq4NSFg2cdcGdKUqmw",
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"gpt-6.2-sol\",\"choices\":[{\"id\":\"gpt-6.2-sol\",\"label\":\"GPT-6.2 Sol\"},{\"id\":\"gpt-6.1-terra\",\"label\":\"GPT-6.1 Terra\"},{\"id\":\"gpt-6-luna\",\"label\":\"GPT-6 Luna\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"medium\",\"label\":\"medium\"},{\"id\":\"high\",\"label\":\"high\"},{\"id\":\"xhigh\",\"label\":\"xhigh\"},{\"id\":\"max\",\"label\":\"max\"},{\"id\":\"ultra\",\"label\":\"ultra\"}]}}",
+    "plaintext_bytes": 420,
+    "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
+    "nonce": "0000000000000000000001fe",
+    "ct": "AAAAAAAAAAAAAAH+pbTiFOpjl1JwCJ8sYIX4XVGkMro+4Wv7tGWc8bT2FkgpNyLVkhScyMdL6qJaiRG7mbqN6mygBGdZnXLyVhgdkL0wIfedrh0Hh4rUVgvBjmhvvbpgXc0FCYSFZ41uNofj8ODhl5A/4+07XW2cL6lQ9GJubwEQhoghqGn/+MEb05a9/PvjwF+0El1qGtS1LS78onWtx7wk3R3KEwJswbaJZoOPS+Goqw1t0+jA8gLWjjh6HKfesfiNbWyQOJUOz8b/VZ68lIiG4Kii79PBC2ecVfjOkUpjVekN+wFmwiFgafHh4X6qUnEsaNgFY34+QBFxJbWlvLxUQEbf2NHgTfCr0HcsFZuO8EIMGmu1hqpykitFrZAbJ8EZjmDYblQYed8JtKgRki7bXhRNRPG2JepY12uBWq4pigcSM3Go0WP+uB70Wf45PfxtWw/m/rUBaXepouYn18uANx7mQ1CfsdP4wosr+HFt3BXW+JArjzK/CivOjUpa18CaFeLVRE4AtZABxXaOULRoi/XhaJXxleC5wN7i91KHnOQbBG6AzJyAeB42cuhju20vDwmaSNcoyR/rKkB5WQ=="
+   },
+   "grok": {
+    "from": "dsk_5f3c9a0e1b7d2468",
+    "to": "ph_a1b2c3d4e5f60718",
+    "class": "state",
+    "push": "none",
+    "ck": "7eo4fq4NSFg2cdcGdKUqmw",
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"grok-4.7-build\",\"choices\":[{\"id\":\"grok-4.7-build\",\"label\":\"Grok 4.7 Build\"},{\"id\":\"grok-4.7\",\"label\":\"Grok 4.7\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"Low\"},{\"id\":\"medium\",\"label\":\"Medium\"},{\"id\":\"high\",\"label\":\"High\"},{\"id\":\"xhigh\",\"label\":\"Extra high\"}]}}",
+    "plaintext_bytes": 325,
+    "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
+    "nonce": "0000000000000000000001ff",
+    "ct": "AAAAAAAAAAAAAAH/zUFYHBtOX4VjmebRfaDEQRzxNxe04qryzQrnYAnoanB1AJ4G+3Bm+EuQrMxlEkTK2igCpEfqyTE0Q3kt/CTxT1B3Nn9ji8hI5s9UK4+4JWR5Cl0BYbROYonL+fcXt/YqZjinQKIJRLFdmkijWh35J00PJOwMjz6/MqvDkDVcH3uP2RrtC/5ZVWD/DVo56liaPGSSiIc8H9qL1koyU7R7Zf9uhY8hY1GbgUwZws01Ce+biioYmhrcCBl4XSKqgdkB9rn023mithc4d/QvXg8nZ96la8tm4jICNzenmAbzN8rT7lWLnYiRCou8LT2LiWCEIJJe++VNySM0RuPbfrLUIYeXKifgHnKQIy1dXOmJMMi/SUDikp71R7R5+axkQfuYnyphRF4fS2UwnLsTY4mDe7tx3FJkF4h5hOLjHyWBFzIfSWTckh8NRpnf9vRJuq3R7xw9vYY="
+   },
+   "labels": {
+    "from": "dsk_5f3c9a0e1b7d2468",
+    "to": "ph_a1b2c3d4e5f60718",
+    "class": "state",
+    "push": "none",
+    "ck": "7eo4fq4NSFg2cdcGdKUqmw",
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"a\",\"choices\":[{\"id\":\"a\",\"label\":\"a\"},{\"id\":\"b\",\"label\":\"Line one tab \"},{\"id\":\"c\",\"label\":\"Résumé 日本\"},{\"id\":\"d\",\"label\":\"LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL…\"},{\"id\":\"e\",\"label\":\"mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm…\"},{\"id\":\"f\",\"label\":\"say \\\"hi\\\" \\\\ there\"},{\"id\":\"g\",\"label\":\"g\"}]},\"effort\":{\"choices\":[{\"id\":\"low\",\"label\":\"low\"}]}}",
+    "plaintext_bytes": 450,
+    "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
+    "nonce": "000000000000000000000200",
+    "ct": "AAAAAAAAAAAAAAIAsaiWtQhWwkRujfUwCXkI6OgH3Tj5LAFietmH3HXuSbGPTrNT/y17JukTvcCZFWfpcbk4HSCuAgjQNiSw4Da5RFyBMv1PogZH+E/dNBE2at/IlOiGtfWg+2OlSz0nUJgA7HYwckAv5nGWu233u8Rfe8tWEQgvRr2vzUkGsoJtV35nQLyhDRFY3gGlVIcOA9RCWAW0TaOse8MlHr1aqqe4JuPiz65srIQ8mobWSIm4MqTbFPn1ba8ImvjGBvIAG2ggRV4F6UF04FUY9nK7T9G4XRFgWhsjIYGgmp9hg3dBUuzYRwflCNyCdQAcpUIyOSSPVI4CC5GQ/yHLP7NnT6Id22kZEbBjRPAVq+ew9Q1dl5Z7nTpT3A+EdVaxhG7aTbMuBKckuBENbXzLwviygHONcyG9tIyyKcNj7kCouppyiebm0g64ngENpV4AcJSpZTIKNPE2Tkln1pnsV7o8TiUlxXsiGelsrWyvs6PrYSTc/34V7MgQOSSzYWxrChfcgPyTLSYyK4XJQljTl/+MLUbCoPWjPzZatZS6DGv3IrzeZ1P3+y030nIca8GdNckBboCDwo5GXZuBFv72LXnzu9xYmPWBRaLsqu3YsSIx57HDdYczYw=="
+   },
+   "capped": {
+    "from": "dsk_5f3c9a0e1b7d2468",
+    "to": "ph_a1b2c3d4e5f60718",
+    "class": "state",
+    "push": "none",
+    "ck": "7eo4fq4NSFg2cdcGdKUqmw",
+    "plaintext": "{\"t\":\"run\",\"session_id\":\"0f6c4f2a\",\"model\":{\"id\":\"model-57\",\"pending\":\"model-59\",\"choices\":[{\"id\":\"model-00\",\"label\":\"Model 00\"},{\"id\":\"model-01\",\"label\":\"Model 01\"},{\"id\":\"model-02\",\"label\":\"Model 02\"},{\"id\":\"model-03\",\"label\":\"Model 03\"},{\"id\":\"model-04\",\"label\":\"Model 04\"},{\"id\":\"model-05\",\"label\":\"Model 05\"},{\"id\":\"model-06\",\"label\":\"Model 06\"},{\"id\":\"model-07\",\"label\":\"Model 07\"},{\"id\":\"model-08\",\"label\":\"Model 08\"},{\"id\":\"model-09\",\"label\":\"Model 09\"},{\"id\":\"model-10\",\"label\":\"Model 10\"},{\"id\":\"model-11\",\"label\":\"Model 11\"},{\"id\":\"model-12\",\"label\":\"Model 12\"},{\"id\":\"model-13\",\"label\":\"Model 13\"},{\"id\":\"model-14\",\"label\":\"Model 14\"},{\"id\":\"model-15\",\"label\":\"Model 15\"},{\"id\":\"model-16\",\"label\":\"Model 16\"},{\"id\":\"model-17\",\"label\":\"Model 17\"},{\"id\":\"model-18\",\"label\":\"Model 18\"},{\"id\":\"model-19\",\"label\":\"Model 19\"},{\"id\":\"model-20\",\"label\":\"Model 20\"},{\"id\":\"model-21\",\"label\":\"Model 21\"},{\"id\":\"model-22\",\"label\":\"Model 22\"},{\"id\":\"model-23\",\"label\":\"Model 23\"},{\"id\":\"model-24\",\"label\":\"Model 24\"},{\"id\":\"model-25\",\"label\":\"Model 25\"},{\"id\":\"model-26\",\"label\":\"Model 26\"},{\"id\":\"model-27\",\"label\":\"Model 27\"},{\"id\":\"model-28\",\"label\":\"Model 28\"},{\"id\":\"model-29\",\"label\":\"Model 29\"},{\"id\":\"model-30\",\"label\":\"Model 30\"},{\"id\":\"model-31\",\"label\":\"Model 31\"},{\"id\":\"model-32\",\"label\":\"Model 32\"},{\"id\":\"model-33\",\"label\":\"Model 33\"},{\"id\":\"model-34\",\"label\":\"Model 34\"},{\"id\":\"model-35\",\"label\":\"Model 35\"},{\"id\":\"model-36\",\"label\":\"Model 36\"},{\"id\":\"model-37\",\"label\":\"Model 37\"},{\"id\":\"model-38\",\"label\":\"Model 38\"},{\"id\":\"model-39\",\"label\":\"Model 39\"},{\"id\":\"model-40\",\"label\":\"Model 40\"},{\"id\":\"model-41\",\"label\":\"Model 41\"},{\"id\":\"model-42\",\"label\":\"Model 42\"},{\"id\":\"model-43\",\"label\":\"Model 43\"},{\"id\":\"model-44\",\"label\":\"Model 44\"},{\"id\":\"model-45\",\"label\":\"Model 45\"},{\"id\":\"model-46\",\"label\":\"Model 46\"},{\"id\":\"model-47\",\"label\":\"Model 47\"},{\"id\":\"model-57\",\"label\":\"Model 57\"},{\"id\":\"model-59\",\"label\":\"Model 59\"}]},\"effort\":{\"id\":\"high\",\"choices\":[{\"id\":\"low\",\"label\":\"low\"},{\"id\":\"medium\",\"label\":\"medium\"},{\"id\":\"high\",\"label\":\"high\"},{\"id\":\"xhigh\",\"label\":\"xhigh\"},{\"id\":\"max\",\"label\":\"max\"}]}}",
+    "plaintext_bytes": 2126,
+    "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
+    "nonce": "000000000000000000000201",
+    "ct": "AAAAAAAAAAAAAAIBHuSnepdaLuqIT/wjBNrbg5VkDO2ZRKdi+VUqNC0mPCuH2cuyFuQNHV4Sh1JCVi9mtp7f1MWfZOU66QIbFCN1UvqkHXcmahGNJebr7VBx3++8djJkjkzJdaEd/Anc3WAH/Ds/cOibabMG300XycbY22L/uY+7h7CftUi9sR8Q5D0bSGXCJUSb47x5DZ30vGxcZ5taShTEUTInAcLyhxL1A4yYYgx6mQ/0ZoV9TF2LJF4sDXKru+67sdFyJ1jybaBK2JBoGNdi4ubYFxx3A9lxj1+mSVGm909omMYAuUwX75LhBZ69S7Ukhd/FDqlb+wCItdhOjAgP2d5E6AqFeqg5R5YUNGbjJbyhqlT6lAuq+NKIPE8DyPfKnPScc6yKFMN2TyX1csQaRmqMFFbbseC+g0oVa2SbgG9DNrLIWxg+oNhFnQQcPHICMZrKRYEtDP5Rwyov7qeTH9XFFB9sd0NuaVizcBjLHb/GfYYCsfxLq5FIstnvbu4dju8WMERvtWJHIAd9o3zketVUKregud1YcAysAaDG2wLSZIhXz5J8Qqr609e+idbIHPIyWIK6Jp95F09SwGQE3PrmvOl1I7dlwV+YuwWlApcEbSQmkk+BkacCHUEl1DNvDueVtcO3ru/0efRijnSN6bLZVmmBtebvC6nLpqVAfnbFHxtcMzzSeVFBss4J/G7+dKwRks3Fo285AGjzxUyruFk5UPyERTX82BSp/W+YtSWLOSW9/Bb7DENdUP93oTMpoxgp7LbPj0VAuBq9/5ZnE/cnDEEzfVFs0+f1/j3fLJhhiep+OyZxsEeofSeRrXYnca6z2dZnYYILOdzlIBNra5fTNOY572t8CxAQhgcFxebFsSwlme7JEGl8v+Oseg4Pgq/efR+gaCkGDF3cKi3LaHAqluoVrH3GSCg3FafA96FvkpAP4D50MMKewtq9WFktHj2EuY5+cIG/73fM1iFUgYWFLKeOlNCH7sBvW7gQjew9cLqk3qVcc1NjiU57AjDKQuJ9A7F5hUHHD5YvXQXSngVG581Q8n/sY3r97k1DOcyXuNNxSVx0CqxpATC0ljqlt/0jEk/YccrGBbOuYea1MSTOqS6OabvNpuChntJHnVOnBXcLZd0mbRuhVCEST+45jtw6nEgeF9C+sn/p8JJqPewqG1XHeKABB/8orMb64ehNrj1btw8f5AtabRjrYzxEBBCj4ssViBNkaxBrdwwx5RnmCWZj3aFGCc3kck4Jg0t+60rNjd9yPUCYjh0NQBpea4MRzcyWmVs9s/zn8zL/+dYIW7ys/hJo6oEmMnM4/gKye/cSmvrE32GtA148GEN1Rx2VpyB1RKtpQLEELhoFi7x/puzpYXgI6BMZl+HznHPM5HstMBUaycZU+4yVQcRje6QY3lyFe9SK5ValRpHtORudFaMjPY3FZrAcUVomhjwhCOIAd6E+Fg9SvxOtQSt0Z8Nw16Tv2XA62r/AORI0DB9rlI8aoPpV3mbznvvzbTwgxF0yorXZ290Biu8xOGiJLq93NQTdAAv6YqpSvM4SlQOD/LPDHxvkpl6xXKOanprj4/07ILYqLTaxKb+ubR/JNZkBdWhnshLv5p11/E2RgZawfjjx2+2ncNcnMXlGAjhK4PivJk/BUZ/DXgJo3lMKNXbJHLttTZ2DMtOtl3yRQK22FH+oQ5YhZamnhGGdAYSTo4cEAhwEGb303fPzbh5HwKRIZb6OW6MsWN+S2DfzA6YOeKnkNWc8fyl2aITuUEgnEZRG5JLY6J7AAYp3adlMOK7/x60Bz0wOJS/QZjxxuqTAi9dt6wAoob3j8uITM1dkNSrJMXACXThI/LaxV+V3JwvUG/2keq6+FX+xL8+mXsxAsD78l+Cr/qNarKQzPkDGtgSFjGaZc9uAYmPYT0aPEjW4fp6uPy+L171vPOpgKwClmZQjBgjb8AeSOSU9hJO7koR4rxot3H1ETqzefFb28IkLQyUXh+iEn8mJKJnb2lS8O+WtUaDRfMV58D/cUM4QmsBMxxdDCLn711XdojLG706jsOEK1c6tMYKRGpkOCWcmc7z5cyX3NGcSw5yoYnRzk4MggArSWD6V6cqORkgh3w4F5W5VFlw1siiGXWKRZfumvzi9T4h2xx6FYeUUiBHg+b+AEkqK91HdJynhIqXlHblnb71s2mZZeOwlo+VtQJ9oS5XXXAZZgDT5W0jVxVmDhe4GnW/CaFQvHz4+1/+caRcKEAuOCgf+YFzdvradq4pbAYJbr6U6wkThuTtk1CpTxqayBS10mJOyKcEubRl+VmGG+wWtyDEViSLymVGIqxtSzHR1T1F1EvFsvc4yI7Zrwdj+AaQy6JthKFs0BfHnUtjKUcimBBmSMkzpiUKZ0Xa+22o8vzJb8W9fYQ1wMQ9q+Pd0wdjWQfWinc1nWtkwihOoc22YSbPVii2mzGVuXVw+4Ngxs7tNWReUsiCUW0dEIfU+JSS+AiPMYnWIFLW9ZnMty2bmNETYbL2m3v4azZ18F0XeChPPrWl9hE+eYRutxoEH28VcCUpI93yxoH2vE29OdfO0iMYkfw1vqXsxzKUL6QCbD747GXxjYxEiXe7duTN3soeQ50M29HokI8CuERUtGGMYZSxormCjZ7cFTvCBGUF+JyQtPC91aRdG/C7yBZPmTsk1ebi6q70bqCKkGfGVWxzPyzuzLJ3oiyyL0wJxLJDbeO93N375VUoJnCsBH3AEdvaT44Cz+MNT780YEZrCnPip4gIU61VWzwUjqCPr0Wi3PxvYU6ZEwS4aAyhuRYj6IbdPsiLLGkmHuAvxGUYMPgYDQCceGSLz8RlN5R46EFpo+VWRUdTecEEy3GpRUHe4fwWL"
+   }
+  },
+  "effort_ok": {
+   "envelope_id": "01JCD0SETRUN00000000000001",
+   "request": {
+    "from": "ph_a1b2c3d4e5f60718",
+    "to": "dsk_5f3c9a0e1b7d2468",
+    "class": "action",
+    "push": "none",
+    "ck": "",
+    "plaintext": "{\"t\":\"set_run\",\"session_id\":\"0f6c4f2a\",\"field\":\"effort\",\"value\":\"xhigh\"}",
+    "plaintext_bytes": 72,
+    "aad": "70685f613162326333643465356636303731387c64736b5f356633633961306531623764323436387c616374696f6e",
+    "nonce": "0000000100000000000001f4",
+    "ct": "AAAAAQAAAAAAAAH0jA7u1l7a/oXaFPfGEVaD+yBiEIRJceEJdUuQAlzQmH+y2HBG0ilzFDi3DYPoxTAuHXpMyNx8/2cs/KoTG+QOrpjc7r1IFm9+eLXWutv68zBh9TzeGasPsQ=="
+   },
+   "reply": {
+    "from": "dsk_5f3c9a0e1b7d2468",
+    "to": "ph_a1b2c3d4e5f60718",
+    "class": "action",
+    "push": "none",
+    "ck": "_APVA4tadxC7cR0g6HWoxg",
+    "plaintext": "{\"t\":\"ok\",\"ref\":\"01JCD0SETRUN00000000000001\",\"code\":\"set\",\"session_id\":\"0f6c4f2a\"}",
+    "plaintext_bytes": 82,
+    "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c616374696f6e",
+    "nonce": "000000000000000000000202",
+    "ct": "AAAAAAAAAAAAAAICODU3tquEpBqEEFZS1DdOKjqVq8b1gQJu9f/6WgUm+43Mguip3EsYHl1Kzy73w+/Ffrcm0b4YbP1O6ovfBXxiP6/k68AoMzhXvsGgDJ9NdMK7qciu/byOAa6W4PaTiz/yW1A="
+   }
+  },
+  "model_ok": {
+   "envelope_id": "01JCD0SETRUN00000000000002",
+   "request": {
+    "from": "ph_a1b2c3d4e5f60718",
+    "to": "dsk_5f3c9a0e1b7d2468",
+    "class": "action",
+    "push": "none",
+    "ck": "",
+    "plaintext": "{\"t\":\"set_run\",\"session_id\":\"0f6c4f2a\",\"field\":\"model\",\"value\":\"sonnet\"}",
+    "plaintext_bytes": 72,
+    "aad": "70685f613162326333643465356636303731387c64736b5f356633633961306531623764323436387c616374696f6e",
+    "nonce": "0000000100000000000001f5",
+    "ct": "AAAAAQAAAAAAAAH1zAdfwnAV6m8a1ErVtjv3iTLBXLzYVdnVYGCs2P4fBljwNE4AEW1Dq2XD1mMgI1Y7qjjjuFwdlAtH4fx8WMBaxxClrhDRHPiOiidQ5DU+9Qho65a43K4IZA=="
+   },
+   "reply": {
+    "from": "dsk_5f3c9a0e1b7d2468",
+    "to": "ph_a1b2c3d4e5f60718",
+    "class": "action",
+    "push": "none",
+    "ck": "_APVA4tadxC7cR0g6HWoxg",
+    "plaintext": "{\"t\":\"ok\",\"ref\":\"01JCD0SETRUN00000000000002\",\"code\":\"set\",\"session_id\":\"0f6c4f2a\"}",
+    "plaintext_bytes": 82,
+    "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c616374696f6e",
+    "nonce": "000000000000000000000203",
+    "ct": "AAAAAAAAAAAAAAID+2F7Xl3Bd7/dzlBlCzhJaQeUPMC9LBHImyv6Y/ediL4nvQf1FclfLQZBpnAUjS/z7SnrXqQZpMPX2PO7Lo6AQo1IiL9Ot/MNoZAFT5mqYzWMKpHghZVJhKO9NatHJO2+8ZM="
+   }
+  },
+  "unknown_session": {
+   "envelope_id": "01JCD0SETRUN00000000000004",
+   "request": {
+    "from": "ph_a1b2c3d4e5f60718",
+    "to": "dsk_5f3c9a0e1b7d2468",
+    "class": "action",
+    "push": "none",
+    "ck": "",
+    "plaintext": "{\"t\":\"set_run\",\"session_id\":\"0f6c4f2a\",\"field\":\"effort\",\"value\":\"xhigh\"}",
+    "plaintext_bytes": 72,
+    "aad": "70685f613162326333643465356636303731387c64736b5f356633633961306531623764323436387c616374696f6e",
+    "nonce": "0000000100000000000001f6",
+    "ct": "AAAAAQAAAAAAAAH2DAFU74fOPc6v1Vs03mMEciWkcC4BE+ZqLYL7pEDZqWu037xoPGLjMKkupMY0XNNz8t5YeOcSHjQniF3wHoPxEUJ7bzLsnThsYnGeehft5/gGa/ZtuPpRAw=="
+   },
+   "reply": {
+    "from": "dsk_5f3c9a0e1b7d2468",
+    "to": "ph_a1b2c3d4e5f60718",
+    "class": "action",
+    "push": "none",
+    "ck": "_APVA4tadxC7cR0g6HWoxg",
+    "plaintext": "{\"t\":\"err\",\"ref\":\"01JCD0SETRUN00000000000004\",\"code\":\"unknown_session\",\"session_id\":\"0f6c4f2a\"}",
+    "plaintext_bytes": 95,
+    "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c616374696f6e",
+    "nonce": "000000000000000000000204",
+    "ct": "AAAAAAAAAAAAAAIEPgF9sPjUe80UKpmxhLYAXqpM93osXFA0mOVcfHRG1xn9yWeXdwxS/gR0f2mk0s5cYqSL4mBzLCdxtR3/dgIp3LR6qYjKXAQPk9Qy8BVXPOhYsIiFmQywNPooyKwhhZd4z2kfeTcp7VS6CL8rannZ"
+   }
+  },
+  "off_model": {
+   "envelope_id": "01JCD0SETRUN00000000000005",
+   "request": {
+    "from": "ph_a1b2c3d4e5f60718",
+    "to": "dsk_5f3c9a0e1b7d2468",
+    "class": "action",
+    "push": "none",
+    "ck": "",
+    "plaintext": "{\"t\":\"set_run\",\"session_id\":\"0f6c4f2a\",\"field\":\"model\",\"value\":\"sonnet\"}",
+    "plaintext_bytes": 72,
+    "aad": "70685f613162326333643465356636303731387c64736b5f356633633961306531623764323436387c616374696f6e",
+    "nonce": "0000000100000000000001f7",
+    "ct": "AAAAAQAAAAAAAAH3EEYZURS6Q919nbJRRNVKjmwmjfKHhOcYT/gZ2xux+FsncUjEiQrB9OEi+cfw1f5tgXtFbSaWEkYAoANsrYzg8T7eupaPwXUFugYfXiovxK8SgqGH293C7Q=="
+   },
+   "reply": {
+    "from": "dsk_5f3c9a0e1b7d2468",
+    "to": "ph_a1b2c3d4e5f60718",
+    "class": "action",
+    "push": "none",
+    "ck": "_APVA4tadxC7cR0g6HWoxg",
+    "plaintext": "{\"t\":\"err\",\"ref\":\"01JCD0SETRUN00000000000005\",\"code\":\"unavailable\",\"session_id\":\"0f6c4f2a\",\"why\":\"This session has no terminal to type into, and its Remote Control bridge is off.\"}",
+    "plaintext_bytes": 180,
+    "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c616374696f6e",
+    "nonce": "000000000000000000000205",
+    "ct": "AAAAAAAAAAAAAAIFY7/LJtnW/dLzdkv8IVnPIvjH7lHm0MX/cy9LlfyAaSnX1gzoukwA0EnSbOfHCZAExDQaEUw+q63DpxvksAfaQW+TOmnG6U1CdQAvEN5UsNuwQ5bOcT9QQVAmJWUDWX/iW6JmknNSX+ve+ly2CRR7nU0W61KJg6i9T9gHLP0A/YDGHIKuEaWfiTnZKloCWbGtrOY+swYxfsCZoVKUBGjU+Eb7+O9kz+fyDjrsd2jaew+sR/slSfx4MfDKTamOPuQEIWwhJw=="
+   }
+  },
+  "busy_other_field": {
+   "envelope_id": "01JCD0SETRUN00000000000009",
+   "request": {
+    "from": "ph_a1b2c3d4e5f60718",
+    "to": "dsk_5f3c9a0e1b7d2468",
+    "class": "action",
+    "push": "none",
+    "ck": "",
+    "plaintext": "{\"t\":\"set_run\",\"session_id\":\"0f6c4f2a\",\"field\":\"model\",\"value\":\"sonnet\"}",
+    "plaintext_bytes": 72,
+    "aad": "70685f613162326333643465356636303731387c64736b5f356633633961306531623764323436387c616374696f6e",
+    "nonce": "0000000100000000000001f8",
+    "ct": "AAAAAQAAAAAAAAH4M+bYKKBLEAnpg4ZJzg37wckbX2qwwZ+2boz3Rm6MUID/GVx8TNbvvtcMjONedEBUXtJ2GjrSU9icay7iD04awDcq3qWKDVDGnj+UibKaraLWgOYOGx1b1Q=="
+   },
+   "reply": {
+    "from": "dsk_5f3c9a0e1b7d2468",
+    "to": "ph_a1b2c3d4e5f60718",
+    "class": "action",
+    "push": "none",
+    "ck": "_APVA4tadxC7cR0g6HWoxg",
+    "plaintext": "{\"t\":\"err\",\"ref\":\"01JCD0SETRUN00000000000009\",\"code\":\"unavailable\",\"session_id\":\"0f6c4f2a\",\"why\":\"Another change to this session is being made right now.\"}",
+    "plaintext_bytes": 155,
+    "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c616374696f6e",
+    "nonce": "000000000000000000000206",
+    "ct": "AAAAAAAAAAAAAAIGk9XZ7yKrYE+bw8tA3uhPDtdRKLNBg0FJ0pKsyq2dYClSNgQoQYA1rzaTIR1HYr26qbq2cjxmjNKQ93evGax9OitoHbEFRrAX0yHn+jIJNN/3TjAXZR63T6vWwoB3z8PxQLmM1CcbUc0UtPfmJ0q1FCD9/ZKmfYrmSumMfjB2ZsWo3JwaBh2Akx7HJkTqrLUeYsR0Wu628gJXqivdUrNghnJScYfYakvXNns1"
+   }
+  },
+  "bad_value": {
+   "envelope_id": "01JCD0SETRUN00000000000012",
+   "request": {
+    "from": "ph_a1b2c3d4e5f60718",
+    "to": "dsk_5f3c9a0e1b7d2468",
+    "class": "action",
+    "push": "none",
+    "ck": "",
+    "plaintext": "{\"t\":\"set_run\",\"session_id\":\"0f6c4f2a\",\"field\":\"effort\",\"value\":\"ultra\"}",
+    "plaintext_bytes": 72,
+    "aad": "70685f613162326333643465356636303731387c64736b5f356633633961306531623764323436387c616374696f6e",
+    "nonce": "0000000100000000000001f9",
+    "ct": "AAAAAQAAAAAAAAH5Rd8f/Rkx+Dr28PNRhjtc7q1z1lEeLq/A+fULbczvxzn9gurO1wxvALh/Ek2/PRihkNLmbgOMC3HmXsIiB6THJzLKcOqQ4TnK3M2C3wgabrYObxbysIPn4w=="
+   },
+   "reply": {
+    "from": "dsk_5f3c9a0e1b7d2468",
+    "to": "ph_a1b2c3d4e5f60718",
+    "class": "action",
+    "push": "none",
+    "ck": "_APVA4tadxC7cR0g6HWoxg",
+    "plaintext": "{\"t\":\"err\",\"ref\":\"01JCD0SETRUN00000000000012\",\"code\":\"bad_value\",\"session_id\":\"0f6c4f2a\"}",
+    "plaintext_bytes": 89,
+    "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c616374696f6e",
+    "nonce": "000000000000000000000207",
+    "ct": "AAAAAAAAAAAAAAIHi/sHSyEAF+uyM8sCcKtcLMkkooquidJq9/0G0E1/h/IE5V8Lyb22nAe3vp75jeZ2GEyrAIKNHvEC1vA4phABNT48MGg6NyXkzdtkynRyDrGfZvBwYsCllXJkNhV2CW0R4ux7GMaeN3i0"
+   }
+  },
+  "route_failed": {
+   "envelope_id": "01JCD0SETRUN00000000000015",
+   "request": {
+    "from": "ph_a1b2c3d4e5f60718",
+    "to": "dsk_5f3c9a0e1b7d2468",
+    "class": "action",
+    "push": "none",
+    "ck": "",
+    "plaintext": "{\"t\":\"set_run\",\"session_id\":\"0f6c4f2a\",\"field\":\"effort\",\"value\":\"xhigh\"}",
+    "plaintext_bytes": 72,
+    "aad": "70685f613162326333643465356636303731387c64736b5f356633633961306531623764323436387c616374696f6e",
+    "nonce": "0000000100000000000001fa",
+    "ct": "AAAAAQAAAAAAAAH6sHBy6ipRoraRjId5XQte+7+5OmmKkYJPG1p4XpLOsRzFrVH8/RpmHb+1UbttLwBEiwHOcBfJPoCg4wehA8rgeb9lzI9v2xok0TGpO3ktZuOu7V5t1GHnCg=="
+   },
+   "reply": {
+    "from": "dsk_5f3c9a0e1b7d2468",
+    "to": "ph_a1b2c3d4e5f60718",
+    "class": "action",
+    "push": "none",
+    "ck": "_APVA4tadxC7cR0g6HWoxg",
+    "plaintext": "{\"t\":\"err\",\"ref\":\"01JCD0SETRUN00000000000015\",\"code\":\"set_failed\",\"session_id\":\"0f6c4f2a\",\"why\":\"It is showing a dialog: Bash command\"}",
+    "plaintext_bytes": 135,
+    "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c616374696f6e",
+    "nonce": "000000000000000000000208",
+    "ct": "AAAAAAAAAAAAAAII2dC5Dpnb5ig4gWO8u0BC1240gv9B3n3w+Id/VwU4EIzIek8ngEyUeKbiFz+7+2Cyn3SqmVUUo9BS6Nujf+gziUm8QoUuGaOgk1bJpXq363pcUPRz9FnpwjubvY635WhzeetytVBmxI/xHc2SVrABraZHZcEbGeufjtWKL8lDvOr5JkpqR0t8850LVKqoibwX5HAwjB7Zpg=="
+   }
+  },
+  "bad_frame": {
+   "envelope_id": "01JCD0SETRUN00000000000900",
+   "_request_plaintext": "{\"t\":\"set_run\",\"session_id\":\"0f6c4f2a\",\"field\":\"thinking\",\"value\":\"high\"}",
+   "reply": {
+    "from": "dsk_5f3c9a0e1b7d2468",
+    "to": "ph_a1b2c3d4e5f60718",
+    "class": "action",
+    "push": "none",
+    "ck": "_APVA4tadxC7cR0g6HWoxg",
+    "plaintext": "{\"t\":\"err\",\"ref\":\"01JCD0SETRUN00000000000900\",\"code\":\"bad_frame\",\"session_id\":\"0f6c4f2a\"}",
+    "plaintext_bytes": 89,
+    "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c616374696f6e",
+    "nonce": "000000000000000000000209",
+    "ct": "AAAAAAAAAAAAAAIJ//3A5lGtH5ntVt73riY+SBj04R9J3HO625eeF/H1HEVVHBkTg4SGiwfFlzRbZEMrIdlzfm3Eg3r/ynRBKhh4k0gndLFhctDuxD5MkDyg1At+C18AmxP3+HMZZVd0wpjEzkhoNC+NZ+u5"
+   }
+  },
+  "bad_frame_no_session": {
+   "envelope_id": "01JCD0SETRUN00000000000901",
+   "_request_plaintext": "{\"t\":\"set_run\",\"field\":\"model\",\"value\":\"opus\"}",
+   "reply": {
+    "from": "dsk_5f3c9a0e1b7d2468",
+    "to": "ph_a1b2c3d4e5f60718",
+    "class": "action",
+    "push": "none",
+    "ck": "",
+    "plaintext": "{\"t\":\"err\",\"ref\":\"01JCD0SETRUN00000000000901\",\"code\":\"bad_frame\"}",
+    "plaintext_bytes": 65,
+    "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c616374696f6e",
+    "nonce": "00000000000000000000020a",
+    "ct": "AAAAAAAAAAAAAAIKjL6ZBWBIk4DDh8bHK+gyMH5BbzgE+R8yDmUIFQk9yh7Heqa9k9zGk+Tq3OkE6+UR033mOtfv7dmJrX7vENd6/7JGHZ7OKMfGy1m9bw4FvG9N"
+   }
+  }
+ },
+ "sequence": {
+  "_note": "One change as the phone sees it, by name into `sealed`: the frame held, the request and its ok, the pending frame, the confirming frame.",
+  "steps": [
+   "run.claude_enabled",
+   "effort_ok.request",
+   "effort_ok.reply",
+   "run.effort_pending",
+   "run.effort_confirmed"
+  ]
+ },
+ "blindness": {
+  "_note": "frames-v13.json blindness (1). Each planted string is in at least one sealed plaintext (the positive control) and in none of relay_visible for any box, as text, base64 or base64url. The JSON-escaped form is what a plaintext holds.",
+  "relay_visible": [
+   "id",
+   "from",
+   "to",
+   "class",
+   "push",
+   "ck",
+   "ct"
+  ],
+  "planted": [
+   "run_options",
+   "set_run",
+   "Opus 5.5",
+   "sonnet",
+   "xhigh",
+   "gpt-6.2-sol",
+   "Grok 4.7 Build",
+   "Extra high",
+   "Résumé 日本",
+   "This session has no terminal to type into, and its Remote Control bridge is off.",
+   "This model has no effort setting.",
+   "The session is still on high. xhigh was not applied.",
+   "It is showing a dialog: Bash command",
+   "model-57",
+   "saves_default"
+  ]
+ }
+}

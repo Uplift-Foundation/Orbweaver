@@ -108,7 +108,7 @@ public class OpenClawRunControlsPayloadTests : IDisposable
         Assert.NotNull(OpenClawSessions.RunStateOf(nativeKey));
         Assert.NotNull(OpenClawSessions.RunStateOf(discordKey));
         Assert.NotNull(native.RunOptions);
-        Assert.Null(discord.RunOptions);
+        Assert.Equal(OpenClawRunText.SurfaceReason, discord.RunOptions!.ModelDisabledReason);
         Assert.Equal("Claude Sonnet 4.6 · adaptive", native.RunOptions!.ChipText);
     }
 }

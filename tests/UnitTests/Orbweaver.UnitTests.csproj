@@ -29,6 +29,8 @@
     <Content Include="Fixtures\pages\*.json" CopyToOutputDirectory="PreserveNewest" />
     <!-- CB-308: the real GitHub releases API responses and SHA256SUMS.txt, captured 2026-11-06. -->
     <Content Include="Fixtures\update\*" CopyToOutputDirectory="PreserveNewest" />
+    <!-- CB-404: run-controls parser fixtures, captured 2026-11-21. -->
+    <Content Include="Fixtures\run\*" CopyToOutputDirectory="PreserveNewest" />
     <!-- CB-314: the phone relay's contract vectors, copied from Orbweaver-Mobile contracts/ (see Fixtures/relay/SOURCE.md). -->
     <Content Include="Fixtures\relay\*.json" CopyToOutputDirectory="PreserveNewest" />
     <!-- CB-313: real terminal captures, shared with tools/screen-read-probe. -->

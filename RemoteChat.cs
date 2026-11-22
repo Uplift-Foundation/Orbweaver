@@ -688,7 +688,7 @@ namespace Orbweaver
     // and FastIsSet likewise says whether fast mode was chosen or is the default.
     // CanResetToDefault is whether a "Default" choice may be offered at all.
     public sealed record RemoteRunOptions(
-        string ModelId,
+        string? ModelId,
         IReadOnlyList<RemoteRunChoice> Models,
         string? ThinkingId,
         string? ThinkingDefaultLabel,
@@ -697,7 +697,38 @@ namespace Orbweaver
         bool FastIsSet,
         bool Locked,
         bool CanResetToDefault,
-        string ChipText);
+        string ChipText)
+    {
+        // CB-404. A control that cannot be used is drawn, greyed, with this as
+        // the reason under it and in its tooltip; null is enabled. Locked is one
+        // source of the model's reason.
+        public string? ModelDisabledReason { get; init; }
+        public string? EffortDisabledReason { get; init; }
+
+        // A set this app made that no reading has confirmed: ModelId/ThinkingId
+        // then hold the chosen value, and the Confirmed ids what was last read.
+        public bool ModelPending { get; init; }
+        public bool EffortPending { get; init; }
+        public string? ConfirmedModelId { get; init; }
+        public string? ConfirmedEffortId { get; init; }
+
+        // Where the reading came from.
+        public RunReadingSource Source { get; init; } = RunReadingSource.Gateway;
+
+        // The line under the controls when the route also changes the default
+        // for new sessions (Claude Code's typed route, a Codex before 0.164).
+        public string? DefaultWarning { get; init; }
+        public bool SavesDefault { get; init; }
+
+        // The last change to that field a reading contradicted or that timed
+        // out; null once a newer change is made.
+        public string? ModelFailure { get; init; }
+        public string? EffortFailure { get; init; }
+
+        // OpenClaw's extras. Every other CLI has neither.
+        public bool HasFast { get; init; } = true;
+        public bool HasTimeLimit { get; init; } = true;
+    }
 
     // A session whose model, thinking level and fast mode a person may change from
     // the panel (CB-270 Stage 4).

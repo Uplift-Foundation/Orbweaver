@@ -109,6 +109,8 @@ internal static class TestBootstrap
         // written yet, may reach a real speech engine or chime process — see
         // TextToSpeech.SilenceForTests and ChimePlayer.SilenceForTests.
         TextToSpeech.SilenceForTests = true;
+        // CB-404: no run-controls probe (claude -p, codex app-server) ever starts in a suite.
+        RunSourcesLive.ProbesOffForTests = true;
         ChimePlayer.SilenceForTests = true;
     }
 }

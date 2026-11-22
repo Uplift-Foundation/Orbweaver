@@ -168,8 +168,12 @@ public class ChatPanelRunOptionsTests : IDisposable
         // "Default" first on each, since a reset is possible.
         Assert.Equal(new[] { "Default", "Claude Opus 4.6", "Qwen" },
             panel.RunModelBox!.Items.OfType<ComboBoxItem>().Select(i => (string)i.Content!));
-        Assert.Equal(new[] { "Default (adaptive)", "off", "on", "adaptive" },
-            panel.RunThinkingBox!.Items.OfType<ComboBoxItem>().Select(i => (string)i.Content!));
+        // CB-404: the levels are on the dial, the default is a button beside it,
+        // and with no level chosen the dial points at the one the default is.
+        Assert.Equal(new[] { "off", "on", "adaptive" }, panel.RunEffortDial!.Levels);
+        Assert.Equal(2, panel.RunEffortDial.SelectedIndex);
+        Assert.Equal("Default (adaptive)", (string)panel.RunEffortDefault!.Content!);
+        Assert.False(panel.RunEffortDefault.IsVisible);
         Assert.Equal(new[] { "Default", "2 minutes", "10 minutes", "30 minutes", "60 minutes" },
             panel.RunLimitBox!.Items.OfType<ComboBoxItem>().Select(i => (string)i.Content!));
     }
@@ -211,7 +215,7 @@ public class ChatPanelRunOptionsTests : IDisposable
         var panel = Open(session);
         panel.OpenRunOptions();
 
-        panel.RunThinkingBox!.SelectedIndex = 2;
+        panel.RunEffortDial!.Choose(1);
         await SettleAsync(() => session.ThinkingRequests.Count > 0);
 
         Assert.Equal(new string?[] { "low" }, session.ThinkingRequests);
@@ -223,9 +227,10 @@ public class ChatPanelRunOptionsTests : IDisposable
         var session = Fake(Options(thinkingId: "low"));
         var panel = Open(session);
         panel.OpenRunOptions();
-        Assert.Equal(2, panel.RunThinkingBox!.SelectedIndex);
+        Assert.Equal(1, panel.RunEffortDial!.SelectedIndex);
+        Assert.True(panel.RunEffortDefault!.IsVisible);
 
-        panel.RunThinkingBox!.SelectedIndex = 0;
+        panel.RunEffortDefault.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
         await SettleAsync(() => session.ThinkingRequests.Count > 0);
 
         Assert.Equal(new string?[] { null }, session.ThinkingRequests);
@@ -328,8 +333,8 @@ public class ChatPanelRunOptionsTests : IDisposable
         panel.OpenRunOptions();
 
         Assert.DoesNotContain(panel.RunModelBox!.Items.OfType<ComboBoxItem>(), i => (string)i.Content! == "Default");
-        Assert.Equal(new[] { "off", "on", "adaptive" },
-            panel.RunThinkingBox!.Items.OfType<ComboBoxItem>().Select(i => (string)i.Content!));
+        Assert.Equal(new[] { "off", "on", "adaptive" }, panel.RunEffortDial!.Levels);
+        Assert.Null(panel.RunEffortDefault);
         Assert.False(panel.RunFastDefault!.IsVisible);
     }
 
@@ -342,7 +347,8 @@ public class ChatPanelRunOptionsTests : IDisposable
 
         panel.OpenRunOptions();
 
-        Assert.Equal("Default", (string)((ComboBoxItem)panel.RunThinkingBox!.Items[0]!).Content!);
+        Assert.Equal("Default", (string)panel.RunEffortDefault!.Content!);
+        Assert.Equal(-1, panel.RunEffortDial!.SelectedIndex);
     }
 
     [AvaloniaFact]
@@ -354,7 +360,9 @@ public class ChatPanelRunOptionsTests : IDisposable
 
         Assert.False(panel.RunModelBox!.IsEnabled);
         Assert.Equal(OpenClawRunText.LockedModelTip, ToolTip.GetTip(panel.RunModelBox));
-        Assert.True(panel.RunThinkingBox!.IsEnabled);
+        Assert.Equal(OpenClawRunText.LockedModelTip, panel.RunModelReason!.Text);
+        Assert.True(panel.RunEffortDial!.IsEnabled);
+        Assert.Null(panel.RunEffortReason);
         Assert.True(panel.RunFastSwitch!.IsEnabled);
     }
 
@@ -366,7 +374,7 @@ public class ChatPanelRunOptionsTests : IDisposable
 
         panel.OpenRunOptions();
 
-        Assert.Null(panel.RunThinkingBox);
+        Assert.Null(panel.RunEffortDial);
     }
 
     // Setting the controls up from the options is not a choice: rebuilding the
@@ -384,7 +392,7 @@ public class ChatPanelRunOptionsTests : IDisposable
         Assert.Empty(session.ModelRequests);
         Assert.Empty(session.ThinkingRequests);
         Assert.Empty(session.FastRequests);
-        Assert.Equal(2, panel.RunThinkingBox!.SelectedIndex);
+        Assert.Equal(1, panel.RunEffortDial!.SelectedIndex);
     }
 
     // The options going away under an open flyout closes it and hides the chip.
@@ -504,7 +512,6 @@ public class ChatPanelRunOptionsTests : IDisposable
         panel.OpenRunOptions();
 
         panel.RunModelBox!.SelectedIndex = -1;
-        panel.RunThinkingBox!.SelectedIndex = -1;
         panel.RunLimitBox!.SelectedIndex = -1;
 
         Assert.Empty(session.ModelRequests);

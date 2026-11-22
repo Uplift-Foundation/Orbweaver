@@ -69,6 +69,8 @@ internal static class TestBootstrap
         // why this has to be a process-wide guard rather than trusted to
         // every call site remembering its own seam.
         TextToSpeech.SilenceForTests = true;
+        // CB-404: no run-controls probe (claude -p, codex app-server) ever starts in a suite.
+        RunSourcesLive.ProbesOffForTests = true;
         ChimePlayer.SilenceForTests = true;
 
         OrbweaverSettings.ReloadForTests();

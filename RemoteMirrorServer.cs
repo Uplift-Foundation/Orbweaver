@@ -174,7 +174,15 @@ namespace Orbweaver
             // Null on a harness that predates it, which reads Agents as before;
             // a peek that has nothing yet answers null, and the request is then
             // judged against the browse roots alone.
-            Func<IReadOnlyList<AgentRoster.Entry>?>? PeekAgents = null);
+            Func<IReadOnlyList<AgentRoster.Entry>?>? PeekAgents = null,
+
+            // CB-404: the model and effort each session runs, for the roster's
+            // `run` field, and the act of changing one for a `run` INPUT. Null is
+            // a server that offers neither: no `run` in the roster, so a near
+            // Buddy shows the controls disabled and never sends the flag.
+            // RunControlsHost reads cached readings only, so asking it on the
+            // peer pump costs no disk walk (the CB-306 freeze).
+            IRunControls? RunControls = null);
 
         // What running a slash line on the far machine came to: one of
         // MirrorProtocol.ViaTyped/ViaControl/ViaRefused, and for a refusal the
@@ -514,7 +522,8 @@ namespace Orbweaver
                 PressKey: TerminalFocuser.SendPaneKey,
                 TypeLiteral: TerminalFocuser.SendPaneText,
                 Shadow: RealShadowOn,
-                Files: LiveFiles);
+                Files: LiveFiles,
+                RunControls: RunControlsLive.Shared);
         }
 
         // CB-307: shadow mode, read the way the local panel's gate reads it —
@@ -561,7 +570,7 @@ namespace Orbweaver
         // Excluded from coverage along with the rest of LiveSeams: it scans
         // a real registry directory and checks a real process table.
         [ExcludeFromCodeCoverage]
-        private static SessionRegistry.Entry? RegistryEntryFor(SessionStatus status)
+        internal static SessionRegistry.Entry? RegistryEntryFor(SessionStatus status)
         {
             if (status.SessionPid <= 0) return null;
 
@@ -770,7 +779,8 @@ namespace Orbweaver
                     RouteFor(resolved.Value.SessionId),
                     PersonaFor(status, userConfigDirs, picturesById),
                     CommandRoutes: offered.Routes,
-                    Parked: parked ? true : null));
+                    Parked: parked ? true : null,
+                    Run: RunFor(status)));
             }
 
             // AgentRoster is Claude Code's authority, not a universal session
@@ -803,7 +813,8 @@ namespace Orbweaver
                         hasTranscript, _seams.CanType(status), string.IsNullOrWhiteSpace(status.Color) ? null : status.Color,
                         offered.Names, status.State, _seams.CanDeliver?.Invoke(status), RouteFor(session.SessionId),
                         PersonaFor(status, userConfigDirs, picturesById),
-                    CommandRoutes: offered.Routes));
+                    CommandRoutes: offered.Routes,
+                    Run: RunFor(status)));
                 }
             }
 
@@ -845,7 +856,8 @@ namespace Orbweaver
                         offered.Names, status.State, _seams.CanDeliver?.Invoke(status), RouteFor(sessionId),
                         PersonaFor(status, userConfigDirs, picturesById),
                     CommandRoutes: offered.Routes,
-                    Parked: HasTranscript(status) && ParkedNow(status) ? true : null));
+                    Parked: HasTranscript(status) && ParkedNow(status) ? true : null,
+                    Run: RunFor(status)));
                 }
             }
 
@@ -2327,6 +2339,14 @@ namespace Orbweaver
             // runs on the frame loop, which must not stall a HELLO or a watch
             // for that long. The reply carries the frame's id, so it can go
             // whenever it is ready; SlashAsync catches its own failures.
+            // CB-404: a run change is resolved here too, and detached for the same
+            // reason: a control request waits on the far CLI's answer.
+            if (frame.Get(MirrorRun.Field) is { } runField)
+            {
+                RunInFlight = Task.Run(() => SetRunAsync(fromPeer, frame, status, runField, text));
+                return;
+            }
+
             if (frame.Num(MirrorProtocol.SlashField) == 1)
             {
                 SlashInFlight = Task.Run(() => SlashAsync(fromPeer, frame, status, text));
@@ -2472,6 +2492,51 @@ namespace Orbweaver
         // The last detached slash run, so a test can wait on it instead of
         // sleeping. Nothing in production reads it.
         internal Task SlashInFlight { get; private set; } = Task.CompletedTask;
+
+        // CB-404: what a session's `run` roster field says, or null for none. A
+        // host that throws costs that session its field, never the roster.
+        private PeerRun? RunFor(SessionStatus status)
+        {
+            if (_seams.RunControls is not { } run) return null;
+            try { return run.Read(status) is { } state ? MirrorRun.From(state) : null; }
+            catch (Exception e)
+            {
+                QuietLog($"run-read:{e.GetType().Name}", $"run read threw {e.GetType().Name}");
+                return null;
+            }
+        }
+
+        // CB-404: a `run` INPUT, held to the rules a phone's set_run is: the
+        // shape (field name, ID grammar), then the field's state as last read
+        // (off or another change running, then a value outside its choices), then the
+        // route.
+        // Answered OK with via=set, or via=refused with why and kind; never ERR,
+        // which is for a request that could not be served at all.
+        private async Task SetRunAsync(string fromPeer, MirrorProtocol.MirrorFrame frame, SessionStatus status,
+            string field, string value)
+        {
+            (string Code, string? Why)? answer;
+            if (!RunFrames.FieldOk(field) || !RunFrames.IdOk(value))
+                answer = (RunFrames.BadValue, "that can't be passed to the CLI");
+            else if (_seams.RunControls is not { } run || run.Read(status) is not { } state)
+                answer = (RunFrames.Unavailable, RelayRemote.NoRunControlsWhy);
+            else if (RunFrames.Refusal(state, field, value, run.IsRunning(status)) is { } refused)
+                answer = refused;
+            else
+            {
+                RunSetResult result;
+                try { result = await run.SetAsync(status, field, value).ConfigureAwait(false); }
+                catch { result = new(RunSetKind.Failed, "that machine failed while changing it"); }
+                answer = result.Kind == RunSetKind.Sent ? null : RunFrames.Answer(result);
+            }
+
+            var fields = MirrorRun.ReplyFields(answer?.Code, answer?.Why);
+            InputLog("input", $"n={frame.Text("n")} -> ok via={fields["via"]} run={field}");
+            await SendAsync(fromPeer, MirrorProtocol.BuildFrame(MirrorProtocol.Ok, frame.Id, fields)).ConfigureAwait(false);
+        }
+
+        // The last detached run change, for tests, as SlashInFlight is.
+        internal Task RunInFlight { get; private set; } = Task.CompletedTask;
 
         // No runner wired: type it where there is a pane, refuse where there is
         // not. The same split Offered makes for the roster, so what was offered

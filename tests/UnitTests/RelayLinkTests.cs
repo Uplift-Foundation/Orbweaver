@@ -1404,6 +1404,22 @@ public partial class RelayLinkTests : IDisposable
     }
 
     [Fact]
+    public void A_run_frame_seals_as_state_on_the_run_ck_to_an_online_phone_only()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var ck = RelayCrypto.Ck(RelayCrypto.CoalesceKey(phone.Base()), RunFrames.CkFor("s1"));
+
+        var run = link.SendRun(phone.Id, "s1", """{"t":"run"}""").Single();
+        Assert.Equal(("state", ck), (J(run).GetProperty("class").GetString(), CkOf(run)));
+        Assert.Equal("run", phone.OpenFromDesktop(run).GetProperty("t").GetString());
+        Assert.Empty(link.SendRun("ph_nobody", "s1", "{}"));
+        link.OnFrame(Presence(phone.Id, false));
+        Assert.Empty(link.SendRun(phone.Id, "s1", "{}"));                 // watchers only; never queued
+        link.Disconnected();
+        Assert.Empty(link.SendRun(phone.Id, "s1", "{}"));
+    }
+
+    [Fact]
     public void Nothing_v4_is_sent_before_welcome()
     {
         var (link, _, phone, _, _) = Paired();
