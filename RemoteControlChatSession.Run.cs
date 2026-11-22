@@ -31,7 +31,12 @@ namespace Orbweaver
         private MirrorProtocol.MirrorRosterEntry? RunEntry() =>
             Link() is { } client && client.StateFor(_remoteName) is { Entry: { } entry } ? entry : null;
 
-        public RemoteRunOptions? RunOptions
+        // The far side's options, with the note on the last set from here (sent,
+        // but typed because the far bridge did not answer), drawn as information.
+        public RemoteRunOptions? RunOptions =>
+            RunOptionsFromRoster is { } o && RunNote is { } note ? o with { Note = note } : RunOptionsFromRoster;
+
+        private RemoteRunOptions? RunOptionsFromRoster
         {
             get
             {

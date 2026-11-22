@@ -170,6 +170,36 @@ public class LocalCliChatSessionRunTests
         Assert.NotNull(s.RunOptions!.ModelDisabledReason);
     }
 
+    // A bridge that never answers falls back to typing: the change went, so it
+    // is no failure, but the person is told it also saved the default — as a
+    // note on the options, cleared by the next set.
+    [AvaloniaFact]
+    public async Task AFallbackToTypingIsANoteNotAFailure()
+    {
+        var typed = new List<string>();
+        var host = new RunControlsHost(new RunControlsHost.Seams(
+            _ => true, st => st.BridgeSessionId, () => true,
+            _ => new RunReading("claude-opus-5-5", "high", DateTimeOffset.FromUnixTimeSeconds(1_800_000_000), RunReadingSource.Transcript),
+            _ => null, _ => null,
+            (_, text) => { typed.Add(text); return Task.FromResult(true); },
+            (_, _, _) => Task.FromResult(MirrorSlashHost.ControlVerdict.Unreached("no credential")),
+            () => DateTimeOffset.FromUnixTimeSeconds(1_800_000_010), Log: (_, _) => { },
+            Delay: _ => Task.CompletedTask));
+        using var s = new LocalCliChatSession("run-pane", new SessionStatus
+        {
+            SessionId = "run-pane", Source = SessionSource.ClaudeCode, BridgeSessionId = "bridge-9", State = "idle", Cwd = "",
+        }, findRegistry: _ => null, bridgeCommandsEnabled: () => true, runControls: host);
+
+        Assert.Null(await s.SetModelAsync("sonnet"));
+
+        Assert.Equal(new[] { "/model sonnet" }, typed);
+        Assert.Equal(RunControlsHost.FellBackToTyping, s.RunOptions!.Note);
+        Assert.Contains(RunControlsHost.FellBackToTyping, LocalCliChatSession.RunSignature(s.RunOptions));
+
+        await s.SetThinkingAsync("low");
+        Assert.Null(s.RunOptions!.Note);
+    }
+
     [Fact]
     public void TheSignatureOfNoOptionsIsEmpty()
     {

@@ -202,10 +202,12 @@ public partial class RemoteMirrorChatSessionTests
         Assert.Null(await session.SetModelAsync("sonnet"));
         Assert.Equal(RunControlsHost.FellBackToTyping, session.RunNote);
         Assert.True(session.RunOptions!.ModelPending);
+        Assert.Equal(RunControlsHost.FellBackToTyping, session.RunOptions!.Note);
 
         // The next set of either field clears it.
         _farRun.Result = RunSetResult.Sent;
         Assert.Null(await session.SetThinkingAsync("low"));
         Assert.Null(session.RunNote);
+        Assert.Null(session.RunOptions!.Note);
     }
 }
