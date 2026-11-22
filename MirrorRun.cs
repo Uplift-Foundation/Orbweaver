@@ -74,11 +74,11 @@ namespace Orbweaver
         // answer, or, from a far Buddy that predates this, both controls
         // shown and disabled with the reason, never hidden. cli is the roster's
         // word for the far CLI, which picks the saves-a-default sentence.
-        internal static RemoteRunOptions Options(PeerRun? run, string machine, string? cli = null)
+        internal static RemoteRunOptions Options(PeerRun? run, string machine, string? cli = null, string? offReason = null)
         {
             if (run is null)
             {
-                var old = TooOldReason(machine);
+                var old = offReason ?? TooOldReason(machine);
                 return new RemoteRunOptions(null, [], null, null, [], false, false, false, false, RunText.ModelUnknown)
                 {
                     ModelDisabledReason = old,
@@ -102,6 +102,8 @@ namespace Orbweaver
                 EffortDisabledReason = s.Effort.Off,
                 ModelPending = s.Model.Pending is not null,
                 EffortPending = s.Effort.Pending is not null,
+                ModelFailure = s.Model.Failed,
+                EffortFailure = s.Effort.Failed,
                 ConfirmedModelId = s.Model.Id,
                 ConfirmedEffortId = s.Effort.Id,
                 Source = RunReadingSource.None,
