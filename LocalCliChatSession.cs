@@ -404,7 +404,12 @@ namespace Orbweaver
         private readonly RunControlsHost _runHost;
         private string _runShown = "";
 
-        public RemoteRunOptions? RunOptions => _runHost.Options(_status);
+        public RemoteRunOptions? RunOptions =>
+            _runHost.Options(_status) is { } o ? (_runNote is null ? o : o with { Note = _runNote }) : null;
+
+        // The host's word on the last set when it went but has something to say
+        // (RunSetKind.Sent with a Why). Cleared by the next set of either field.
+        private string? _runNote;
 
         public event Action? RunOptionsChanged;
 
@@ -423,9 +428,13 @@ namespace Orbweaver
             // No "Default" is offered for a CLI session (CanResetToDefault is
             // false), so a null here is not a choice anyone made.
             if (value is null) return field == RunField.Model ? "name a model" : "name an effort level";
+            _runNote = null;
             var result = await _runHost.SetAsync(_status, field, value);
+            // Sent with a sentence is a note, not a refusal: the panel draws it
+            // as information, and the set is pending like any other.
+            if (result.Kind == RunSetKind.Sent) _runNote = result.Why;
             AnnounceRun();
-            return result.Why;
+            return result.Kind == RunSetKind.Sent ? null : result.Why;
         }
 
         // The host says a pending change moved; it may say so off the UI thread.
@@ -448,7 +457,7 @@ namespace Orbweaver
 
         internal static string RunSignature(RemoteRunOptions? o) => o is null ? "" : string.Join("\u001f",
             o.ChipText, o.ModelId, o.ThinkingId, o.ModelDisabledReason, o.EffortDisabledReason, o.ModelPending, o.EffortPending,
-            o.ConfirmedModelId, o.ConfirmedEffortId, o.DefaultWarning, o.ModelFailure, o.EffortFailure,
+            o.ConfirmedModelId, o.ConfirmedEffortId, o.DefaultWarning, o.ModelFailure, o.EffortFailure, o.Note,
             string.Join(",", o.Models.Select(m => m.Id + "=" + m.Label)), string.Join(",", o.ThinkingChoices.Select(c => c.Id)));
 
         // --- reading ---

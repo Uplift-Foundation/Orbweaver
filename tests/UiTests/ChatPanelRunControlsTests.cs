@@ -201,6 +201,27 @@ public class ChatPanelRunControlsTests : IDisposable
         Assert.Equal(expected, panel.RunStatus.Text);
     }
 
+    // A change that went by a route worth knowing about (typed because the
+    // bridge did not answer) is said as information, not as a failure.
+    [AvaloniaFact]
+    public void ANoteIsInformationNotAFailure()
+    {
+        var panel = Open(Resolve() with { Note = "Sent by typing it." }, out _);
+
+        Assert.Equal("Sent by typing it.", panel.RunNote!.Text);
+        Assert.True(panel.RunNote.IsVisible);
+        Assert.False(panel.RunStatus!.IsVisible);
+        Assert.NotEqual(panel.RunStatus.Foreground, panel.RunNote.Foreground);
+    }
+
+    [AvaloniaFact]
+    public void NoNoteDrawsNoNoteLine()
+    {
+        var panel = Open(Resolve(), out _);
+
+        Assert.Null(panel.RunNote);
+    }
+
     [AvaloniaFact]
     public void NoFailureLeavesTheStatusLineHidden()
     {

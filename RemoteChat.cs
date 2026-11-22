@@ -718,6 +718,12 @@ namespace Orbweaver
         // The line under the controls when the route also changes the default
         // for new sessions (Claude Code's typed route, a Codex before 0.164).
         public string? DefaultWarning { get; init; }
+
+        // Something to say about the last change that is not a failure: it was
+        // sent, but by a route the person should know about (a bridge that did
+        // not answer, so it was typed, which also saved the default). Drawn as
+        // information, never in the failure colour.
+        public string? Note { get; init; }
         public bool SavesDefault { get; init; }
 
         // The last change to that field a reading contradicted or that timed

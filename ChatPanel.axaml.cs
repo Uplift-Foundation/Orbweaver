@@ -1151,6 +1151,7 @@ namespace Orbweaver
         internal TextBlock? RunModelReason { get; private set; }
         internal TextBlock? RunEffortReason { get; private set; }
         internal TextBlock? RunDefaultWarning { get; private set; }
+        internal TextBlock? RunNote { get; private set; }
         internal ToggleSwitch? RunFastSwitch { get; private set; }
         internal Button? RunFastDefault { get; private set; }
         internal ComboBox? RunLimitBox { get; private set; }
@@ -1303,6 +1304,16 @@ namespace Orbweaver
                     Foreground = RecordingFill
                 };
                 panel.Children.Add(RunStatus);
+
+                // CB-404: a note on the last change that went but has something
+                // to say (typed because the bridge did not answer). Information,
+                // in the ordinary text colour, never the failure colour.
+                RunNote = null;
+                if (options.Note is { } note)
+                {
+                    RunNote = new TextBlock { Text = note, FontSize = 11, TextWrapping = TextWrapping.Wrap, Opacity = 0.8, MaxWidth = 260 };
+                    panel.Children.Add(RunNote);
+                }
 
                 // CB-404: a change a reading contradicted, or that never showed
                 // up, is said once the flyout opens, effort's after model's.
