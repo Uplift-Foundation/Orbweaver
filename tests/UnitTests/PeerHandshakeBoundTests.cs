@@ -137,6 +137,26 @@ public class PeerHandshakeBoundTests
         Assert.Equal(0, link.StuckHandshakes);
     }
 
+    // Shutdown does not wait out the grace: a 30 s grace must not delay it.
+    [Fact]
+    public async Task ShutdownSkipsTheGrace()
+    {
+        using var link = Link();
+        link.StallGrace = TimeSpan.FromSeconds(30);
+        var gate = Gate();
+        using var shutdown = new CancellationTokenSource();
+        using var setup = CancellationTokenSource.CreateLinkedTokenSource(shutdown.Token);
+
+        var pending = link.BoundedHandshakeAsync(() => gate.Task, shutdown.Token, setup.Token, "10s");
+        shutdown.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(1, link.StuckHandshakes);
+
+        gate.SetResult();
+        await Until(() => link.StuckHandshakes == 0);
+    }
+
     // A deaf call (it never looks at its token) that nevertheless returns inside
     // the grace was only slow, not stuck: no stall, no cap.
     [Fact]

@@ -768,9 +768,14 @@ namespace Orbweaver
                 // it is counted as stuck. A call that finishes within it yields
                 // its own outcome (normally the cancellation), so the callers'
                 // "no answer within" arm runs and the count is untouched.
-                using var grace = new CancellationTokenSource();
-                await Task.WhenAny(handshake, Task.Delay(StallGrace, grace.Token)).ConfigureAwait(false);
-                grace.Cancel();
+                // Not on shutdown: the caller is going away, nothing is gained
+                // by waiting, and the thread is counted at once.
+                if (!outer.IsCancellationRequested)
+                {
+                    using var grace = new CancellationTokenSource();
+                    await Task.WhenAny(handshake, Task.Delay(StallGrace, grace.Token)).ConfigureAwait(false);
+                    grace.Cancel();
+                }
 
                 if (handshake.IsCompleted)
                 {
