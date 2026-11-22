@@ -65,7 +65,7 @@ public class PeerLinkKeychainHangTests
                 if (keychain.ReturnNormally) return Task.CompletedTask;
                 throw new InvalidOperationException("keychain released; handshake abandoned");
             }))
-        { DialTimeout = dial ?? Short, InboundSetupTimeout = dial ?? Short };
+        { DialTimeout = dial ?? Short, InboundSetupTimeout = dial ?? Short, StallGrace = TimeSpan.FromMilliseconds(50) };
 
     private static (TcpListener Listener, int Port, Func<int> Accepted) Silent()
     {

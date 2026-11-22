@@ -15,7 +15,8 @@ public class PeerHandshakeBoundTests
     private static PeerLink Link() => new(new PeerLink.Seams(
         Deliver: (_, _) => Task.CompletedTask,
         KnownPeer: _ => null,
-        OwnCertificate: _ => throw new InvalidOperationException("no certificate in this test")));
+        OwnCertificate: _ => throw new InvalidOperationException("no certificate in this test")))
+    { StallGrace = TimeSpan.FromMilliseconds(50) };
 
     private static TaskCompletionSource Gate() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -108,6 +109,32 @@ public class PeerHandshakeBoundTests
 
         gate.SetResult();
         await Until(() => link.StuckHandshakes == 0);
+    }
+
+    // The ordinary CB-301 shape: a far side that accepts TCP and never speaks.
+    // The real handshake honours its token but takes a moment to unwind, so
+    // IsCompleted is still false when the clock fires. That is a silent peer,
+    // not a keychain, and it must neither say so nor take the cap.
+    [Fact]
+    public async Task ACooperativeHandshakeThatUnwindsAfterTheClockIsNotAKeychainStall()
+    {
+        using var link = Link();
+        link.StallGrace = TimeSpan.FromSeconds(5); // far longer than the 100 ms unwind
+        using var setup = new CancellationTokenSource(Short);
+
+        var thrown = await Record.ExceptionAsync(() => link.BoundedHandshakeAsync(async () =>
+        {
+            try { await Task.Delay(Timeout.Infinite, setup.Token); }
+            catch (OperationCanceledException)
+            {
+                await Task.Delay(100); // unwinding takes a moment
+                throw;
+            }
+        }, CancellationToken.None, setup.Token, "0.1s", "mini"));
+
+        Assert.IsNotType<PeerLink.HandshakeStalled>(thrown);
+        Assert.IsAssignableFrom<OperationCanceledException>(thrown);
+        Assert.Equal(0, link.StuckHandshakes);
     }
 
     // A counter, not a flag: two abandoned handshakes hold the cap until both return.

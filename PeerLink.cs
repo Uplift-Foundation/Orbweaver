@@ -731,6 +731,10 @@ namespace Orbweaver
         // reconnects.
         private int _stuckHandshakes;
 
+        // How long an abandoned handshake may keep unwinding before it is called
+        // stuck. Settable so a test of the non-cooperative case need not wait it out.
+        internal TimeSpan StallGrace { get; set; } = TimeSpan.FromSeconds(2);
+
         // Abandoned handshakes whose native call has not returned yet.
         internal int StuckHandshakes => Volatile.Read(ref _stuckHandshakes);
 
@@ -755,6 +759,26 @@ namespace Orbweaver
             }
             catch (OperationCanceledException)
             {
+                // A handshake that honours its token still needs a moment to
+                // unwind, so IsCompleted is usually false at this instant even
+                // for the ordinary CB-301 shape (a far side that accepts TCP
+                // and never speaks). That is a silent peer, not a keychain:
+                // give the call a short grace, and only one still running after
+                // it is counted as stuck. A call that finishes within it yields
+                // its own outcome (normally the cancellation), so the callers'
+                // "no answer within" arm runs and the count is untouched.
+                using var grace = new CancellationTokenSource();
+                await Task.WhenAny(handshake, Task.Delay(StallGrace, grace.Token)).ConfigureAwait(false);
+                grace.Cancel();
+
+                if (handshake.IsCompleted)
+                {
+                    // Its own outcome stands: a cooperative call rethrows its
+                    // cancellation here, one that won the race simply succeeds.
+                    await handshake.ConfigureAwait(false);
+                    return;
+                }
+
                 Interlocked.Increment(ref _stuckHandshakes);
 
                 // Reading Exception observes it, so a stuck call that finally
