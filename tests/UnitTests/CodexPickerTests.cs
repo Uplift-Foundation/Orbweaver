@@ -358,6 +358,50 @@ public class CodexPickerTests
         Assert.Equal(new RunSetResult(RunSetKind.Unavailable, RunControlsHost.OldCodexReason), await noKeys.SetAsync(codex, RunField.Model, "x"));
     }
 
+    // juno's hazard on 25f20f208: the asker is answered at SetBudget, but the
+    // guard must stay held while the picker is still pressing keys, or a second
+    // set's keystrokes interleave with it in one pane.
+    [Fact]
+    public async Task APickerSlowerThanTheBudgetKeepsTheGuardUntilItsLastKey()
+    {
+        var pane = new Pane();
+        var seams = pane.Seams;
+        var slowKey = new TaskCompletionSource();
+        var setTimer = new TaskCompletionSource();
+        var typed = new List<string>();
+        var host = new RunControlsHost(new RunControlsHost.Seams(
+            _ => true, _ => null, () => true, _ => new RunReading("gpt-5.6-terra", "medium", null, RunReadingSource.PaneFooter), _ => null,
+            _ => new Version(0, 154, 0),
+            async (_, text) => { lock (typed) typed.Add(text); return await seams.TypeLine(text); },
+            (_, _, _) => Task.FromResult(MirrorSlashHost.ControlVerdict.Done),
+            () => DateTimeOffset.FromUnixTimeSeconds(1_800_000_000),
+            Log: (_, _) => { },
+            // The level digit is slow (a pane that takes its time to redraw).
+            PressKey: async (_, key) =>
+            {
+                if (pane.At == Pane.Where.Levels) await slowKey.Task;
+                return await seams.Press(key);
+            },
+            Delay: d => d == RunControlsHost.SetBudget ? setTimer.Task
+                : d == RunControlsHost.StepBudget ? new TaskCompletionSource().Task
+                : Task.CompletedTask,
+            CapturePane: _ => seams.ReadScreen()));
+        var codex = new SessionStatus { SessionId = "c9", Source = SessionSource.Codex, Cwd = "/w" };
+
+        var first = host.SetAsync(codex, RunField.Effort, "high");
+        setTimer.SetResult();
+        Assert.Equal(new RunSetResult(RunSetKind.Failed, RunControlsHost.NoAnswerInTime), await first);
+
+        // The picker is still on its levels screen: a second set is refused, and types nothing.
+        Assert.True(host.IsRunning(codex));
+        Assert.Equal(new RunSetResult(RunSetKind.Unavailable, RunFrames.BusyWhy), await host.SetAsync(codex, RunField.Model, "gpt-5.6-terra"));
+        Assert.Equal(new[] { "/model" }, typed);
+
+        slowKey.SetResult();
+        await RunControlsHostTests.Until(() => !host.IsRunning(codex));
+        Assert.Equal("high", host.Options(codex)!.ThinkingId);    // the slow set did land
+    }
+
     // The paired case: the same set where the screen never confirms stays
     // pending under the host until a reading settles it.
     [Fact]
