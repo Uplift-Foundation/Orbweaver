@@ -2524,7 +2524,10 @@ namespace Orbweaver
             }
 
             var fields = MirrorRun.ReplyFields(answer?.Code, answer?.Why);
-            InputLog("input", $"n={frame.Text("n")} -> ok via={fields["via"]} run={field}");
+            // The code a refusal carried, never its sentence or the value: what a
+            // hand check needs to tell busy from bad_value from a failed route.
+            InputLog("input", $"n={frame.Text("n")} -> ok via={fields["via"]} run={field}"
+                + (answer is { } a ? $" code={a.Code}" : ""));
             await SendAsync(fromPeer, MirrorProtocol.BuildFrame(MirrorProtocol.Ok, frame.Id, fields)).ConfigureAwait(false);
         }
 

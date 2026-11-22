@@ -210,4 +210,62 @@ public partial class MirrorRoundTripTests
 
         Assert.Equal(new RunSetResult(RunSetKind.Failed, MirrorProtocol.ErrNoSession), result);
     }
+
+    // CB-404 hand check (the mini, 2026-11-22): every peer set was refused as busy
+    // from the first. The first set's control post waited on a Keychain nobody
+    // could answer, held the guard past the near side's ten seconds, and every
+    // set behind it was refused. With a real host behind the far server: a post
+    // that never answers falls back to typing, the set answers, and the next one
+    // is not busy.
+    [Fact]
+    public async Task APeerSetToAnIdlePaneWhoseBridgePostHangsIsTypedAndTheNextSetIsNotBusy()
+    {
+        var typed = new List<string>();
+        var posts = 0;
+        var host = new RunControlsHost(new RunControlsHost.Seams(
+            _ => true, _ => "bridge-1", () => true,
+            _ => new RunReading("claude-opus-5-5", "high", DateTimeOffset.UtcNow.AddMinutes(-5), RunReadingSource.Transcript),
+            _ => RunSources.ClaudeFallback, _ => null,
+            (_, text) => { lock (typed) typed.Add(text); return Task.FromResult(true); },
+            (_, _, _) => { Interlocked.Increment(ref posts); return new TaskCompletionSource<MirrorSlashHost.ControlVerdict>().Task; },
+            () => DateTimeOffset.UtcNow,
+            Log: (_, _) => { },
+            // The control budget runs out at once; the set's own budget never does.
+            Delay: d => d == RunControlsHost.ControlBudget ? Task.CompletedTask : new TaskCompletionSource().Task));
+        var harness = new Harness(_dir, run: host);
+        var log = new List<string>();
+        harness.Server.InputLog = (_, detail) => { lock (log) log.Add(detail); };
+        harness.AddSession("job-hunter", WriteTranscript("run-hang.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var first = harness.Client.SetRunAsync("job-hunter", RunField.Model, "sonnet");
+        await harness.Server.RunInFlight;
+        Assert.Equal(RunSetResult.Sent, await first);
+
+        var second = harness.Client.SetRunAsync("job-hunter", RunField.Effort, "low");
+        await harness.Server.RunInFlight;
+        Assert.Equal(RunSetResult.Sent, await second);
+
+        Assert.Equal(["/model sonnet", "/effort low"], typed);
+        Assert.Equal(2, posts);
+        Assert.Contains(log, l => l.EndsWith("via=set run=model"));
+    }
+
+    [Fact]
+    public async Task A_refused_run_logs_its_code_and_never_its_sentence()
+    {
+        var harness = new Harness(_dir, run: new FarRun { Running = true });
+        var log = new List<string>();
+        harness.Server.InputLog = (_, detail) => { lock (log) log.Add(detail); };
+        harness.AddSession("job-hunter", WriteTranscript("run-log.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var set = harness.Client.SetRunAsync("job-hunter", RunField.Model, "sonnet");
+        await harness.Server.RunInFlight;
+        Assert.Equal(new RunSetResult(RunSetKind.Unavailable, RunFrames.BusyWhy), await set);
+
+        var line = Assert.Single(log, l => l.Contains("run=model"));
+        Assert.EndsWith("via=refused run=model code=unavailable", line);
+        Assert.DoesNotContain(RunFrames.BusyWhy, line);
+    }
 }

@@ -30,6 +30,10 @@ public class RunControlsHostTests
         public readonly List<(string Subtype, string Json)> Posted = [];
         public readonly List<string> Changed = [];
         public TaskCompletionSource<bool>? TypeGate;
+        public TaskCompletionSource<MirrorSlashHost.ControlVerdict>? PostGate;
+
+        // The two clocks a set is bounded by, each released by the test.
+        public readonly TaskCompletionSource ControlTimer = new(), SetTimer = new();
         public RunControlsHost Host = null!;
 
         public Desk()
@@ -47,10 +51,17 @@ public class RunControlsHostTests
                     if (TypeGate is { } gate) await gate.Task;
                     return Types;
                 },
-                (_, subtype, request) => { Posted.Add((subtype, request.ToJsonString())); return Task.FromResult(Verdict); },
+                (_, subtype, request) =>
+                {
+                    Posted.Add((subtype, request.ToJsonString()));
+                    return PostGate is { } gate ? gate.Task : Task.FromResult(Verdict);
+                },
                 () => Now,
                 RecordStatus: _ => Record,
-                Log: (_, _) => { }));
+                Log: (_, _) => { },
+                Delay: d => d == RunControlsHost.ControlBudget ? ControlTimer.Task
+                    : d == RunControlsHost.SetBudget ? SetTimer.Task
+                    : Task.CompletedTask));
             Host.Changed += Changed.Add;
         }
     }
@@ -296,5 +307,58 @@ public class RunControlsHostTests
         await d.Host.SetAsync(Of(SessionSource.Grok), RunFrames.FieldEffort, "high");
         await d.Host.SetAsync(Of(SessionSource.Grok), RunFrames.FieldModel, "grok-4.7");
         Assert.Equal(["/effort high", "/model grok-4.7"], d.Typed);
+    }
+
+    // ---- CB-404 hand check: a set that never finished held the guard ---------
+
+    [Fact]
+    public async Task A_control_post_that_never_answers_falls_back_to_typing_into_the_pane()
+    {
+        // The mini: bridge on, a bridge id, and a Keychain nobody can answer.
+        var d = new Desk { Bridge = "b", PostGate = new() };
+
+        var set = d.Host.SetAsync(Claude(), RunField.Model, "sonnet");
+        Assert.Single(d.Posted);
+        Assert.Empty(d.Typed);
+        d.ControlTimer.SetResult();
+
+        Assert.Equal(RunSetResult.Sent, await set);
+        Assert.Equal("/model sonnet", d.Typed.Single());
+        Assert.False(d.Host.IsRunning(Claude()));
+        Assert.True(d.Host.Options(Claude())!.ModelPending);
+    }
+
+    [Fact]
+    public async Task A_post_refused_before_the_cli_types_where_there_is_a_pane_and_fails_where_there_is_none()
+    {
+        var d = new Desk { Bridge = "b", Verdict = MirrorSlashHost.ControlVerdict.Unreached("no usable credential") };
+        Assert.Equal(RunSetResult.Sent, await d.Host.SetAsync(Claude(), RunField.Effort, "high"));
+        Assert.Equal("/effort high", d.Typed.Single());
+
+        var paneless = new Desk { Bridge = "b", CanType = false, Verdict = MirrorSlashHost.ControlVerdict.Unreached("no usable credential") };
+        Assert.Equal(new RunSetResult(RunSetKind.Failed, "no usable credential"), await paneless.Host.SetAsync(Claude(), RunField.Effort, "high"));
+        Assert.Empty(paneless.Typed);
+    }
+
+    [Fact]
+    public async Task The_clis_own_refusal_is_final_and_nothing_is_typed()
+    {
+        var d = new Desk { Bridge = "b", Verdict = MirrorSlashHost.ControlVerdict.Refused("Model 'x' not found") };
+        Assert.Equal(new RunSetResult(RunSetKind.Failed, "Model 'x' not found"), await d.Host.SetAsync(Claude(), RunField.Model, "sonnet"));
+        Assert.Empty(d.Typed);
+    }
+
+    [Fact]
+    public async Task A_set_that_does_not_finish_in_time_answers_and_releases_the_guard()
+    {
+        var d = new Desk { TypeGate = new() };                   // typing that never returns
+
+        var set = d.Host.SetAsync(Claude(), RunField.Model, "sonnet");
+        Assert.True(d.Host.IsRunning(Claude()));
+        d.SetTimer.SetResult();
+
+        Assert.Equal(new RunSetResult(RunSetKind.Failed, RunControlsHost.NoAnswerInTime), await set);
+        Assert.False(d.Host.IsRunning(Claude()));               // the next set is not refused as busy
+        d.TypeGate.SetResult(false);
     }
 }

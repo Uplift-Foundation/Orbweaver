@@ -44,11 +44,17 @@ namespace Orbweaver
         // CB-306's product-readiness round: the far side's answer to a control
         // request, carried back over the link so the near panel says what the
         // far CLI said rather than assuming success.
-        internal sealed record ControlVerdict(string? Refusal, bool Confirmed)
+        //
+        // CB-404: Reached says whether the request got as far as the CLI. A
+        // refusal from before it (the setting off, no bridge, no credential, no
+        // answer in time) is one a caller with another route may route around;
+        // the CLI's own "no" is final.
+        internal sealed record ControlVerdict(string? Refusal, bool Confirmed, bool Reached = true)
         {
             internal static readonly ControlVerdict Done = new(null, true);
             internal static readonly ControlVerdict Unconfirmed = new(null, false);
             internal static ControlVerdict Refused(string reason) => new(reason, false);
+            internal static ControlVerdict Unreached(string reason) => new(reason, false, Reached: false);
         }
 
         private readonly Seams _seams;
@@ -133,11 +139,11 @@ namespace Orbweaver
             Func<SessionStatus, string, JsonObject, Task<CloudTurnSender.ControlAttempt>> post) =>
             async (status, _, request) =>
             {
-                if (!commandsEnabled()) return ControlVerdict.Refused(LocalCliChatSession.BridgeCommandsOffHint);
-                if (bridgeIdFor(status) is not { } id) return ControlVerdict.Refused(NoBridgeReason);
+                if (!commandsEnabled()) return ControlVerdict.Unreached(LocalCliChatSession.BridgeCommandsOffHint);
+                if (bridgeIdFor(status) is not { } id) return ControlVerdict.Unreached(NoBridgeReason);
 
                 var attempt = await post(status, id, request).ConfigureAwait(false);
-                if (attempt.Failure is { } failure) return ControlVerdict.Refused(failure);
+                if (attempt.Failure is { } failure) return ControlVerdict.Unreached(failure);
                 if (attempt.CliError is { } refused)
                     return ControlVerdict.Refused(CloudTurnSender.RejectionClause(refused, versionFor(status)));
                 return attempt.Confirmed ? ControlVerdict.Done : ControlVerdict.Unconfirmed;

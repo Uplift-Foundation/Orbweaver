@@ -170,7 +170,19 @@ namespace Orbweaver
             if (CliFor(status) is not { } cli) return new(RunSetKind.Unavailable, RunText.NoRoute);
             lock (_gate)
                 if (!_running.Add(Key(status))) return new(RunSetKind.Unavailable, RunFrames.BusyWhy);
-            try { return await RunAsync(status, cli, field, value).ConfigureAwait(false); }
+            try
+            {
+                // Bounded, so the asker always hears an answer and the guard is
+                // always released: a near Buddy gives up on an INPUT after
+                // MirrorProtocol.InputTimeoutSeconds, and a set that outlived it
+                // once held the guard for most of a minute (a control post
+                // waiting on a Keychain nobody could answer, CB-404 hand check)
+                // and refused every set after it as busy.
+                var run = RunAsync(status, cli, field, value);
+                if (await Task.WhenAny(run, Wait(SetBudget)).ConfigureAwait(false) == run) return await run.ConfigureAwait(false);
+                _ = run.ContinueWith(t => _ = t.Exception, TaskScheduler.Default);
+                return new(RunSetKind.Failed, NoAnswerInTime);
+            }
             finally
             {
                 lock (_gate) _running.Remove(Key(status));
@@ -189,7 +201,7 @@ namespace Orbweaver
                 return new(RunSetKind.BadValue, problem);
 
             var result = route.Route == RunRoute.Control
-                ? await ControlAsync(status, field, value).ConfigureAwait(false)
+                ? await ControlAsync(status, cli, field, value).ConfigureAwait(false)
                 : await TypedAsync(status, cli, route, field, value).ConfigureAwait(false);
 
             if (result.Kind == RunSetKind.Sent)
@@ -214,12 +226,35 @@ namespace Orbweaver
                 ? SlashRouting.ControlRequest("set_model", value, out problem)
                 : SlashRouting.ControlRequest("apply_flag_settings", value, out problem);
 
-        private async Task<RunSetResult> ControlAsync(SessionStatus status, RunField field, string value)
+        // The whole of one set, and the control post inside it. Both under the
+        // near side's ten-second INPUT wait, with room for the typed fallback
+        // after a post that never answered.
+        internal static readonly TimeSpan SetBudget = TimeSpan.FromSeconds(8);
+        internal static readonly TimeSpan ControlBudget = TimeSpan.FromSeconds(4);
+
+        internal const string NoAnswerInTime = "the session didn't take the change in time; try again in a moment";
+        internal const string ControlNoAnswer = "the Remote Control bridge didn't answer in time";
+
+        private Task Wait(TimeSpan d) => (_seams.Delay ?? Task.Delay)(d);
+
+        private async Task<RunSetResult> ControlAsync(SessionStatus status, RunCli cli, RunField field, string value)
         {
             if (ControlFor(field, value, out var problem) is not { } request) return new(RunSetKind.BadValue, problem);
             var subtype = request["subtype"]!.GetValue<string>();
-            var verdict = await _seams.PostControl(status, subtype, request).ConfigureAwait(false);
-            return verdict.Refusal is { } refusal ? new(RunSetKind.Failed, refusal) : RunSetResult.Sent;
+
+            var post = _seams.PostControl(status, subtype, request);
+            var verdict = await Task.WhenAny(post, Wait(ControlBudget)).ConfigureAwait(false) == post
+                ? await post.ConfigureAwait(false)
+                : MirrorSlashHost.ControlVerdict.Unreached(ControlNoAnswer);
+            if (verdict.Refusal is not { } refusal) return RunSetResult.Sent;
+
+            // The request never reached the CLI (no credential on a machine
+            // nobody is at, the bridge setting off, no answer in time): a session
+            // with a pane is typed into instead, which is the route F1 already
+            // settled for a session with no usable bridge.
+            if (!verdict.Reached && !status.IsDesktopHosted && _seams.CanType(status))
+                return await TypedAsync(status, cli, new RunRouteDecision(RunRoute.Typed, null, true), field, value).ConfigureAwait(false);
+            return new(RunSetKind.Failed, refusal);
         }
 
         // The line each CLI takes (plan 2.1, 2.4, 2.5). Codex sets effort as an
