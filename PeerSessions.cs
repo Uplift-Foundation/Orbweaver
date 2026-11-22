@@ -315,6 +315,34 @@ namespace Orbweaver
             }
         }
 
+        // Longer than ConnectAsync's own clock (CB-411), so the inner timeout
+        // fires first and explains itself; this outer one exists only for a
+        // dial that fails to come back at all.
+        internal static TimeSpan DialBound(TimeSpan dialTimeout) => dialTimeout + TimeSpan.FromSeconds(5);
+
+        // One dial, bounded from outside as well (CB-411): ConnectAsync has its
+        // own clock, but one dial that ever failed to come back would hold the
+        // SingleFlight tick, and with it every later dial. Never throws.
+        internal static async Task<bool> DialPeerAsync(string machine, Func<Task<bool>> connect, TimeSpan bound)
+        {
+            try
+            {
+                return await connect().WaitAsync(bound).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                MirrorLog.SayOnce($"peer-dial-abandoned:{machine}",
+                    $"to={machine} dial did not return within its bound; moving on");
+            }
+            catch (Exception ex)
+            {
+                MirrorLog.SayOnce($"peer-dial-failed:{machine}",
+                    $"to={machine} {ex.GetType().Name}: {ex.Message}");
+            }
+
+            return false;
+        }
+
         [ExcludeFromCodeCoverage]
         private static async Task DialOnceAsync()
         {
@@ -365,17 +393,10 @@ namespace Orbweaver
 
             foreach (var peer in worth)
             {
-                try
-                {
-                    await host.Link
-                        .ConnectAsync(peer.Machine, peer.Address, peer.Port)
-                        .ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    MirrorLog.SayOnce($"peer-dial-failed:{peer.Machine}",
-                        $"to={peer.Machine} {ex.GetType().Name}: {ex.Message}");
-                }
+                await DialPeerAsync(
+                    peer.Machine,
+                    () => host.Link.ConnectAsync(peer.Machine, peer.Address, peer.Port),
+                    DialBound(host.Link.DialTimeout)).ConfigureAwait(false);
             }
 
             await AskWhatTheyHaveAsync(host).ConfigureAwait(false);
