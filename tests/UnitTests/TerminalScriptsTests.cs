@@ -1267,7 +1267,7 @@ namespace Orbweaver.Tests
 
             var args = TerminalScripts.TmuxSplitArgs(null, "user:3", "/tmp/x", command);
 
-            Assert.Equal("cd -- '/tmp/x' || exit 1; " + command, args[^1]);
+            Assert.Equal("cd -- '/tmp/x' || exit 1; " + command, AgentEnvironment.Unwrap(args[^1]));
         }
 
         // tmux format-expands -c, so a directory named with `#{…}` or `#(…)`
@@ -1284,8 +1284,8 @@ namespace Orbweaver.Tests
         {
             var guard = "cd -- " + TerminalScripts.ShellQuote(cwd) + " || exit 1; exec 'x'";
 
-            Assert.Equal(guard, TerminalScripts.TmuxSplitArgs(null, "user:3", cwd, "exec 'x'")[^1]);
-            Assert.Equal(guard, TerminalScripts.TmuxNewWindowArgs(null, "user", cwd, "exec 'x'")[^1]);
+            Assert.Equal(guard, AgentEnvironment.Unwrap(TerminalScripts.TmuxSplitArgs(null, "user:3", cwd, "exec 'x'")[^1]));
+            Assert.Equal(guard, AgentEnvironment.Unwrap(TerminalScripts.TmuxNewWindowArgs(null, "user", cwd, "exec 'x'")[^1]));
         }
 
         // No cwd, no guard — `cd -- ''` would fail and take the command with it.
@@ -1294,8 +1294,8 @@ namespace Orbweaver.Tests
         [InlineData("")]
         public void NoCwdMeansTheBareCommand(string? cwd)
         {
-            Assert.Equal("exec 'x'", TerminalScripts.TmuxSplitArgs(null, "user:3", cwd, "exec 'x'")[^1]);
-            Assert.Equal("exec 'x'", TerminalScripts.TmuxNewWindowArgs(null, "user", cwd, "exec 'x'")[^1]);
+            Assert.Equal("exec 'x'", AgentEnvironment.Unwrap(TerminalScripts.TmuxSplitArgs(null, "user:3", cwd, "exec 'x'")[^1]));
+            Assert.Equal("exec 'x'", AgentEnvironment.Unwrap(TerminalScripts.TmuxNewWindowArgs(null, "user", cwd, "exec 'x'")[^1]));
         }
 
         // The new window hands back its pane id, which is what the caller treats

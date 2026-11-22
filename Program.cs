@@ -46,6 +46,13 @@ namespace Orbweaver
         public static void Main(string[] args)
         {
             StartupTimeline.Default.Mark("Main entered");
+
+            // CB-413: first thing, before anything can launch a child. An app
+            // started from an agent's shell carries that session's identity
+            // (job dir, session id, messaging socket, TMUX…) and would hand it
+            // to every session it launches.
+            AgentEnvironment.ScrubCurrentProcess();
+
             // The order these run in is Startup.Run's, and the first two
             // are the fixes for CB-44 and CB-178 respectively — see
             // Startup.Run's own comment for why claimSingleInstance sits where

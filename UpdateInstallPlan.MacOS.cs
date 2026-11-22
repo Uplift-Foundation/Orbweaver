@@ -179,7 +179,7 @@ namespace Orbweaver
         // the install script strips it: a launch from a shell inside a Claude
         // session must not hand the new Buddy that session's config root.
         internal static MacCommand MacOpenInstalled(string app) =>
-            new("/usr/bin/env", ["-u", "CLAUDE_CONFIG_DIR", "/usr/bin/open", "-a", app]);
+            new("/usr/bin/env", [.. AgentEnvironment.UnsetArgs(), "-u", "CLAUDE_CONFIG_DIR", "/usr/bin/open", "-a", app]);
 
         internal static MacCommand MacKeepAliveRepair(string installedApp) =>
             new(JoinPosix(installedApp, "Contents", "Resources", "install-hooks.sh"), ["--keepalive-only"]);

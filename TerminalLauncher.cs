@@ -165,7 +165,7 @@ namespace Orbweaver
         [ExcludeFromCodeCoverage]
         public static int? StartConsole(ProcessStartInfo start)
         {
-            try { return Process.Start(start)?.Id; }
+            try { return Process.Start(AgentEnvironment.Scrubbed(start))?.Id; }
             catch { return null; }
         }
 
@@ -230,7 +230,7 @@ namespace Orbweaver
             try
             {
                 if (startInfoFor(true) is not { } wt) return false;
-                Process.Start(wt);
+                Process.Start(AgentEnvironment.Scrubbed(wt));
                 return true;
             }
             catch
@@ -238,7 +238,7 @@ namespace Orbweaver
                 try
                 {
                     if (startInfoFor(false) is not { } cmd) return false;
-                    Process.Start(cmd);
+                    Process.Start(AgentEnvironment.Scrubbed(cmd));
                     return true;
                 }
                 catch
@@ -261,6 +261,9 @@ namespace Orbweaver
                     RedirectStandardOutput = true,
                     RedirectStandardError = true
                 };
+                // CB-413: never target a tmux server by inheritance (TMUX) or
+                // hand a launched session this app's inherited agent identity.
+                AgentEnvironment.Scrubbed(psi);
                 foreach (var arg in TerminalScripts.TmuxProcessArgs(exe, args)) psi.ArgumentList.Add(arg);
 
                 using var process = Process.Start(psi);
