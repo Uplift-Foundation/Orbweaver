@@ -268,4 +268,49 @@ public partial class MirrorRoundTripTests
         Assert.EndsWith("via=refused run=model code=unavailable", line);
         Assert.DoesNotContain(RunFrames.BusyWhy, line);
     }
+
+    // The same hand check from the mini's own panel, which nobody can open there:
+    // both routes into RunControlsHost.SetAsync, the local panel
+    // (LocalCliChatSession) and the peer INPUT, over ONE host, for an idle tmux
+    // Claude session whose bridge post never answers. Both go through, typed, and
+    // neither is refused as busy, so the guard was the host's and is fixed there.
+    [Fact]
+    public async Task BothRoutesIntoTheHostTypeAndNeitherIsBusyWhenTheBridgePostHangs()
+    {
+        var typed = new List<string>();
+        var host = new RunControlsHost(new RunControlsHost.Seams(
+            _ => true, _ => "bridge-1", () => true,
+            _ => new RunReading("claude-opus-5-5", "high", DateTimeOffset.UtcNow.AddMinutes(-5), RunReadingSource.Transcript),
+            _ => RunSources.ClaudeFallback, _ => null,
+            (_, text) => { lock (typed) typed.Add(text); return Task.FromResult(true); },
+            (_, _, _) => new TaskCompletionSource<MirrorSlashHost.ControlVerdict>().Task,
+            () => DateTimeOffset.UtcNow,
+            Log: (_, _) => { },
+            Delay: d => d == RunControlsHost.ControlBudget ? Task.CompletedTask : new TaskCompletionSource().Task));
+
+        var harness = new Harness(_dir, run: host);
+        var transcript = WriteTranscript("run-both.jsonl", Conversation(2));
+        harness.AddSession("job-hunter", transcript);
+        await harness.HandshakeAsync("job-hunter");
+
+        // The local panel's route: the same session as the mini's own panel would hold it.
+        var status = new SessionStatus
+        {
+            SessionId = "588fbf9a-local", Source = SessionSource.ClaudeCode, State = "idle", Title = "job-hunter",
+            Cwd = _dir, TranscriptPath = transcript, TmuxPane = "%241",
+        };
+        using var local = new LocalCliChatSession(status.SessionId, status,
+            findRegistry: _ => null, runControls: host);
+
+        Assert.Null(await local.SetModelAsync("sonnet"));
+        Assert.Null(await local.SetThinkingAsync("low"));
+
+        // The peer's route, right after, into the same host.
+        var peer = harness.Client.SetRunAsync("job-hunter", RunField.Model, "opus");
+        await harness.Server.RunInFlight;
+        Assert.Equal(RunSetResult.Sent, await peer);
+
+        Assert.Equal(["/model sonnet", "/effort low", "/model opus"], typed);
+        Assert.False(host.IsRunning(status));
+    }
 }
