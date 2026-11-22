@@ -734,9 +734,9 @@ namespace Orbweaver
         // Abandoned handshakes whose native call has not returned yet.
         internal int StuckHandshakes => Volatile.Read(ref _stuckHandshakes);
 
-        private sealed class HandshakeStalled(string message) : Exception(message);
+        internal sealed class HandshakeStalled(string message) : Exception(message);
 
-        private async Task BoundedHandshakeAsync(
+        internal async Task BoundedHandshakeAsync(
             Func<Task> start, CancellationToken outer, CancellationToken setup, string bound,
             string? machine = null)
         {
@@ -746,7 +746,14 @@ namespace Orbweaver
             {
                 await handshake.WaitAsync(setup).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (!handshake.IsCompleted)
+            catch (OperationCanceledException) when (handshake.IsCompleted)
+            {
+                // The clock and the call finished in the same tick: the call's
+                // own outcome is the truth, so a handshake that succeeded is not
+                // reported as cancelled.
+                await handshake.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
             {
                 Interlocked.Increment(ref _stuckHandshakes);
 
@@ -782,7 +789,7 @@ namespace Orbweaver
         // Closes a connection that never became a link. After a stall the
         // SslStream is closed off this thread: it may be the very object the
         // stuck native call holds, and disposing it must not take the caller down with it.
-        private static void Discard(SslStream? tls, TcpClient? client, bool stalled)
+        internal static void Discard(SslStream? tls, TcpClient? client, bool stalled)
         {
             if (!stalled)
             {

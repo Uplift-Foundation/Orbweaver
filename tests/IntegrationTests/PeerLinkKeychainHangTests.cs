@@ -34,6 +34,7 @@ public class PeerLinkKeychainHangTests
     {
         public readonly ManualResetEventSlim Gate = new();
         public int Entered;
+        public volatile bool ReturnNormally; // how a released call ends
         public void Dispose() => Gate.Set();
     }
 
@@ -54,12 +55,14 @@ public class PeerLinkKeychainHangTests
             {
                 Interlocked.Increment(ref keychain.Entered);
                 keychain.Gate.Wait(); // no token: this is the native call
+                if (keychain.ReturnNormally) return Task.CompletedTask;
                 throw new InvalidOperationException("keychain released; handshake abandoned");
             },
             ServerHandshake: (_, _, _) =>
             {
                 Interlocked.Increment(ref keychain.Entered);
                 keychain.Gate.Wait();
+                if (keychain.ReturnNormally) return Task.CompletedTask;
                 throw new InvalidOperationException("keychain released; handshake abandoned");
             }))
         { DialTimeout = dial ?? Short, InboundSetupTimeout = dial ?? Short };
@@ -202,5 +205,73 @@ public class PeerLinkKeychainHangTests
         using var third = new TcpClient();
         await third.ConnectAsync(IPAddress.Loopback, port);
         await Within(TimeSpan.FromSeconds(5), () => keychain.Entered == 2);
+    }
+
+    // A released call may also simply return. The clear is in a continuation,
+    // so both endings must lower the count, and the next dial reaches the seam.
+    [Fact]
+    public async Task AStuckCallThatReturnsNormallyClearsTheCapToo()
+    {
+        using var keychain = new Keychain { ReturnNormally = true };
+        using var link = Link(keychain);
+        var (listener, port, _) = Silent();
+
+        try
+        {
+            Assert.False(await link.ConnectAsync("kc-dial-normal", "127.0.0.1", port).WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Equal(1, link.StuckHandshakes);
+
+            keychain.Gate.Set();
+            await Within(TimeSpan.FromSeconds(5), () => link.StuckHandshakes == 0);
+
+            await link.ConnectAsync("kc-dial-normal", "127.0.0.1", port).WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(2, keychain.Entered); // reached the seam again, not refused
+        }
+        finally { listener.Stop(); }
+    }
+
+    // One cap for both directions: a stuck dial blocks the accept side.
+    [Fact]
+    public async Task AStuckDialBlocksAnInboundHandshake()
+    {
+        using var keychain = new Keychain();
+        using var link = Link(keychain);
+        link.Listen(0);
+        var (listener, port, _) = Silent();
+
+        try
+        {
+            Assert.False(await link.ConnectAsync("kc-cross-out", "127.0.0.1", port).WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Equal(1, link.StuckHandshakes);
+
+            using var inbound = new TcpClient();
+            await inbound.ConnectAsync(IPAddress.Loopback, link.BoundPort);
+            Assert.Equal(0, await inbound.GetStream().ReadAsync(new byte[1]).AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Equal(1, keychain.Entered); // the inbound never reached the seam
+        }
+        finally { listener.Stop(); }
+    }
+
+    // ...and a stuck inbound handshake blocks the dial side.
+    [Fact]
+    public async Task AStuckInboundHandshakeBlocksADial()
+    {
+        using var keychain = new Keychain();
+        using var link = Link(keychain);
+        link.Listen(0);
+        var (listener, port, accepted) = Silent();
+
+        try
+        {
+            using var inbound = new TcpClient();
+            await inbound.ConnectAsync(IPAddress.Loopback, link.BoundPort);
+            await Within(TimeSpan.FromSeconds(5), () => link.StuckHandshakes == 1);
+
+            Assert.False(await link.ConnectAsync("kc-cross-in", "127.0.0.1", port).WaitAsync(TimeSpan.FromSeconds(10)));
+            await Task.Delay(100);
+            Assert.Equal(0, accepted());       // no TCP connection was made
+            Assert.Equal(1, keychain.Entered); // and no second native call
+        }
+        finally { listener.Stop(); }
     }
 }
