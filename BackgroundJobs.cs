@@ -16,8 +16,9 @@ namespace Orbweaver
     // fifteen orbs at once.
     internal enum JobPhase
     {
-        // Read a listing, and this session was not on it: an interactive
-        // session, a subagent, or a status file that outlived its session.
+        // Read a listing, and this session was not on it, and nothing says it is
+        // alive: a subagent, or a status file that outlived its session. A live
+        // process with a fresh file is Unknown instead — see Phase.
         NotAJob,
 
         // Mid-turn. Indistinguishable from Parked on disk, which is the whole
@@ -151,9 +152,11 @@ namespace Orbweaver
         // without a daemon to ask. `states` is what Parse returned — null for a
         // listing that could not be read at all.
         //
-        // Absent from a listing that was read successfully means not a job at
-        // all: a subagent, or a session that ended. "done" means it was one and
-        // has finished. Neither has anything left to show, and an orb for
+        // Absent from a listing that was read successfully means the daemon does
+        // not run it as a job under that id: a subagent, a session that ended, or
+        // a live session sharing a re-pointed job's worker (CB-413 — see the
+        // pid-aware Phase below for how the scan tells those apart). "done" means
+        // it was a job and has finished. Neither has anything left to show, and an orb for
         // either is a click that can only fail.
         //
         // A listing that couldn't be read answers true, not false. This decides
@@ -213,6 +216,46 @@ namespace Orbweaver
             if (Is(state, "done")) return JobPhase.Done;
 
             return JobPhase.Working;
+        }
+
+        // How long a status file may sit untouched and still count as evidence
+        // that a session absent from the listing is alive. The same ten minutes
+        // as SessionManager.SweepGrace, deliberately: past it the sweep deletes
+        // the file, so an orb kept on this evidence goes when the file does and
+        // the two never disagree.
+        internal static readonly TimeSpan AbsentGrace = TimeSpan.FromMinutes(10);
+
+        // Phase, corrected for what the listing cannot see.
+        //
+        // Absent from a listing means "not a job the daemon is running under
+        // that id" and no more. It does not mean the session is over: the daemon
+        // re-points a job to a newer conversation that shares its worker, so the
+        // listing names the old session id while a second, entirely live session
+        // (same pid, fresh status file) is not named at all. Read as NotAJob,
+        // that session lost its orb on a machine where it was plainly running —
+        // CB-413, found because the user's own work vanished from the board.
+        //
+        // So NotAJob is only believed of a session that is actually over: its
+        // process is gone or its file has gone quiet past AbsentGrace. A process
+        // that is alive and a file that is fresh read Unknown, which every rule
+        // built on Phase treats as "change nothing". A pid of 0 is a hook that
+        // recorded no process, which is no evidence either way, so it keeps the
+        // listing's word — the subagent and the leftover file the NotAJob rules
+        // exist for are exactly the pid-less ones. "done" stays Done: the daemon
+        // said so, and nothing here second-guesses a word it did say.
+        //
+        // `isRunning` is a Func so the stat behind it is only paid for a session
+        // the listing did not name.
+        internal static JobPhase Phase(
+            Dictionary<string, string>? states, string sessionId,
+            int pid, DateTime written, DateTime now, Func<int, bool> isRunning)
+        {
+            var phase = Phase(states, sessionId);
+            if (phase != JobPhase.NotAJob) return phase;
+
+            return pid > 0 && now - written < AbsentGrace && isRunning(pid)
+                ? JobPhase.Unknown
+                : JobPhase.NotAJob;
         }
 
         private static bool Is(string? state, string word) =>
