@@ -137,6 +137,24 @@ public class PeerHandshakeBoundTests
         Assert.Equal(0, link.StuckHandshakes);
     }
 
+    // A deaf call (it never looks at its token) that nevertheless returns inside
+    // the grace was only slow, not stuck: no stall, no cap.
+    [Fact]
+    public async Task ADeafCallThatReturnsInsideTheGraceIsNotStuck()
+    {
+        using var link = Link();
+        link.StallGrace = TimeSpan.FromSeconds(5);
+        var gate = Gate();
+        using var setup = new CancellationTokenSource(Short);
+
+        var pending = link.BoundedHandshakeAsync(() => gate.Task, CancellationToken.None, setup.Token, "0.1s");
+        await Task.Delay(Short * 2); // the clock has fired and the call is still out
+        gate.SetResult();
+
+        Assert.Null(await Record.ExceptionAsync(() => pending));
+        Assert.Equal(0, link.StuckHandshakes);
+    }
+
     // A counter, not a flag: two abandoned handshakes hold the cap until both return.
     [Fact]
     public async Task TheCapHoldsUntilEveryAbandonedHandshakeHasReturned()
@@ -290,6 +308,34 @@ public class PeerHandshakeBoundTests
         PeerLink.Discard(tls, client: null, stalled);
 
         await Until(() => inner.Disposed);
+    }
+
+    // Shutdown while a handshake is stuck: the SslStream the stuck call holds may
+    // block on Dispose, and closing it must not take the caller with it.
+    [Fact]
+    public async Task DiscardAfterAStallDoesNotBlockOnADisposeThatBlocks()
+    {
+        using var release = new ManualResetEventSlim();
+        var inner = new BlocksOnDispose(release);
+        var tls = new SslStream(inner, leaveInnerStreamOpen: false);
+
+        await Task.Run(() => PeerLink.Discard(tls, client: null, stalled: true)).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.False(inner.Disposed);   // still blocked inside Dispose, off-thread
+        release.Set();
+        await Until(() => inner.Disposed);
+    }
+
+    private sealed class BlocksOnDispose(ManualResetEventSlim release) : MemoryStream
+    {
+        private int _disposed;
+        public bool Disposed => Volatile.Read(ref _disposed) == 1;
+        protected override void Dispose(bool disposing)
+        {
+            release.Wait();
+            Volatile.Write(ref _disposed, 1);
+            base.Dispose(disposing);
+        }
     }
 
     private sealed class Tracked : MemoryStream

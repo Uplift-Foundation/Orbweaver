@@ -533,15 +533,16 @@ namespace Orbweaver
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                // Shutdown, not a failure.
-                if (!adopted) { tls?.Dispose(); client.Dispose(); }
+                // Shutdown, not a failure. Closed off-thread: a handshake left
+                // stuck may hold this very SslStream (CB-411).
+                if (!adopted) Discard(tls, client, stalled: true);
             }
             catch (Exception ex)
             {
                 // SayOnce with a fixed key and no endpoint: a scanner or a flood
                 // of silent sockets collapses to one line and a restatement
                 // every so often, instead of evicting the log's history.
-                if (!adopted) Discard(tls, client, ex is HandshakeStalled);
+                if (!adopted) Discard(tls, client, ex is HandshakeStalled or OperationCanceledException);
 
                 var why = ex is HandshakeStalled
                     ? ex.Message
@@ -695,7 +696,7 @@ namespace Orbweaver
                 // A socket that never became a link is closed here rather than
                 // left to a finalizer — a silent far side would otherwise cost
                 // one open connection per tick.
-                if (!adopted) Discard(tls, client, ex is HandshakeStalled);
+                if (!adopted) Discard(tls, client, ex is HandshakeStalled or OperationCanceledException);
 
                 var why = ex is HandshakeStalled
                     ? ex.Message

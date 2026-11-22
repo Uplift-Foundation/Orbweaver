@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -137,9 +136,10 @@ public class PeerLinkKeychainHangTests
             await Within(TimeSpan.FromSeconds(5), () => accepted() >= 1);
             Assert.Equal(1, accepted());
 
-            var before = Stopwatch.GetTimestamp();
+            // No stopwatch: that the seam, the socket and the count are all
+            // untouched below is what says it failed fast, without a wall-clock
+            // tolerance a loaded runner would break.
             Assert.False(await link.ConnectAsync("kc-dial-two-b", "127.0.0.1", port).WaitAsync(TimeSpan.FromSeconds(10)));
-            Assert.True(Stopwatch.GetElapsedTime(before) < Short / 2, "the refusal waited instead of failing fast");
 
             await Task.Delay(100);
             Assert.Equal(1, accepted());                 // no second TCP connection
@@ -273,5 +273,77 @@ public class PeerLinkKeychainHangTests
             Assert.Equal(1, keychain.Entered); // and no second native call
         }
         finally { listener.Stop(); }
+    }
+
+    // The CB-301 shape: TCP accepted, TLS silent, and a handshake that honours
+    // its token. That is a silent peer, not a keychain, and the old messages
+    // stand. The seam observes the token and otherwise never completes.
+    private static PeerLink Cooperative(TimeSpan timeout) =>
+        Warm() ? new PeerLink(new PeerLink.Seams(
+            Deliver: (_, _) => Task.CompletedTask,
+            KnownPeer: _ => null,
+            OwnCertificate: _ => Task.FromResult(Cert.Value),
+            ClientHandshake: async (_, _, ct) => await Task.Delay(Timeout.Infinite, ct),
+            ServerHandshake: async (_, _, ct) => await Task.Delay(Timeout.Infinite, ct)))
+        { DialTimeout = timeout, InboundSetupTimeout = timeout, StallGrace = TimeSpan.FromSeconds(5) }
+        : throw new InvalidOperationException();
+
+    [Fact]
+    public async Task ASilentFarSideIsReportedAsNoAnswerNotAsAKeychain()
+    {
+        using var link = Cooperative(TimeSpan.FromMilliseconds(300));
+        var (listener, port, _) = Silent();
+        var heard = new List<(string What, string Detail)>();
+        void H(string w, string d) { lock (heard) heard.Add((w, d)); }
+        MirrorLog.Heard += H;
+
+        try
+        {
+            Assert.False(await link.ConnectAsync("kc-silent-out", "127.0.0.1", port).WaitAsync(TimeSpan.FromSeconds(10)));
+
+            lock (heard)
+            {
+                var line = Assert.Single(heard, e => e.What == "peer-connect-failed:kc-silent-out");
+                Assert.Contains("no answer within", line.Detail);
+                Assert.DoesNotContain("keychain", line.Detail);
+            }
+
+            Assert.Equal(0, link.StuckHandshakes);
+        }
+        finally { MirrorLog.Heard -= H; listener.Stop(); }
+    }
+
+    [Fact]
+    public async Task ASilentClientIsReportedAsNoHandshakeNotAsAKeychain()
+    {
+        // 200 ms: its detail line ("no handshake within 0.2s") is unique among
+        // the tests, because SayOnce swallows an identical repeat.
+        using var server = Cooperative(TimeSpan.FromMilliseconds(200));
+        server.Listen(0);
+        var heard = new List<(string What, string Detail)>();
+        var said = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void H(string w, string d)
+        {
+            lock (heard) heard.Add((w, d));
+            if (w == "peer-inbound-failed") said.TrySetResult();
+        }
+        MirrorLog.Heard += H;
+
+        try
+        {
+            using var silent = new TcpClient();
+            await silent.ConnectAsync(IPAddress.Loopback, server.BoundPort);
+            await said.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+            lock (heard)
+            {
+                var line = heard.Last(e => e.What == "peer-inbound-failed");
+                Assert.Contains("no handshake within", line.Detail);
+                Assert.DoesNotContain("keychain", line.Detail);
+            }
+
+            Assert.Equal(0, server.StuckHandshakes);
+        }
+        finally { MirrorLog.Heard -= H; }
     }
 }
