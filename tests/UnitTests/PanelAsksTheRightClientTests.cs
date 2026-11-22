@@ -29,8 +29,10 @@ public class PanelAsksTheRightClientTests
     // the accessor itself, and the link's own plumbing — the pump that ticks
     // the halves and the republish that turns the roster into orb rows. None
     // of the three answers a panel's question.
+    // RepublishIfOutOfStep (CB-402) is the same republish, run on the dial tick.
+    // RepublishIfOutOfStep (CB-402) is that same republish, run on the dial tick.
     private static readonly string[] HostReadersAllowed =
-        { "MirrorClientFor", "MirrorTickAsync", "RepublishFromLink" };
+        { "MirrorClientFor", "MirrorTickAsync", "RepublishFromLink", "RepublishIfOutOfStep" };
 
     [Fact]
     public void EveryPanelQuestionGoesThroughTheOneAccessor()

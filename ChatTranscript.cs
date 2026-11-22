@@ -757,9 +757,16 @@ namespace Orbweaver
                 if (text.Length == 0 || OptionLine.IsMatch(text) || IsHorizontalRule(text) || IsHint(text)) break;
                 if (ContentColumn(lines[k]) < labelColumn) break;
 
+                // One column of slack: Claude Code wraps a line one short of
+                // the screen, so a word that would end exactly at the edge is
+                // still sent down. Measured on 2.1.330 in a 35-column pane
+                // (PaneFixtures.TeamLeadNarrowFreeTextTyped): "not fit on one row of
+                // a" (28) + " narrow" ends at 35 and was wrapped, and the row's
+                // last line was lost — the read-back of a typed answer then
+                // failed and the phone's answer was never sent (CB-406).
                 var firstWord = text.Split(' ', 2)[0];
                 var above = lines[previous].TrimEnd().Length;
-                if (above + 1 + firstWord.Length <= width) break;
+                if (above + 1 + firstWord.Length < width) break;
 
                 // A terminal also breaks a word at a hyphen ("cb313-" / "probe"); that one is
                 // rejoined without the space it never had. A label that truly ends in " -"
@@ -864,8 +871,23 @@ namespace Orbweaver
                 return o with { Label = label };
             }).ToList();
 
-            var freeText = options.FirstOrDefault(o => o.Label.StartsWith(FreeTextLabel, StringComparison.Ordinal))?.Key;
-            var chatAbout = options.FirstOrDefault(o => o.Label.StartsWith(ChatAboutLabel, StringComparison.Ordinal))?.Key;
+            // A pane about twelve columns wide wraps even these two fixed rows ("Type
+            // somethi ng.", "Chat" / "about this"), and a form whose free-text row was
+            // missed here was declined as no form at all (CB-407). So each is also found
+            // by its letters with spaces ignored, "Chat about this" by being the last
+            // row right under the free-text row and a start of that label; and a row
+            // found that way is given its whole label.
+            var freeText = options.FirstOrDefault(o => o.Label.StartsWith(FreeTextLabel, StringComparison.Ordinal))?.Key
+                ?? options.FirstOrDefault(o => LettersStart(o.Label, FreeTextLabel))?.Key;
+            var chatAbout = options.FirstOrDefault(o => o.Label.StartsWith(ChatAboutLabel, StringComparison.Ordinal))?.Key
+                // Keys are the digits ParseDialog read off the numbered rows, so they always parse.
+                ?? (freeText is not null
+                    ? options.FirstOrDefault(o => o.Key == (int.Parse(freeText) + 1).ToString() && o == options[^1] && LettersStart(ChatAboutLabel, o.Label))?.Key
+                    : null);
+            options = options.Select(o =>
+                o.Key == freeText && !o.Label.StartsWith(FreeTextLabel, StringComparison.Ordinal) ? o with { Label = FreeTextRowLabel }
+                : o.Key == chatAbout && !o.Label.StartsWith(ChatAboutLabel, StringComparison.Ordinal) ? o with { Label = ChatAboutLabel }
+                : o).ToList();
 
             // The Submit tab's own screen: "Review your answers", the answers as
             // "● question" / "→ answer" pairs, then Submit answers / Cancel.
@@ -949,6 +971,19 @@ namespace Orbweaver
                 KeyOf(SubmitAnswersLabel), KeyOf(CancelLabel));
         }
 
+        // Whether the form's free-text row is being typed into: no row reads
+        // "Type something" any more (its label is what was typed), there is a
+        // "Chat about this" row, and the cursor is on the row just above it,
+        // where Claude Code always draws the free-text row. A digit pressed now
+        // goes into that field as text rather than choosing an option — the
+        // second half of CB-406: a phone's "1" landed in a field a failed typed
+        // answer had left open, and pressed nothing. Measured on 2.1.330
+        // (PaneFixtures.TeamLeadNarrowFreeTextTyped).
+        internal static bool IsEditingFreeText(AskForm form) =>
+            !form.IsReview && form.FreeTextKey is null
+            && int.TryParse(form.ChatAboutKey, out var chat)
+            && form.CursorKey == (chat - 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+
         internal const string ReviewHeading = "Review your answers";
         internal const string SubmitAnswersLabel = "Submit answers";
         internal const string CancelLabel = "Cancel";
@@ -960,6 +995,13 @@ namespace Orbweaver
         internal const string NextRowLabel = "Next";
 
         internal const string FreeTextLabel = "Type something";
+        internal const string FreeTextRowLabel = "Type something.";
+
+        // Whether `text` begins with `wanted`, comparing letters only: every space gone,
+        // because a narrow pane breaks the rows inside words.
+        internal static bool LettersStart(string text, string wanted) =>
+            Regex.Replace(text, @"\s+", "").StartsWith(Regex.Replace(wanted, @"\s+", ""), StringComparison.Ordinal)
+            && Regex.Replace(text, @"\s+", "").Length >= 3;
         internal const string ChatAboutLabel = "Chat about this";
 
         private static bool IsTabBar(string line) =>

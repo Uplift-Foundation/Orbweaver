@@ -33,6 +33,14 @@ namespace Orbweaver
         internal long ExpiresAt { get; }
         internal bool Answered { get; set; }
 
+        // The sequence number stamped when a press on this prompt last ended
+        // with no effect, 0 for none (CB-406). A press that had no effect no longer leaves the
+        // prompt answered, so a retry works; an answer that arrived while that
+        // press was being decided is not a retry but a racing duplicate, and
+        // must still be refused (rule 8). PromptPipeline compares the sequence
+        // an answer arrived at with this.
+        internal long LastPress { get; set; }
+
         // The only keys an answer may press, when the prompt was sent with a
         // chosen subset of the screen's options (a question: its own choices,
         // never "Type something." or "Chat about this", whose digit declines

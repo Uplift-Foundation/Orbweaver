@@ -111,6 +111,13 @@ namespace Orbweaver
         public const string ErrBadHash = "bad-hash";
         public const string ErrUnsupported = "unsupported";
 
+        // Never on the wire: made here when a request got no reply at all (nothing came back
+        // within the timeout, the relay could not be reached, or an OK carried a payload that
+        // is not what was asked for). It says nothing about what the far side can do, so it is
+        // never read as ErrUnsupported, which a session treats as final (CB-407, and
+        // CB-406, where it took a form off the MacBook's panel for good).
+        public const string ErrNoReply = "no-reply";
+
         // The far session's own registry entry is gone — CB-105's messaging
         // path found no ~/.claude/sessions file for it at all, which almost
         // always means the background job it named has since stopped. There
@@ -1233,7 +1240,16 @@ namespace Orbweaver
 
             if (AskFormTranscript.ReadForm(screen, call) is { } form) return Bounded(form);
 
-            return ChatTranscript.ParseDialog(screen) is { } dialog
+            // The transcript says this screen is an AskUserQuestion (a call is pending and
+            // the form footer is drawn) and neither form reader could place it. The screen's
+            // own numbered reading is then the wrong thing to serve: it glues each label to
+            // its description row and keeps one row of a wrapped title, and it looks
+            // plausible (CB-407). Nothing is offered, and the person is sent to the terminal.
+            // An overlay is not that: it has no numbered rows to glue, and reads as its own.
+            var dialog = ChatTranscript.ParseDialog(screen);
+            if (call is not null && dialog?.Body is null && AskFormTranscript.HasFormFooter(screen)) return null;
+
+            return dialog is not null
                 ? Bounded(new AskForm(dialog, Array.Empty<AskTab>(), -1, null, null))
                 : null;
         }

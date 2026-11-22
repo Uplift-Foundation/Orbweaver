@@ -178,9 +178,22 @@ internal sealed class FakeChatSession :
         _history = seedHistory?.ToList() ?? new List<ChatTurn>();
     }
 
+    public string? RefusalNote { get; set; }
+
     public Task<ChatSendOutcome> SendAsync(string text)
     {
         SentTexts.Add(text);
+
+        // CB-403: a refused send, as the real sessions do it — a note under
+        // the composer and no user bubble, because nothing was sent.
+        if (RefusalNote is { } note)
+        {
+            var noteTurn = new ChatTurn { Role = ChatRole.System, Text = note, IsComplete = true };
+            _history.Add(noteTurn);
+            TurnAdded?.Invoke(noteTurn);
+
+            return Task.FromResult(SendOutcome);
+        }
 
         var turn = new ChatTurn { Role = ChatRole.User, Text = text };
         _history.Add(turn);

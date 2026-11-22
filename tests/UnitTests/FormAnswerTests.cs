@@ -75,6 +75,82 @@ public class FormAnswerTests
 
     // Enter only after the row reads back as the text: a cursor that never
     // reached the row, or text that never showed, stops before Enter.
+    // CB-406, end to end on the real team-lead captures: a long answer wraps
+    // over four rows of a 35-column pane and is still read back as typed, so
+    // Enter is pressed. Failed before the fix (type-failed, text left in the
+    // field). The cursor-on-row screen is TeamLeadNarrowForm with its ❯ moved to
+    // row 4, which is all the arrows change: the fingerprint ignores it.
+    [Fact]
+    public async Task ALongAnswerInANarrowTeamLeadsPaneReachesEnter()
+    {
+        const string typed = "my own answer and this is a much longer reply that will not fit on one row of a narrow pane";
+        var onRow = PaneFixtures.TeamLeadNarrowForm.Replace("❯ 1. Red", "  1. Red").Replace("  4. Type something.", "❯ 4. Type something.");
+        var pane = new Pane(PaneFixtures.TeamLeadNarrowForm);
+        var downs = 0;
+        pane.AfterPress = k => k == "Down" && ++downs == 3 ? onRow : null;
+        pane.AfterType = _ => PaneFixtures.TeamLeadNarrowFreeTextTyped;
+        var said = new List<string>();
+
+        Assert.Null(await FormAnswer.AnswerAsync(Status, pane.Capture, pane.Press, pane.Type, pane.Fp, "4", null, typed, said.Add));
+        Assert.Equal(new[] { "Down", "Down", "Down", "Enter" }, pane.Pressed);
+        Assert.Empty(said);
+    }
+
+    // QA round 2: a refused read-back says why, as numbers and never the text.
+    [Theory]
+    [InlineData(false, "readback stage=row read=form same-form=1 cursor=1 free=3 shown=15 wanted=0 prefix=0 rows=1")]
+    [InlineData(true, "readback stage=typed read=form same-form=1 cursor=3 free=3 shown=15 wanted=13 prefix=0 rows=1")]
+    public async Task ARefusedReadBackSaysWhyWithoutTheText(bool cursorArrives, string expected)
+    {
+        var pane = new Pane(PaneFixtures.QaFormQ1);
+        var downs = 0;
+        pane.AfterPress = k => cursorArrives && k == "Down" && ++downs == 2 ? PaneFixtures.QaCursorOnFreeText : null;
+        var said = new List<string>();
+
+        Assert.Equal(MirrorProtocol.ErrTypeFailed,
+            await FormAnswer.AnswerAsync(Status, pane.Capture, pane.Press, pane.Type, pane.Fp, "3", null, "my own answer", said.Add));
+        Assert.Equal(expected, Assert.Single(said));
+        Assert.DoesNotContain("my own answer", said[0]);
+    }
+
+    // Every arm of the diagnosis: no form read at all, a form without the row,
+    // and a row that is the start of what was typed.
+    [Fact]
+    public void TheDiagnosisReadsEveryShapeOfARefusalAsNumbers()
+    {
+        Assert.Equal("readback stage=row read=none same-form=0 cursor=none free=3 shown=0 wanted=0 prefix=0 rows=0",
+            FormAnswer.ReadBackDiagnosis("row", null, null, "3", null, false));
+
+        var form = MirrorProtocol.PromptFromScreen(PaneFixtures.QaTeamLeadShortPaneTyped)!;
+        Assert.Equal("readback stage=typed read=form same-form=1 cursor=3 free=9 shown=0 wanted=4 prefix=0 rows=0",
+            FormAnswer.ReadBackDiagnosis("typed", form, PaneFixtures.QaTeamLeadShortPaneTyped, "9", "four", true));
+        Assert.Equal("readback stage=typed read=form same-form=1 cursor=3 free=3 shown=83 wanted=88 prefix=1 rows=4",
+            FormAnswer.ReadBackDiagnosis("typed", form, PaneFixtures.QaTeamLeadShortPaneTyped, "3",
+                "QA test, ignore: a long peer answer that wraps over several rows of the narrow pane more", true));
+    }
+
+    // The screen stops being a form after the arrows: the row stage refuses
+    // with nothing read, and says so.
+    [Fact]
+    public async Task AFormThatVanishesBeforeTheRowIsReachedIsDiagnosedAsNoneRead()
+    {
+        var pane = new Pane(PaneFixtures.QaFormQ1);
+        pane.AfterPress = k => k == "Down" ? PaneFixtures.MacPromptAfterEsc : null;
+        var said = new List<string>();
+
+        Assert.Equal(MirrorProtocol.ErrTypeFailed,
+            await FormAnswer.AnswerAsync(Status, pane.Capture, pane.Press, pane.Type, pane.Fp, "3", null, "my own answer", said.Add));
+        Assert.StartsWith("readback stage=row read=none same-form=0 cursor=none", Assert.Single(said));
+    }
+
+    [Fact]
+    public void RowLinesCountsAWrappedRowAndNothingForAMissingOne()
+    {
+        Assert.Equal(4, FormAnswer.RowLines(PaneFixtures.QaTeamLeadShortPaneTyped, "3"));
+        Assert.Equal(0, FormAnswer.RowLines(PaneFixtures.QaTeamLeadShortPaneTyped, "9"));
+        Assert.Equal(0, FormAnswer.RowLines(null, "3"));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

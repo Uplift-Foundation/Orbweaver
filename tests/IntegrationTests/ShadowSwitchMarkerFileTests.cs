@@ -5,9 +5,9 @@ namespace Orbweaver.Tests;
 // CB-307: the shadow switch against real marker files in a real folder, read
 // with File.Exists exactly as both gates read them in the app — the local
 // panel's (LocalCliChatSession) and the mirror's remote typing paths
-// (RemoteMirrorServer.LiveSeams → TypingGate.GuardedTypeAsync). Log-only by
-// default; the enforce marker opts in; the shadow marker keeps meaning
-// log-only and wins over it.
+// (RemoteMirrorServer.LiveSeams → TypingGate.GuardedTypeAsync). Enforcing by
+// default (CB-403); the shadow marker is the opt-out and wins over the
+// now-redundant enforce marker.
 public class ShadowSwitchMarkerFileTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "cb307-shadow-" + Guid.NewGuid().ToString("N"));
@@ -22,18 +22,18 @@ public class ShadowSwitchMarkerFileTests : IDisposable
     private void Touch(string name) => File.WriteAllText(Path.Combine(_dir, name), "");
 
     [Fact]
-    public void AnEmptySettingsFolderIsLogOnly() =>
-        Assert.True(ShadowSwitch.IsOn(_dir, null, File.Exists));
+    public void AnEmptySettingsFolderEnforces() =>
+        Assert.False(ShadowSwitch.IsOn(_dir, null, File.Exists));
 
     [Fact]
-    public void TheEnforceMarkerOptsIntoEnforcing()
+    public void TheEnforceMarkerIsRedundantButHarmless()
     {
         Touch(ShadowSwitch.EnforceMarkerFileName);
         Assert.False(ShadowSwitch.IsOn(_dir, null, File.Exists));
     }
 
     [Fact]
-    public void AnInstalledShadowMarkerStaysLogOnlyEvenBesideAnEnforceMarker()
+    public void TheShadowMarkerOptsOutIntoLogOnlyEvenBesideAnEnforceMarker()
     {
         Touch(ShadowSwitch.MarkerFileName);
         Assert.True(ShadowSwitch.IsOn(_dir, null, File.Exists));

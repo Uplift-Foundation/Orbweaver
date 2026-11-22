@@ -47,12 +47,23 @@ namespace Orbweaver
 
         // The pending call for a screen, or null without reading anything when
         // the screen has no form footer on it.
-        internal static Call? CallFor(string? screen, string? transcriptPath)
+        internal static Call? CallFor(string? screen, string? transcriptPath) => CallForWhy(screen, transcriptPath).Call;
+
+        // The words a log line may carry about why no call was found: fixed, never any
+        // content of the screen or the transcript. "found" is the one that says there is one.
+        internal const string CallFound = "found", NoScreen = "no-screen", NoTranscriptPath = "no-transcript-path",
+            NoFooter = "no-footer", TranscriptMissing = "transcript-missing", NoPendingCall = "no-pending-call";
+
+        // CallFor with the condition that decided it, so a report that "the form was not
+        // offered" can say whether the screen, the path, the file or the transcript's last
+        // rows were why (CB-407: the host's reader could not be told from outside).
+        internal static (Call? Call, string Why) CallForWhy(string? screen, string? transcriptPath)
         {
-            if (string.IsNullOrEmpty(screen) || string.IsNullOrEmpty(transcriptPath)) return null;
-            if (!HasFormFooter(ChatTranscript.ScreenLines(screen).Select(Clean).ToArray())) return null;
-            if (!File.Exists(transcriptPath)) return null;
-            return PendingCall(TranscriptReader.TailLines(transcriptPath));
+            if (string.IsNullOrEmpty(screen)) return (null, NoScreen);
+            if (string.IsNullOrEmpty(transcriptPath)) return (null, NoTranscriptPath);
+            if (!HasFormFooter(ChatTranscript.ScreenLines(screen).Select(Clean).ToArray())) return (null, NoFooter);
+            if (!File.Exists(transcriptPath)) return (null, TranscriptMissing);
+            return PendingCall(TranscriptReader.TailLines(transcriptPath)) is { } call ? (call, CallFound) : (null, NoPendingCall);
         }
 
         // Walks the rows in order, remembering the last AskUserQuestion tool_use
@@ -179,7 +190,7 @@ namespace Orbweaver
             var raw = ChatTranscript.ScreenLines(screen);
             var cleaned = raw.Select(Clean).ToArray();
 
-            var footer = Array.FindLastIndex(cleaned, l => l.StartsWith(FormFooter, StringComparison.Ordinal));
+            var footer = FooterIndex(cleaned);
             if (footer < 0) return null;
 
             var run = new List<(int Line, int Key, string Label)>();
@@ -198,14 +209,22 @@ namespace Orbweaver
             for (var i = 0; i < run[0].Line; i++)
                 if (raw[i].Length > 0 && !char.IsWhiteSpace(raw[i][0])) return null;
 
+            // A pane about twelve columns wide wraps even the fixed labels ("Chat" /
+            // "about this", "Type" / "somethi" / "ng."), so each is read across the rows it
+            // wrapped onto, the way a choice's label is below.
             var last = run[^1];
-            if (!last.Label.StartsWith(ChatTranscript.ChatAboutLabel, StringComparison.Ordinal)) return null;
+            var lastRows = RowsUnder(cleaned, last.Line, footer);
+            if (!LabelMatches(ChatTranscript.ChatAboutLabel, last.Label, lastRows)) return null;
             // The row above "Chat about this" is "Type something." — or, once the
             // cursor is on it and text has been typed, that text (ask-freetext-
             // typed): FormAnswer reads the row back before pressing Enter, so it
             // must still read as the form's free-text row.
             var typeRow = run[^2];
-            if (!StripBox(typeRow.Label).StartsWith(ChatTranscript.FreeTextLabel, StringComparison.Ordinal)
+            var typeRows = RowsUnder(cleaned, typeRow.Line, last.Line);
+            var typeWrapped = !StripBox(typeRow.Label).StartsWith(ChatTranscript.FreeTextLabel, StringComparison.Ordinal)
+                && LabelMatches(ChatTranscript.FreeTextLabel, StripBox(typeRow.Label), typeRows);
+            if (!typeWrapped
+                && !StripBox(typeRow.Label).StartsWith(ChatTranscript.FreeTextLabel, StringComparison.Ordinal)
                 && !cleaned[typeRow.Line].StartsWith('❯')) return null;
 
             // The option count is anchored on "Type something", not on the last key:
@@ -234,8 +253,8 @@ namespace Orbweaver
 
             var options = question.Options
                 .Select((o, i) => new ChatPromptOption((i + 1).ToString(), o))
-                .Append(new ChatPromptOption(typeRow.Key.ToString(), StripBox(typeRow.Label)))
-                .Append(new ChatPromptOption(last.Key.ToString(), last.Label))
+                .Append(new ChatPromptOption(typeRow.Key.ToString(), typeWrapped ? TypeRowLabel : StripBox(typeRow.Label)))
+                .Append(new ChatPromptOption(last.Key.ToString(), last.Label.StartsWith(ChatTranscript.ChatAboutLabel, StringComparison.Ordinal) ? last.Label : ChatTranscript.ChatAboutLabel))
                 .ToList();
 
             string? cursor = null;
@@ -290,8 +309,62 @@ namespace Orbweaver
             return tabs;
         }
 
-        internal static bool HasFormFooter(IEnumerable<string> cleaned) =>
-            cleaned.Any(l => l.StartsWith(FormFooter, StringComparison.Ordinal));
+        internal static bool HasFormFooter(IEnumerable<string> cleaned) => FooterIndex(cleaned.ToArray()) >= 0;
+
+        internal static bool HasFormFooter(string screen) =>
+            HasFormFooter(ChatTranscript.ScreenLines(screen).Select(Clean).ToArray());
+
+        // The row the form footer starts on, or -1. The footer is the bottom of the
+        // screen, so it is the row from which everything that follows, joined, begins
+        // "Enter to select" — and spaces do not count, because a pane about twelve
+        // columns wide wraps it as "Enter to" / "select · ↑/↓" (and a narrower one
+        // between letters). Matching the row alone missed that, so the transcript was
+        // never consulted and no form was offered (CB-407). Only the last rows are
+        // looked at: the footer wraps over at most a handful of them.
+        private const int FooterReach = 16;
+
+        internal static int FooterIndex(string[] cleaned)
+        {
+            var wanted = NoSpace(FormFooter);
+            for (var i = cleaned.Length - 1; i >= Math.Max(0, cleaned.Length - FooterReach); i--)
+            {
+                if (cleaned[i].Length == 0) continue;
+                var tail = string.Concat(cleaned.Skip(i).Where(l => l.Length > 0));
+                if (NoSpace(tail).StartsWith(wanted, StringComparison.Ordinal)) return i;
+            }
+            return -1;
+        }
+
+        internal const string TypeRowLabel = ChatTranscript.FreeTextRowLabel;
+
+        // The rows a label wrapped onto: those under its option row up to the next
+        // option or the end bound, stopping at a blank row, a scroll marker or a rule,
+        // none of which is a label's continuation.
+        private static List<string> RowsUnder(string[] cleaned, int line, int end)
+        {
+            var rows = new List<string>();
+            // end is always a row index of the screen (the footer's, or the last option's),
+            // so it bounds the walk by itself.
+            for (var i = line + 1; i < end; i++)
+            {
+                var l = cleaned[i];
+                if (l.Length == 0 || l[0] is '↑' or '↓' || l.All(c => c is '─' or '━' or '═' or '╌')) break;
+                if (ChatTranscript.OptionLine.IsMatch(l)) break;
+                rows.Add(l);
+            }
+            return rows;
+        }
+
+        // Whether a label, with the rows it wrapped onto, starts with the wanted text,
+        // spaces ignored: "Chat" + "about this" is "Chat about this", and "Type" +
+        // "somethi" + "ng." is "Type something.".
+        private static bool LabelMatches(string wanted, string label, IEnumerable<string> continuation)
+        {
+            var drawn = NoSpace(StripBox(label) + " " + string.Join(" ", continuation));
+            return drawn.StartsWith(NoSpace(wanted), StringComparison.Ordinal);
+        }
+
+        private static string NoSpace(string text) => Regex.Replace(text, @"\s+", "");
 
         private static string Clean(string line) => line.Trim().Trim('│', '┃', '|', '║').Trim();
 

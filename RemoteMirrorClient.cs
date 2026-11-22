@@ -946,7 +946,14 @@ namespace Orbweaver
 
             if (!reply.Ok)
             {
-                var code = reply.ErrCode ?? MirrorProtocol.ErrUnsupported;
+                // No reply at all is ErrNoReply, not a refusal (CB-406):
+                // measured in CB-403's proof C, an INPUT the far side typed
+                // (22:05:22 "-> ok via=typed", the turn in its transcript) came
+                // back here as "unsupported" after the timeout, and the panel
+                // said the send had failed.
+                // A frame that never left is plainly not delivered: that stays a
+                // failure (unsupported, as before), never "may have been".
+                var code = reply.ErrCode ?? (reply.Unsent ? MirrorProtocol.ErrUnsupported : MirrorProtocol.ErrNoReply);
                 Log("input", $"n={name} -> err code={code}");
 
                 // CB-307 addendum: the far side's reason rides along as Why,
@@ -1115,23 +1122,28 @@ namespace Orbweaver
         }
 
         // What a PROMPT reply means, pure so each arm is asserted without a
-        // far side that misbehaves on cue: a refusal is its code, a request
-        // that never got an answer (no code at all) reads as unsupported, and
-        // so does an OK whose payload is not a prompt — the panel then offers
-        // the terminal rather than buttons it cannot trust.
+        // far side that misbehaves on cue: a refusal is its code, and a request
+        // that never got an answer (no code at all) is ErrNoReply, as is an OK
+        // whose payload is not a prompt. Neither is "unsupported": a slow or
+        // lost reply says nothing about what the far side can do, and a session
+        // treats unsupported as final (CB-407, where three slow replies in a
+        // row turned prompts off for the rest of a session). The panel asks
+        // again on its next poll.
         internal static PromptOutcome PromptOutcomeOf(bool ok, string? errCode, byte[]? payload)
         {
-            if (!ok) return new PromptOutcome(null, errCode ?? MirrorProtocol.ErrUnsupported);
+            if (!ok) return new PromptOutcome(null, errCode ?? MirrorProtocol.ErrNoReply);
 
             return MirrorProtocol.DecodePrompt(payload) is { } prompt
                 ? new PromptOutcome(prompt, null)
-                : new PromptOutcome(null, MirrorProtocol.ErrUnsupported);
+                : new PromptOutcome(null, MirrorProtocol.ErrNoReply);
         }
 
         // And an ANSWER reply: null when it was taken, otherwise the code, with
-        // no code at all (never answered) read as unsupported.
+        // no code at all (never answered) ErrNoReply. The answer may still have
+        // landed on the far side, which is why a caller re-reads the screen
+        // before offering buttons again.
         internal static string? AnswerErrorOf(bool ok, string? errCode) =>
-            ok ? null : errCode ?? MirrorProtocol.ErrUnsupported;
+            ok ? null : errCode ?? MirrorProtocol.ErrNoReply;
 
         // Take one option of the dialog Fingerprint names. Null on success,
         // otherwise the far side's code — ErrPromptChanged means the screen
@@ -1252,9 +1264,11 @@ namespace Orbweaver
 
         // --- request / reply ---------------------------------------------------
 
+        // Unsent: the frame never left this machine, so the far side cannot
+        // have acted on it — unlike a timeout, where it may have (CB-406).
         private readonly record struct Reply(
             bool Ok, byte[]? Payload, IReadOnlyDictionary<string, string>? Fields,
-            string? ErrCode, string? Reason);
+            string? ErrCode, string? Reason, bool Unsent = false);
 
         private sealed class Pending
         {
@@ -1381,7 +1395,7 @@ namespace Orbweaver
                 var frame = MirrorProtocol.BuildFrame(type, id, fields, payload);
 
                 if (!await Send(relay, frame).ConfigureAwait(false))
-                    return new Reply(false, null, null, null, "couldn't reach the other machine");
+                    return new Reply(false, null, null, null, "couldn't reach the other machine", Unsent: true);
 
                 if (!awaitReply) return new Reply(true, null, null, null, null);
 

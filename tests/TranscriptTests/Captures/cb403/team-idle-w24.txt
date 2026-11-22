@@ -1,0 +1,23 @@
+  to report. I'll reply
+  "done" once it
+  finishes.
+
+⏺ scratch-two is in the
+  same state as
+  scratch-one: its sleep
+  900 is still running
+  in the background and
+  it will report "done"
+  when it finishes. No
+  action is needed from
+  me.
+
+────────────────────────
+❯ 
+────────────────────────
+  Haiku 5.5 | ~/throw…
+  ⏵⏵ bypass      · ↓ …
+
+  ⏺ main
+  ◯ scratch-one  … 51s
+  ◯ scratch-two  … 50s

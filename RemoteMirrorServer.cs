@@ -155,6 +155,10 @@ namespace Orbweaver
             // variable as the local panel's gate.
             Func<bool>? Shadow = null,
 
+            // CB-403: the clock the gate waits on while a screen settles into
+            // a prompt. Null is real time.
+            Func<TimeSpan, Task>? GateDelay = null,
+
             // CB-363: what a FILE request is answered against — the browse
             // settings, the disk BrowseRules reads, and the file reader. Read
             // once per request, off the frame loop. Null means this server does
@@ -1174,15 +1178,17 @@ namespace Orbweaver
             var (status, name, refused) = await DialogSessionAsync(fromPeer, frame).ConfigureAwait(false);
             if (status is null) { AnswerLog("prompt", $"n={name} -> err code={refused}"); return; }
 
-            var prompt = await ReadPromptAsync(status).ConfigureAwait(false);
+            var (prompt, callWhy) = await ReadPromptAsync(status).ConfigureAwait(false);
+            // call=yes, or call=no:<fixed word> naming the condition that found none; never content.
+            var call = callWhy == AskFormTranscript.CallFound ? "call=yes" : "call=no:" + callWhy;
             if (prompt is null)
             {
-                AnswerLog("prompt", $"n={name} -> err code={MirrorProtocol.ErrNoPrompt}");
+                AnswerLog("prompt", $"n={name} -> err code={MirrorProtocol.ErrNoPrompt} {call}");
                 await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrNoPrompt, name).ConfigureAwait(false);
                 return;
             }
 
-            AnswerLog("prompt", $"n={name} -> ok options={prompt.Options.Count} fp={prompt.Fingerprint}");
+            AnswerLog("prompt", $"n={name} -> ok options={prompt.Options.Count} fp={prompt.Fingerprint} {call}");
             await SendTransferAsync(fromPeer, frame.Id, MirrorProtocol.EncodePrompt(prompt),
                 new Dictionary<string, string> { [MirrorProtocol.FingerprintField] = prompt.Fingerprint }, sub: null)
                 .ConfigureAwait(false);
@@ -1226,7 +1232,7 @@ namespace Orbweaver
             var code = _seams.PressKey is not { } press
                 ? MirrorProtocol.ErrUnsupported
                 : await FormAnswer.AnswerAsync(status, _seams.CapturePane!, press, _seams.TypeLiteral,
-                    wanted, key, action, text).ConfigureAwait(false);
+                    wanted, key, action, text, why => AnswerLog("answer", $"n={name} {why}")).ConfigureAwait(false);
 
             var what = action is null ? $"key={key}" : $"act={action}";
             if (code is not null)
@@ -1265,13 +1271,14 @@ namespace Orbweaver
             return (status, name, code);
         }
 
-        private async Task<MirrorProtocol.WirePrompt?> ReadPromptAsync(SessionStatus status)
+        private async Task<(MirrorProtocol.WirePrompt? Prompt, string CallWhy)> ReadPromptAsync(SessionStatus status)
         {
             string? screen;
             try { screen = await _seams.CapturePane!(status).ConfigureAwait(false); }
             catch { screen = null; }
 
-            return MirrorProtocol.PromptFromScreen(screen, AskFormTranscript.CallFor(screen, status.TranscriptPath));
+            var (call, why) = AskFormTranscript.CallForWhy(screen, status.TranscriptPath);
+            return (MirrorProtocol.PromptFromScreen(screen, call), why);
         }
 
         // The sink for prompt and answer outcomes: the route, the key and the
@@ -2553,7 +2560,7 @@ namespace Orbweaver
         private Task<(bool Typed, string? Refusal, string? Diagnostic)> GuardedTypeAsync(
             SessionStatus status, string text, string who) =>
             TypingGate.GuardedTypeAsync(status, text, _seams.TypeInto,
-                _seams.RecordStatus, _seams.CapturePane, _seams.CanReadPane, _seams.Shadow, InputLog, who);
+                _seams.RecordStatus, _seams.CapturePane, _seams.CanReadPane, _seams.Shadow, InputLog, who, _seams.GateDelay);
 
         // --- sending ------------------------------------------------------------
 

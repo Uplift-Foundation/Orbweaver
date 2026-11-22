@@ -160,6 +160,10 @@ namespace Orbweaver
         // a queue of captures behind a slow pane would only grow.
         private int _scanning;
 
+        // Counts presses decided, so an answer can tell a press it raced from
+        // one it came after (PendingPrompt.LastPress).
+        private long _pressSeq;
+
         internal async Task OnScannedAsync(IReadOnlyList<(string SessionId, SessionStatus Status)> snapshot)
         {
             if (Interlocked.Exchange(ref _scanning, 1) == 1) return;
@@ -197,10 +201,17 @@ namespace Orbweaver
                         Settle(sid, live, fp is null ? "desk" : "gone");
                     }
                     if (fp is null || screen is null) continue;
+                    // A form whose free-text field holds typed text is not one a
+                    // phone may press on: every digit would be typed into the
+                    // field (CB-406, the "1" at 21:49:12). Nothing is minted until
+                    // the desk sends or clears it; the prompt it replaced was
+                    // settled gone just above.
+                    var form = AskFormTranscript.ReadForm(screen, ask);
+                    if (form is not null && ChatTranscript.IsEditingFreeText(form)) continue;
                     // An AskUserQuestion form goes to the phone as a question
                     // (CB-323): CB-315 sent none, so the phone saw the session
                     // waiting with nothing to answer, and froze on it.
-                    Mint(sid, status, fp, screen, AskFormTranscript.ReadForm(screen, ask));
+                    Mint(sid, status, fp, screen, form);
                 }
             }
             // Fired and forgotten by the caller, like an answer: said, not lost,
@@ -410,16 +421,40 @@ namespace Orbweaver
         {
             // Gate (a)'s breakdown starts here: when the answer reached the desk.
             _seams.Log($"answer {answer.RequestId} from {phoneId}");
+            // Read before queueing on the gate: a no-effect outcome stamped after
+            // this is one the answer could not have seen (CB-406, see
+            // PendingPrompt.LastPress).
+            var arrivedAt = Interlocked.Read(ref _pressSeq);
             await _gate.WaitAsync().ConfigureAwait(false);
             try
             {
                 var live = _live.Values.FirstOrDefault(l => l.Pending.RequestId == answer.RequestId);
+                if (live is not null && live.Pending.LastPress > arrivedAt)
+                {
+                    Refuse(phoneId, answer, AnswerGate.NotPending);
+                    return;
+                }
                 var fresh = live is null ? null : await _seams.Capture(live.Status).ConfigureAwait(false);
                 var d = AnswerGate.Decide(live?.Pending, answer, fresh, phoneId, phoneIdPublic, _seams.Now(), _nonces, watchPublic,
                     AskFormTranscript.CallFor(fresh, live?.Status.TranscriptPath));
                 if (!d.Press)
                 {
                     Refuse(phoneId, answer, d.Code!);
+                    // CB-406: an id this desk does not hold at all — settled
+                    // already, or minted before a restart emptied _live — is
+                    // over, so the phones are told so, and a stale card clears
+                    // the moment it is tapped. Measured: two prompts for one
+                    // question stayed on Warren's phone, seven taps refused
+                    // not_pending and none of them resolved. Only for an
+                    // unknown id: a held prompt refused not_pending is a press
+                    // in flight, and that press resolves it. Reached only past
+                    // the gate's signature check (rule 1
+                    // comes first), so nobody unpaired can resolve anything.
+                    if (live is null && d.Code == AnswerGate.NotPending)
+                    {
+                        _send.ResolvedQuiet(answer.RequestId, answer.SessionId, "gone");
+                        _seams.Log($"resolved {answer.RequestId} gone (unknown on answer)");
+                    }
                     return;
                 }
 
@@ -463,16 +498,26 @@ namespace Orbweaver
                 {
                     _seams.Log($"press-no-effect {answer.RequestId}");
                     _send.Refusal(phoneId, answer.RequestId, answer.SessionId, AnswerGate.StalePrompt);
-                    // Left in place, answered: the dialog is still up and is the
-                    // desk's to answer now. Not minted again while its hash
-                    // stands, and settled silently when the session moves on.
-                    //
-                    // CB-400: not for an overlay. Esc there that changes neither the
-                    // title nor the label (a pane that did not move) is harmless to
-                    // press again, and a phone that could never press again would be
-                    // stuck on a Close that no longer works. It stays pending and every
-                    // later answer passes the whole gate against a fresh read.
-                    if (live.Quiet) pending.Answered = false;
+                    // Left in place and NOT answered (CB-406). It used to stay
+                    // marked answered, "settled silently when the session moves
+                    // on" — but the refusal reaches only the phone that tapped,
+                    // and the phone keeps the card regardless, so nobody was
+                    // ever told the prompt was over. Measured: a typed answer
+                    // that failed its read-back, then a press that landed in the
+                    // still-open field, left two prompts on Warren's phone long
+                    // after the question had left the screen, every retry
+                    // refused not_pending. Unanswered, a retry is decided by the
+                    // gate like any answer (the screen must still be this
+                    // dialog), and the scan sends resolved when it moves on. Not
+                    // minted again while its hash stands, as before. This
+                    // subsumes CB-400's overlay case (an Esc that moved
+                    // nothing is harmless to press again), which develop
+                    // un-answered on its own.
+                    pending.Answered = false;
+                    // Stamped when the outcome is known: an answer read before
+                    // this (queued behind the press) raced it and is refused; one
+                    // after it is a retry.
+                    pending.LastPress = Interlocked.Increment(ref _pressSeq);
                     return;
                 }
 
@@ -605,8 +650,8 @@ namespace Orbweaver
         private async Task<PressOutcome> PressOtherAsync(SessionStatus status, PendingPrompt pending, string requestId, string row, string note)
         {
             if (await ApprovedFormAsync(status, pending).ConfigureAwait(false) is not { } form) return PressOutcome.Changed;
-            var code = await FormAnswer.AnswerAsync(status, _seams.Capture, _seams.PressKey, _seams.TypeLiteral, form.Fingerprint, row, null, note)
-                .ConfigureAwait(false);
+            var code = await FormAnswer.AnswerAsync(status, _seams.Capture, _seams.PressKey, _seams.TypeLiteral, form.Fingerprint, row, null, note,
+                why => _seams.Log($"{why} {requestId}")).ConfigureAwait(false);
             if (code is null) _seams.Log($"press {requestId} other");
             return OutcomeOf(code);
         }

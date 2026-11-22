@@ -1,0 +1,23 @@
+
+Which fruit
+do you
+prefer?
+
+❯ 1. apple
+     apple
+  2. banana
+     banana
+  3. cherry
+     cherry
+  4. Type
+     somethi
+     ng.
+────────────
+  5. Chat
+  about this
+ ↑ 1 more l…
+Enter to
+select · ↑/↓
+to navigate
+· Esc to
+cancel

@@ -1,0 +1,23 @@
+  3. Hold for Morgan to
+     decide
+     Leave the pull
+     request open and
+     ask Morgan to make
+     the call on
+     merging. This puts
+     the decision with
+     the person who owns
+     the risk tradeoff
+     between speed and
+     the unfinished
+     mobile check.
+     Nothing merges
+     until Morgan
+     responds.
+  4. Type something.
+────────────────────────
+  5. Chat about this
+ ↑ 59 more lines
+Enter to select · ↑/↓ to
+navigate · Esc to
+cancel
