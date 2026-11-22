@@ -331,6 +331,44 @@ public class HeadlessSnapshotTests
         }
     }
 
+    // CB-413, at scan level: one process, one job row, two live status files.
+    // The listing names only d7b7db77; the newer conversation sharing its worker
+    // is not named at all. Superseded keeps the newest file per pid, so the
+    // unnamed one survives it, and the pid-aware Phase keeps it from reading
+    // NotAJob. The negative control is the older unnamed file, which Superseded
+    // still drops: a /clear leftover on a live pid looks identical, and keeping
+    // the single-terminal rule is deliberate (named as a limit in the PR).
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public void ALiveSessionTheJobListingDoesNotNameIsKeptWhenItIsTheNewestOnItsPid(bool unnamedIsNewer, bool kept)
+    {
+        var dir = NewStatusDir();
+        try
+        {
+            const string listed = "d7b7db77-0000-4000-8000-000000000000";
+            const string unnamed = "b1375106-f6f2-4a11-9c3d-5e5e5e5e5e5e";
+            var now = DateTime.UtcNow;
+            foreach (var id in new[] { listed, unnamed })
+            {
+                WriteStatus(dir, id, new SessionStatus
+                    { State = "idle", Title = id[..8], Cwd = "/tmp/t", Source = SessionSource.ClaudeCode, SessionPid = 85260 });
+            }
+            File.SetLastWriteTimeUtc(Path.Combine(dir, listed + ".txt"), now.AddSeconds(unnamedIsNewer ? -30 : -5));
+            File.SetLastWriteTimeUtc(Path.Combine(dir, unnamed + ".txt"), now.AddSeconds(unnamedIsNewer ? -5 : -30));
+
+            var jobs = BackgroundJobs.Parse("""[{"pid":85260,"id":"b1375106","kind":"background","sessionId":"d7b7db77-0000-4000-8000-000000000000","state":"working"}]""");
+            var snapshot = SessionManager.HeadlessSnapshot(dir, () => jobs, isRunning: _ => true, nowUtc: now);
+
+            Assert.Equal(kept, snapshot.Any(k => k.SessionId == unnamed));
+            Assert.Contains(snapshot, k => k.SessionId == listed);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
     // Only Claude Code sessions are asked about: agent teams are Claude Code's,
     // and a Codex session kept beside a member is left out of the batch.
     [Fact]

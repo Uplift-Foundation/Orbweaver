@@ -154,9 +154,11 @@ namespace Orbweaver
         //
         // Absent from a listing that was read successfully means the daemon does
         // not run it as a job under that id: a subagent, a session that ended, or
-        // a live session sharing a re-pointed job's worker (CB-413 — see the
-        // pid-aware Phase below for how the scan tells those apart). "done" means
-        // it was a job and has finished. Neither has anything left to show, and an orb for
+        // a live session sharing a re-pointed job's worker (CB-413). This bare
+        // question cannot tell those apart, so it answers false for all three;
+        // the scan's orb decisions go through the pid-aware Phase below, which
+        // can. "done" means it was a job and has finished. Neither an ended
+        // session nor a finished job has anything left to show, and an orb for
         // either is a click that can only fail.
         //
         // A listing that couldn't be read answers true, not false. This decides
