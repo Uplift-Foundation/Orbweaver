@@ -1890,27 +1890,46 @@ namespace Orbweaver
         // byte for byte as before. The typing gate is a separate seam and still reads
         // the tmux pane directly.
         internal Func<SessionStatus, string, Task<bool>> PressKey { get; init; } =
-            (s, key) => PickPress(TerminalFocuser.RouteFor(s))(s, key);
+            RealPress;
         internal Func<SessionStatus, Task<string?>> Capture { get; init; } =
-            s => PickCapture(TerminalFocuser.RouteFor(s))(s);
+            RealCapture;
         internal Func<SessionStatus, string, Task<bool>> TypeLiteral { get; init; } =
-            (s, text) => PickType(TerminalFocuser.RouteFor(s))(s, text);
+            RealType;
+
+        // The real defaults: they ask the machine which route the session is on and
+        // then run a tmux, osascript or console call, so a headless run cannot execute
+        // them. The choice they make is PickCapture/PickPress/PickType, which the
+        // route table test covers.
+        [ExcludeFromCodeCoverage]
+        private static Task<bool> RealPress(SessionStatus s, string key) => PickPress(TerminalFocuser.RouteFor(s))(s, key);
+
+        [ExcludeFromCodeCoverage]
+        private static Task<string?> RealCapture(SessionStatus s) => PickCapture(TerminalFocuser.RouteFor(s))(s);
+
+        [ExcludeFromCodeCoverage]
+        private static Task<bool> RealType(SessionStatus s, string text) => PickType(TerminalFocuser.RouteFor(s))(s, text);
+
+        [ExcludeFromCodeCoverage]
+        private static bool RealCanPress(SessionStatus s) => TerminalFocuser.CanPressSilently(s);
+
+        [ExcludeFromCodeCoverage]
+        private static TerminalTyping.Route RealRouteOf(SessionStatus s) => TerminalFocuser.RouteFor(s);
 
         internal static Func<SessionStatus, Task<string?>> PickCapture(TerminalTyping.Route route) =>
             route == TerminalTyping.Route.Tmux ? TerminalFocuser.CapturePane : RealReadAnyRoute;
 
         internal static Func<SessionStatus, string, Task<bool>> PickPress(TerminalTyping.Route route) =>
-            route == TerminalTyping.Route.Tmux ? TerminalFocuser.SendPaneKey : (s, key) => TerminalFocuser.PressKey(s, key);
+            route == TerminalTyping.Route.Tmux ? TerminalFocuser.SendPaneKey : TerminalFocuser.PressKey;
 
         internal static Func<SessionStatus, string, Task<bool>> PickType(TerminalTyping.Route route) =>
-            route == TerminalTyping.Route.Tmux ? TerminalFocuser.SendPaneText : (s, text) => TerminalFocuser.TypeQuietly(s, text);
+            route == TerminalTyping.Route.Tmux ? TerminalFocuser.SendPaneText : TerminalFocuser.TypeQuietly;
 
         // Whether a key can be pressed here without bringing the terminal forward
         // (Terminal.app cannot), and the wait between read-backs of a typed code.
-        internal Func<SessionStatus, TerminalTyping.Route> RouteOf { get; init; } = s => TerminalFocuser.RouteFor(s);
+        internal Func<SessionStatus, TerminalTyping.Route> RouteOf { get; init; } = RealRouteOf;
         internal static bool IsVerifiedRoute(TerminalTyping.Route route) =>
             route is not (TerminalTyping.Route.Tmux or TerminalTyping.Route.None);
-        internal Func<SessionStatus, bool> CanPress { get; init; } = s => TerminalFocuser.CanPressSilently(s);
+        internal Func<SessionStatus, bool> CanPress { get; init; } = RealCanPress;
         internal Func<TimeSpan, Task> LoginDelay { get; init; } = t => Task.Delay(t);
 
         // CB-400: the overlay's two seams. ReadAnyRoute is the route-aware reader

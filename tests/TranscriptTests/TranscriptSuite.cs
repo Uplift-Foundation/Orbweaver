@@ -58,7 +58,7 @@ namespace Orbweaver.Tests
             Cb330Captures.Run(Check);
             Cb356Captures.Run(Check);
             Cb403Captures.Run(Check);
-            Cb412Captures.Run(Check);
+            Cb412Checks.Run(Check);
 
             // --- the transcript ---
 
