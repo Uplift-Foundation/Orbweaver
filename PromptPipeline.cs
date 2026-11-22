@@ -324,7 +324,14 @@ namespace Orbweaver
         };
 
         internal static string LoginPreview(LoginScreen login) =>
-            login.Step == LoginStep.Url ? LoginUrlPreview : string.Join("\n", login.Preview);
+            login.Step switch
+            {
+                LoginStep.Url => LoginUrlPreview,
+                // The picker's question ("Select login method:") is its title, the
+                // text above it the preview; the phone shows both, in screen order.
+                LoginStep.Picker => string.Join("\n", login.Preview.Append(login.Title)),
+                _ => string.Join("\n", login.Preview),
+            };
 
         // The screen's own options, as plain choices: the digits, or Enter ("Try
         // again"). The URL step has none.
@@ -704,8 +711,8 @@ namespace Orbweaver
         private async Task<PressOutcome> PressCodeAsync(SessionStatus status, PendingPrompt pending, string requestId, string code)
         {
             var press = _seams.CaptureAndPress ?? ((st, key, approved) => CaptureThenPress(st, key, approved));
-            var outcome = await LoginAnswer.SubmitCodeAsync(status, new Capture(_seams.Capture), new Type(_seams.TypeLiteral),
-                    new CaptureAndPress(press), _seams.Delay, pending.ScreenHash, code)
+            var outcome = await LoginAnswer.SubmitCodeAsync(status, new LoginCapture(_seams.Capture), new LoginType(_seams.TypeLiteral),
+                    new LoginCaptureAndPress(press), _seams.Delay, pending.ScreenHash, code)
                 .ConfigureAwait(false);
             if (outcome is not null) return OutcomeOf(outcome);
             _seams.Log($"press {requestId} code");

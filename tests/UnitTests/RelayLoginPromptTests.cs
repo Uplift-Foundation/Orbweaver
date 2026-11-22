@@ -177,7 +177,7 @@ public class RelayLoginPromptTests
         Assert.Empty(j.GetProperty("options").EnumerateArray());
         Assert.Equal(PromptPipeline.LoginUrlPreview, j.GetProperty("preview").GetString());
         // The URL is in exactly one place in the frame: login.url.
-        Assert.Equal(1, System.Text.RegularExpressions.Regex.Matches(raw, "oauth/authorize").Count);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(raw, "oauth/authorize"));
         Assert.Null(_sent.Prompts[0].Push);
         Assert.DoesNotContain(url, string.Join("\n", _log));
         Assert.DoesNotContain("oauth", _p.ActivityFor("s1")!.Command);
