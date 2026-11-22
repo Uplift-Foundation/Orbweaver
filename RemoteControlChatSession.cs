@@ -1227,6 +1227,7 @@ namespace Orbweaver
             if (_disposed) return;
             _disposed = true;
             StopPromptPolling();
+            DisposeRun();
 
             RemoteControlSessions.MirrorChanged -= OnMirrorChanged;
 

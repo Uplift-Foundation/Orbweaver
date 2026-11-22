@@ -29,7 +29,7 @@ namespace Orbweaver.Tests;
 // ChatPanelPinTests.IsOpenForFindsAPinnedPanelToo failure that only showed up
 // in the full suite, in Release, never standalone (CB-168).
 [Collection("Settings")]
-public class RemoteMirrorChatSessionTests : IDisposable
+public partial class RemoteMirrorChatSessionTests : IDisposable
 {
     private const string Account = ".claude-board";
     private const string Name = "job-hunter";
@@ -2765,7 +2765,9 @@ public class RemoteMirrorChatSessionTests : IDisposable
             GateDelay: _ => Task.CompletedTask,
             CapturePane: _farScreen is null ? null : _ => Task.FromResult<string?>(_farScreen),
             CanReadPane: _farScreen is null ? null : _ => true,
-            PressKey: _farScreen is null ? null : (_, key) => { _pressed.Add(key); return Task.FromResult(true); }));
+            PressKey: _farScreen is null ? null : (_, key) => { _pressed.Add(key); return Task.FromResult(true); },
+            // CB-404: null unless a test drives the far side's run controls.
+            RunControls: _farRun));
 
     private void BuildClient()
     {

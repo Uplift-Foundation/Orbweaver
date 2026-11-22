@@ -478,7 +478,7 @@ namespace Orbweaver
     // same bubble.
     internal sealed class ClaudeCloudChatSession : IRemoteChatSession, IRemoteChatComposer,
         IRemoteChatReadOnly, IRemoteChatMachine, IRemoteChatInterrupt,
-        IRemoteChatSlashCommands, IRemoteChatSlashRunner
+        IRemoteChatSlashCommands, IRemoteChatSlashRunner, IRemoteChatRunOptions
     {
         // How much of a long transcript the panel is given. The interface's own
         // contract is that history arrives already bounded and ordered oldest to
@@ -684,6 +684,7 @@ namespace Orbweaver
             _api = api;
             _credentials = credentials;
             _post = post ?? (action => Dispatcher.UIThread.Post(action));
+            _runReading = RosterReading(session);
         }
 
         // Re-point at the login that owns the session now. Loads, sends and Stop
@@ -1027,6 +1028,99 @@ namespace Orbweaver
             return ChatSendOutcome.Sent;
         }
 
+        // --- CB-404: model and effort -----------------------------------------
+        //
+        // A cloud session is set over its own control channel (set_model,
+        // measured on a 2.1.317 worker; apply_flag_settings, not measured on a
+        // worker — M2 — so a refusal comes back as the worker's own sentence).
+        // The reading is the events rows' model and effort, and before any row
+        // the roster's external_metadata.model, undated so a row always wins.
+
+        // The catalogue: list_models for the default config root through the
+        // same live hook the local host reads (so one place decides when a
+        // probe may run), or Claude Code's aliases until it answers.
+        internal Func<RunCatalogue> RunCatalogue { get; set; } =
+            () => RunControlsLive.CatalogueFor(new SessionStatus { Source = SessionSource.ClaudeCode }) ?? RunSources.ClaudeFallback;
+
+        internal Func<DateTimeOffset> RunNow { get; set; } = () => DateTimeOffset.UtcNow;
+
+        private RunReading _runReading;
+        private IReadOnlyList<RunPending> _runPending = Array.Empty<RunPending>();
+        private readonly List<RunFailure> _runFailures = new();
+        private string _runShown = "";
+
+        private static RunReading RosterReading(ClaudeCloudSessions.Session row) =>
+            new(row.Model, null, null, RunReadingSource.CloudRoster);
+
+        public event Action? RunOptionsChanged;
+
+        public RemoteRunOptions? RunOptions
+        {
+            get
+            {
+                var catalogue = RunCatalogue();
+                var (still, failures) = RunPendingRules.Reconcile(_runPending, _runReading, RunNow(),
+                    RunPendingRules.TimeoutFor(RunCli.ClaudeCloud), catalogue);
+                _runPending = still;
+                foreach (var f in failures) { _runFailures.RemoveAll(x => x.Field == f.Field); _runFailures.Add(f); }
+
+                var route = IsReadOnly ? RunRouteDecision.Unavailable(ComposerHint)
+                    : !Enabled() ? RunRouteDecision.Unavailable(CloudOffReason)
+                    : new RunRouteDecision(RunRoute.Control, null, false);
+                return RunControlsResolver.Resolve(RunCli.ClaudeCloud, route, _runReading, catalogue, _runPending,
+                    failures: _runFailures);
+            }
+        }
+
+        internal const string CloudOffReason = "cloud sessions are switched off in Settings";
+
+        public Task<string?> SetModelAsync(string? id) => SetRunAsync(RunField.Model, id);
+
+        public Task<string?> SetThinkingAsync(string? id) => SetRunAsync(RunField.Effort, id);
+
+        public Task<string?> SetFastModeAsync(bool? on) => Task.FromResult<string?>(RunText.NoRoute);
+
+        public int? TimeoutMinutes { get => null; set { } }
+
+        private async Task<string?> SetRunAsync(RunField field, string? value)
+        {
+            if (value is null) return field == RunField.Model ? "name a model" : "name an effort level";
+            if (RunOptions is { } o && (field == RunField.Model ? o.ModelDisabledReason : o.EffortDisabledReason) is { } off) return off;
+            if (RunControlsResolver.Validate(RunCli.ClaudeCloud, field, value, _runReading, RunCatalogue()) is { } problem) return problem;
+
+            var request = field == RunField.Model
+                ? SlashRouting.ControlRequest("set_model", value, out problem)
+                : SlashRouting.ControlRequest("apply_flag_settings", value, out problem);
+            if (request is null) return problem;
+
+            var failure = await CloudTurnSender.PostControlAsync(
+                _api, _credentials, ReadBudget, SessionId, request, CancellationToken.None).ConfigureAwait(false);
+            if (failure is not null) return failure;
+
+            _post(() =>
+            {
+                _runPending = RunPendingRules.With(_runPending, new RunPending(field, value, RunNow()));
+                _runFailures.RemoveAll(x => x.Field == field);
+                AnnounceRun();
+            });
+            return null;
+        }
+
+        // Called on the UI thread with each new reading.
+        internal void ObserveRun(RunReading reading)
+        {
+            _runReading = RunReading.Merge(_runReading, reading);
+            AnnounceRun();
+        }
+
+        private void AnnounceRun()
+        {
+            var now = LocalCliChatSession.RunSignature(RunOptions);
+            if (now == _runShown) return;
+            _runShown = now;
+            RunOptionsChanged?.Invoke();
+        }
+
         // --- stopping --------------------------------------------------------
 
         // Stop the turn in flight.
@@ -1097,6 +1191,7 @@ namespace Orbweaver
             var before = Affordances();
 
             _row = row;
+            if (row is not null) ObserveRun(RosterReading(row));
             var rosterBusy = row is not null && ClaudeCloudRoster.IsBusy(row);
 
             // The live loop owns busy while it runs. Otherwise the roster does —
@@ -1452,6 +1547,13 @@ namespace Orbweaver
 
         private void HandleDurable(CloudStreamEvent e)
         {
+            // CB-404: every durable row is also a reading of model and effort.
+            if (e.RowJson is { } rowJson)
+            {
+                var reading = RunReadings.FromClaudeTranscript(new[] { rowJson }, RunReadingSource.CloudEvents);
+                if (reading.Model is not null || reading.Effort is not null) _post(() => ObserveRun(reading));
+            }
+
             switch (e.PayloadType)
             {
                 // The turn has started — measured: `system init`, then a
@@ -1885,6 +1987,8 @@ namespace Orbweaver
             // Trimming the head would hand the panel the beginning of a
             // conversation and call it the end of one.
             newestFirst.Reverse();
+            var loaded = RunReadings.FromClaudeTranscript(newestFirst, RunReadingSource.CloudEvents);
+            if (loaded.Model is not null || loaded.Effort is not null) _post(() => ObserveRun(loaded));
             var rows = ChatTranscript.Map(newestFirst);
             var kept = rows.Count > HistoryTurns
                 ? rows.Skip(rows.Count - HistoryTurns).ToList()
