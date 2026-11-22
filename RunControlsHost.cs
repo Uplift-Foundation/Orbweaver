@@ -170,24 +170,47 @@ namespace Orbweaver
             if (CliFor(status) is not { } cli) return new(RunSetKind.Unavailable, RunText.NoRoute);
             lock (_gate)
                 if (!_running.Add(Key(status))) return new(RunSetKind.Unavailable, RunFrames.BusyWhy);
-            try
-            {
-                // Bounded, so the asker always hears an answer and the guard is
-                // always released: a near Buddy gives up on an INPUT after
-                // MirrorProtocol.InputTimeoutSeconds, and a set that outlived it
-                // once held the guard for most of a minute (a control post
-                // waiting on a Keychain nobody could answer, CB-404 hand check)
-                // and refused every set after it as busy.
-                var run = RunAsync(status, cli, field, value);
-                if (await Task.WhenAny(run, Wait(SetBudget)).ConfigureAwait(false) == run) return await run.ConfigureAwait(false);
-                _ = run.ContinueWith(t => _ = t.Exception, TaskScheduler.Default);
-                return new(RunSetKind.Failed, NoAnswerInTime);
-            }
+
+            // The guard is the run's, not the answer's: it is released when the
+            // run itself ends, so a second set can never put keystrokes into the
+            // pane while a slow picker is still pressing digits (juno, CB-404).
+            // The asker is answered at SetBudget regardless — a near Buddy gives
+            // up on an INPUT after MirrorProtocol.InputTimeoutSeconds — and every
+            // step inside the run has a bound of its own (ControlBudget for the
+            // control post, StepBudget for each type, key and capture, the
+            // picker's own polls), so the guard is never held forever, which is
+            // what refused every set as busy in the CB-404 hand check.
+            var run = Guarded(status, cli, field, value);
+            if (await Task.WhenAny(run, Wait(SetBudget)).ConfigureAwait(false) == run) return await run.ConfigureAwait(false);
+            return new(RunSetKind.Failed, NoAnswerInTime);
+        }
+
+        private async Task<RunSetResult> Guarded(SessionStatus status, RunCli cli, RunField field, string value)
+        {
+            try { return await RunAsync(status, cli, field, value).ConfigureAwait(false); }
+            catch (Exception e) { return new(RunSetKind.Failed, "it failed while changing it (" + e.GetType().Name + ")"); }
             finally
             {
                 lock (_gate) _running.Remove(Key(status));
             }
         }
+
+        // One type, key press or screen capture into the pane. Answered as "did
+        // not go" (false, or no screen) when it outlives this, which the typing
+        // gate and the picker already treat as a refusal and stop on.
+        internal static readonly TimeSpan StepBudget = TimeSpan.FromSeconds(3);
+
+        private async Task<T> Step<T>(Task<T> step, T late)
+        {
+            if (await Task.WhenAny(step, Wait(StepBudget)).ConfigureAwait(false) == step) return await step.ConfigureAwait(false);
+            _ = step.ContinueWith(t => _ = t.Exception, TaskScheduler.Default);
+            return late;
+        }
+
+        private Func<SessionStatus, string, Task<bool>> TypeInto => (s, text) => Step(_seams.TypeInto(s, text), false);
+
+        private Func<SessionStatus, Task<string?>>? CapturePane =>
+            _seams.CapturePane is { } capture ? s => Step(capture(s), (string?)null) : null;
 
         private async Task<RunSetResult> RunAsync(SessionStatus status, RunCli cli, RunField field, string value)
         {
@@ -279,7 +302,7 @@ namespace Orbweaver
                 return await PickerAsync(status, field, value).ConfigureAwait(false);
 
             var (typed, notAtPrompt, _) = await TypingGate.GuardedTypeAsync(status, TypedLine(cli, field, value),
-                _seams.TypeInto, _seams.RecordStatus, _seams.CapturePane, _seams.CanReadPane, _seams.Shadow,
+                TypeInto, _seams.RecordStatus, CapturePane, _seams.CanReadPane, _seams.Shadow,
                 _seams.Log ?? ((what, detail) => MirrorLog.Say(what, detail)), "run-host").ConfigureAwait(false);
             if (notAtPrompt is not null) return new(RunSetKind.Failed, TypingGate.NotAtPromptReason(notAtPrompt));
             return typed ? RunSetResult.Sent : new(RunSetKind.Failed, "the terminal refused the text");
@@ -312,13 +335,13 @@ namespace Orbweaver
                 async line =>
                 {
                     var (typed, notAtPrompt, _) = await TypingGate.GuardedTypeAsync(status, line,
-                        _seams.TypeInto, _seams.RecordStatus, _seams.CapturePane, _seams.CanReadPane, _seams.Shadow,
+                        TypeInto, _seams.RecordStatus, CapturePane, _seams.CanReadPane, _seams.Shadow,
                         _seams.Log ?? ((what, detail) => MirrorLog.Say(what, detail)), "run-host").ConfigureAwait(false);
                     if (notAtPrompt is not null) gateRefusal = TypingGate.NotAtPromptReason(notAtPrompt);
                     return typed && notAtPrompt is null;
                 },
-                key => press(status, key),
-                () => capture(status),
+                key => Step(press(status, key), false),
+                () => Step(capture(status), (string?)null),
                 _seams.Delay ?? (d => Task.Delay(d)));
 
             var outcome = field == RunField.Model

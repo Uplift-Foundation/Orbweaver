@@ -33,7 +33,7 @@ public class RunControlsHostTests
         public TaskCompletionSource<MirrorSlashHost.ControlVerdict>? PostGate;
 
         // The two clocks a set is bounded by, each released by the test.
-        public readonly TaskCompletionSource ControlTimer = new(), SetTimer = new();
+        public readonly TaskCompletionSource ControlTimer = new(), SetTimer = new(), StepTimer = new();
         public RunControlsHost Host = null!;
 
         public Desk()
@@ -61,6 +61,7 @@ public class RunControlsHostTests
                 Log: (_, _) => { },
                 Delay: d => d == RunControlsHost.ControlBudget ? ControlTimer.Task
                     : d == RunControlsHost.SetBudget ? SetTimer.Task
+                    : d == RunControlsHost.StepBudget ? StepTimer.Task
                     : Task.CompletedTask));
             Host.Changed += Changed.Add;
         }
@@ -349,16 +350,42 @@ public class RunControlsHostTests
     }
 
     [Fact]
-    public async Task A_set_that_does_not_finish_in_time_answers_and_releases_the_guard()
+    public async Task A_set_past_its_budget_answers_but_keeps_the_guard_until_the_run_really_ends()
     {
-        var d = new Desk { TypeGate = new() };                   // typing that never returns
+        var d = new Desk { TypeGate = new() };                   // typing that is still going
 
         var set = d.Host.SetAsync(Claude(), RunField.Model, "sonnet");
-        Assert.True(d.Host.IsRunning(Claude()));
         d.SetTimer.SetResult();
-
         Assert.Equal(new RunSetResult(RunSetKind.Failed, RunControlsHost.NoAnswerInTime), await set);
-        Assert.False(d.Host.IsRunning(Claude()));               // the next set is not refused as busy
-        d.TypeGate.SetResult(false);
+
+        // Still typing: a second set is the honest busy, and types nothing.
+        Assert.True(d.Host.IsRunning(Claude()));
+        Assert.Equal(new RunSetResult(RunSetKind.Unavailable, RunFrames.BusyWhy), await d.Host.SetAsync(Claude(), RunField.Effort, "low"));
+        Assert.Single(d.Typed);
+
+        d.TypeGate.SetResult(true);
+        await Until(() => !d.Host.IsRunning(Claude()));
+        d.TypeGate = null;
+        Assert.Equal(RunSetResult.Sent, await d.Host.SetAsync(Claude(), RunField.Effort, "low"));
     }
+
+    [Fact]
+    public async Task A_pane_step_that_never_returns_is_given_up_at_its_own_budget()
+    {
+        var d = new Desk { TypeGate = new() };                   // a tmux call that hangs
+
+        var set = d.Host.SetAsync(Claude(), RunField.Model, "sonnet");
+        d.StepTimer.SetResult();
+
+        Assert.Equal(new RunSetResult(RunSetKind.Failed, "the terminal refused the text"), await set);
+        Assert.False(d.Host.IsRunning(Claude()));
+        d.TypeGate.SetResult(true);
+    }
+
+    internal static async Task Until(Func<bool> done)
+    {
+        for (var i = 0; i < 200 && !done(); i++) await Task.Delay(5);
+        Assert.True(done());
+    }
+
 }
