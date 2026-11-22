@@ -172,4 +172,67 @@ public class LoginScreenTests
             .Select(n => Read(n)!.Hash).Distinct().Count();
         Assert.Equal(4, hashes);
     }
+
+    private static string[] Rows(string name) => Cb412Captures.Screen(name).Split('\n');
+    private static string FullUrl => Read("login-url-w100")!.Url!;
+
+    // The URL as a reader that returns logical lines would give it: one line.
+    [Fact]
+    public void Url_as_one_unwrapped_line_is_the_full_url()
+    {
+        var rows = Rows("login-url-w60").ToList();
+        var i = rows.FindIndex(r => r.StartsWith("https://"));
+        rows[i] += rows[i + 1];
+        rows.RemoveAt(i + 1);
+        Assert.Equal(FullUrl, LoginScreen.Read(string.Join("\n", rows))!.Url);
+    }
+
+    [Fact]
+    public void Wrapped_rows_with_a_leading_indent_and_padding_give_the_full_url()
+    {
+        var rows = Rows("login-url-w60").ToList();
+        var i = rows.FindIndex(r => r.StartsWith("https://"));
+        rows[i] += "  ";
+        rows[i + 1] = "    " + rows[i + 1] + "   ";
+        Assert.Equal(FullUrl, LoginScreen.Read(string.Join("\n", rows))!.Url);
+    }
+
+    [Fact]
+    public void An_indented_continuation_with_no_blank_row_before_the_paste_row_is_not_a_link()
+    {
+        var rows = Rows("login-url-w60").ToList();
+        var i = rows.FindIndex(r => r.StartsWith("https://"));
+        rows[i + 1] = "    " + rows[i + 1];
+        rows.RemoveAt(i + 2); // the blank row
+        Assert.Null(LoginScreen.Read(string.Join("\n", rows)));
+    }
+
+    [Fact]
+    public void A_url_with_no_continuation_and_no_blank_row_is_not_a_link()
+    {
+        var rows = Rows("login-url-w60").ToList();
+        var i = rows.FindIndex(r => r.StartsWith("https://"));
+        rows.RemoveRange(i + 1, 2); // the continuation and the blank row
+        Assert.Null(LoginScreen.Read(string.Join("\n", rows)));
+    }
+
+    [Fact]
+    public void A_screen_cut_off_mid_url_is_not_a_link()
+    {
+        var rows = Rows("login-url-w60");
+        var cut = string.Join("\n", rows.TakeWhile(r => !r.Contains("Paste code")));
+        Assert.Null(LoginScreen.Read(cut));
+    }
+
+    [Theory]
+    [InlineData("abc", "abc")]
+    [InlineData("abcdef", "abcdef")]
+    [InlineData("***xyz", "xyz")]
+    public void A_short_code_is_its_own_tail(string field, string tail)
+    {
+        var screen = Cb412Captures.Screen("login-url-w100").Replace("│                                                                                              │", "│ " + field.PadRight(94) + "│");
+        var s = LoginScreen.Read(screen)!;
+        Assert.False(s.FieldEmpty);
+        Assert.Equal(tail, s.FieldTail);
+    }
 }

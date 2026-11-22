@@ -80,15 +80,17 @@ namespace Orbweaver
             var start = Array.FindIndex(body, 0, paste, l => l.StartsWith("https://", StringComparison.Ordinal));
             if (start < 0) return null;
 
-            // Wrapped rows start at column 0 and every other row is indented, so
-            // the URL is the first row plus every row up to a blank or indented one.
+            // The URL is its first row plus every row up to the first blank one, each
+            // trimmed on both sides and joined with nothing between: tmux wraps at
+            // column 0, a reader that re-flows may pad or indent the continuation. A
+            // blank row has to end it before the Paste row; with none, there is no
+            // telling where the URL stops (or that it was not cut off), so the screen
+            // is not read and never offers a truncated link. A non-URL row that slips
+            // in carries whitespace and fails the check below.
             var sb = new StringBuilder();
-            for (var i = start; i < paste; i++)
-            {
-                var row = body[i];
-                if (row.Length == 0 || char.IsWhiteSpace(row[0])) break;
-                sb.Append(row.TrimEnd());
-            }
+            var i = start;
+            for (; i < paste && body[i].Trim().Length > 0; i++) sb.Append(body[i].Trim());
+            if (i >= paste) return null;
 
             var url = sb.ToString();
             if (url.Length > MaxUrlLength || url.Any(char.IsWhiteSpace)
