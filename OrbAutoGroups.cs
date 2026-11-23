@@ -47,6 +47,9 @@ namespace Orbweaver
                 SessionSource.Codex => "codex",
                 SessionSource.Grok => "grok",
                 SessionSource.OpenClaw => "openclaw",
+                // CB-421: a Paperclip company groups as "Paperclip" beside the
+                // CLIs, not as "Claude" by default, which is what `_` would say.
+                SessionSource.Paperclip => "paperclip",
                 SessionSource.RemoteControl => (facts.RemoteCli ?? "").Trim().ToLowerInvariant() switch
                 {
                     "codex" => "codex",
@@ -56,7 +59,7 @@ namespace Orbweaver
                 _ => "claude"
             };
 
-            var name = key switch { "codex" => "Codex", "grok" => "Grok", "openclaw" => "OpenClaw", _ => "Claude" };
+            var name = key switch { "codex" => "Codex", "grok" => "Grok", "openclaw" => "OpenClaw", "paperclip" => "Paperclip", _ => "Claude" };
             return new AutoGroupValue(key, name);
         }
 

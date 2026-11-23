@@ -127,7 +127,12 @@ namespace Orbweaver
             bool IsWindows,
             Func<string, bool> CliInstalled,
             Func<string, bool> DirectoryExists,
-            Func<string, bool> InRoster);
+            Func<string, bool> InRoster,
+            // CB-422 (frames-v15): a parent that is a Paperclip row. InRoster is
+            // about local CLI sessions, so without this a Paperclip parent would
+            // read as unknown_parent, which tells the phone the session is gone
+            // when it is a row on screen that simply cannot lead a team.
+            Func<string, bool>? IsPaperclip = null);
 
         // The first failing check's code, or null when the launch may go ahead.
         // The nonce is recorded once the signature and expiry pass, as the
@@ -160,7 +165,8 @@ namespace Orbweaver
             if (f.Persona.Length > 0) return RelayReplies.UnsupportedPersona;
             if (f.ParentSessionId.Length > 0)
             {
-                if (!env.InRoster(f.ParentSessionId)) return RelayReplies.UnknownParent;
+                if (!env.InRoster(f.ParentSessionId))
+                    return env.IsPaperclip?.Invoke(f.ParentSessionId) == true ? RelayReplies.UnsupportedParent : RelayReplies.UnknownParent;
                 if (f.Cli != "claude") return RelayReplies.UnsupportedParent;
             }
             if (!RelayText.Typeable(f.FirstMessage, allowEmpty: true)) return RelayReplies.BadInput;

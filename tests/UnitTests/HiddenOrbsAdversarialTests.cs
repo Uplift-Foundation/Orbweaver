@@ -98,6 +98,7 @@ public class HiddenOrbsAdversarialTests
     [InlineData(SessionSource.OpenClaw, "room", "")]
     [InlineData(SessionSource.ClaudeCloud, "lead", "")]
     [InlineData(SessionSource.ClaudeCode, null, "")]
+    [InlineData(SessionSource.Paperclip, "paperclip:lead", "")]     // CB-421
     public void OnlyAgentTeamSourcesPropagate(SessionSource source, string? lead, string expected) =>
         Assert.Equal(expected, HiddenOrbs.PropagatingLead(source, lead));
 
@@ -109,7 +110,7 @@ public class HiddenOrbsAdversarialTests
         var known = new[]
         {
             SessionSource.ClaudeCode, SessionSource.Codex, SessionSource.Grok,
-            SessionSource.OpenClaw, SessionSource.RemoteControl, SessionSource.ClaudeCloud
+            SessionSource.OpenClaw, SessionSource.RemoteControl, SessionSource.ClaudeCloud, SessionSource.Paperclip
         };
         Assert.Equal(known.OrderBy(x => x), Enum.GetValues<SessionSource>().OrderBy(x => x));
     }

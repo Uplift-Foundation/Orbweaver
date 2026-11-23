@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RollForward>LatestMajor</RollForward>
+    <AssemblyName>PaperclipProbe</AssemblyName>
+    <RootNamespace>Orbweaver</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The shipped parsing, transport and poll step, compiled in rather than
+         reimplemented: a probe that read Paperclip its own way could answer a
+         question the app would answer differently, which is the one thing it
+         must not do. Nothing here needs Avalonia or the app's settings. -->
+    <Compile Include="../../PaperclipApi.cs" />
+    <Compile Include="../../PaperclipHttp.cs" />
+    <Compile Include="../../PaperclipDiscovery.cs" />
+    <Compile Include="../../PaperclipSessions.cs" />
+    <Compile Include="../../PaperclipRoster.cs" />
+  </ItemGroup>
+
+</Project>

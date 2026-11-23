@@ -68,6 +68,11 @@ namespace Orbweaver
             RelaySession? oldest = null;
             foreach (var row in rows)
             {
+                // CB-422 (frames-v15 activity): a Paperclip agent is never counted as
+                // working or idle, and not as amber either until a prompt exists for
+                // it (release 2), so a company that runs on a schedule cannot move
+                // the island or the Live Activity.
+                if (row.Cli == MirrorProtocol.CliPaperclip) continue;
                 switch (row.State)
                 {
                     case RelayRoster.Waiting:

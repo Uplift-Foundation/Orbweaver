@@ -127,6 +127,19 @@ namespace Orbweaver
         // Two lobes and a point, with a shallow notch: a deep notch closes up
         // at 11px and the heart reads as a blob, which is the failure the
         // cloud's lumps were designed against too.
+        // CB-421: the two marks a Paperclip orb wears in its presence corner.
+        // Drawn rather than typed for CB-173's reason: "!" and U+23F8 resolve to
+        // different faces per platform, and the pause glyph is a colour emoji on
+        // Windows. Alert is a bar and a dot, Pause two bars, both in the 16x16
+        // box with the same optical weight as Stop.
+        internal const string Alert =
+            "M6.9,2 L9.1,2 L8.6,9.6 L7.4,9.6 Z "
+            + "M8,10.8 A1.4,1.4 0 1 1 8,13.6 A1.4,1.4 0 1 1 8,10.8 Z";
+
+        internal const string Pause =
+            "M3.5,2.5 L6.5,2.5 L6.5,13.5 L3.5,13.5 Z "
+            + "M9.5,2.5 L12.5,2.5 L12.5,13.5 L9.5,13.5 Z";
+
         internal const string Heart =
             "M8,14.5 C8,14.5 0.8,10.1 0.8,5.4 C0.8,3.1 2.6,1.4 4.8,1.4 "
             + "C6.2,1.4 7.4,2.2 8,3.3 C8.6,2.2 9.8,1.4 11.2,1.4 "

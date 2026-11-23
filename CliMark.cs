@@ -70,8 +70,21 @@ namespace Orbweaver
             + "C8,13.0 5.8,12.2 5.2,10.4 C4.6,7.2 5.4,4.2 8,4.2 Z "
             + "M5.4,11.6 L3.8,14.4 L8,13.4 L12.2,14.4 L10.6,11.6 Z");
 
+        // Paperclip indigo, a paperclip: the outline of one wire bent into an
+        // outer loop and an inner one, drawn as a single filled path (the stroke
+        // converted to its outline, 1.6 wide) so it scales with the disc like
+        // every other glyph here. Worn by every Paperclip orb, asleep or not:
+        // the mark says what the agent IS (a Paperclip agent, not a terminal
+        // session) and the orb's dimming says whether it is running (CB-421).
+        internal static readonly CliMarkStyle Paperclip = new(
+            "paperclip",
+            "#5B5BD6",
+            "M11.2,10 V5 A3.2,3.2 0 0 0 4.8,5 V11.5 A1.7,1.7 0 0 0 8.2,11.5 V6 H9.8 "
+            + "V11.5 A3.3,3.3 0 0 1 3.2,11.5 V5 A4.8,4.8 0 0 1 12.8,5 V10 Z");
+
         internal static CliMarkStyle? For(SessionSource source) => source switch
         {
+            SessionSource.Paperclip => Paperclip,
             SessionSource.ClaudeCode => Claude,
             SessionSource.Codex => Codex,
             SessionSource.Grok => Grok,

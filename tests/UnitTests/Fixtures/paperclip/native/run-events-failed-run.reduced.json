@@ -1,0 +1,643 @@
+[
+  {
+    "seq": 1,
+    "eventType": "legacy.case_handoff_cleanup_intent",
+    "createdAt": "2026-11-23T04:01:20.955Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 2,
+    "eventType": "lifecycle",
+    "createdAt": "2026-11-23T04:01:21.009Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 3,
+    "eventType": "run.startup.reuse",
+    "createdAt": "2026-11-23T04:01:21.216Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 4,
+    "eventType": "run.startup.reuse",
+    "createdAt": "2026-11-23T04:01:21.218Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 5,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:21.219Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 6,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:21.221Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 7,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:21.222Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 8,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:21.223Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 9,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:21.225Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 10,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:21.234Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 11,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:21.236Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 12,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:21.239Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 13,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:21.242Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 14,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:21.251Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 15,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:21.254Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 16,
+    "eventType": "native.process_start_requested",
+    "createdAt": "2026-11-23T04:01:21.277Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {
+      "hostname": "host.example",
+      "providerAttempt": 1
+    }
+  },
+  {
+    "seq": 17,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:21.357Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 18,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:21.358Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 19,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:21.360Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 20,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:21.361Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 21,
+    "eventType": "native.process_identity_recorded",
+    "createdAt": "2026-11-23T04:01:21.427Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {
+      "hostname": "host.example",
+      "processPid": 80361,
+      "targetKind": "local",
+      "processGroupId": 80361,
+      "processStartedAt": "2026-11-23T04:01:21.000Z"
+    }
+  },
+  {
+    "seq": 22,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:21.505Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 23,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:25.489Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 24,
+    "eventType": "native.process_identity_recorded",
+    "createdAt": "2026-11-23T04:01:25.487Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {
+      "hostname": "host.example",
+      "processPid": 80361,
+      "targetKind": "local",
+      "processGroupId": 80361,
+      "processStartedAt": "2026-11-23T04:01:21.000Z"
+    }
+  },
+  {
+    "seq": 25,
+    "eventType": "session.started",
+    "createdAt": "2026-11-23T04:01:25.509Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 26,
+    "eventType": "run.startup.reuse",
+    "createdAt": "2026-11-23T04:01:25.517Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 27,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:25.537Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 28,
+    "eventType": "session.capabilities.updated",
+    "createdAt": "2026-11-23T04:01:25.540Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 29,
+    "eventType": "session.capabilities.updated",
+    "createdAt": "2026-11-23T04:01:25.550Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 30,
+    "eventType": "session.goal.snapshot",
+    "createdAt": "2026-11-23T04:01:25.551Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 31,
+    "eventType": "session.goal.snapshot",
+    "createdAt": "2026-11-23T04:01:25.556Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 32,
+    "eventType": "item.completed",
+    "createdAt": "2026-11-23T04:01:25.558Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 33,
+    "eventType": "item.completed",
+    "createdAt": "2026-11-23T04:01:25.568Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 34,
+    "eventType": "turn.submitted",
+    "createdAt": "2026-11-23T04:01:25.581Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 35,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:25.608Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 36,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:25.613Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 37,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:25.615Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 38,
+    "eventType": "turn.started",
+    "createdAt": "2026-11-23T04:01:25.616Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 39,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:25.619Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 40,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:25.637Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 41,
+    "eventType": "turn.started",
+    "createdAt": "2026-11-23T04:01:25.639Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 42,
+    "eventType": "turn.accepted",
+    "createdAt": "2026-11-23T04:01:25.640Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 43,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:25.643Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 44,
+    "eventType": "harness.diagnostic",
+    "createdAt": "2026-11-23T04:01:25.933Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 45,
+    "eventType": "hook.started",
+    "createdAt": "2026-11-23T04:01:25.945Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {
+      "prpEvent": {
+        "payload": {
+          "event": "SessionStart",
+          "scope": "turn",
+          "hookId": "00000000-0000-4000-8000-00000000200a",
+          "schema": "paperclip.hook.v1",
+          "source": null,
+          "status": "running",
+          "message": null,
+          "outcome": "running",
+          "summary": null,
+          "blocking": true,
+          "toolName": "startup",
+          "durationMs": null
+        },
+        "normalizedSessionId": "00000000-0000-4000-8000-00000000200b"
+      }
+    }
+  },
+  {
+    "seq": 46,
+    "eventType": "hook.completed",
+    "createdAt": "2026-11-23T04:01:25.951Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {
+      "prpEvent": {
+        "payload": {
+          "event": "SessionStart",
+          "scope": "turn",
+          "hookId": "00000000-0000-4000-8000-00000000200a",
+          "schema": "paperclip.hook.v1",
+          "source": null,
+          "status": "completed",
+          "message": null,
+          "outcome": "passed",
+          "summary": null,
+          "blocking": true,
+          "toolName": "startup",
+          "durationMs": null
+        },
+        "normalizedSessionId": "00000000-0000-4000-8000-00000000200b"
+      }
+    }
+  },
+  {
+    "seq": 47,
+    "eventType": "hook.started",
+    "createdAt": "2026-11-23T04:01:26.355Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {
+      "prpEvent": {
+        "payload": {
+          "event": "UserPromptSubmit",
+          "scope": "turn",
+          "hookId": "00000000-0000-4000-8000-00000000200c",
+          "schema": "paperclip.hook.v1",
+          "source": null,
+          "status": "running",
+          "message": null,
+          "outcome": "running",
+          "summary": null,
+          "blocking": true,
+          "toolName": null,
+          "durationMs": null
+        },
+        "normalizedSessionId": "00000000-0000-4000-8000-00000000200b"
+      }
+    }
+  },
+  {
+    "seq": 48,
+    "eventType": "hook.started",
+    "createdAt": "2026-11-23T04:01:26.384Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {
+      "prpEvent": {
+        "payload": {
+          "event": "UserPromptSubmit",
+          "scope": "turn",
+          "hookId": "00000000-0000-4000-8000-00000000200d",
+          "schema": "paperclip.hook.v1",
+          "source": null,
+          "status": "running",
+          "message": null,
+          "outcome": "running",
+          "summary": null,
+          "blocking": true,
+          "toolName": null,
+          "durationMs": null
+        },
+        "normalizedSessionId": "00000000-0000-4000-8000-00000000200b"
+      }
+    }
+  },
+  {
+    "seq": 49,
+    "eventType": "hook.completed",
+    "createdAt": "2026-11-23T04:01:26.416Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {
+      "prpEvent": {
+        "payload": {
+          "event": "UserPromptSubmit",
+          "scope": "turn",
+          "hookId": "00000000-0000-4000-8000-00000000200d",
+          "schema": "paperclip.hook.v1",
+          "source": null,
+          "status": "completed",
+          "message": null,
+          "outcome": "passed",
+          "summary": null,
+          "blocking": true,
+          "toolName": null,
+          "durationMs": null
+        },
+        "normalizedSessionId": "00000000-0000-4000-8000-00000000200b"
+      }
+    }
+  },
+  {
+    "seq": 50,
+    "eventType": "hook.completed",
+    "createdAt": "2026-11-23T04:01:26.423Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {
+      "prpEvent": {
+        "payload": {
+          "event": "UserPromptSubmit",
+          "scope": "turn",
+          "hookId": "00000000-0000-4000-8000-00000000200c",
+          "schema": "paperclip.hook.v1",
+          "source": null,
+          "status": "completed",
+          "message": null,
+          "outcome": "passed",
+          "summary": null,
+          "blocking": true,
+          "toolName": null,
+          "durationMs": null
+        },
+        "normalizedSessionId": "00000000-0000-4000-8000-00000000200b"
+      }
+    }
+  },
+  {
+    "seq": 51,
+    "eventType": "item.completed",
+    "createdAt": "2026-11-23T04:01:26.430Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 52,
+    "eventType": "item.completed",
+    "createdAt": "2026-11-23T04:01:27.354Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 53,
+    "eventType": "turn.failed",
+    "createdAt": "2026-11-23T04:01:27.388Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 54,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:27.413Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 55,
+    "eventType": "turn.failed",
+    "createdAt": "2026-11-23T04:01:27.417Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {
+      "status": "failed"
+    }
+  },
+  {
+    "seq": 56,
+    "eventType": "instruction_save",
+    "createdAt": "2026-11-23T04:01:28.743Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 57,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:28.745Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 58,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:28.772Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 59,
+    "eventType": "run.performance.span",
+    "createdAt": "2026-11-23T04:01:28.787Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 60,
+    "eventType": "error",
+    "createdAt": "2026-11-23T04:01:28.829Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 61,
+    "eventType": "lifecycle",
+    "createdAt": "2026-11-23T04:01:28.876Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 62,
+    "eventType": "native.local_process_stopped",
+    "createdAt": "2026-11-23T04:01:28.951Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {
+      "processPid": 80361,
+      "processGroupId": 80361,
+      "processStartedAt": "2026-11-23T04:01:21.000Z"
+    }
+  },
+  {
+    "seq": 63,
+    "eventType": "lifecycle",
+    "createdAt": "2026-11-23T04:01:28.959Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  },
+  {
+    "seq": 64,
+    "eventType": "lifecycle",
+    "createdAt": "2026-11-23T04:01:43.792Z",
+    "runId": "00000000-0000-4000-8000-000000002003",
+    "agentId": "00000000-0000-4000-8000-000000000004",
+    "payload": {}
+  }
+]

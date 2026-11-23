@@ -45,6 +45,32 @@ namespace Orbweaver
         [JsonIgnore]
         public string Lead { get; set; } = "";
 
+        // Paperclip-only, and [JsonIgnore] for the reason Source is: the app's
+        // conclusion, never the hook's. Mark is the broke / paused / over
+        // budget corner glyph and MarkReason its hover words; BudgetPercent is
+        // null when no ring is drawn; FoldedCount and FoldedNames describe the
+        // sleeping agents folded into this lead (CB-421).
+        [JsonIgnore]
+        public PaperclipMark Mark { get; set; } = PaperclipMark.None;
+
+        [JsonIgnore]
+        public string? MarkReason { get; set; }
+
+        [JsonIgnore]
+        public int FoldedCount { get; set; }
+
+        [JsonIgnore]
+        public string? FoldedNames { get; set; }
+
+        [JsonIgnore]
+        public int? BudgetPercent { get; set; }
+
+        // The Paperclip orb's hover, one line each, already in the order plan 2.7
+        // gives and with the empty ones left out (PaperclipApi owns that). The
+        // orb draws what is here and decides nothing about it.
+        [JsonIgnore]
+        public IReadOnlyList<string> HoverLines { get; set; } = Array.Empty<string>();
+
         // What this agent is called inside its team — MenuUX, HitReactSpec.
         // Empty for everything that isn't a team member, and filled in beside
         // Lead from the same read of the process. Everything user-facing
@@ -362,7 +388,13 @@ namespace Orbweaver
         // machine *of yours* reached through a relay that can type into it.
         // There is no machine of yours behind this one and nothing here can
         // type into it, so a click opens the session in a browser instead.
-        ClaudeCloud
+        ClaudeCloud,
+
+        // An agent in a Paperclip company, listed by Paperclip's own API
+        // rather than by a hook (see PaperclipSessions). No process, terminal
+        // or transcript here, so like ClaudeCloud a click opens a browser, and
+        // like it the orb outlives the agent's runs. Not in IsLocalCli.
+        Paperclip
     }
 
     // Watches %TEMP%\orbweaver\<session_id>.txt (one per running Claude
@@ -630,17 +662,26 @@ namespace Orbweaver
 
             // CB-212: every pid's team first, in one read, because the plan's
             // gates need the leads and the UI half needs the rest.
-            var teams = _teams(ScanProbePlan.TeamPids(found));
+            var teamPids = ScanProbePlan.TeamPids(found);
+            var teams = Timed("agent teams (pids)", teamPids.Count, () => _teams(teamPids));
 
             // The sessions with no pid to ask about, from their files instead
             // (AgentTeamFiles): a WSL session records none, so its team was
             // unknowable and its orb drew alone. Asked here, off the UI thread,
             // because it opens a file over a VM's share.
-            var fileTeams = _fileTeams(ScanProbePlan.FileTeamCandidates(found));
+            var fileCandidates = ScanProbePlan.FileTeamCandidates(found);
+            var fileTeams = Timed("agent teams (files)", fileCandidates.Count, () => _fileTeams(fileCandidates));
 
+            // Each probe Gather will run is timed on its own, so a slow pass names
+            // the one that was slow.
             return ScanProbes.Gather(
                 ScanProbePlan.For(found, pid => teams.TryGetValue(pid, out var m) ? m.Lead : ""),
-                teams, _paneOwners, _jobListing, _attachClients, _agentViewer, fileTeams);
+                teams,
+                claims => Timed("tmux pane owners", claims.Count, () => _paneOwners(claims)),
+                () => Timed("background-job listing", found.Count, () => _jobListing()),
+                () => Timed("attach clients", found.Count, () => _attachClients()),
+                cwd => Timed("agent viewer", 1, () => _agentViewer(cwd)),
+                fileTeams);
         }
 
         internal static IEnumerable<string?> ClaudeTranscripts(IEnumerable<ScanEntry> found) =>
@@ -881,8 +922,13 @@ namespace Orbweaver
             _debounce.Tick += (_, _) =>
             {
                 _debounce.Stop();
-                _ = ScheduleScan();
+                if (_nudge.OnDebounceTick(_scanInFlight)) _ = ScheduleScan();
             };
+
+            // CB-421: a Paperclip snapshot that changes what the orbs draw asks
+            // for a scan now rather than at the next 2 s tick. Marshalled to the
+            // UI thread, where the scan state lives; Paperclip-only.
+            PaperclipSessions.Changed += () => Dispatcher.UIThread.Post(RequestScan);
 
             _ = ScheduleScan();
         }
@@ -945,6 +991,24 @@ namespace Orbweaver
         // One status file, already parsed. Written is the file's mtime, which is
         // what "how long since this session last said anything" means throughout.
         internal sealed record ScanEntry(string SessionId, SessionStatus Status, DateTime Written);
+
+        // Remembers which Paperclip agents were awake lately, so a short run does
+        // not make the folded picture jump (PaperclipApi.UnfoldHold).
+        private readonly PaperclipScan _paperclipScan = new();
+
+        // Applied only while Paperclip is enabled and its snapshot is non-empty;
+        // with it off nothing changes from before (plan 2.9).
+        internal static bool PaperclipFoldAway(SessionStatus status)
+        {
+            if (!OrbweaverSettings.PaperclipEnabled) return false;
+            var agents = PaperclipSessions.Snapshot();
+            if (agents.Count == 0) return false;
+            if (status.Source != SessionSource.ClaudeCode) return false;
+            return PaperclipApi.IsRunProcess(status.Entrypoint, status.Cwd,
+                status.SessionPid > 0 ? status.SessionPid : null, status.SessionId,
+                agents.Where(a => a.RunPid != null).Select(a => a.RunPid!.Value).ToHashSet(),
+                agents.Where(a => !string.IsNullOrEmpty(a.RunSessionId)).Select(a => a.RunSessionId!).ToHashSet());
+        }
 
         // Whether the user wants this kind of session tracked at all.
         //
@@ -1489,6 +1553,12 @@ namespace Orbweaver
             // `updated_at` back inside the window.
             if (staleAfter is not null
                 && status.Source != SessionSource.ClaudeCloud
+
+                // CB-421: an agent between runs is the normal state of a
+                // Paperclip company, not a husk. Its orb lasts until the agent
+                // is terminated or gone from a successful listing, switching
+                // the feature off, or disconnecting.
+                && status.Source != SessionSource.Paperclip
                 && status.State != "waiting"
                 && !(status.Source == SessionSource.OpenClaw && status.State == "generating")
 
@@ -2275,13 +2345,36 @@ namespace Orbweaver
         {
             SyncAutoColorMarker();
             var now = DateTime.UtcNow;
-            var found = ReadStatusFiles(now);
+            var found = ReadStatusFilesTimed(now);
             ScanAndUpdateCore(found, GatherProbes(found), now);
         }
 
         // Guards ScheduleScan against a tick landing while the previous scan's
         // background read is still in flight.
         private bool _scanInFlight;
+
+        private readonly ScanNudge _nudge = new();
+
+        // The slow-phase diagnostic (SlowPhase): a clock, a threshold and a sink,
+        // all replaceable so the suites can run a "slow" phase without sleeping.
+        internal Func<TimeSpan> ScanClock { get; set; } = SlowPhase.StopwatchClock();
+        internal TimeSpan SlowPhaseThreshold { get; set; } = SlowPhase.DefaultThreshold;
+        internal Action<string> SlowPhaseSink { get; set; } = SlowPhase.DefaultSink;
+
+        private T Timed<T>(string phase, int count, Func<T> work) =>
+            SlowPhase.Measure(phase, count, work, ScanClock, SlowPhaseThreshold, SlowPhaseSink);
+
+        private List<ScanEntry> ReadStatusFilesTimed(DateTime now) =>
+            SlowPhase.Measure("read status files", (List<ScanEntry> r) => r.Count,
+                () => ReadStatusFiles(now), ScanClock, SlowPhaseThreshold, SlowPhaseSink);
+
+        // Asks for a scan promptly, through the 150 ms debounce the status-file
+        // watcher uses, so a burst is one scan; if one is running, one more runs
+        // after it. UI thread only. See ScanNudge.
+        internal void RequestScan()
+        {
+            if (_nudge.Request(_scanInFlight)) RestartDebounce();
+        }
 
         // The production entry point: Start() wires the poll timer and the
         // file-watcher debounce to this instead of to ScanAndUpdate directly.
@@ -2323,21 +2416,38 @@ namespace Orbweaver
         {
             if (_scanInFlight) return;
             _scanInFlight = true;
+            var passStarted = ScanClock();
+            var passCount = 0;
             try
             {
                 var now = DateTime.UtcNow;
+                var queued = ScanClock();
                 var (found, probes) = await Task.Run(() =>
                 {
+                    // Time spent waiting for a worker thread is outside every
+                    // phase below, and a starved pool at launch would hide there.
+                    SlowPhase.Report("waiting for a worker thread", -1, ScanClock() - queued,
+                        SlowPhaseThreshold, SlowPhaseSink);
                     SyncAutoColorMarker();
-                    var read = ReadStatusFiles(now);
+                    var read = ReadStatusFilesTimed(now);
                     return (read, GatherProbes(read));
                 }).ConfigureAwait(true);
 
-                ScanAndUpdateCore(found, probes, now);
+                passCount = found.Count;
+
+                // The apply runs on the UI thread, so a slow one is a frozen UI.
+                Timed("apply", found.Count, () => { ScanAndUpdateCore(found, probes, now); return 0; });
             }
             finally
             {
                 _scanInFlight = false;
+
+                // The whole pass, from the tick to the end of the apply: when it
+                // is slow and no single phase above is, the time is spread over
+                // many short ones or sits between them, and this says so.
+                SlowPhase.Report("scan pass (total)", passCount, ScanClock() - passStarted,
+                    SlowPhaseThreshold, SlowPhaseSink);
+                if (_nudge.OnScanFinished()) RestartDebounce();
             }
         }
 
@@ -2788,6 +2898,14 @@ namespace Orbweaver
                     session.LastActivity));
             }
 
+            // Paperclip agents (CB-421): one orb per agent, keyed "paperclip:<id>",
+            // the lead pointing at its manager. Empty and free unless
+            // paperclipEnabled is on - PaperclipSessions.Snapshot holds that gate.
+            // What the orb says is PaperclipScan's, so this is one call.
+            found.AddRange(_paperclipScan.Entries(
+                PaperclipSessions.Snapshot(), PaperclipSessions.Link, PaperclipSessions.StatusText,
+                OrbweaverSettings.PaperclipSleeping, DateTime.UtcNow, PaperclipSessions.Remembered));
+
             // Before InheritTerminalInfo, so this describes the files as the
             // hooks wrote them. It happens to be immune to the donation — pid and
             // source are not among the fields moved — but this ordering is the one
@@ -3068,6 +3186,14 @@ namespace Orbweaver
                 // when the connected gateway already draws it. See
                 // OpenClawCliSession.
                 if (!OpenClawCliSession.ShowHere(status))
+                {
+                    continue;   // removed in the pass below
+                }
+
+                // CB-421: a headless session Paperclip started to run one of its
+                // agents is the same work as that agent's orb, so the local row
+                // is folded away while Paperclip is connected and drawing.
+                if (PaperclipFoldAway(status))
                 {
                     continue;   // removed in the pass below
                 }
@@ -3610,6 +3736,10 @@ namespace Orbweaver
 
                 return OpenClawSessions.RoomChatFor(sessionId, status.Title, members);
             }
+
+            // A Paperclip agent has no conversation to open: talking to one is
+            // commenting on a task, which is Paperclip's page, not a chat panel.
+            if (status.Source == SessionSource.Paperclip) return null;
 
             if (status.Source == SessionSource.OpenClaw)
                 return OpenClawSessions.ChatFor(sessionId, status.Title);

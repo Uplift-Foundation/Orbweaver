@@ -284,6 +284,30 @@ var windows = new[]
     S("1e2f3a4b-5c6d-4e7f-9a8b-0c1d2e3f4a5b", "grok", "scratch", @"C:\Users\someone\scratch", "generating", 55, persona: Persona("Pixel", "PI", null)),
 };
 JsonNode Parse(byte[] utf8) => JsonNode.Parse(utf8)!;
+// CB-422 (frames-v15): a Paperclip company beside one claude row. Built through
+// RelayRoster.Project from scan-shaped statuses rather than by hand, so the row
+// shape (empty cwd, no persona, a parent only when the lead is a row) is the
+// projection's own and not this file's idea of it.
+var pcLead = "paperclip:3f2a9c4e-6b1d-4e87-a5c3-9d0e7b2f1a64";
+var pcWaiting = "paperclip:5b8d1e07-c2a4-4f69-8e3b-1a7c9d4f2e05";
+var pcIdle = "paperclip:9c6e2a13-d8f5-4b70-b1a9-e4c3f7d02a58";
+SessionStatus PcStatus(string title, string state, string leadKey) =>
+    new() { Source = SessionSource.Paperclip, Title = title, State = state, Cwd = "", Lead = leadKey };
+var paperclip = RelayRoster.Project(new (string, SessionStatus)[]
+{
+    ("8a6f0c1e-2b3d-4e5f-9a8b-7c6d5e4f3a2b", new SessionStatus { Title = "CB-421 paperclip orbs", State = "idle", Cwd = "/Users/someone/Source/Orbweaver" }),
+    (pcLead, PcStatus("Atlas", "generating", "")),
+    (pcWaiting, PcStatus("Beacon", "waiting", pcLead)),
+    (pcIdle, PcStatus("Cinder", "idle", pcLead)),
+}, (Func<SessionStatus, RelayPersona?>)(_ => null))
+    .Select((r, i) => r with { Since = t0.AddSeconds(new[] { 0, 10, 20, 30 }[i]) }).ToArray();
+var paperclipDeltas = new JsonArray
+{
+    Parse(RelayRoster.DeltaJson(2, new RelayDelta(pcWaiting, "generating", null, t0.AddSeconds(100), false))),
+    Parse(RelayRoster.DeltaJson(3, new RelayDelta(pcLead, "idle", null, t0.AddSeconds(110), false))),
+    Parse(RelayRoster.DeltaJson(4, new RelayDelta(pcIdle, null, "Cinder (research)", null, false))),
+    Parse(RelayRoster.DeltaJson(5, new RelayDelta(pcIdle, "ended", null, t0.AddSeconds(150), true))),
+};
 var deltas = new JsonArray
 {
     Parse(RelayRoster.DeltaJson(2, new RelayDelta(lead, "idle", null, t0.AddSeconds(90), false))),
@@ -300,6 +324,9 @@ var rosters = new JsonObject
     ["empty_roster"] = Parse(RelayRoster.RosterJson(1, [])),
     ["macbook_deltas_after_roster"] = deltas,
     ["gap_example"] = new JsonObject { ["_note"] = "after macbook_roster (seq 1), receiving this seq 3 delta with no seq 2 is a gap: send resync {t,peer_id} and expect a fresh roster", ["delta"] = Parse(RelayRoster.DeltaJson(3, new RelayDelta(lead, "waiting", null, t0.AddSeconds(200), false))) },
+    ["_paperclip_rules"] = "CB-422 (frames-v15): paperclip_roster is the fourth roster. A Paperclip agent is a row with cli \"paperclip\", session_id \"paperclip:\" + the agent's UUID, cwd \"\", no persona, and parent_session_id \"paperclip:\" + its lead's id only when that lead is a row in the same roster. paperclip_deltas_after_roster is its delta sequence, ending in a removal (an agent terminated or folded away). The three older rosters keep their bytes.",
+    ["paperclip_roster"] = Parse(RelayRoster.RosterJson(1, paperclip)),
+    ["paperclip_deltas_after_roster"] = paperclipDeltas,
 };
 
 var options = new JsonSerializerOptions { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };

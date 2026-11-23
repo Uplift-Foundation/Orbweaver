@@ -163,7 +163,7 @@ namespace Orbweaver
         // else, and a rule that lives next to the Process.Start it guards is a
         // rule no test can reach.
         internal static bool OpensInABrowser(SessionStatus? status) =>
-            status?.Source == SessionSource.ClaudeCloud;
+            status?.Source is SessionSource.ClaudeCloud or SessionSource.Paperclip;
 
         // Whether "take me to this session" means bringing Claude Desktop forward.
         //

@@ -30,6 +30,19 @@ public class RelayActivityTests
         Assert.Equal(("MacBook Pro", 2, 1, 3), (s.Machine, s.Amber, s.Working, s.Idle));
     }
 
+    // CB-422 (frames-v15 activity): a company that runs on a schedule must not move the island.
+    [Fact]
+    public void A_paperclip_row_is_never_counted_working_idle_or_amber()
+    {
+        var pc = (string state) => new RelaySession("paperclip:" + state, "paperclip", "Atlas", "", state, null, null) { Since = T0 };
+        var s = RelayActivity.Snapshot([Row("a", "generating"), pc("waiting"), pc("generating"), pc("idle")], None, "MacBook Pro");
+        Assert.Equal(("MacBook Pro", 0, 1, 0), (s.Machine, s.Amber, s.Working, s.Idle));
+        Assert.Null(s.Oldest);
+        // The control: a claude row in the same states does count.
+        var claude = RelayActivity.Snapshot([Row("a", "generating"), Row("b", "waiting"), Row("c", "idle")], None, "MacBook Pro");
+        Assert.Equal((1, 1, 1), (claude.Amber, claude.Working, claude.Idle));
+    }
+
     [Fact]
     public void No_amber_means_no_oldest_and_the_frame_writes_null()
     {

@@ -370,7 +370,9 @@ namespace Orbweaver
             // often than a real detail.
             var tipPath = status.Source == SessionSource.ClaudeCloud
                 ? CloudTipDetail(status.StatusDetail, status.RecentAction)
-                : string.IsNullOrEmpty(status.Cwd) ? null : status.Cwd;
+                : status.Source == SessionSource.Paperclip
+                    ? PaperclipOrb.TipBody(status.HoverLines, status.FoldedCount, status.FoldedNames)
+                    : string.IsNullOrEmpty(status.Cwd) ? null : status.Cwd;
 
             // UpdateFrom runs on every session poll, but SetTip always builds
             // a fresh Border. Doing that while the pointer is resting on the
@@ -495,6 +497,9 @@ namespace Orbweaver
                 SessionSource.RemoteControl => (
                     "This session's state is controlled on its other machine",
                     "This session is managed on its other machine, so it must be reset there."),
+                SessionSource.Paperclip => (
+                    "Paperclip controls this agent's state",
+                    "This agent runs in Paperclip, so " + Brand.DisplayName + " cannot reset its state."),
                 SessionSource.ClaudeCloud => (
                     "Anthropic's cloud controls this session's state",
                     "This session runs in Anthropic's cloud, so its state is theirs to change "
@@ -525,14 +530,129 @@ namespace Orbweaver
             // about stillness, and the state block is the thing that starts
             // motion. Applied in the other order, an orb that parked and
             // changed state in one update would be left breathing.
-            ApplyPresence(status.Presence);
+            // Paperclip decides its own dimming (see PaperclipOrb.Dims). Forced when
+            // that verdict moves with the presence unchanged: a mark arriving on a
+            // parked agent changes whether it is dimmed, and ApplyPresence returns
+            // early on an unchanged presence.
+            var dims = PaperclipOrb.Dims(status);
+            var dimChanged = dims != _dimOverride;
+            _dimOverride = dims;
+            ApplyPresence(status.Presence, force: dimChanged);
 
             // After the state block too, and for a milder version of the same
             // reason: the ring is drawn over the orb's own glow, and applying it
             // before a colour fade starts would leave it underneath a brush that
             // is still animating.
-            ApplyContextRing(status.ContextPercent);
+            // A Paperclip agent's budget is drawn on the same ring a cloud
+            // session's context is, gated by source so the two can never both be
+            // drawn: a ring at 90% is the same red wherever it is drawn and there
+            // is one arc to keep clear of the corner badges, not two.
+            ApplyContextRing(PaperclipOrb.RingPercent(status));
+
+            ApplyPaperclip(status);
         }
+
+        // --- Paperclip (CB-421) -----------------------------------------------
+        // The drawn mark, the folded count and the menu rows. The badge in the
+        // bottom-left, the ring and the dimming are the existing channels:
+        // ApplyCli, ApplyContextRing and ApplyPresence.
+
+        private PaperclipMark _mark = PaperclipMark.None;
+
+        // What the presence corner is drawing, for the UI suite and for nothing
+        // else: the drawn mark's name, or null when the corner shows the typed
+        // glyph ("?" wins) or nothing.
+        internal string? PresenceMarkName { get; private set; }
+
+        internal string? FoldedPillLabel { get; private set; }
+
+        internal bool FoldedPillVisible => FoldedPill.IsVisible;
+
+        internal bool PresenceMarkVisible => PresenceMark.IsVisible;
+
+        internal bool PresenceBadgeVisible => PresenceBadge.IsVisible;
+
+        internal bool OpenPaperclipVisible => OpenPaperclipItem.IsVisible;
+
+        internal bool ReviewPaperclipVisible => ReviewPaperclipItem.IsVisible;
+
+        internal bool ReconnectPaperclipVisible => ReconnectPaperclipItem.IsVisible;
+
+        // What Reconnect does. Null until the Settings wiring installs it, which
+        // is the one place that knows how to run the approval again; the orb
+        // only asks.
+        internal static Action? PaperclipReconnect { get; set; }
+
+        private void ApplyPaperclip(SessionStatus status)
+        {
+            var paperclip = status.Source == SessionSource.Paperclip;
+            _mark = paperclip ? status.Mark : PaperclipMark.None;
+            ReconcilePresenceCorner();
+
+            FoldedPillLabel = PaperclipOrb.FoldedLabel(status);
+            FoldedPillVisible_Set(FoldedPillLabel);
+
+            var offer = PaperclipOrb.Offer(status, PaperclipSessions.Link);
+            OpenPaperclipItem.IsVisible = offer.Open;
+            ReviewPaperclipItem.IsVisible = offer.Review;
+            ReconnectPaperclipItem.IsVisible = offer.Reconnect;
+        }
+
+        private void FoldedPillVisible_Set(string? label)
+        {
+            FoldedPill.IsVisible = label is not null;
+            FoldedPillText.Text = label;
+        }
+
+        // One corner, two possible occupants. The typed "?" / check is what a
+        // session wants from you and wins when both apply: a broke agent that is
+        // also waiting on you shows the question, and its mark's reason still
+        // rides the hover. The drawn mark is a Paperclip agent's own state and
+        // only fills the corner when presence has nothing to say.
+        private void ReconcilePresenceCorner()
+        {
+            var typed = PresenceMarkFor(_presence)?.Glyph;
+            var drawn = PaperclipOrb.MarkFor(_mark);
+
+            if (typed is not null)
+            {
+                PresenceGlyph.Text = typed;
+                PresenceGlyph.IsVisible = true;
+                PresenceMark.IsVisible = false;
+                PresenceMarkName = null;
+                PresenceBadge.IsVisible = true;
+            }
+            else if (drawn is { } look)
+            {
+                PresenceGlyph.Text = null;
+                PresenceGlyph.IsVisible = false;
+                PresenceMark.Data = StreamGeometry.Parse(look.Path);
+                PresenceMark.Fill = new SolidColorBrush(Color.Parse(look.FillHex));
+                PresenceMark.IsVisible = true;
+                PresenceMarkName = look.Name;
+                PresenceBadge.IsVisible = true;
+            }
+            else
+            {
+                PresenceGlyph.Text = null;
+                PresenceMark.IsVisible = false;
+                PresenceMarkName = null;
+                PresenceBadge.IsVisible = false;
+            }
+        }
+
+        // Both rows open the orb's own Url, which the Paperclip merge sets to the
+        // first need's page when something is waiting and to the agent's page
+        // otherwise. Excluded from coverage for TryOpenInBrowser's reason: its one
+        // effect launches a real browser. The rule it runs is PaperclipOrb.Offer
+        // and the launch is CloudSessionLink.StartInfoFor, both pure and covered.
+        [ExcludeFromCodeCoverage]
+        internal void OpenPaperclip_Click(object? sender, RoutedEventArgs e)
+        {
+            if (_lastStatus is { Source: SessionSource.Paperclip } status) CloudSessionLink.Open(status.Url);
+        }
+
+        internal void ReconnectPaperclip_Click(object? sender, RoutedEventArgs e) => PaperclipReconnect?.Invoke();
 
         // --- presence ---------------------------------------------------------
         // A third axis, beside identity and state. The orb's colour says which
@@ -555,6 +675,33 @@ namespace Orbweaver
         private const double ParkedOpacity = 0.45;
 
         private OrbPresence _presence = OrbPresence.Present;
+
+        // A Paperclip orb's own dimming verdict, or null for every other orb, whose
+        // dimming is the presence's (PaperclipOrb.Dims).
+        private bool? _dimOverride;
+
+        // Dimmed or not. A Paperclip orb dims its body and leaves the presence
+        // corner at full strength: the pause mark always sits on a dimmed orb and
+        // a mark ghosted along with it (grey on grey) cannot be read, which is the
+        // one place the dimming must not reach. Everything else dims the whole
+        // window, as before.
+        private void SetDim(bool dim)
+        {
+            var opacity = dim ? ParkedOpacity : 1.0;
+            if (_dimOverride is null)
+            {
+                Root.Opacity = opacity;
+                return;
+            }
+
+            Root.Opacity = 1.0;
+            foreach (var child in Root.Children)
+                child.Opacity = ReferenceEquals(child, PresenceBadge) ? 1.0 : opacity;
+        }
+
+        // What a test reads: how strongly the orb's body is drawn, whichever way
+        // the dimming is done.
+        internal double BodyOpacity => Disc.Opacity * Root.Opacity;
 
         // The two things a dimmed orb can be saying, and nothing for the two that
         // have nothing to add.
@@ -677,20 +824,13 @@ namespace Orbweaver
             if (!force && _presence == presence) return;
             _presence = presence;
 
-            var mark = PresenceMarkFor(presence);
-            if (mark?.Glyph is null)
-            {
-                PresenceBadge.IsVisible = false;
-            }
-            else
-            {
-                PresenceGlyph.Text = mark.Value.Glyph;
-                PresenceBadge.IsVisible = true;
-            }
+            // The corner is shared with a Paperclip agent's drawn mark, so what it
+            // shows is decided in one place rather than here and there.
+            ReconcilePresenceCorner();
 
-            if (presence != OrbPresence.Present)
+            if (_dimOverride ?? presence != OrbPresence.Present)
             {
-                Root.Opacity = ParkedOpacity;
+                SetDim(true);
 
                 // Off the shared roster as well as stopped. StopPulse alone
                 // leaves an orb on it when a heart is beating, which no local
@@ -702,7 +842,7 @@ namespace Orbweaver
                 return;
             }
 
-            Root.Opacity = 1.0;
+            SetDim(false);
 
             // Back to whatever it was doing. Guarded exactly as UpdateFrom's
             // state block is, and for the same two reasons: before Loaded there
@@ -1836,6 +1976,9 @@ namespace Orbweaver
             _ackStartedAt = 0;
             _glowScale.ScaleX = _glowScale.ScaleY = 1.0;
             Glow.Opacity = 1.0;
+            // A Paperclip orb dims its children one by one (SetDim), the glow among them,
+            // so the halo's "back to full" must not undo that on a dimmed one.
+            if (_dimOverride == true) Glow.Opacity = ParkedOpacity;
 
             // Off the roster again if this put it there, following StopPulse's own
             // rule about the heart: a beating badge keeps the orb on the ticker

@@ -121,5 +121,76 @@
       "state": "waiting",
       "since": 1794125000
     }
-  }
+  },
+  "_paperclip_rules": "CB-422 (frames-v15): paperclip_roster is the fourth roster. A Paperclip agent is a row with cli \"paperclip\", session_id \"paperclip:\" + the agent's UUID, cwd \"\", no persona, and parent_session_id \"paperclip:\" + its lead's id only when that lead is a row in the same roster. paperclip_deltas_after_roster is its delta sequence, ending in a removal (an agent terminated or folded away). The three older rosters keep their bytes.",
+  "paperclip_roster": {
+    "t": "roster",
+    "seq": 1,
+    "sessions": [
+      {
+        "session_id": "8a6f0c1e-2b3d-4e5f-9a8b-7c6d5e4f3a2b",
+        "cli": "claude",
+        "title": "CB-421 paperclip orbs",
+        "cwd": "/Users/someone/Source/Orbweaver",
+        "state": "idle",
+        "since": 1794124800
+      },
+      {
+        "session_id": "paperclip:3f2a9c4e-6b1d-4e87-a5c3-9d0e7b2f1a64",
+        "cli": "paperclip",
+        "title": "Atlas",
+        "cwd": "",
+        "state": "generating",
+        "since": 1794124810
+      },
+      {
+        "session_id": "paperclip:5b8d1e07-c2a4-4f69-8e3b-1a7c9d4f2e05",
+        "cli": "paperclip",
+        "title": "Beacon",
+        "cwd": "",
+        "state": "waiting",
+        "since": 1794124820,
+        "parent_session_id": "paperclip:3f2a9c4e-6b1d-4e87-a5c3-9d0e7b2f1a64"
+      },
+      {
+        "session_id": "paperclip:9c6e2a13-d8f5-4b70-b1a9-e4c3f7d02a58",
+        "cli": "paperclip",
+        "title": "Cinder",
+        "cwd": "",
+        "state": "idle",
+        "since": 1794124830,
+        "parent_session_id": "paperclip:3f2a9c4e-6b1d-4e87-a5c3-9d0e7b2f1a64"
+      }
+    ]
+  },
+  "paperclip_deltas_after_roster": [
+    {
+      "t": "delta",
+      "seq": 2,
+      "session_id": "paperclip:5b8d1e07-c2a4-4f69-8e3b-1a7c9d4f2e05",
+      "state": "generating",
+      "since": 1794124900
+    },
+    {
+      "t": "delta",
+      "seq": 3,
+      "session_id": "paperclip:3f2a9c4e-6b1d-4e87-a5c3-9d0e7b2f1a64",
+      "state": "idle",
+      "since": 1794124910
+    },
+    {
+      "t": "delta",
+      "seq": 4,
+      "session_id": "paperclip:9c6e2a13-d8f5-4b70-b1a9-e4c3f7d02a58",
+      "title": "Cinder (research)"
+    },
+    {
+      "t": "delta",
+      "seq": 5,
+      "session_id": "paperclip:9c6e2a13-d8f5-4b70-b1a9-e4c3f7d02a58",
+      "state": "ended",
+      "since": 1794124950,
+      "removed": true
+    }
+  ]
 }

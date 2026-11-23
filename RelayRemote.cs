@@ -155,6 +155,18 @@ namespace Orbweaver
             return null;
         }
 
+        // CB-422 (frames-v15): a Paperclip agent this desk is drawing. It is a
+        // row the phone can see, so a request naming it is answered rather than
+        // told the session is gone, but it has no transcript, terminal or run
+        // controls, which is why Local() does not and must not include it.
+        internal bool Listed(string sessionId)
+        {
+            lock (_gate)
+                foreach (var (sid, status) in _snapshot)
+                    if (sid == sessionId && status.Source == SessionSource.Paperclip) return true;
+            return false;
+        }
+
         private IReadOnlyList<(string SessionId, SessionStatus Status)> Snapshot()
         {
             lock (_gate) return _snapshot;
@@ -375,6 +387,11 @@ namespace Orbweaver
         // ran, not that it took: the confirming run frame says that.
         private async Task SetRunAsync(string phoneId, SetRunRequest r)
         {
+            if (Listed(r.SessionId))
+            {
+                RunErr(phoneId, r, RunFrames.Unavailable, NoRunControlsWhy);
+                return;
+            }
             if (Local(r.SessionId) is not { } status)
             {
                 RunErr(phoneId, r, RelayReplies.UnknownSession);
@@ -417,7 +434,7 @@ namespace Orbweaver
         private void Err(string phoneId, string reference, string code, string? sessionId = null, string? why = null)
         {
             _seams.Log($"err {RelayLink.Safe(reference)} {code}");
-            _send.Reply(phoneId, sessionId is not null && Local(sessionId) is not null ? sessionId : null,
+            _send.Reply(phoneId, sessionId is not null && (Local(sessionId) is not null || Listed(sessionId)) ? sessionId : null,
                 RelayReplies.Err(reference, code, sessionId, why));
         }
 
@@ -429,6 +446,15 @@ namespace Orbweaver
 
         private void Watch(string phoneId, WatchRequest w)
         {
+            if (Listed(w.SessionId))
+            {
+                // A Paperclip row has no conversation: watching it succeeds with
+                // nothing in it, no window, no run frame and no subscription, so
+                // a phone that opens one shows an empty conversation instead of
+                // "That session is gone from the desk."
+                Ok(phoneId, w.Ref, RelayReplies.Watching, w.SessionId, 0);
+                return;
+            }
             if (Local(w.SessionId) is null)
             {
                 Err(phoneId, w.Ref, RelayReplies.UnknownSession, w.SessionId);
@@ -470,6 +496,11 @@ namespace Orbweaver
 
         private void Unwatch(string phoneId, UnwatchRequest u)
         {
+            if (Listed(u.SessionId))
+            {
+                Ok(phoneId, u.Ref, RelayReplies.Unwatched, u.SessionId);
+                return;
+            }
             if (Local(u.SessionId) is null)
             {
                 Err(phoneId, u.Ref, RelayReplies.UnknownSession, u.SessionId);
@@ -481,6 +512,13 @@ namespace Orbweaver
 
         private async Task InputAsync(string phoneId, InputRequest i)
         {
+            if (Listed(i.SessionId))
+            {
+                // frames-v4: untypeable carries no `why` (only not_at_prompt, typing_failed,
+                // no_terminal and launch_failed do), so the phone's own copy says it.
+                Err(phoneId, i.Ref, RelayReplies.Untypeable, i.SessionId);
+                return;
+            }
             if (Local(i.SessionId) is not { } status)
             {
                 Err(phoneId, i.Ref, RelayReplies.UnknownSession, i.SessionId);

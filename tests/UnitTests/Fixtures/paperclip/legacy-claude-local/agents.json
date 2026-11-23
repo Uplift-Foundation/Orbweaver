@@ -1,0 +1,409 @@
+[
+  {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "companyId": "00000000-0000-4000-8000-000000000002",
+    "name": "Nadia Okafor",
+    "role": "pm",
+    "title": "Product Manager",
+    "icon": null,
+    "appearance": {
+      "schemaVersion": 1,
+      "characterVersion": "cap-v1",
+      "paletteId": "tangerine-cobalt"
+    },
+    "status": "idle",
+    "lifecycleState": "ready",
+    "lifecycleHolds": [],
+    "lifecycleVersion": 4,
+    "lifecycleError": null,
+    "reportsTo": "00000000-0000-4000-8000-000000000003",
+    "capabilities": null,
+    "adapterType": "claude_local",
+    "adapterConfig": {
+      "model": "claude-sonnet-5-5",
+      "engine": "cli",
+      "command": "/opt/homebrew/bin/claude",
+      "provider": "acpx",
+      "acpxAgent": "claude",
+      "extraArgs": [
+        "--allowedTools",
+        "Read,Grep,Glob"
+      ],
+      "timeoutSec": 1800,
+      "acpxPermissionMode": "approve-reads",
+      "paperclipSkillSync": {
+        "desiredSkills": []
+      },
+      "codexPermissionMode": "never",
+      "instructionsFilePath": "/Users/someone/.paperclip/instances/default/companies/00000000-0000-4000-8000-000000000002/agents/00000000-0000-4000-8000-000000000001/instructions/AGENTS.md",
+      "instructionsRootPath": "/Users/someone/.paperclip/instances/default/companies/00000000-0000-4000-8000-000000000002/agents/00000000-0000-4000-8000-000000000001/instructions",
+      "instructionsEntryFile": "AGENTS.md",
+      "instructionsBundleMode": "managed",
+      "dangerouslySkipPermissions": false,
+      "env": {
+        "CLAUDE_CONFIG_DIR": {
+          "type": "plain",
+          "value": "***REDACTED***"
+        }
+      }
+    },
+    "runtimeConfig": {
+      "heartbeat": {
+        "enabled": false,
+        "wakeOnDemand": true,
+        "wakeOnAssignment": true,
+        "maxConcurrentRuns": 20
+      }
+    },
+    "defaultEnvironmentId": null,
+    "budgetMonthlyCents": 5000,
+    "spendMonthUtc": null,
+    "spentMonthlyCents": 0,
+    "pauseReason": null,
+    "pausedAt": null,
+    "errorReason": null,
+    "permissions": {
+      "canCreateAgents": true,
+      "canCreateSkills": true
+    },
+    "lastHeartbeatAt": "2026-11-23T03:00:43.059Z",
+    "metadata": null,
+    "createdByUserId": null,
+    "createdAt": "2026-11-23T02:38:40.557Z",
+    "updatedAt": "2026-11-23T03:00:43.059Z",
+    "urlKey": "nadia-okafor",
+    "avatarUrl": "/api/agent-avatars/cap-v1/tangerine-cobalt/rest.png?size=512&scale=1",
+    "orgChainHealth": {
+      "status": "healthy",
+      "reason": "healthy",
+      "fullChain": [
+        {
+          "id": "00000000-0000-4000-8000-000000000001",
+          "companyId": "00000000-0000-4000-8000-000000000002",
+          "name": "Nadia Okafor",
+          "status": "idle",
+          "reportsTo": "00000000-0000-4000-8000-000000000003",
+          "depth": 0,
+          "relation": "self"
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000003",
+          "companyId": "00000000-0000-4000-8000-000000000002",
+          "name": "Jennifer Voss",
+          "status": "idle",
+          "reportsTo": null,
+          "depth": 1,
+          "relation": "ancestor"
+        }
+      ],
+      "firstInvalidAncestor": null,
+      "invalidAncestors": [],
+      "repairGuidance": null,
+      "pausedAncestors": [],
+      "escalationWarning": null
+    }
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000004",
+    "companyId": "00000000-0000-4000-8000-000000000002",
+    "name": "Juno Abernathy",
+    "role": "engineer",
+    "title": "Engineer",
+    "icon": null,
+    "appearance": {
+      "schemaVersion": 1,
+      "characterVersion": "cap-v1",
+      "paletteId": "arctic-blue"
+    },
+    "status": "idle",
+    "lifecycleState": "ready",
+    "lifecycleHolds": [],
+    "lifecycleVersion": 4,
+    "lifecycleError": null,
+    "reportsTo": "00000000-0000-4000-8000-000000000003",
+    "capabilities": null,
+    "adapterType": "claude_local",
+    "adapterConfig": {
+      "model": "claude-sonnet-5-5",
+      "engine": "cli",
+      "command": "/opt/homebrew/bin/claude",
+      "provider": "acpx",
+      "acpxAgent": "claude",
+      "extraArgs": [
+        "--allowedTools",
+        "Read,Grep,Glob"
+      ],
+      "timeoutSec": 1800,
+      "acpxPermissionMode": "approve-reads",
+      "paperclipSkillSync": {
+        "desiredSkills": []
+      },
+      "codexPermissionMode": "never",
+      "instructionsFilePath": "/Users/someone/.paperclip/instances/default/companies/00000000-0000-4000-8000-000000000002/agents/00000000-0000-4000-8000-000000000004/instructions/AGENTS.md",
+      "instructionsRootPath": "/Users/someone/.paperclip/instances/default/companies/00000000-0000-4000-8000-000000000002/agents/00000000-0000-4000-8000-000000000004/instructions",
+      "instructionsEntryFile": "AGENTS.md",
+      "instructionsBundleMode": "managed",
+      "dangerouslySkipPermissions": false,
+      "env": {
+        "CLAUDE_CONFIG_DIR": {
+          "type": "plain",
+          "value": "***REDACTED***"
+        }
+      }
+    },
+    "runtimeConfig": {
+      "heartbeat": {
+        "enabled": false,
+        "wakeOnDemand": true,
+        "wakeOnAssignment": true,
+        "maxConcurrentRuns": 20
+      }
+    },
+    "defaultEnvironmentId": null,
+    "budgetMonthlyCents": 5000,
+    "spendMonthUtc": null,
+    "spentMonthlyCents": 0,
+    "pauseReason": null,
+    "pausedAt": null,
+    "errorReason": null,
+    "permissions": {
+      "canCreateAgents": true,
+      "canCreateSkills": true
+    },
+    "lastHeartbeatAt": "2026-11-23T03:01:19.419Z",
+    "metadata": null,
+    "createdByUserId": null,
+    "createdAt": "2026-11-23T02:38:40.525Z",
+    "updatedAt": "2026-11-23T03:01:19.419Z",
+    "urlKey": "juno-abernathy",
+    "avatarUrl": "/api/agent-avatars/cap-v1/arctic-blue/rest.png?size=512&scale=1",
+    "orgChainHealth": {
+      "status": "healthy",
+      "reason": "healthy",
+      "fullChain": [
+        {
+          "id": "00000000-0000-4000-8000-000000000004",
+          "companyId": "00000000-0000-4000-8000-000000000002",
+          "name": "Juno Abernathy",
+          "status": "idle",
+          "reportsTo": "00000000-0000-4000-8000-000000000003",
+          "depth": 0,
+          "relation": "self"
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000003",
+          "companyId": "00000000-0000-4000-8000-000000000002",
+          "name": "Jennifer Voss",
+          "status": "idle",
+          "reportsTo": null,
+          "depth": 1,
+          "relation": "ancestor"
+        }
+      ],
+      "firstInvalidAncestor": null,
+      "invalidAncestors": [],
+      "repairGuidance": null,
+      "pausedAncestors": [],
+      "escalationWarning": null
+    }
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000003",
+    "companyId": "00000000-0000-4000-8000-000000000002",
+    "name": "Jennifer Voss",
+    "role": "cto",
+    "title": "CTO",
+    "icon": null,
+    "appearance": {
+      "schemaVersion": 1,
+      "characterVersion": "cap-v1",
+      "paletteId": "deep-tide"
+    },
+    "status": "idle",
+    "lifecycleState": "ready",
+    "lifecycleHolds": [],
+    "lifecycleVersion": 4,
+    "lifecycleError": null,
+    "reportsTo": null,
+    "capabilities": null,
+    "adapterType": "claude_local",
+    "adapterConfig": {
+      "model": "claude-sonnet-5-5",
+      "engine": "cli",
+      "command": "/opt/homebrew/bin/claude",
+      "provider": "acpx",
+      "acpxAgent": "claude",
+      "extraArgs": [
+        "--allowedTools",
+        "Read,Grep,Glob"
+      ],
+      "timeoutSec": 1800,
+      "acpxPermissionMode": "approve-reads",
+      "paperclipSkillSync": {
+        "desiredSkills": []
+      },
+      "codexPermissionMode": "never",
+      "instructionsFilePath": "/Users/someone/.paperclip/instances/default/companies/00000000-0000-4000-8000-000000000002/agents/00000000-0000-4000-8000-000000000003/instructions/AGENTS.md",
+      "instructionsRootPath": "/Users/someone/.paperclip/instances/default/companies/00000000-0000-4000-8000-000000000002/agents/00000000-0000-4000-8000-000000000003/instructions",
+      "instructionsEntryFile": "AGENTS.md",
+      "instructionsBundleMode": "managed",
+      "dangerouslySkipPermissions": false,
+      "env": {
+        "CLAUDE_CONFIG_DIR": {
+          "type": "plain",
+          "value": "***REDACTED***"
+        }
+      }
+    },
+    "runtimeConfig": {
+      "heartbeat": {
+        "enabled": false,
+        "wakeOnDemand": true,
+        "wakeOnAssignment": true,
+        "maxConcurrentRuns": 20
+      }
+    },
+    "defaultEnvironmentId": null,
+    "budgetMonthlyCents": 5000,
+    "spendMonthUtc": null,
+    "spentMonthlyCents": 0,
+    "pauseReason": null,
+    "pausedAt": null,
+    "errorReason": null,
+    "permissions": {
+      "canCreateAgents": true,
+      "canCreateSkills": true
+    },
+    "lastHeartbeatAt": "2026-11-23T03:01:41.398Z",
+    "metadata": null,
+    "createdByUserId": null,
+    "createdAt": "2026-11-23T02:38:40.470Z",
+    "updatedAt": "2026-11-23T03:01:41.398Z",
+    "urlKey": "jennifer-voss",
+    "avatarUrl": "/api/agent-avatars/cap-v1/deep-tide/rest.png?size=512&scale=1",
+    "orgChainHealth": {
+      "status": "healthy",
+      "reason": "healthy",
+      "fullChain": [
+        {
+          "id": "00000000-0000-4000-8000-000000000003",
+          "companyId": "00000000-0000-4000-8000-000000000002",
+          "name": "Jennifer Voss",
+          "status": "idle",
+          "reportsTo": null,
+          "depth": 0,
+          "relation": "self"
+        }
+      ],
+      "firstInvalidAncestor": null,
+      "invalidAncestors": [],
+      "repairGuidance": null,
+      "pausedAncestors": [],
+      "escalationWarning": null
+    }
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000005",
+    "companyId": "00000000-0000-4000-8000-000000000002",
+    "name": "Ines Carvalho",
+    "role": "qa",
+    "title": "QA",
+    "icon": null,
+    "appearance": {
+      "schemaVersion": 1,
+      "characterVersion": "cap-v1",
+      "paletteId": "lime-lagoon"
+    },
+    "status": "idle",
+    "lifecycleState": "ready",
+    "lifecycleHolds": [],
+    "lifecycleVersion": 4,
+    "lifecycleError": null,
+    "reportsTo": "00000000-0000-4000-8000-000000000003",
+    "capabilities": null,
+    "adapterType": "claude_local",
+    "adapterConfig": {
+      "model": "claude-sonnet-5-5",
+      "engine": "cli",
+      "command": "/opt/homebrew/bin/claude",
+      "provider": "acpx",
+      "acpxAgent": "claude",
+      "extraArgs": [
+        "--allowedTools",
+        "Read,Grep,Glob"
+      ],
+      "timeoutSec": 1800,
+      "acpxPermissionMode": "approve-reads",
+      "paperclipSkillSync": {
+        "desiredSkills": []
+      },
+      "codexPermissionMode": "never",
+      "instructionsFilePath": "/Users/someone/.paperclip/instances/default/companies/00000000-0000-4000-8000-000000000002/agents/00000000-0000-4000-8000-000000000005/instructions/AGENTS.md",
+      "instructionsRootPath": "/Users/someone/.paperclip/instances/default/companies/00000000-0000-4000-8000-000000000002/agents/00000000-0000-4000-8000-000000000005/instructions",
+      "instructionsEntryFile": "AGENTS.md",
+      "instructionsBundleMode": "managed",
+      "dangerouslySkipPermissions": false,
+      "env": {
+        "CLAUDE_CONFIG_DIR": {
+          "type": "plain",
+          "value": "***REDACTED***"
+        }
+      }
+    },
+    "runtimeConfig": {
+      "heartbeat": {
+        "enabled": false,
+        "wakeOnDemand": true,
+        "wakeOnAssignment": true,
+        "maxConcurrentRuns": 20
+      }
+    },
+    "defaultEnvironmentId": null,
+    "budgetMonthlyCents": 5000,
+    "spendMonthUtc": null,
+    "spentMonthlyCents": 0,
+    "pauseReason": null,
+    "pausedAt": null,
+    "errorReason": null,
+    "permissions": {
+      "canCreateAgents": true,
+      "canCreateSkills": true
+    },
+    "lastHeartbeatAt": "2026-11-23T03:00:48.226Z",
+    "metadata": null,
+    "createdByUserId": null,
+    "createdAt": "2026-11-23T02:38:40.389Z",
+    "updatedAt": "2026-11-23T03:00:48.226Z",
+    "urlKey": "ines-carvalho",
+    "avatarUrl": "/api/agent-avatars/cap-v1/lime-lagoon/rest.png?size=512&scale=1",
+    "orgChainHealth": {
+      "status": "healthy",
+      "reason": "healthy",
+      "fullChain": [
+        {
+          "id": "00000000-0000-4000-8000-000000000005",
+          "companyId": "00000000-0000-4000-8000-000000000002",
+          "name": "Ines Carvalho",
+          "status": "idle",
+          "reportsTo": "00000000-0000-4000-8000-000000000003",
+          "depth": 0,
+          "relation": "self"
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000003",
+          "companyId": "00000000-0000-4000-8000-000000000002",
+          "name": "Jennifer Voss",
+          "status": "idle",
+          "reportsTo": null,
+          "depth": 1,
+          "relation": "ancestor"
+        }
+      ],
+      "firstInvalidAncestor": null,
+      "invalidAncestors": [],
+      "repairGuidance": null,
+      "pausedAncestors": [],
+      "escalationWarning": null
+    }
+  }
+]

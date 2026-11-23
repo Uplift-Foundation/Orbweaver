@@ -271,11 +271,9 @@ public class TurnSoundsTests : IDisposable
     public async Task CancelPendingForADifferentSessionLeavesTheRealPendingSignalAlone()
     {
         var played = new System.Collections.Generic.List<string>();
-        var signal = new TaskCompletionSource<bool>();
         ChimePlayer.PlayForTests = path =>
         {
             lock (played) played.Add(path);
-            signal.TrySetResult(true);
         };
 
         OrbweaverSettings.TurnSoundsEnabled = true;
@@ -283,17 +281,20 @@ public class TurnSoundsTests : IDisposable
 
         var start = DateTime.UtcNow;
         TurnSounds.Deliver(new[] { Finished("key-a", "session-a") }, NoSummary, start);
-        await Task.WhenAny(signal.Task, Task.Delay(TimeSpan.FromSeconds(2)));
-        Assert.Single(played);
+        await TurnSounds.ChimesEnqueuedSoFar();
+        lock (played) Assert.Single(played);
 
-        signal = new TaskCompletionSource<bool>();
         TurnSounds.Deliver(new[] { Finished("key-b", "session-b") }, NoSummary, start.AddMilliseconds(100));
 
         TurnSounds.CancelPendingFor("some-other-session-entirely");
 
-        var second = await Task.WhenAny(signal.Task, Task.Delay(TimeSpan.FromSeconds(3)));
-        Assert.Equal(signal.Task, second);
-        Assert.Equal(2, played.Count);
+        // Fired by hand at a logical moment past the gap, as the tests above
+        // do (8d5fbf26e), instead of waiting up to three real seconds for the
+        // pending timer: on a loaded runner the timer was the thing that did
+        // not arrive in time (CI, run 45114606958, one failure in 16346).
+        await FireDueAndDrainAsync(start);
+
+        lock (played) Assert.Equal(2, played.Count);
     }
 
     // A chime still queued on the chain when ResetForTests runs must not
