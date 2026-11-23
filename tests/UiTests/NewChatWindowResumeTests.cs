@@ -144,6 +144,70 @@ public class NewChatWindowResumeTests : IDisposable
         Assert.EndsWith("4 messages", NewChatWindow.ResumeDetail(Shown(window)[1]));
     }
 
+    // CB-361: the listing leaves the count null; a row's count is read when the
+    // row is realised, and "…" stands in until it lands.
+    private static string[] RowTexts(NewChatWindow w, PastSessionRow row)
+    {
+        var control = (Control)w.ResumeList.ItemTemplate!.Build(row)!;
+        return control.GetLogicalDescendants().OfType<TextBlock>().Select(t => t.Text ?? "").ToArray();
+    }
+
+    [AvaloniaFact]
+    public void ADetailLineShowsEllipsisWhileCountingAndOmitsAnUnreadableCount()
+    {
+        var row = new PastSessionRow(Session("a", "T"), false);
+        var folder = Path.GetFileName(Existing);
+
+        Assert.Equal(folder + " · …", NewChatWindow.ResumeDetail(row, counting: true));
+        Assert.Equal(folder + " · 1 message", NewChatWindow.ResumeDetail(row, 1));
+        Assert.Equal(folder + " · 12 messages", NewChatWindow.ResumeDetail(row, 12));
+        var unknown = new PastSessionRow(Session("a", "T") with { MessageCount = null }, false);
+        Assert.Equal(folder, NewChatWindow.ResumeDetail(unknown));
+    }
+
+    [AvaloniaFact]
+    public void TheCountIsReadForARealisedRowAndCachedPerFile()
+    {
+        var reads = new List<string>();
+        PastSessions.CountForTests = (_, path) => { reads.Add(path); return 7; };
+        try
+        {
+            var window = ResumeWindow(Session("a", "One") with { MessageCount = null });
+            var row = Shown(window)[0];
+
+            Assert.Contains(RowTexts(window, row), t => t.EndsWith("· 7 messages"));
+            Assert.Contains(RowTexts(window, row), t => t.EndsWith("· 7 messages"));
+            Assert.Single(reads);
+        }
+        finally { PastSessions.CountForTests = null; }
+    }
+
+    [AvaloniaFact]
+    public void AnUnreadableTranscriptShowsNoCountRatherThanZero()
+    {
+        PastSessions.CountForTests = (_, _) => null;
+        try
+        {
+            var window = ResumeWindow(Session("a", "One") with { MessageCount = null });
+            var texts = RowTexts(window, Shown(window)[0]);
+
+            Assert.DoesNotContain(texts, t => t.Contains("message") || t.Contains('…'));
+        }
+        finally { PastSessions.CountForTests = null; }
+    }
+
+    [AvaloniaFact]
+    public void ACountThatThrowsIsTreatedAsUnreadable()
+    {
+        PastSessions.CountForTests = (_, _) => throw new IOException("gone");
+        try
+        {
+            var window = ResumeWindow(Session("a", "One") with { MessageCount = null });
+            Assert.DoesNotContain(RowTexts(window, Shown(window)[0]), t => t.Contains('…'));
+        }
+        finally { PastSessions.CountForTests = null; }
+    }
+
     [AvaloniaFact]
     public void OnlyTheSelectedClisSessionsAreListed()
     {

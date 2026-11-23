@@ -2364,11 +2364,16 @@ namespace Orbweaver
             };
         }
 
-        internal static string ResumeDetail(PastSessionRow row)
+        // `counting` is true while a lazily-read message count is still on its
+        // way ("…"); a count that could not be read is left out rather than
+        // shown as zero.
+        internal static string ResumeDetail(PastSessionRow row, int? count = null, bool counting = false)
         {
             var s = row.Session;
             var folder = s.Cwd is null ? "unknown folder" : (System.IO.Path.GetFileName(s.Cwd.TrimEnd('/', '\\')) is { Length: > 0 } n ? n : s.Cwd);
-            var detail = folder + " · " + s.MessageCount + (s.MessageCount == 1 ? " message" : " messages");
+            var detail = folder;
+            if (counting) detail += " · …";
+            else if ((count ?? s.MessageCount) is { } c) detail += " · " + c + (c == 1 ? " message" : " messages");
             if (s.FolderMissing) detail += " · folder missing";
             else if (row.IsLive) detail += " · running";
             return detail;
@@ -2385,10 +2390,12 @@ namespace Orbweaver
             {
                 Text = s.Title, FontWeight = FontWeight.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis
             });
-            titles.Children.Add(new TextBlock
+            var detailText = new TextBlock
             {
-                Text = ResumeDetail(row), FontSize = 11, Opacity = 0.7, TextTrimming = TextTrimming.CharacterEllipsis
-            });
+                FontSize = 11, Opacity = 0.7, TextTrimming = TextTrimming.CharacterEllipsis
+            };
+            titles.Children.Add(detailText);
+            BindResumeCount(row, detailText);
             var when = new TextBlock
             {
                 Text = ago, FontSize = 11, Opacity = 0.7, VerticalAlignment = VerticalAlignment.Center,
@@ -2409,8 +2416,48 @@ namespace Orbweaver
                 ToolTip.SetTip(dock, "This session's folder no longer exists.");
             }
 
-            AutomationProperties.SetName(dock, s.Title + ", " + ResumeDetail(row) + ", " + ago);
+            AutomationProperties.SetName(dock, s.Title + ", " + detailText.Text + ", " + ago);
             return dock;
+        }
+
+        // A row's message count is read when the row is realised (so only
+        // visible rows pay for a full-file read), off the UI thread, and cached
+        // per file for the life of the window. "…" until it lands.
+        private readonly Dictionary<string, int?> _resumeCounts = new(StringComparer.Ordinal);
+        private readonly HashSet<string> _resumeCountsPending = new(StringComparer.Ordinal);
+
+        private void BindResumeCount(PastSessionRow row, TextBlock detail)
+        {
+            var s = row.Session;
+            if (s.MessageCount is not null || _resumeCounts.TryGetValue(s.TranscriptPath, out _))
+            {
+                detail.Text = ResumeDetail(row, _resumeCounts.GetValueOrDefault(s.TranscriptPath));
+                return;
+            }
+
+            detail.Text = ResumeDetail(row, counting: true);
+            if (!_resumeCountsPending.Add(s.TranscriptPath)) return;
+
+            void Done(int? count)
+            {
+                _resumeCountsPending.Remove(s.TranscriptPath);
+                _resumeCounts[s.TranscriptPath] = count;
+                detail.Text = ResumeDetail(row, count);
+            }
+
+            int? Read()
+            {
+                try { return PastSessions.CountMessages(s.Cli, s.TranscriptPath); }
+                catch (Exception) { return null; }
+            }
+
+            if (ResumeLoadInlineForTests)
+            {
+                Done(Read());
+                return;
+            }
+
+            _ = Task.Run(Read).ContinueWith(t => Dispatcher.UIThread.Post(() => Done(t.Result)), TaskScheduler.Default);
         }
 
         internal void ResumeClicked(NewChatCli cli)
