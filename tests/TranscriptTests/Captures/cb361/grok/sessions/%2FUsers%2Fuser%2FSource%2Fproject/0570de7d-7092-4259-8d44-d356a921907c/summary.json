@@ -1,0 +1,22 @@
+{
+  "info": {
+    "id": "0570de7d-7092-4259-8d44-d356a921907c",
+    "cwd": "/Users/user/Source/project"
+  },
+  "session_summary": "scrubbed",
+  "created_at": "2026-11-23T03:11:39.111188Z",
+  "updated_at": "2026-11-23T03:17:04.591696Z",
+  "num_messages": 57,
+  "num_chat_messages": 23,
+  "current_model_id": "scrubbed",
+  "next_trace_turn": 1,
+  "chat_format_version": 1,
+  "session_kind": "headless",
+  "request_id": "c617ceb0-4898-4bcd-842d-ef7c2ded9128",
+  "grok_home": "/Users/user/Source/project/scrubbed",
+  "last_active_at": "2026-11-23T03:17:04.591696Z",
+  "generated_title": "Scrubbed session title",
+  "agent_name": "grok-build-plan",
+  "sandbox_profile": "scrubbed",
+  "reasoning_effort": "scrubbed"
+}
