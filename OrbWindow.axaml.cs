@@ -370,7 +370,9 @@ namespace Orbweaver
             // often than a real detail.
             var tipPath = status.Source == SessionSource.ClaudeCloud
                 ? CloudTipDetail(status.StatusDetail, status.RecentAction)
-                : string.IsNullOrEmpty(status.Cwd) ? null : status.Cwd;
+                : status.Source == SessionSource.Paperclip
+                    ? PaperclipOrb.TipBody(status.HoverLines, status.FoldedCount, status.FoldedNames)
+                    : string.IsNullOrEmpty(status.Cwd) ? null : status.Cwd;
 
             // UpdateFrom runs on every session poll, but SetTip always builds
             // a fresh Border. Doing that while the pointer is resting on the
@@ -495,6 +497,9 @@ namespace Orbweaver
                 SessionSource.RemoteControl => (
                     "This session's state is controlled on its other machine",
                     "This session is managed on its other machine, so it must be reset there."),
+                SessionSource.Paperclip => (
+                    "Paperclip controls this agent's state",
+                    "This agent runs in Paperclip, so " + Brand.DisplayName + " cannot reset its state."),
                 SessionSource.ClaudeCloud => (
                     "Anthropic's cloud controls this session's state",
                     "This session runs in Anthropic's cloud, so its state is theirs to change "
@@ -531,8 +536,116 @@ namespace Orbweaver
             // reason: the ring is drawn over the orb's own glow, and applying it
             // before a colour fade starts would leave it underneath a brush that
             // is still animating.
-            ApplyContextRing(status.ContextPercent);
+            // A Paperclip agent's budget is drawn on the same ring a cloud
+            // session's context is (the two never meet: only one of them is ever
+            // set), so a ring at 90% is the same red wherever it is drawn and
+            // there is one arc to keep clear of the corner badges, not two.
+            ApplyContextRing(status.BudgetPercent ?? status.ContextPercent);
+
+            ApplyPaperclip(status);
         }
+
+        // --- Paperclip (CB-421) -----------------------------------------------
+        // The drawn mark, the folded count and the menu rows. The badge in the
+        // bottom-left, the ring and the dimming are the existing channels:
+        // ApplyCli, ApplyContextRing and ApplyPresence.
+
+        private PaperclipMark _mark = PaperclipMark.None;
+
+        // What the presence corner is drawing, for the UI suite and for nothing
+        // else: the drawn mark's name, or null when the corner shows the typed
+        // glyph ("?" wins) or nothing.
+        internal string? PresenceMarkName { get; private set; }
+
+        internal string? FoldedPillLabel { get; private set; }
+
+        internal bool FoldedPillVisible => FoldedPill.IsVisible;
+
+        internal bool PresenceMarkVisible => PresenceMark.IsVisible;
+
+        internal bool PresenceBadgeVisible => PresenceBadge.IsVisible;
+
+        internal bool OpenPaperclipVisible => OpenPaperclipItem.IsVisible;
+
+        internal bool ReviewPaperclipVisible => ReviewPaperclipItem.IsVisible;
+
+        internal bool ReconnectPaperclipVisible => ReconnectPaperclipItem.IsVisible;
+
+        // What Reconnect does. Null until the Settings wiring installs it, which
+        // is the one place that knows how to run the approval again; the orb
+        // only asks.
+        internal static Action? PaperclipReconnect { get; set; }
+
+        private void ApplyPaperclip(SessionStatus status)
+        {
+            var paperclip = status.Source == SessionSource.Paperclip;
+            _mark = paperclip ? status.Mark : PaperclipMark.None;
+            ReconcilePresenceCorner();
+
+            FoldedPillLabel = PaperclipOrb.FoldedLabel(status);
+            FoldedPillVisible_Set(FoldedPillLabel);
+
+            var offer = PaperclipOrb.Offer(status, PaperclipSessions.Link);
+            OpenPaperclipItem.IsVisible = offer.Open;
+            ReviewPaperclipItem.IsVisible = offer.Review;
+            ReconnectPaperclipItem.IsVisible = offer.Reconnect;
+        }
+
+        private void FoldedPillVisible_Set(string? label)
+        {
+            FoldedPill.IsVisible = label is not null;
+            FoldedPillText.Text = label;
+        }
+
+        // One corner, two possible occupants. The typed "?" / check is what a
+        // session wants from you and wins when both apply: a broke agent that is
+        // also waiting on you shows the question, and its mark's reason still
+        // rides the hover. The drawn mark is a Paperclip agent's own state and
+        // only fills the corner when presence has nothing to say.
+        private void ReconcilePresenceCorner()
+        {
+            var typed = PresenceMarkFor(_presence)?.Glyph;
+            var drawn = PaperclipOrb.MarkFor(_mark);
+
+            if (typed is not null)
+            {
+                PresenceGlyph.Text = typed;
+                PresenceGlyph.IsVisible = true;
+                PresenceMark.IsVisible = false;
+                PresenceMarkName = null;
+                PresenceBadge.IsVisible = true;
+            }
+            else if (drawn is { } look)
+            {
+                PresenceGlyph.Text = null;
+                PresenceGlyph.IsVisible = false;
+                PresenceMark.Data = StreamGeometry.Parse(look.Path);
+                PresenceMark.Fill = new SolidColorBrush(Color.Parse(look.FillHex));
+                PresenceMark.IsVisible = true;
+                PresenceMarkName = look.Name;
+                PresenceBadge.IsVisible = true;
+            }
+            else
+            {
+                PresenceGlyph.Text = null;
+                PresenceMark.IsVisible = false;
+                PresenceMarkName = null;
+                PresenceBadge.IsVisible = false;
+            }
+        }
+
+        // Both rows open the orb's own Url, which the Paperclip merge sets to the
+        // first need's page when something is waiting and to the agent's page
+        // otherwise. Excluded from coverage for TryOpenInBrowser's reason: its one
+        // effect launches a real browser. The rule it runs is PaperclipOrb.Offer
+        // and the launch is CloudSessionLink.StartInfoFor, both pure and covered.
+        [ExcludeFromCodeCoverage]
+        internal void OpenPaperclip_Click(object? sender, RoutedEventArgs e)
+        {
+            if (_lastStatus is { Source: SessionSource.Paperclip } status) CloudSessionLink.Open(status.Url);
+        }
+
+        internal void ReconnectPaperclip_Click(object? sender, RoutedEventArgs e) => PaperclipReconnect?.Invoke();
 
         // --- presence ---------------------------------------------------------
         // A third axis, beside identity and state. The orb's colour says which
@@ -677,16 +790,9 @@ namespace Orbweaver
             if (!force && _presence == presence) return;
             _presence = presence;
 
-            var mark = PresenceMarkFor(presence);
-            if (mark?.Glyph is null)
-            {
-                PresenceBadge.IsVisible = false;
-            }
-            else
-            {
-                PresenceGlyph.Text = mark.Value.Glyph;
-                PresenceBadge.IsVisible = true;
-            }
+            // The corner is shared with a Paperclip agent's drawn mark, so what it
+            // shows is decided in one place rather than here and there.
+            ReconcilePresenceCorner();
 
             if (presence != OrbPresence.Present)
             {

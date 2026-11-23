@@ -71,6 +71,12 @@ namespace Orbweaver
         // Lead field holds its *room*, and a room is not a team lead for this
         // purpose — hiding a room hides the room orb and leaves its members
         // standing, which is the requester's decision 4.
+        //
+        // A Paperclip company is not one either (CB-421): its agents are the
+        // user's colleagues in someone else's org chart, and hiding the lead
+        // orb to tidy the screen must not silently hide everyone who reports to
+        // it. A decision made when the source was added, as the test below makes
+        // every new source do.
         internal static string PropagatingLead(SessionSource source, string? lead) =>
             source is SessionSource.ClaudeCode or SessionSource.RemoteControl
                 ? lead ?? ""
@@ -115,6 +121,7 @@ namespace Orbweaver
             SessionSource.OpenClaw => status.IsRoom ? "OpenClaw room" : "OpenClaw",
             SessionSource.RemoteControl => "Other machine",
             SessionSource.ClaudeCloud => "Claude cloud",
+            SessionSource.Paperclip => "Paperclip agent",
             _ => status.Source.ToString()
         };
 

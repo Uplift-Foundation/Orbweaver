@@ -192,7 +192,11 @@ namespace Orbweaver
             // somebody else's conversation, which is CB-140 again.
             if (source is SessionSource.OpenClaw
                 or SessionSource.RemoteControl
-                or SessionSource.ClaudeCloud) return files;
+                or SessionSource.ClaudeCloud
+                // CB-421: a Paperclip agent has no folder on this disk (its cwd is
+                // empty), so the walk would climb from nowhere to the root and hand
+                // whatever it found to somebody else's agent.
+                or SessionSource.Paperclip) return files;
 
             // OrdinalIgnoreCase for the reason BackgroundJobs.ExtraAccountDirs
             // is: Windows paths are, and one file reached under two
