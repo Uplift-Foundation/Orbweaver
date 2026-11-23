@@ -223,6 +223,110 @@ public class PaperclipConnectTests
         Assert.DoesNotContain(w.Anon.Calls, c => c.Contains("challenges/c1?token"));
     }
 
+    // ---- the server is told when an attempt is abandoned ----
+
+    private const string CancelCall = "POST /api/cli-auth/challenges/c1/cancel";
+
+    private static int Cancels(World w) => w.Anon.Calls.Count(c => c == CancelCall);
+
+    [Fact]
+    public async Task UserCancel_SendsExactlyOneCancel_WithTheChallengeToken_EvenThoughItsTokenIsCancelled()
+    {
+        var w = new World(); w.Statuses("pending", "pending");
+        using var cts = new CancellationTokenSource();
+        var r = await PaperclipConnect.RunAsync("http://127.0.0.1:3100", k => k == null ? w.Anon : w.Keyed, u => true, () => w.Now,
+            (d, c) => { cts.Cancel(); return Task.CompletedTask; }, cts.Token);
+        Assert.Equal(PaperclipConnectOutcome.Cancelled, r.Outcome);
+        Assert.Equal(1, Cancels(w));
+        Assert.Equal("{\"token\":\"tok\"}", w.Anon.LastPostBody);
+    }
+
+    [Fact]
+    public async Task ExpiringLocally_SendsExactlyOneCancel()
+    {
+        var w = new World();
+        w.Anon.Posts["/api/cli-auth/challenges"] = FakePaperclip.Ok(ChallengeJson(expires: PaperclipFx.Now.AddSeconds(3).ToString("O")));
+        w.Anon.Gets["/api/cli-auth/challenges/c1?token=tok"] = FakePaperclip.Ok("{\"status\":\"pending\"}");
+        Assert.Equal(PaperclipConnectOutcome.Expired, (await w.Run()).Outcome);
+        Assert.Equal(1, Cancels(w));
+    }
+
+    [Fact]
+    public async Task FailFast_SendsExactlyOneCancel()
+    {
+        var w = new World();
+        Assert.Equal(PaperclipConnectOutcome.Failed, (await w.Run()).Outcome);
+        Assert.Equal(1, Cancels(w));
+    }
+
+    [Fact]
+    public async Task ARefusedApprovalUrl_AndABrowserThatWontOpen_EachCancelOnce()
+    {
+        var refused = new World();
+        refused.Anon.Posts["/api/cli-auth/challenges"] = FakePaperclip.Ok(ChallengeJson(url: "file:///x"));
+        Assert.Equal(PaperclipConnectOutcome.Refused, (await refused.Run()).Outcome);
+        Assert.Equal(1, Cancels(refused));
+
+        var noBrowser = new World { BrowserWorks = false };
+        Assert.Equal(PaperclipConnectOutcome.Failed, (await noBrowser.Run()).Outcome);
+        Assert.Equal(1, Cancels(noBrowser));
+    }
+
+    [Theory]
+    [InlineData("approved")]
+    [InlineData("cancelled")]   // Paperclip already knows
+    [InlineData("expired")]
+    public async Task NoCancelIsSent_WhenTheServerSettledItAlready(string status)
+    {
+        var w = new World(); w.Statuses(status);
+        await w.Run();
+        Assert.Equal(0, Cancels(w));
+    }
+
+    [Fact]
+    public async Task NoCancelIsSent_WhenNoChallengeWasEverCreated()
+    {
+        var w = new World();
+        w.Anon.Posts.Remove("/api/cli-auth/challenges");
+        Assert.Equal(PaperclipConnectOutcome.Failed, (await w.Run()).Outcome);
+        Assert.Equal(0, Cancels(w));
+    }
+
+    [Fact]
+    public async Task AFailingCancel_ChangesNoOutcome_AndShowsNoError()
+    {
+        // The server answers the cancel with an error.
+        var w = new World();
+        w.Anon.Posts["/api/cli-auth/challenges/c1/cancel"] = FakePaperclip.Status(PaperclipHttpKind.ServerError, 500);
+        var r = await w.Run();
+        Assert.Equal(PaperclipConnectOutcome.Failed, r.Outcome);
+        Assert.Contains("stopped answering", r.Message);   // the original reason, not the cancel's
+
+        // The transport throws on it.
+        var inner = new World();
+        var throwing = new CancelThrows(inner.Anon);
+        var r2 = await PaperclipConnect.RunAsync("http://127.0.0.1:3100", k => k == null ? throwing : inner.Keyed, u => true,
+            () => inner.Now, (d, c) => { inner.Now += d; return Task.CompletedTask; }, default);
+        Assert.Equal(PaperclipConnectOutcome.Failed, r2.Outcome);
+        Assert.Contains("stopped answering", r2.Message);
+    }
+
+    private sealed class CancelThrows(IPaperclipApi inner) : IPaperclipApi
+    {
+        public Task<PaperclipResponse> GetAsync(string p, CancellationToken c) => inner.GetAsync(p, c);
+        public Task<PaperclipResponse> PostAsync(string p, string b, CancellationToken c) =>
+            p.EndsWith("/cancel") ? throw new InvalidOperationException("boom") : inner.PostAsync(p, b, c);
+    }
+
+    [Fact]
+    public async Task AnApprovedAttempt_SendsNoCancel_ForAKeyThatDidNotWork()
+    {
+        var w = new World(); w.Statuses("approved");
+        w.Keyed.Gets["/api/cli-auth/me"] = FakePaperclip.Status(PaperclipHttpKind.Unauthorized, 401);
+        Assert.Equal(PaperclipConnectOutcome.Failed, (await w.Run()).Outcome);
+        Assert.Equal(0, Cancels(w));
+    }
+
     [Theory]
     [InlineData("/cli-auth/challenges/c1")]        // the real shape
     [InlineData("/api/cli-auth/challenges/c1")]    // already under /api

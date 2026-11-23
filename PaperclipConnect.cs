@@ -97,50 +97,65 @@ namespace Orbweaver
                 var ch = PaperclipApi.ParseChallenge(post.Body);
                 if (ch == null) return Fail("Paperclip's approval answer was not understood.");
 
-                var approval = ApprovalUrlFor(baseUrl, ch);
-                if (!Uri.TryCreate(approval, UriKind.Absolute, out var uri)
-                    || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
-                    return new PaperclipConnectResult(PaperclipConnectOutcome.Refused, Message: "Paperclip's approval link was not a web address.");
-
-                if (!openBrowser(approval))
-                    return Fail("Couldn't open the browser.");
-                progress?.Invoke("Approve Orbweaver in your browser…");
-
-                var pollPath = PollPathFor(ch);
-                var failedPolls = 0;
-                var interval = TimeSpan.FromMilliseconds(ch.PollIntervalMs);
-                var deadline = ch.ExpiresAt ?? now() + TimeSpan.FromMinutes(10);
-
-                while (true)
+                // Every way out that is not an approval, or Paperclip's own cancelled
+                // or expired, leaves the challenge pending there, where a later click
+                // on Approve would issue a key no app holds. So each sends one
+                // best-effort cancel (see CancelChallengeAsync).
+                var settled = false;
+                try
                 {
-                    if (now() >= deadline) return new PaperclipConnectResult(PaperclipConnectOutcome.Expired);
-                    await delay(interval, ct).ConfigureAwait(false);
-                    ct.ThrowIfCancellationRequested();
+                    var approval = ApprovalUrlFor(baseUrl, ch);
+                    if (!Uri.TryCreate(approval, UriKind.Absolute, out var uri)
+                        || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+                        return new PaperclipConnectResult(PaperclipConnectOutcome.Refused, Message: "Paperclip's approval link was not a web address.");
 
-                    var poll = await anon.GetAsync(pollPath, ct).ConfigureAwait(false);
-                    if (!poll.IsOk)
+                    if (!openBrowser(approval))
+                        return Fail("Couldn't open the browser.");
+                    progress?.Invoke("Approve Orbweaver in your browser…");
+
+                    var pollPath = PollPathFor(ch);
+                    var failedPolls = 0;
+                    var interval = TimeSpan.FromMilliseconds(ch.PollIntervalMs);
+                    var deadline = ch.ExpiresAt ?? now() + TimeSpan.FromMinutes(10);
+
+                    while (true)
                     {
-                        // A hiccup is ridden out, but a poll that keeps failing (a
-                        // wrong path answers 404 for ever) ends the attempt with a
-                        // reason instead of spinning to the challenge's expiry.
-                        if (++failedPolls >= MaxFailedPolls)
-                            return Fail("Paperclip stopped answering the approval check ("
-                                + (poll.StatusCode > 0 ? "HTTP " + poll.StatusCode : poll.Kind.ToString()) + ").");
-                        continue;
+                        if (now() >= deadline) return new PaperclipConnectResult(PaperclipConnectOutcome.Expired);
+                        await delay(interval, ct).ConfigureAwait(false);
+                        ct.ThrowIfCancellationRequested();
+
+                        var poll = await anon.GetAsync(pollPath, ct).ConfigureAwait(false);
+                        if (!poll.IsOk)
+                        {
+                            // A hiccup is ridden out, but a poll that keeps failing (a
+                            // wrong path answers 404 for ever) ends the attempt with a
+                            // reason instead of spinning to the challenge's expiry.
+                            if (++failedPolls >= MaxFailedPolls)
+                                return Fail("Paperclip stopped answering the approval check ("
+                                    + (poll.StatusCode > 0 ? "HTTP " + poll.StatusCode : poll.Kind.ToString()) + ").");
+                            continue;
+                        }
+                        failedPolls = 0;
+                        switch (PaperclipApi.ParseChallengeStatus(poll.Body))
+                        {
+                            case "approved":
+                                settled = true;   // a key was issued: there is nothing left to cancel
+                                var me = await apiFor(ch.BoardApiToken).GetAsync("/api/cli-auth/me", ct).ConfigureAwait(false);
+                                if (!me.IsOk) return Fail("Paperclip approved Orbweaver but the key did not work.");
+                                return new PaperclipConnectResult(PaperclipConnectOutcome.Connected,
+                                    ch.BoardApiToken, now() + KeyLifetime);
+                            case "cancelled":
+                                settled = true;   // Paperclip already knows
+                                return new PaperclipConnectResult(PaperclipConnectOutcome.Cancelled);
+                            case "expired":
+                                settled = true;
+                                return new PaperclipConnectResult(PaperclipConnectOutcome.Expired);
+                        }
                     }
-                    failedPolls = 0;
-                    switch (PaperclipApi.ParseChallengeStatus(poll.Body))
-                    {
-                        case "approved":
-                            var me = await apiFor(ch.BoardApiToken).GetAsync("/api/cli-auth/me", ct).ConfigureAwait(false);
-                            if (!me.IsOk) return Fail("Paperclip approved Orbweaver but the key did not work.");
-                            return new PaperclipConnectResult(PaperclipConnectOutcome.Connected,
-                                ch.BoardApiToken, now() + KeyLifetime);
-                        case "cancelled":
-                            return new PaperclipConnectResult(PaperclipConnectOutcome.Cancelled);
-                        case "expired":
-                            return new PaperclipConnectResult(PaperclipConnectOutcome.Expired);
-                    }
+                }
+                finally
+                {
+                    if (!settled) await CancelChallengeAsync(anon, ch).ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -150,6 +165,26 @@ namespace Orbweaver
 
             static PaperclipConnectResult Fail(string m) => new(PaperclipConnectOutcome.Failed, Message: m);
             static string Suffix(PaperclipResponse r) => r.Detail == null ? "" : " " + r.Detail;
+        }
+
+        internal static readonly TimeSpan CancelTimeout = TimeSpan.FromSeconds(3);
+
+        // One attempt, a short timeout of its own (the caller's token may already
+        // be cancelled), failure ignored and never shown as an error: this only
+        // tidies the server. Its body carries the challenge token, which is never
+        // logged (the transport logs the path only).
+        internal static async Task CancelChallengeAsync(IPaperclipApi anon, PaperclipApi.Challenge ch)
+        {
+            try
+            {
+                using var cts = new CancellationTokenSource(CancelTimeout);
+                await anon.PostAsync($"/api/cli-auth/challenges/{Uri.EscapeDataString(ch.Id)}/cancel",
+                    System.Text.Json.JsonSerializer.Serialize(new { token = ch.Token }), cts.Token).ConfigureAwait(false);
+            }
+            catch
+            {
+                // Best effort.
+            }
         }
 
         // Several companies means the user picks; one means it is chosen; the

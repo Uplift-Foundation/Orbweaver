@@ -256,6 +256,33 @@ public sealed class PaperclipHttpTests : IDisposable
     }
 
     [Fact]
+    public async Task AnAbandonedAttempt_PostsTheCancelOverTheWire_WithTheTokenInTheBodyAndNotInTheLog()
+    {
+        _handler = (req, r) => req.Url!.AbsolutePath switch
+        {
+            "/api/health" => Reply(r, 200, "{\"status\":\"ok\",\"deploymentMode\":\"authenticated\"}"),
+            "/api/cli-auth/challenges" => Reply(r, 200, "{\"id\":\"c1\",\"token\":\"CHALLENGE-TOKEN-0123456789\",\"boardApiToken\":\"B\"," +
+                "\"approvalUrl\":\"" + _root + "/cli-auth/c1\",\"pollPath\":\"/cli-auth/challenges/c1\",\"suggestedPollIntervalMs\":250}"),
+            "/api/cli-auth/challenges/c1/cancel" => Reply(r, 200, "{}"),
+            _ => Reply(r, 404, ""),   // every poll 404s: the attempt fails fast
+        };
+        var lines = new List<string>();
+        var result = await PaperclipConnect.RunAsync(_root, k => new PaperclipHttp(_root, k, log: lines.Add), u => true,
+            () => DateTime.UtcNow, (d, c) => Task.Delay(1, c), default);
+        Assert.Equal(PaperclipConnectOutcome.Failed, result.Outcome);
+        string cancelBody;
+        lock (_seen)
+        {
+            var cancel = Assert.Single(_seen, s => s.PathAndQuery == "/api/cli-auth/challenges/c1/cancel");
+            Assert.Equal("POST", cancel.Method);
+            Assert.Null(cancel.Auth);
+            cancelBody = cancel.Body;
+        }
+        Assert.Equal("{\"token\":\"CHALLENGE-TOKEN-0123456789\"}", cancelBody);
+        Assert.All(lines, l => Assert.DoesNotContain("CHALLENGE-TOKEN", l));
+    }
+
+    [Fact]
     public async Task DisconnectOverTheRealTransport_PostsRevokeCurrentWithTheKey()
     {
         _handler = (_, r) => Reply(r, 200, "{}");
