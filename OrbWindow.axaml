@@ -209,6 +209,9 @@
                           IsVisible="False"
                           StaysOpenOnClick="True"
                           Click="ResumePaperclip_Click"/>
+                <MenuItem x:Name="PaperclipNoteItem"
+                          IsVisible="False"
+                          IsEnabled="False"/>
                 <MenuItem x:Name="ReconnectPaperclipItem"
                           Header="Reconnect to Paperclip"
                           IsVisible="False"

@@ -33,12 +33,15 @@ namespace Orbweaver
     //
     // Measured (plan 13.1): approve / reject with a board key; approving an
     // approved item again is a 200 and so Done; rejecting an approved one is a 422
-    // and the row does not change; pause, resume and wakeup. Declared in source
-    // and never called live: the tool action approve / decline.
+    // and the row does not change; pause, resume and wakeup; the tool action
+    // approve / decline (a 409 for the opposite decision, a 200 whose status can
+    // read failed because the tool runs inside the call). No request raised by a
+    // real agent run has been seen, only test-call ones.
     internal sealed class PaperclipActions : IPaperclipActions
     {
         internal const string DecisionNote = "From Orbweaver";
         internal const string AlreadyDecidedWhy = "Already answered in Paperclip";
+        internal const string AgentGoneWhy = "That agent is no longer in Paperclip";
         internal const string ToolFailedWhy = "Approved, but the tool failed";
         internal const string ReconnectWhy = "Reconnect to Paperclip to answer";
         internal const string UnreachableWhy = "Can't reach Paperclip";
@@ -124,8 +127,13 @@ namespace Orbweaver
         public Task<PaperclipOutcome> ResumeAsync(string agentId, CancellationToken ct) =>
             Agent(agentId, "resume", "{}", ct);
 
-        private async Task<PaperclipOutcome> Agent(string agentId, string verb, string body, CancellationToken ct) =>
-            Settle(Classify(await _api.PostAsync(AgentPath(agentId, verb), body, ct).ConfigureAwait(false)));
+        // For an agent verb a 404 is not "answered elsewhere": nothing was waiting on
+        // an answer, the agent is simply gone, and the menu must say so.
+        private async Task<PaperclipOutcome> Agent(string agentId, string verb, string body, CancellationToken ct)
+        {
+            var res = await _api.PostAsync(AgentPath(agentId, verb), body, ct).ConfigureAwait(false);
+            return Settle(res.StatusCode == 404 ? new(PaperclipActionResult.Refused, AgentGoneWhy) : Classify(res));
+        }
 
         private PaperclipOutcome Settle(PaperclipOutcome o)
         {

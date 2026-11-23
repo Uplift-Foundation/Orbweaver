@@ -180,26 +180,17 @@ namespace Orbweaver
 
         // ---- how long a change takes to reach the orbs (CB-425) --------------------
 
-        // The earliest published change no pass has yet drawn. Paperclip's rows ride
-        // the shared scan pass, which on a slow machine takes seconds (measured on
-        // the Windows test PC: 74 passes of 1 s or more in 14 hours, median 1.6 s,
-        // the apply alone up to 4.4 s), so a change published mid-pass waits for it
-        // and then for a full pass of its own. This is the one line that says so.
+        // When the poll published the earliest change no orb update has drawn yet.
+        // The apply that draws it takes the mark and says how long it took.
         private static long _changedTicks;
 
         internal static void MarkChanged(DateTime nowUtc) =>
             Interlocked.CompareExchange(ref _changedTicks, nowUtc.Ticks, 0);
 
-        // Called when a pass that STARTED at passStartedUtc has been applied. A pass
-        // that began before the change read the old snapshot, so it proves nothing
-        // and the change stays pending; the first pass that began at or after it
-        // is the one that drew it, and the time since the change is the answer.
-        internal static TimeSpan? ReachedOrbs(DateTime passStartedUtc, DateTime nowUtc)
+        internal static DateTime? TakeChangeSeen()
         {
-            var changed = Interlocked.Read(ref _changedTicks);
-            if (changed == 0 || changed > passStartedUtc.Ticks) return null;
-            Interlocked.CompareExchange(ref _changedTicks, 0, changed);
-            return nowUtc - new DateTime(changed, DateTimeKind.Utc);
+            var t = Interlocked.Exchange(ref _changedTicks, 0);
+            return t == 0 ? null : new DateTime(t, DateTimeKind.Utc);
         }
 
         // ---- answering in place (CB-427) -------------------------------------
@@ -245,6 +236,11 @@ namespace Orbweaver
         // The actions the flyout and the menu make, bound to the live key and
         // company. Rebuilt only when either moves, as the poll's own client is;
         // null while Paperclip is switched off or has no company.
+        // An approve runs a tool inside the call (3.4 s measured), so an answer gets
+        // far more than the poll's 5 s: a timeout there would say "can't reach"
+        // after Paperclip had in fact approved.
+        internal static readonly TimeSpan ActionTimeout = TimeSpan.FromSeconds(20);
+
         private static readonly object ActionsGate = new();
         private static PaperclipActions? _actions;
         private static PaperclipHttp? _actionsHttp;
@@ -269,7 +265,7 @@ namespace Orbweaver
                 if (_actions == null || cfg.Key != _actionsKey || cfg.BaseUrl != _actionsUrl || cfg.CompanyId != _actionsCompany)
                 {
                     _actionsHttp?.Dispose();
-                    _actionsHttp = new PaperclipHttp(cfg.BaseUrl, cfg.Key, log: PaperclipHttp.DefaultLog, logSuccess: true);
+                    _actionsHttp = new PaperclipHttp(cfg.BaseUrl, cfg.Key, timeout: ActionTimeout, log: PaperclipHttp.DefaultLog, logSuccess: true);
                     _actions = new PaperclipActions(_actionsHttp, cfg.CompanyId);
                     _actionsKey = cfg.Key; _actionsUrl = cfg.BaseUrl; _actionsCompany = cfg.CompanyId;
                 }
@@ -286,6 +282,17 @@ namespace Orbweaver
         internal static void NoteWake(string agentId, DateTime now)
         {
             lock (WakeGate) _wakes[agentId] = now;
+        }
+
+        // Whether a Wake was pressed on this desktop for this agent within the last
+        // 30 s: a Broke that follows it is the person's own doing, not news.
+        internal static readonly TimeSpan OwnWakeWindow = TimeSpan.FromSeconds(30);
+
+        internal static bool WokeRecently(string agentId, DateTimeOffset now)
+        {
+            lock (WakeGate)
+                return _wakes.TryGetValue(agentId, out var at) && now.UtcDateTime - at >= TimeSpan.Zero
+                    && now.UtcDateTime - at <= OwnWakeWindow;
         }
 
         internal static IReadOnlyDictionary<string, DateTime> Wakes()

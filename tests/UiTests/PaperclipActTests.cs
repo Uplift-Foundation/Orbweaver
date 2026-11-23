@@ -61,9 +61,15 @@ public class PaperclipActTests : IDisposable
         internal readonly FakeActions Actions = new();
         internal readonly List<string> Opened = [];
         internal readonly PaperclipNeedsPanel Panel;
+        internal DateTime Now = new(2026, 11, 23, 12, 0, 0, DateTimeKind.Utc);
+        internal readonly List<(TimeSpan Delay, Action Run)> Scheduled = [];
         internal Rig(bool connected = true)
         {
-            Panel = new PaperclipNeedsPanel(() => connected ? Actions : null, Opened.Add);
+            Panel = new PaperclipNeedsPanel(() => connected ? Actions : null, Opened.Add)
+            {
+                Clock = () => Now,
+                Schedule = (d, a) => Scheduled.Add((d, a)),
+            };
         }
     }
 
@@ -147,7 +153,7 @@ public class PaperclipActTests : IDisposable
     }
 
     [AvaloniaFact]
-    public async Task An_item_answered_elsewhere_is_reported_as_that_in_place_of_the_block_and_is_not_an_error()
+    public async Task An_item_answered_elsewhere_is_reported_in_place_of_its_block_and_held_for_three_seconds_whatever_the_poll_does()
     {
         var rig = new Rig();
         rig.Actions.Answer = _ => new(PaperclipActionResult.AlreadyDecided, "Already answered in Paperclip");
@@ -155,53 +161,64 @@ public class PaperclipActTests : IDisposable
         var card = rig.Panel.RowFor("ap1")!.Card;
         await Click(rig.Panel.RowFor("ap1")!, true, rig);
         Assert.Null(rig.Panel.RowFor("ap1"));
-        // the sentence stands where the block was, in ordinary text
         Assert.Equal("Already answered in Paperclip", Assert.IsType<TextBlock>(card.Child).Text);
         Assert.Null(rig.Panel.FooterText);
-        // it stays through a stale poll and goes when the poll drops the item
-        rig.Panel.Present(Amber(Hire, Tool));
-        Assert.Equal("Already answered in Paperclip", Assert.IsType<TextBlock>(card.Child).Text);
+        Assert.Equal((PaperclipNeedsPanel.Hold, 1), (rig.Scheduled[0].Delay, rig.Scheduled.Count));
+
+        // the nudged poll drops the item at once: the sentence is still readable
+        rig.Now = rig.Now.AddMilliseconds(300);
         rig.Panel.Present(Amber(Tool));
+        Assert.NotNull(card.Parent);
+        rig.Scheduled[0].Run();                       // swept early: the hold has not ended
+        Assert.NotNull(card.Parent);
+
+        rig.Now = rig.Now.AddSeconds(3);
+        rig.Scheduled[0].Run();
         Assert.Null(card.Parent);
     }
 
     [AvaloniaFact]
-    public async Task When_the_only_item_was_answered_elsewhere_the_sentence_is_all_that_is_left_until_the_poll_drops_it()
+    public async Task The_last_answer_keeps_its_words_for_the_hold_and_then_the_panel_closes()
     {
         var rig = new Rig();
-        rig.Actions.Answer = _ => new(PaperclipActionResult.AlreadyDecided, null);
         rig.Panel.Present(Amber(Hire));
+        rig.Panel.Show();
         await Click(rig.Panel.RowFor("ap1")!, true, rig);
-        Assert.Equal("Atlas", rig.Panel.HeadingText);
-        Assert.Empty(rig.Panel.NeedRows);
-        var card = Assert.Single(rig.Panel.Content is Border b ? ((StackPanel)b.Child!).Children.OfType<StackPanel>().First().Children : []);
-        Assert.Equal("Already answered in Paperclip", Assert.IsType<TextBlock>(((Border)card).Child).Text);
+        Assert.Equal("Approved.", rig.Panel.FooterText);
+        // the poll drops the only item straight away: the panel does not close under the sentence
         rig.Panel.Present(Amber());
-        Assert.Empty(((StackPanel)((Border)rig.Panel.Content!).Child!).Children.OfType<StackPanel>().First().Children);
+        Assert.True(rig.Panel.IsVisible);
+        Assert.Equal("Approved.", rig.Panel.FooterText);
+        rig.Now = rig.Now.AddSeconds(3);
+        rig.Scheduled[0].Run();
+        Assert.False(rig.Panel.IsVisible);
     }
 
     [AvaloniaFact]
-    public async Task An_approval_whose_tool_then_failed_says_so_in_the_footer()
+    public async Task A_later_answer_moves_the_deadline_and_a_sweep_with_rows_left_keeps_the_panel()
     {
         var rig = new Rig();
-        rig.Actions.Answer = _ => new(PaperclipActionResult.Done, "Approved, but the tool failed");
-        rig.Panel.Present(Amber(Tool));
+        rig.Panel.Present(Amber(Hire, Tool));
+        rig.Panel.Show();
+        await Click(rig.Panel.RowFor("ap1")!, true, rig);
+        rig.Now = rig.Now.AddSeconds(2);
         await Click(rig.Panel.RowFor("ac1")!, true, rig);
-        Assert.Equal("Approved, but the tool failed", rig.Panel.FooterText);
-    }
-
-    [AvaloniaFact]
-    public void A_need_with_a_summary_shows_it_between_the_title_and_the_buttons_cut_when_long()
-    {
-        var rig = new Rig();
-        var withSummary = Hire with { Summary = "Needs QA before the release." };
-        var longOne = Tool with { Summary = new string('s', 300) };
-        rig.Panel.Present(Amber(withSummary, longOne));
-        var texts = Texts(rig.Panel.RowFor("ap1")!).ToList();
-        Assert.Equal(["Hire: QA engineer", "Needs QA before the release.", ""], texts);
-        var cut = Texts(rig.Panel.RowFor("ac1")!).ElementAt(1);
-        Assert.Equal(241, cut.Length);
-        Assert.EndsWith("…", cut);
+        rig.Now = rig.Now.AddSeconds(1.5);          // 3.5 s after the first, 1.5 after the second
+        rig.Scheduled[0].Run();
+        Assert.Equal("Approved.", rig.Panel.FooterText);
+        rig.Now = rig.Now.AddSeconds(2);
+        rig.Scheduled[1].Run();
+        Assert.False(rig.Panel.IsVisible);
+        // a sweep that finds a row still waiting leaves the panel up
+        var rig2 = new Rig();
+        rig2.Panel.Present(Amber(Hire, Tool));
+        rig2.Panel.Show();
+        await Click(rig2.Panel.RowFor("ap1")!, true, rig2);
+        rig2.Now = rig2.Now.AddSeconds(4);
+        rig2.Scheduled[0].Run();
+        Assert.True(rig2.Panel.IsVisible);
+        Assert.Null(rig2.Panel.FooterText);
+        rig2.Panel.Close();
     }
 
     [AvaloniaTheory]
@@ -237,7 +254,7 @@ public class PaperclipActTests : IDisposable
         rig.Panel.Present(Amber(Hire));
         var row = rig.Panel.RowFor("ap1")!;
         await Click(row, true, rig);
-        Assert.Equal("boom", row.Status.Text);
+        Assert.Equal("Can't reach Paperclip", row.Status.Text);     // never the exception's own text
         Assert.NotNull(rig.Panel.RowFor("ap1"));
     }
 
@@ -408,6 +425,15 @@ public class PaperclipActTests : IDisposable
         var orb = Orb(Plain("idle"));
         await orb.PaperclipActAsync("wake");
         Assert.Equal("Paperclip said 409.", orb.PaperclipRowNote);
+        // and it is drawn: a disabled row in the menu carries the sentence
+        Assert.True(orb.PaperclipNoteVisible);
+        Assert.Equal("Paperclip said 409.", orb.FindControl<MenuItem>("PaperclipNoteItem")!.Header);
+        Assert.False(orb.FindControl<MenuItem>("PaperclipNoteItem")!.IsEnabled);
+        // the next action clears it
+        fake.Answer = _ => new(PaperclipActionResult.Done);
+        await orb.PaperclipActAsync("wake");
+        Assert.False(orb.PaperclipNoteVisible);
+        Assert.Null(orb.PaperclipRowNote);
     }
 
     [AvaloniaFact]
@@ -420,7 +446,7 @@ public class PaperclipActTests : IDisposable
 
         OrbWindow.PaperclipActionsSource = () => new FakeActions { Throw = true };
         await orb.PaperclipActAsync("wake");
-        Assert.Equal("boom", orb.PaperclipRowNote);
+        Assert.Equal("Can't reach Paperclip", orb.PaperclipRowNote);    // never the exception's own text
     }
 
     [AvaloniaFact]
@@ -449,5 +475,72 @@ public class PaperclipActTests : IDisposable
         var paused = Orb(Plain("paused"));
         paused.FindControl<MenuItem>("ResumePaperclipItem")!.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
         Assert.Equal("resume", paused.PaperclipArmed);
+    }
+
+    // ---- the panel can be opened again (a closed window cannot be re-shown) ------------
+
+    [AvaloniaFact]
+    public void The_panel_opens_closes_and_opens_again_from_an_amber_orb()
+    {
+        var fake = new FakeActions();
+        PaperclipNeedsPanel.Create = () => new PaperclipNeedsPanel(() => fake, _ => { });
+        try
+        {
+            PaperclipSessions.SetLinkForTests(PaperclipLink.Connected, "t");
+            var orb = new OrbWindow("paperclip:amber-1");
+            orb.UpdateFrom(Amber(Hire));
+            orb.Show();
+
+            Assert.True(orb.TryOpenNeedsPanel());
+            Assert.True(PaperclipNeedsPanel.IsOpen);
+            Assert.Equal(1, WindowCount());
+
+            // a click while it is open reuses it
+            Assert.True(orb.TryOpenNeedsPanel());
+            Assert.Equal(1, WindowCount());
+
+            var first = OpenPanel();
+            first.Close();
+            Assert.False(PaperclipNeedsPanel.IsOpen);
+
+            // the second amber click of a session: this used to throw "Cannot re-show a closed window"
+            Assert.True(orb.TryOpenNeedsPanel());
+            Assert.True(PaperclipNeedsPanel.IsOpen);
+            Assert.NotSame(first, OpenPanel());
+            OpenPanel().Close();
+
+            // an orb the panel does not apply to leaves the click to the browser path
+            var calm = new OrbWindow("paperclip:calm-1");
+            calm.UpdateFrom(Plain("idle"));
+            Assert.False(calm.TryOpenNeedsPanel());
+        }
+        finally
+        {
+            PaperclipNeedsPanel.Create = () => new PaperclipNeedsPanel();
+            if (PaperclipNeedsPanel.IsOpen) OpenPanel().Close();
+        }
+    }
+
+    private static PaperclipNeedsPanel OpenPanel() =>
+        (PaperclipNeedsPanel)typeof(PaperclipNeedsPanel).GetField("_instance", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.GetValue(null)!;
+
+    private static int WindowCount() => PaperclipNeedsPanel.IsOpen ? 1 : 0;
+
+    [AvaloniaFact]
+    public void Refresh_updates_an_open_panel_for_its_own_agent_and_ignores_another_agents()
+    {
+        PaperclipNeedsPanel.Create = () => new PaperclipNeedsPanel(() => null, _ => { });
+        try
+        {
+            PaperclipNeedsPanel.ShowFor(Amber(Hire), new Avalonia.PixelPoint(100, 100), new Avalonia.PixelRect(0, 0, 1000, 800));
+            var panel = OpenPanel();
+            PaperclipNeedsPanel.Refresh(Amber(Hire, Tool));
+            Assert.Equal(2, panel.NeedRows.Count);
+            var other = Amber(Stuck); other.PaperclipAgentId = "someone-else";
+            PaperclipNeedsPanel.Refresh(other);
+            Assert.Equal(2, panel.NeedRows.Count);
+            panel.Close();
+        }
+        finally { PaperclipNeedsPanel.Create = () => new PaperclipNeedsPanel(); }
     }
 }

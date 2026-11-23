@@ -183,10 +183,10 @@ public class PaperclipActionsTests
         Assert.True((await a.WakeAsync("a1", default)).IsDone);
         Assert.Equal("{\"source\":\"on_demand\"}", api.LastPostBody);
         Assert.True((await a.PauseAsync("a1", default)).IsDone);
-        // no route scripted: the fake answers 404, and an agent that is gone is "already"
-        Assert.Equal(PaperclipActionResult.AlreadyDecided, (await a.ResumeAsync("a1", default)).Result);
+        // no route scripted: the fake answers 404, and an agent that is gone is a refusal
+        Assert.Equal(PaperclipActionResult.Refused, (await a.ResumeAsync("a1", default)).Result);
         Assert.Equal(["POST /api/agents/a1/wakeup", "POST /api/agents/a1/pause", "POST /api/agents/a1/resume"], api.Calls);
-        Assert.Equal(3, polls());
+        Assert.Equal(2, polls());
     }
 
     [Fact]
@@ -358,33 +358,57 @@ public class PaperclipActionsTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => WaitAsync(TimeSpan.FromSeconds(30), cts.Token));
     }
 
-    // ---- CB-425: how long a change takes to reach the orbs ----------------------------
+    // ---- CB-425: the poll-seen mark ---------------------------------------------------
 
     [Fact]
-    public void A_pass_that_started_before_the_change_proves_nothing_and_the_first_one_after_it_reports_the_wait()
+    public void The_earliest_unrendered_change_is_kept_and_taken_once()
     {
-        while (ReachedOrbs(DateTime.MaxValue, DateTime.MaxValue) != null) { }   // clear anything pending
+        TakeChangeSeen();
+        Assert.Null(TakeChangeSeen());
         var t = new DateTime(2026, 11, 23, 12, 0, 0, DateTimeKind.Utc);
-        Assert.Null(ReachedOrbs(t, t));                           // nothing pending
         MarkChanged(t);
-        MarkChanged(t.AddSeconds(1));                              // the earliest is kept
-        Assert.Null(ReachedOrbs(t.AddMilliseconds(-1), t.AddSeconds(5)));   // read the old snapshot
-        Assert.Equal(TimeSpan.FromMilliseconds(3300), ReachedOrbs(t.AddMilliseconds(200), t.AddMilliseconds(3300)));
-        Assert.Null(ReachedOrbs(t.AddSeconds(9), t.AddSeconds(10)));        // reported once
+        MarkChanged(t.AddSeconds(1));
+        Assert.Equal(t, TakeChangeSeen());
+        Assert.Null(TakeChangeSeen());
     }
 
     [Fact]
     public void Publishing_a_changed_picture_marks_the_change_and_an_unchanged_one_does_not()
     {
-        while (ReachedOrbs(DateTime.MaxValue, DateTime.MaxValue) != null) { }
+        TakeChangeSeen();
         var agents = new List<PaperclipAgent>();
         Publish(agents, PaperclipLink.Connected, "CB-425 first " + Guid.NewGuid());
-        Assert.NotNull(ReachedOrbs(DateTime.MaxValue, DateTime.MaxValue));
+        Assert.NotNull(TakeChangeSeen());
         var status = "CB-425 same";
         Publish(agents, PaperclipLink.Connected, status);
-        while (ReachedOrbs(DateTime.MaxValue, DateTime.MaxValue) != null) { }
+        TakeChangeSeen();
         Publish(agents, PaperclipLink.Connected, status);          // identical: nothing drawn differently
-        Assert.Null(ReachedOrbs(DateTime.MaxValue, DateTime.MaxValue));
+        Assert.Null(TakeChangeSeen());
+    }
+
+    // ---- Nadia's batch -------------------------------------------------------------------
+
+    [Fact]
+    public async Task A_404_on_an_agent_verb_is_a_refusal_that_says_the_agent_is_gone_and_does_not_nudge()
+    {
+        var (api, a, polls) = Rig();      // nothing scripted: the fake answers 404
+        foreach (var o in new[] { await a.WakeAsync("a1", default), await a.PauseAsync("a1", default), await a.ResumeAsync("a1", default) })
+            Assert.Equal((PaperclipActionResult.Refused, "That agent is no longer in Paperclip"), (o.Result, o.Why));
+        Assert.Equal(0, polls());
+    }
+
+    [Fact]
+    public void An_answer_gets_far_more_time_than_the_poll_and_a_wake_inside_thirty_seconds_is_recent()
+    {
+        Assert.True(PaperclipSessions.ActionTimeout >= TimeSpan.FromSeconds(15));
+        Assert.True(PaperclipSessions.ActionTimeout > PaperclipHttp.RequestTimeout);
+        var t = DateTime.UtcNow;
+        PaperclipSessions.NoteWake("recent-1", t);
+        Assert.True(PaperclipSessions.WokeRecently("recent-1", new DateTimeOffset(t.AddSeconds(29))));
+        Assert.True(PaperclipSessions.WokeRecently("recent-1", new DateTimeOffset(t.AddSeconds(30))));
+        Assert.False(PaperclipSessions.WokeRecently("recent-1", new DateTimeOffset(t.AddSeconds(31))));
+        Assert.False(PaperclipSessions.WokeRecently("recent-1", new DateTimeOffset(t.AddSeconds(-1))));
+        Assert.False(PaperclipSessions.WokeRecently("never-woken", new DateTimeOffset(t)));
     }
 
     // ---- the orb's rules -------------------------------------------------------
@@ -407,13 +431,18 @@ public class PaperclipActionsTests
         Assert.Equal((false, false, true), (h.Wake, h.Pause, h.Resume));
         var gone = Agent("terminated");
         Assert.False(PaperclipOrb.Offer(gone, PaperclipLink.Connected).Wake);
+        // awaiting its own approval: Paperclip has not approved the agent yet
+        var pending = Agent("pending_approval", "waiting");
+        var p = PaperclipOrb.Offer(pending, PaperclipLink.Connected);
+        Assert.False(p.Wake);
+        Assert.True(p.Pause);
     }
 
     [Theory]
     [InlineData("idle", "idle", true, true, false)]        // wake, pause
     [InlineData("running", "generating", false, true, false)]  // pause only
     [InlineData("paused", "idle", false, false, true)]     // resume only
-    [InlineData("pending_approval", "waiting", true, true, false)]
+    [InlineData("pending_approval", "waiting", false, true, false)]
     [InlineData("", "idle", false, false, false)]          // parked: no status
     public void Wake_pause_and_resume_show_only_where_they_apply(string status, string state, bool wake, bool pause, bool resume)
     {

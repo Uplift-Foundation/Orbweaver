@@ -942,9 +942,46 @@ namespace Orbweaver
             // CB-421: a Paperclip snapshot that changes what the orbs draw asks
             // for a scan now rather than at the next 2 s tick. Marshalled to the
             // UI thread, where the scan state lives; Paperclip-only.
-            PaperclipSessions.Changed += () => Dispatcher.UIThread.Post(RequestScan);
+            PaperclipSessions.Changed += () => Dispatcher.UIThread.Post(OnPaperclipChanged);
 
             _ = ScheduleScan();
+        }
+
+        // The clock and sink for the one line a Paperclip state change writes, so a
+        // test can read the milliseconds off a fake clock.
+        internal Func<DateTime> PaperclipClock { get; set; } = () => DateTime.UtcNow;
+        internal Action<string> PaperclipLatencySink { get; set; } = line => DiagnosticsLog.Write(line);
+
+        // A published Paperclip change: draw it now on the orbs that exist (CB-425,
+        // PaperclipFastPath), then ask for the ordinary scan, which converges
+        // whatever the fast path left alone.
+        internal void OnPaperclipChanged()
+        {
+            ApplyPaperclipNow();
+            RequestScan();
+        }
+
+        private IReadOnlyList<ScanEntry> PaperclipRows() => _paperclipScan.Entries(
+            PaperclipSessions.Snapshot(), PaperclipSessions.Link, PaperclipSessions.StatusText,
+            OrbweaverSettings.PaperclipSleeping, DateTime.UtcNow, PaperclipSessions.Remembered);
+
+        // UI thread. False when the set of Paperclip orbs differs from what is on
+        // screen, which the full pass handles.
+        internal bool ApplyPaperclipNow()
+        {
+            var fresh = PaperclipRows();
+            var plan = PaperclipFastPath.Plan(fresh, _statuses);
+            if (plan == null || plan.Count == 0) return false;
+            var seen = PaperclipSessions.TakeChangeSeen();
+            foreach (var c in plan)
+            {
+                var before = c.Existing.State;
+                PaperclipFastPath.CopyOwned(c.Existing, c.Fresh);
+                if (_windows.TryGetValue(c.Key, out var window)) window.UpdateFrom(c.Existing);
+                if (seen is { } at && PaperclipFastPath.Line(c.Key, before, c.Existing.State, PaperclipClock() - at) is { } line)
+                    PaperclipLatencySink(line);
+            }
+            return true;
         }
 
         // Excluded from coverage: creates a FileSystemWatcher on the status
@@ -2468,11 +2505,6 @@ namespace Orbweaver
 
                 // The apply runs on the UI thread, so a slow one is a frozen UI.
                 Timed("apply", found.Count, () => { ScanAndUpdateCore(found, probes, now); return 0; });
-
-                // CB-425: how long a published Paperclip change took to be drawn,
-                // written only when it is slow enough to see (the phase threshold).
-                if (PaperclipSessions.ReachedOrbs(now, DateTime.UtcNow) is { } latency)
-                    SlowPhase.Report("paperclip change reaching the orbs", -1, latency, SlowPhaseThreshold, SlowPhaseSink);
             }
             finally
             {

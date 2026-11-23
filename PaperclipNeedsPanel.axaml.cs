@@ -49,6 +49,14 @@ namespace Orbweaver
         private readonly HashSet<string> _answered = new();
         // Cards kept on screen to say "already answered", removed when the poll drops the item.
         private readonly Dictionary<string, Border> _decided = new();
+        // How long an answer's words ("Approved.", "Already answered in Paperclip")
+        // stay readable, whatever the poll does meanwhile.
+        internal static readonly TimeSpan Hold = TimeSpan.FromSeconds(3);
+        internal Func<DateTime> Clock { get; set; } = () => DateTime.UtcNow;
+        // Runs `Sweep` after the delay; a test captures it instead of waiting.
+        internal Action<TimeSpan, Action> Schedule { get; set; } = (d, a) => DispatcherTimer.RunOnce(a, d);
+        internal static Func<PaperclipNeedsPanel> Create { get; set; } = () => new PaperclipNeedsPanel();
+        private DateTime _holdUntil = DateTime.MinValue;
         private string _agentName = "";
         private string _agentId = "";
 
@@ -61,6 +69,9 @@ namespace Orbweaver
             _open = open;
             InitializeComponent();
             KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Escape) Close(); };
+            // A closed Avalonia window cannot be shown again, so the singleton must not
+            // outlive its window (the second amber click used to throw).
+            Closed += (_, _) => { if (ReferenceEquals(_instance, this)) _instance = null; };
             Deactivated += (_, _) => Dispatcher.UIThread.Post(CloseIfIdle, DispatcherPriority.Background);
         }
 
@@ -78,13 +89,9 @@ namespace Orbweaver
         internal string HeadingText => Heading.Text ?? "";
         internal string? FooterText => Footer.IsVisible ? Footer.Text : null;
 
-        // Excluded: constructs the singleton and positions a real window against a
-        // real screen. What it does is Present (driven directly by the suite) and
-        // ChatPanelPlacement.Resolve (swept by its own tests).
-        [ExcludeFromCodeCoverage]
         internal static void ShowFor(SessionStatus status, PixelPoint anchor, PixelRect work)
         {
-            _instance ??= new PaperclipNeedsPanel();
+            _instance ??= Create();
             _instance.Present(status);
             if (!_instance.IsVisible) _instance.Show();
             var size = new PixelSize((int)(_instance.Width * _instance.RenderScaling),
@@ -102,12 +109,6 @@ namespace Orbweaver
             var needs = status.Needs;
             var live = needs.Select(n => n.Id).ToHashSet();
             _answered.RemoveWhere(id => !live.Contains(id));
-            foreach (var id in _decided.Keys.Where(id => !live.Contains(id)).ToList())
-            {
-                Rows.Children.Remove(_decided[id]);
-                _decided.Remove(id);
-            }
-
             foreach (var gone in _rows.Keys.Where(id => !live.Contains(id)).ToList())
             {
                 Rows.Children.Remove(_rows[gone].Card);
@@ -124,7 +125,7 @@ namespace Orbweaver
             }
 
             UpdateHeading();
-            if (_rows.Count == 0 && _decided.Count == 0 && IsVisible) Close();
+            if (_rows.Count == 0 && Clock() >= _holdUntil && IsVisible) Close();
         }
 
         private void UpdateHeading() =>
@@ -218,7 +219,9 @@ namespace Orbweaver
             }
             catch (Exception ex)
             {
-                result = new(PaperclipActionResult.Unreachable, ex.Message);
+                // Never the exception's own text: it can carry an address or a path.
+                DiagnosticsLog.Write("paperclip: answer threw " + ex.GetType().Name);
+                result = new(PaperclipActionResult.Unreachable, PaperclipActions.UnreachableWhy);
             }
 
             SetBusy(row, false);
@@ -243,7 +246,8 @@ namespace Orbweaver
             UpdateHeading();
             Footer.Text = result.IsDone ? (result.Why ?? (approve ? "Approved." : "Declined.")) : null;
             Footer.IsVisible = result.IsDone;
-            if (_rows.Count == 0) CloseSoon();
+            _holdUntil = Clock() + Hold;
+            Schedule(Hold, Sweep);
         }
 
         private void Show(NeedRow row, string message)
@@ -261,10 +265,18 @@ namespace Orbweaver
             if (row.DeclineButton != null) row.DeclineButton.IsEnabled = !busy;
         }
 
-        // The last answer leaves its confirmation up for a moment, then goes.
-        [ExcludeFromCodeCoverage] // a real timer; the close it ends in is Close()
-        private void CloseSoon() =>
-            DispatcherTimer.RunOnce(() => { if (_rows.Count == 0 && _decided.Count == 0) Close(); }, TimeSpan.FromMilliseconds(1200));
+        // The hold is over: the answered-elsewhere sentences and the footer go, and
+        // the panel with them when nothing is left to answer. A later answer
+        // moved the deadline, so an early sweep does nothing.
+        internal void Sweep()
+        {
+            if (Clock() < _holdUntil) return;
+            foreach (var card in _decided.Values) Rows.Children.Remove(card);
+            _decided.Clear();
+            Footer.IsVisible = false;
+            UpdateHeading();
+            if (_rows.Count == 0 && IsVisible) Close();
+        }
 
         private void CloseIfIdle()
         {

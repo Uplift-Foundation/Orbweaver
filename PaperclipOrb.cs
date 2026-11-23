@@ -86,7 +86,7 @@ namespace Orbweaver
         // is offered only while the key is gone. Wake, Pause and Resume (CB-427)
         // are offered only where they apply, and only while the link is live: a
         // parked company is a picture, and an answer to it would go nowhere.
-        //   Wake    an agent that is neither paused, over budget nor running
+        //   Wake    an agent that is neither paused, over budget, running nor awaiting its own approval
         //   Pause   an agent that is not paused or over budget
         //   Resume  an agent paused by hand (never one paused for budget)
         internal readonly record struct MenuOffer(
@@ -109,7 +109,7 @@ namespace Orbweaver
                 Open: openable,
                 Review: openable && status.Presence == OrbPresence.NeedsInput,
                 Reconnect: link == PaperclipLink.NeedsReconnect,
-                Wake: live && !paused && !overBudget && !running,
+                Wake: live && !paused && !overBudget && !running && status.PaperclipAgentStatus != "pending_approval",
                 Pause: live && !paused && !overBudget,
                 Resume: live && paused && !overBudget);
         }

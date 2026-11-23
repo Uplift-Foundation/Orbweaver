@@ -688,6 +688,7 @@ namespace Orbweaver
                 return;
             }
             DisarmPaperclip();
+            ShowPaperclipNote(null);
             var actions = PaperclipActionsSource();
             PaperclipOutcome result;
             if (actions == null) result = new(PaperclipActionResult.Unreachable, "Paperclip is not connected.");
@@ -702,11 +703,27 @@ namespace Orbweaver
                         _ => await actions.ResumeAsync(status.PaperclipAgentId, default),
                     };
                 }
-                catch (Exception ex) { result = new(PaperclipActionResult.Unreachable, ex.Message); }
+                catch (Exception ex)
+                {
+                    DiagnosticsLog.Write("paperclip: " + verb + " threw " + ex.GetType().Name);
+                    result = new(PaperclipActionResult.Unreachable, PaperclipActions.UnreachableWhy);
+                }
             }
-            PaperclipRowNote = result.Settled ? null : result.Why;
+            ShowPaperclipNote(result.Settled ? null : result.Why ?? PaperclipActions.RefusedWhy);
             if (!result.Settled) DiagnosticsLog.Write($"paperclip: {verb} failed: {result.Result}");
         }
+
+        // A failed Wake, Pause or Resume says why on a disabled row in the menu
+        // (Paperclip's own sentence, never an exception's), until the next action,
+        // the next update that offers different rows, or the menu being rebuilt.
+        private void ShowPaperclipNote(string? why)
+        {
+            PaperclipRowNote = why;
+            PaperclipNoteItem.Header = why;
+            PaperclipNoteItem.IsVisible = why != null;
+        }
+
+        internal bool PaperclipNoteVisible => PaperclipNoteItem.IsVisible;
 
         internal void DisarmPaperclip()
         {
@@ -4112,10 +4129,8 @@ namespace Orbweaver
         // CloudSessionLink.StartInfoFor, and both are pure and covered.
         // An amber Paperclip orb holding something this app can answer opens the
         // answer panel instead of the browser (CB-427); the panel's own "Review in
-        // Paperclip" is the browser. Excluded for TryOpenInBrowser's reason: it
-        // shows a real window against a real screen. The rule is
-        // PaperclipOrb.ShowsNeeds and the panel is driven directly by its suite.
-        [ExcludeFromCodeCoverage]
+        // Paperclip" is the browser. Covered headlessly: the suite shows the panel, closes it and
+        // shows it again.
         internal bool TryOpenNeedsPanel()
         {
             if (!PaperclipOrb.ShowsNeeds(_lastStatus, PaperclipSessions.Link)) return false;
