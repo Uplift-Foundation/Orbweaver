@@ -221,6 +221,46 @@ public class RelayPaperclipTests : IAsyncLifetime
         }
     }
 
+    // CB-431: the broke push, from the same headless feed (rows from RelayScan, marks from the poll loop's snapshot).
+    [Fact]
+    public async Task With_the_UI_parked_an_agent_whose_mark_becomes_Broke_pushes_broke_to_a_phone_that_asked_and_an_outage_does_not_repeat_it()
+    {
+        var (client, identity, phone) = await Start();
+        var dir = Path.Combine(Path.GetTempPath(), "cb431-broke-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        await SendPrefs(identity, phone, _stub.DeviceId, """{"t":"prefs","done_alerts":"all","broke_alerts":true}""", 0);
+        await _stub.Next(e => IsEnvelope(e) && e.GetProperty("class").GetString() == "pair");
+        async Task Tick(PaperclipAgent a, PaperclipLink link)
+        {
+            PaperclipSessions.SetSnapshotForTests([a]);
+            PaperclipSessions.SetLinkForTests(link, link.ToString());
+            var scan = RelayService.RelayScan(dir, () => new Dictionary<string, string>(), _ => true, DateTime.UtcNow.AddDays(3), onWindows: false);
+            client.OnScanned(RelayService.Project(scan).Rows);
+            await client.OnStatuses(scan);
+        }
+        try
+        {
+            var ok = Agent();
+            var broke = ok with { Mark = PaperclipMark.Broke, MarkReason = "Last run failed" };
+            await Tick(ok, PaperclipLink.Connected);                       // the baseline
+            await Tick(broke, PaperclipLink.Connected);
+            var env = await _stub.Next(e => IsEnvelope(e) && e.GetProperty("push").GetString() == "broke");
+            Assert.Contains("\"why\":\"run_failed\"", Encoding.UTF8.GetString(PushSeal.Open(phone.KaKey, env.GetProperty("e").GetString()!)!));
+
+            await Tick(broke, PaperclipLink.NeedsReconnect);               // the key is refused: every row parks
+            await Tick(broke, PaperclipLink.Connected);                    // and it comes back, still broke
+            JsonElement? again = null;
+            try { again = await _stub.Next(e => IsEnvelope(e) && e.GetProperty("push").GetString() == "broke", seconds: 1); } catch (OperationCanceledException) { }
+            Assert.Null(again);
+        }
+        finally
+        {
+            PaperclipSessions.SetSnapshotForTests([]);
+            PaperclipSessions.SetLinkForTests(PaperclipLink.Connected, "");
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
     [Fact]
     public void The_desktops_default_agents_are_the_pollers_snapshot()
     {

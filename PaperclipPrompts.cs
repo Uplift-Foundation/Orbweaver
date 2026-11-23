@@ -129,15 +129,23 @@ namespace Orbweaver
                     _send.Resolved(live.Pending.RequestId, live.Pending.SessionId, by,
                         PromptFrames.ResolvedPush(live.Pending.RequestId, live.Pending.SessionId, by, live.Label));
                     _log($"paperclip resolved {live.Pending.RequestId} {by}");
-                    if (expired && rows.Contains(live.Pending.SessionId)) refresh.Add(key);
+                    // A tool action past its own expiry is over in Paperclip, whatever the list still says for a poll or two:
+                    // resolving it is right, minting it again with an expiry already past is not.
+                    if (expired && rows.Contains(live.Pending.SessionId) && !PastOwnExpiry(live.Need, _now())) refresh.Add(key);
                 }
 
                 // One at a time per agent: its oldest need, when nothing of its is pending.
                 foreach (var (sid, agent, needs) in byAgent)
                 {
                     lock (_activityGate) if (_live.Values.Any(l => l.Pending.SessionId == sid)) continue;
-                    var next = needs.FirstOrDefault(n => !_decided.Contains(Key(n.Kind, n.Id)));
-                    if (next is not null) Mint(sid, agent, next, withPush: !refresh.Contains(Key(next.Kind, next.Id)));
+                    var next = needs.FirstOrDefault(n => !_decided.Contains(Key(n.Kind, n.Id)) && !PastOwnExpiry(n, _now()));
+                    if (next is null) continue;
+                    var withPush = !refresh.Contains(Key(next.Kind, next.Id));
+                    // A need must never arrive without its alert: the relay throttles an agent's alerts to one per 30 s, so the
+                    // next prompt that would carry a push waits until 31 s after the last one went out.
+                    if (withPush && _lastAmber.TryGetValue(sid, out var last) && _now() - last < AlertGap) continue;
+                    Mint(sid, agent, next, withPush);
+                    if (withPush) _lastAmber[sid] = _now();
                 }
             }
             catch (Exception ex) { _log($"warning paperclip-poll-failed {ex.GetType().Name}"); }
@@ -164,6 +172,12 @@ namespace Orbweaver
             var age = now - new DateTimeOffset(DateTime.SpecifyKind(at, DateTimeKind.Utc));
             return age >= TimeSpan.Zero && age <= OwnWakeWindow;
         }
+
+        internal static readonly TimeSpan AlertGap = TimeSpan.FromSeconds(31);
+        private readonly Dictionary<string, DateTimeOffset> _lastAmber = new(StringComparer.Ordinal);
+
+        private static bool PastOwnExpiry(PaperclipNeed need, DateTimeOffset now) =>
+            need.ExpiresAt is { } own && new DateTimeOffset(DateTime.SpecifyKind(own, DateTimeKind.Utc)) <= now;
 
         internal static string PreviewOf(PaperclipNeed need, PaperclipAgent agent) =>
             PromptFrames.Cut(need.Title + "\n" + (!string.IsNullOrWhiteSpace(need.Summary) ? need.Summary

@@ -130,6 +130,7 @@ public class PaperclipPromptsTests
         Assert.Single(_sent.Prompts);                                                             // not both, however many polls
 
         await Answer(AnswerTo());                                                                 // the first is answered ...
+        _now = _now.AddSeconds(31);                                                               // held until 31 s after the last alert
         await Poll(Agent(needs: [approval]));                                                     // ... and gone from the list: the next is minted
         Assert.Equal(["Tool action", "Hire"], _sent.Prompts.Select(p => JsonDocument.Parse(p.Prompt).RootElement.GetProperty("tool").GetString()).ToArray());
     }
@@ -200,6 +201,7 @@ public class PaperclipPromptsTests
         await Poll(Agent());
         Assert.Single(_sent.Resolved);                                         // not again
 
+        _now = _now.AddSeconds(31);
         await Poll(Agent(needs: Action()));
         await Poll();                                                           // the agent is gone altogether
         Assert.Equal("gone", _sent.Resolved[1].By);
@@ -425,6 +427,7 @@ public class PaperclipPromptsTests
         await Poll(Agent(needs: Approval()));                                                      // a lagging poll still lists it
         Assert.Single(_sent.Prompts);
         await Poll(Agent());                                                                        // gone from the list: forgotten
+        _now = _now.AddSeconds(31);
         await Poll(Agent(needs: Approval()));                                                      // listed again (a new ask): minted again
         Assert.Equal(2, _sent.Prompts.Count);
     }
@@ -510,4 +513,84 @@ public class PaperclipPromptsRulesTests
         Assert.Equal("error", Why(Agent("error"), null));
         Assert.Equal("error", Why(Agent("error", "adapter exploded at /Users/x/secret"), null));
     }
+}
+
+public class PaperclipPromptsPacingTests
+{
+    internal sealed class PublicSender(List<(string Rid, string Sid)> sent) : IPromptSender
+    {
+        bool IPromptSender.Prompt(string r, string s, string p, string? push) { sent.Add((r, s)); return true; }
+        void IPromptSender.Resolved(string r, string s, string by, string? push) { }
+        void IPromptSender.Refusal(string ph, string r, string s, string code) { }
+        bool IPromptSender.PromptTo(string ph, string r, string s, string p) => true;
+    }
+
+    private const string AgentId = "3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77";
+    private const string Sid = "paperclip:" + AgentId;
+    private DateTimeOffset _now = DateTimeOffset.FromUnixTimeSeconds(1794111900);
+    private readonly List<string> _prompts = new();
+    private readonly List<(string, string)> _resolved = new();
+
+    private sealed class Sender(PaperclipPromptsPacingTests t) : IPromptSender
+    {
+        bool IPromptSender.Prompt(string r, string s, string p, string? push) { t._prompts.Add(r); return true; }
+        bool IPromptSender.PromptQuiet(string r, string s, string p) { t._prompts.Add("quiet:" + r); return true; }
+        void IPromptSender.Resolved(string r, string s, string by, string? push) => t._resolved.Add((r, by));
+        void IPromptSender.Refusal(string ph, string r, string s, string code) { }
+        bool IPromptSender.PromptTo(string ph, string r, string s, string p) => true;
+    }
+
+    private static PaperclipAgent Agent(params PaperclipNeed[] needs) =>
+        new(AgentId, "Ledger bot", "r", "", "active", null, "x", "waiting", PaperclipMark.None, null, needs, null, null, null, null, null,
+            DateTime.UtcNow, "u", false);
+
+    [Fact]
+    public async Task The_next_need_is_held_until_31_seconds_after_the_agents_last_alert_so_it_never_arrives_without_one()
+    {
+        var p = new PaperclipPrompts(new Sender(this), () => _now, "Mac", () => null, new NonceWindow(), _ => { });
+        var roster = new HashSet<string> { Sid };
+        var a = new PaperclipNeed("approval", "a-1", "First", "u");
+        var b = new PaperclipNeed("approval", "b-2", "Second", "u");
+        await p.OnPolledAsync([Agent(a, b)], roster);
+        Assert.Single(_prompts);
+        _now = _now.AddSeconds(5);
+        await p.OnPolledAsync([Agent(b)], roster);                 // the first was answered at 5 s (it left the list)
+        Assert.Single(_prompts);
+        _now = _now.AddSeconds(25);                                // 30 s after the first alert
+        await p.OnPolledAsync([Agent(b)], roster);
+        Assert.Single(_prompts);
+        _now = _now.AddSeconds(1);                                 // 31 s
+        await p.OnPolledAsync([Agent(b)], roster);
+        Assert.Equal(2, _prompts.Count);
+        Assert.DoesNotContain(_prompts, x => x.StartsWith("quiet:"));
+    }
+
+    [Fact]
+    public async Task A_tool_action_still_listed_after_its_own_expiry_is_resolved_once_and_never_minted_again()
+    {
+        var p = new PaperclipPrompts(new Sender(this), () => _now, "Mac", () => null, new NonceWindow(), _ => { });
+        var roster = new HashSet<string> { Sid };
+        var action = new PaperclipNeed("action", "x1", "Send", "u", ExpiresAt: _now.UtcDateTime.AddHours(1), Tool: "Tool action");
+        await p.OnPolledAsync([Agent(action)], roster);
+        Assert.Single(_prompts);
+        _now = _now.AddHours(1).AddSeconds(1);
+        for (var i = 0; i < 3; i++) { await p.OnPolledAsync([Agent(action)], roster); _now = _now.AddSeconds(3); }
+        Assert.Single(_prompts);
+        Assert.Equal("gone", Assert.Single(_resolved).Item2);
+        Assert.Equal(0, p.PendingCount);
+    }
+
+    [Fact]
+    public async Task A_tool_action_that_names_no_agent_is_composed_onto_the_lead_and_prompts_for_the_lead_row_only()
+    {
+        var raw = new PaperclipApi.RawActionRequest("a1", null, "Tool", "preview", DateTime.UtcNow, null);
+        var lead = new PaperclipApi.RawAgent("lead", "Lead", "ceo", "", "idle", null, "x", 0, 0, null, null, null);
+        var other = new PaperclipApi.RawAgent("w", "Worker", "dev", "", "idle", "lead", "x", 0, 0, null, null, null);
+        var agents = PaperclipApi.Compose(new PaperclipApi.ComposeInput([lead, other], [], [], [], [raw], [], new Dictionary<string, string>(),
+            "http://p", "CB", DateTime.UtcNow));
+        var p = new PaperclipPrompts(new PaperclipPromptsPacingTests.PublicSender(sent), () => DateTimeOffset.UtcNow, "Mac", () => null, new NonceWindow(), _ => { });
+        await p.OnPolledAsync(agents, new HashSet<string> { "paperclip:lead", "paperclip:w" });
+        Assert.Equal(["paperclip:lead"], sent.Select(x => x.Sid).ToArray());
+    }
+    private readonly List<(string Rid, string Sid)> sent = new();
 }
