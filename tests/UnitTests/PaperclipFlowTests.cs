@@ -33,34 +33,24 @@ internal sealed class FakePaperclip : IPaperclipApi
 public class PaperclipExplainTests
 {
     [Fact]
-    public void TheInnermostReasonIsPrintedOnce_WithTheAddress()
+    public void TheInnermostReasonIsPrintedOnce_WithNoAddress_TheCallersSentenceHasIt()
     {
         var socket = new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.ConnectionRefused);
         var outer = new HttpRequestException(socket.Message + " (127.0.0.1:3100)", socket);
-        var text = PaperclipHttp.Explain(outer, "http://127.0.0.1:3100", onMacOS: false);
-        Assert.Equal(socket.Message + " (127.0.0.1:3100)", text);
+        Assert.Equal(socket.Message, PaperclipHttp.Explain(outer, onMacOS: false));
     }
 
     [Fact]
-    public void AReasonThatAlreadyNamesTheAddress_IsNotGivenAnother()
-    {
-        var text = PaperclipHttp.Explain(new Exception("refused by 192.0.2.10:3100"), "http://192.0.2.10:3100", false);
-        Assert.Equal("refused by 192.0.2.10:3100", text);
-    }
+    public void AnExceptionWithNoInner_IsItsOwnReason() =>
+        Assert.Equal("boom", PaperclipHttp.Explain(new Exception("boom"), false));
 
     [Fact]
     public void ANoRouteOnAMac_GetsTheLocalNetworkHint_ElsewhereItDoesNot()
     {
         var socket = new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.HostUnreachable);
         var ex = new HttpRequestException("x", socket);
-        Assert.Contains("Local Network", PaperclipHttp.Explain(ex, "http://192.0.2.10:3100", onMacOS: true));
-        Assert.DoesNotContain("Local Network", PaperclipHttp.Explain(ex, "http://192.0.2.10:3100", onMacOS: false));
-    }
-
-    [Fact]
-    public void AnAddressThatIsNotAUrl_IsUsedAsGiven()
-    {
-        Assert.Equal("boom (nonsense)", PaperclipHttp.Explain(new Exception("boom"), "nonsense", false));
+        Assert.Contains("Local Network", PaperclipHttp.Explain(ex, onMacOS: true));
+        Assert.DoesNotContain("Local Network", PaperclipHttp.Explain(ex, onMacOS: false));
     }
 }
 
@@ -405,7 +395,7 @@ public class PaperclipConnectTests
     {
         var w = new World();
         w.Anon.Gets["/api/cli-auth/challenges/c1?token=tok"] = FakePaperclip.Status(PaperclipHttpKind.Timeout);
-        Assert.Contains("Timeout", (await w.Run()).Message);
+        Assert.Contains("(timeout)", (await w.Run()).Message);
     }
 
     [Fact]
@@ -472,26 +462,82 @@ public class PaperclipConnectTests
         Assert.Equal(PaperclipConnectOutcome.Connected, (await w.Run()).Outcome);
     }
 
-    [Fact]
-    public async Task Failures_SayWhat()
+    private static int Count(string text, string needle)
     {
-        var w1 = new World(); w1.Anon.Gets.Remove("/api/health");
-        w1.Anon.Gets["/api/health"] = FakePaperclip.Status(PaperclipHttpKind.Unreachable, 0, "refused");
-        var r1 = await w1.Run();
-        Assert.Equal(PaperclipConnectOutcome.Failed, r1.Outcome);
-        Assert.Contains("refused", r1.Message);
+        var n = 0;
+        for (var i = text.IndexOf(needle, StringComparison.Ordinal); i >= 0; i = text.IndexOf(needle, i + needle.Length, StringComparison.Ordinal)) n++;
+        return n;
+    }
 
-        var w2 = new World(); w2.Anon.Posts.Remove("/api/cli-auth/challenges");
-        Assert.Contains("would not start", (await w2.Run()).Message);
+    [Fact]
+    public async Task EveryFailureNamesTheAddressTheUserTried_Once()
+    {
+        var results = new List<(string Name, string Message)>();
 
-        var w3 = new World(); w3.Anon.Posts["/api/cli-auth/challenges"] = FakePaperclip.Ok("{}");
-        Assert.Contains("not understood", (await w3.Run()).Message);
+        var timeout = new World(); timeout.Anon.Gets["/api/health"] = FakePaperclip.Status(PaperclipHttpKind.Timeout, 0, "Timed out");
+        results.Add(("unreachable", (await timeout.Run()).Message!));
 
-        var w4 = new World { BrowserWorks = false };
-        Assert.Contains("browser", (await w4.Run()).Message);
+        var refused = new World(); refused.Anon.Gets["/api/health"] = FakePaperclip.Status(PaperclipHttpKind.Unreachable, 0, "No connection could be made because the target machine actively refused it");
+        results.Add(("refused", (await refused.Run()).Message!));
 
-        var w5 = new World(); w5.Anon.Gets["/api/health"] = FakePaperclip.Status(PaperclipHttpKind.ServerError, 500);
-        Assert.Equal("Can't reach Paperclip.", (await w5.Run()).Message);
+        var http500 = new World(); http500.Anon.Gets["/api/health"] = FakePaperclip.Status(PaperclipHttpKind.ServerError, 500);
+        results.Add(("health 500", (await http500.Run()).Message!));
+
+        var noChallenge = new World(); noChallenge.Anon.Posts.Remove("/api/cli-auth/challenges");
+        results.Add(("no challenge", (await noChallenge.Run()).Message!));
+
+        var garbled = new World(); garbled.Anon.Posts["/api/cli-auth/challenges"] = FakePaperclip.Ok("{}");
+        results.Add(("not understood", (await garbled.Run()).Message!));
+
+        var badLink = new World(); badLink.Anon.Posts["/api/cli-auth/challenges"] = FakePaperclip.Ok(ChallengeJson(url: "file:///x"));
+        results.Add(("bad link", (await badLink.Run()).Message!));
+
+        var noBrowser = new World { BrowserWorks = false };
+        results.Add(("browser", (await noBrowser.Run()).Message!));
+
+        var polls = new World();
+        results.Add(("polls", (await polls.Run()).Message!));
+
+        var badKey = new World(); badKey.Statuses("approved");
+        badKey.Keyed.Gets["/api/cli-auth/me"] = FakePaperclip.Status(PaperclipHttpKind.Unauthorized, 401);
+        results.Add(("key", (await badKey.Run()).Message!));
+
+        foreach (var (name, message) in results)
+            Assert.True(Count(message, "127.0.0.1:3100") == 1, $"{name}: \"{message}\" must name the address exactly once");
+    }
+
+    [Fact]
+    public async Task TheReasonsRead_AfterTheAddress_InPlainWords()
+    {
+        var timeout = new World(); timeout.Anon.Gets["/api/health"] = FakePaperclip.Status(PaperclipHttpKind.Timeout, 0, "Timed out");
+        Assert.Equal("Can't reach Paperclip at 127.0.0.1:3100: timed out.", (await timeout.Run()).Message);
+
+        var refused = new World(); refused.Anon.Gets["/api/health"] = FakePaperclip.Status(PaperclipHttpKind.Unreachable, 0, "No connection could be made because the target machine actively refused it.");
+        Assert.Equal("Can't reach Paperclip at 127.0.0.1:3100: no connection could be made because the target machine actively refused it.", (await refused.Run()).Message);
+
+        var http500 = new World(); http500.Anon.Gets["/api/health"] = FakePaperclip.Status(PaperclipHttpKind.ServerError, 500);
+        Assert.Equal("Can't reach Paperclip at 127.0.0.1:3100: HTTP 500.", (await http500.Run()).Message);
+
+        var noKind = new World(); noKind.Anon.Gets["/api/health"] = FakePaperclip.Status(PaperclipHttpKind.Unreachable);
+        Assert.Equal("Can't reach Paperclip at 127.0.0.1:3100: unreachable.", (await noKind.Run()).Message);
+
+        var noChallenge = new World(); noChallenge.Anon.Posts.Remove("/api/cli-auth/challenges");
+        Assert.Equal("Paperclip at 127.0.0.1:3100 would not start an approval: HTTP 404.", (await noChallenge.Run()).Message);
+
+        var polls = new World();
+        Assert.Equal("Paperclip at 127.0.0.1:3100 stopped answering the approval check (HTTP 404).", (await polls.Run()).Message);
+    }
+
+    [Fact]
+    public async Task AFailedConnectWithAnAddressWithAPort_UsesAuthorityNotTheWholeUrl()
+    {
+        var w = new World(); w.Anon.Gets["/api/health"] = FakePaperclip.Status(PaperclipHttpKind.Timeout, 0, "Timed out");
+        var r = await PaperclipConnect.RunAsync("http://192.168.0.250:3100/", k => k == null ? w.Anon : w.Keyed, u => true,
+            () => w.Now, (d, c) => Task.CompletedTask, default);
+        Assert.Equal("Can't reach Paperclip at 192.168.0.250:3100: timed out.", r.Message);
+        var odd = await PaperclipConnect.RunAsync("nonsense", k => k == null ? w.Anon : w.Keyed, u => true,
+            () => w.Now, (d, c) => Task.CompletedTask, default);
+        Assert.Equal("Can't reach Paperclip at nonsense: timed out.", odd.Message);
     }
 
     [Fact]

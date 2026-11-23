@@ -13,4 +13,11 @@ namespace Orbweaver
         internal const string LocalNetworkHint = "";
         internal static bool IsHostUnreachable(Exception ex) => false;
     }
+
+    // PaperclipHttp.DefaultLog writes through the app's diagnostics.log, which drags in
+    // CrashLog. The probe is a console program: its failure lines go to its stderr.
+    internal static class DiagnosticsLog
+    {
+        internal static void Write(string line) => Console.Error.WriteLine(line);
+    }
 }

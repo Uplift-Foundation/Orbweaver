@@ -115,7 +115,7 @@ public class PaperclipConnectorTests : IDisposable
         var expired = new World(_dir, TwoCompanies);
         expired.Anon.Gets["/api/cli-auth/challenges/c?token=t"] = FakePaperclip.Ok("{\"status\":\"expired\"}");
         await expired.Connector.ConnectAsync(Base, default);
-        Assert.Equal((PaperclipPhase.Failed, "The approval timed out. Try again."), (expired.Connector.Phase, expired.Connector.Message));
+        Assert.Equal((PaperclipPhase.Failed, "The approval at 127.0.0.1:3100 timed out. Try again."), (expired.Connector.Phase, expired.Connector.Message));
 
         var failed = new World(_dir, TwoCompanies);
         failed.Anon.Gets.Remove("/api/health");

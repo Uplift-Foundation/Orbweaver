@@ -33,7 +33,8 @@ namespace Orbweaver
     internal sealed class PaperclipHttp : IPaperclipApi, IDisposable
     {
         // What the app logs through: status, size and time, never a body, a key or a query.
-        internal static readonly Action<string> DefaultLog = line => Console.Error.WriteLine("paperclip: " + line);
+        // To diagnostics.log: a WinExe has no stderr to write to.
+        internal static readonly Action<string> DefaultLog = line => DiagnosticsLog.Write("paperclip: " + line);
 
         internal static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(5);
 
@@ -100,24 +101,24 @@ namespace Orbweaver
             {
                 _log?.Invoke($"{method} {PathOnly(path)} -> unreachable ({ex.GetType().Name}), {(int)(DateTime.UtcNow - started).TotalMilliseconds} ms");
                 return new PaperclipResponse(PaperclipHttpKind.Unreachable, 0, "",
-                    Explain(ex, _baseUrl, OperatingSystem.IsMacOS()));
+                    Explain(ex, OperatingSystem.IsMacOS()));
             }
         }
 
-        // One reason, once, with the address. .NET nests the same sentence three
-        // deep (the HttpRequestException's, with the address appended, then the
-        // SocketException's), and joining the chain printed it twice. The
-        // innermost message is the reason; the address is added if it lacks it.
-        internal static string Explain(Exception ex, string baseUrl, bool onMacOS)
+        // The reason, once. .NET nests one sentence three deep (the
+        // HttpRequestException's, with the address appended, then the
+        // SocketException's), and joining the chain printed it twice. The innermost
+        // message is the reason. The address is the caller's to add, once, in its
+        // own sentence ("Can't reach Paperclip at host:port: ..."), so it is not
+        // part of this.
+        internal static string Explain(Exception ex, bool onMacOS)
         {
             var inner = ex;
             while (inner.InnerException is not null) inner = inner.InnerException;
             var reason = inner.Message.Trim();
-            var host = Uri.TryCreate(baseUrl, UriKind.Absolute, out var u) ? u.Authority : baseUrl;
-            var text = reason.Contains(host, StringComparison.OrdinalIgnoreCase) ? reason : $"{reason} ({host})";
             return onMacOS && OpenClawGateway.IsHostUnreachable(ex)
-                ? text + " \u2014 " + OpenClawGateway.LocalNetworkHint
-                : text;
+                ? reason + " \u2014 " + OpenClawGateway.LocalNetworkHint
+                : reason;
         }
 
         // The query is never logged: the poll URL carries the challenge token, and

@@ -25,7 +25,8 @@ public class PaperclipSettingsRowsTests : IDisposable
 
         public Task DiscoverAsync(CancellationToken ct) { Calls.Add("discover"); return Task.CompletedTask; }
         public Task LoadCompaniesAsync(CancellationToken ct) { Calls.Add("companies"); return Task.CompletedTask; }
-        public Task ConnectAsync(string baseUrl, CancellationToken ct) { Calls.Add("connect " + baseUrl); return Task.CompletedTask; }
+        public Action? OnConnect;
+        public Task ConnectAsync(string baseUrl, CancellationToken ct) { Calls.Add("connect " + baseUrl); OnConnect?.Invoke(); return Task.CompletedTask; }
         public void CancelConnect() => Calls.Add("cancel");
         public Task DisconnectAsync(CancellationToken ct) { Calls.Add("disconnect"); return Task.CompletedTask; }
         public void ChooseCompany(string companyId) => Calls.Add("choose " + companyId);
@@ -162,6 +163,73 @@ public class PaperclipSettingsRowsTests : IDisposable
         Assert.True(prompt.IsVisible);
         box.Text = "";
         Assert.False(Button(rows, "Connect").IsEnabled);
+    }
+
+    [AvaloniaFact]
+    public void AFailedConnect_KeepsWhatTheUserTyped_NotTheRememberedAddress()
+    {
+        OrbweaverSettings.PaperclipUrl = "http://remembered.example:3100";   // what the box would otherwise revert to
+        var w = NewWindow();
+        var rows = w.PaperclipRows();
+        Assert.Equal("http://remembered.example:3100", AddressBox(rows).Text);
+
+        AddressBox(rows).Text = "http://192.168.0.250:3100";
+        _fake.OnConnect = () => { _fake.Phase = PaperclipPhase.Failed; _fake.Message = "Can't reach Paperclip at 192.168.0.250:3100: timed out."; };
+        Click(Button(rows, "Connect"));
+
+        var after = w.PaperclipRows();                 // what the rebuild after the failure shows
+        Assert.Equal("http://192.168.0.250:3100", AddressBox(after).Text);
+        Assert.Contains("timed out", Text(after));
+        Assert.True(Button(after, "Connect").IsEnabled);
+    }
+
+    [AvaloniaFact]
+    public void AClearedBox_StaysEmpty_AfterARebuild_NotRefilledWithTheSuggestion()
+    {
+        _fake.Found = [new("http://127.0.0.1:3100", "default", "authenticated")];
+        var w = NewWindow();
+        var box = AddressBox(w.PaperclipRows());
+        Assert.Equal("http://127.0.0.1:3100", box.Text);
+        box.Text = "";
+        var after = w.PaperclipRows();
+        Assert.Equal("", AddressBox(after).Text);
+        Assert.False(Button(after, "Connect").IsEnabled);
+    }
+
+    [AvaloniaFact]
+    public void ASuccessfulConnect_ForgetsTheTypedAddress_SoALaterDisconnectShowsTheSuggestionAgain()
+    {
+        var w = NewWindow();
+        var rows = w.PaperclipRows();
+        AddressBox(rows).Text = "http://192.168.0.250:3100";
+        _fake.OnConnect = () => OrbweaverSettings.PaperclipEnabled = true;   // the connector's success
+        Click(Button(rows, "Connect"));
+
+        OrbweaverSettings.PaperclipEnabled = false;                          // disconnected later
+        Assert.True(string.IsNullOrEmpty(AddressBox(w.PaperclipRows()).Text));
+    }
+
+    [AvaloniaFact]
+    public void ThePaperclipButtonsCarryDistinctAutomationNames_NeverJustReconnect()
+    {
+        var names = new List<string?>();
+
+        var disconnected = NewWindow().PaperclipRows();
+        names.Add(Avalonia.Automation.AutomationProperties.GetName(Button(disconnected, "Connect")));
+
+        _fake.Phase = PaperclipPhase.Approving;
+        names.Add(Avalonia.Automation.AutomationProperties.GetName(Button(NewWindow().PaperclipRows(), "Cancel")));
+        _fake.Phase = PaperclipPhase.Idle;
+
+        Connected(link: PaperclipLink.NeedsReconnect, status: "Reconnect to Paperclip");
+        var connected = NewWindow().PaperclipRows();
+        names.Add(Avalonia.Automation.AutomationProperties.GetName(Button(connected, "Reconnect")));
+        names.Add(Avalonia.Automation.AutomationProperties.GetName(Button(connected, "Disconnect")));
+
+        Assert.Equal(new[] { "Connect to Paperclip", "Cancel connecting to Paperclip", "Reconnect to Paperclip", "Disconnect from Paperclip" },
+            names.ToArray());
+        Assert.Equal(names.Count, names.Distinct().Count());
+        Assert.All(names, n => Assert.Contains("Paperclip", n));
     }
 
     [AvaloniaFact]

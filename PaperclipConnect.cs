@@ -79,10 +79,13 @@ namespace Orbweaver
             Action<string>? progress = null)
         {
             var anon = apiFor(null);
+            // Every failure names the address the user tried, once, so "Timed out"
+            // never stands alone.
+            var at = Uri.TryCreate(baseUrl, UriKind.Absolute, out var parsed) ? parsed.Authority : baseUrl;
             try
             {
                 var health = await anon.GetAsync("/api/health", ct).ConfigureAwait(false);
-                if (!health.IsOk) return Fail("Can't reach Paperclip." + Suffix(health));
+                if (!health.IsOk) return Fail($"Can't reach Paperclip at {at}: {Why(health)}.");
 
                 var mode = PaperclipApi.ParseHealth(health.Body)?.DeploymentMode;
                 if (mode == "local_trusted")
@@ -93,9 +96,9 @@ namespace Orbweaver
                 }
 
                 var post = await anon.PostAsync("/api/cli-auth/challenges", ChallengeBody, ct).ConfigureAwait(false);
-                if (!post.IsOk) return Fail("Paperclip would not start an approval." + Suffix(post));
+                if (!post.IsOk) return Fail($"Paperclip at {at} would not start an approval: {Why(post)}.");
                 var ch = PaperclipApi.ParseChallenge(post.Body);
-                if (ch == null) return Fail("Paperclip's approval answer was not understood.");
+                if (ch == null) return Fail($"Paperclip at {at} answered the approval request in a way Orbweaver did not understand.");
 
                 // Every way out that is not an approval, or Paperclip's own cancelled
                 // or expired, leaves the challenge pending there, where a later click
@@ -107,10 +110,10 @@ namespace Orbweaver
                     var approval = ApprovalUrlFor(baseUrl, ch);
                     if (!Uri.TryCreate(approval, UriKind.Absolute, out var uri)
                         || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
-                        return new PaperclipConnectResult(PaperclipConnectOutcome.Refused, Message: "Paperclip's approval link was not a web address.");
+                        return new PaperclipConnectResult(PaperclipConnectOutcome.Refused, Message: $"Paperclip at {at} sent an approval link that was not a web address.");
 
                     if (!openBrowser(approval))
-                        return Fail("Couldn't open the browser.");
+                        return Fail($"Couldn't open the browser to approve at {at}.");
                     progress?.Invoke("Approve Orbweaver in your browser…");
 
                     var pollPath = PollPathFor(ch);
@@ -131,8 +134,7 @@ namespace Orbweaver
                             // wrong path answers 404 for ever) ends the attempt with a
                             // reason instead of spinning to the challenge's expiry.
                             if (++failedPolls >= MaxFailedPolls)
-                                return Fail("Paperclip stopped answering the approval check ("
-                                    + (poll.StatusCode > 0 ? "HTTP " + poll.StatusCode : poll.Kind.ToString()) + ").");
+                                return Fail($"Paperclip at {at} stopped answering the approval check ({Why(poll)}).");
                             continue;
                         }
                         failedPolls = 0;
@@ -141,7 +143,7 @@ namespace Orbweaver
                             case "approved":
                                 settled = true;   // a key was issued: there is nothing left to cancel
                                 var me = await apiFor(ch.BoardApiToken).GetAsync("/api/cli-auth/me", ct).ConfigureAwait(false);
-                                if (!me.IsOk) return Fail("Paperclip approved Orbweaver but the key did not work.");
+                                if (!me.IsOk) return Fail($"Paperclip at {at} approved Orbweaver but the key did not work.");
                                 return new PaperclipConnectResult(PaperclipConnectOutcome.Connected,
                                     ch.BoardApiToken, now() + KeyLifetime);
                             case "cancelled":
@@ -164,7 +166,16 @@ namespace Orbweaver
             }
 
             static PaperclipConnectResult Fail(string m) => new(PaperclipConnectOutcome.Failed, Message: m);
-            static string Suffix(PaperclipResponse r) => r.Detail == null ? "" : " " + r.Detail;
+            // The reason in a sentence: our own detail (lower-cased at its start so it
+            // reads after a colon), else the HTTP status, else the failure kind.
+            static string Why(PaperclipResponse r)
+            {
+                var text = !string.IsNullOrWhiteSpace(r.Detail) ? r.Detail!.Trim().TrimEnd('.')
+                    : r.StatusCode > 0 ? "HTTP " + r.StatusCode : r.Kind.ToString();
+                return text.Length > 1 && char.IsUpper(text[0]) && char.IsLower(text[1])
+                    ? char.ToLowerInvariant(text[0]) + text[1..]
+                    : text;
+            }
         }
 
         internal static readonly TimeSpan CancelTimeout = TimeSpan.FromSeconds(3);

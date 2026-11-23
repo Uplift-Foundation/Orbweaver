@@ -131,17 +131,22 @@ public sealed class PaperclipHttpTests : IDisposable
     }
 
     [Fact]
-    public async Task ARefusedPort_SaysTheReasonOnce_WithTheAddress()
+    public async Task ARefusedPort_SaysTheReasonOnce_AndTheConnectSentenceNamesTheAddressOnce()
     {
         using var refusing = LoopbackHttp.RefusingPort();
         var url = $"http://127.0.0.1:{refusing.Port}";
         var res = await new PaperclipHttp(url, "k").GetAsync("/x", default);
         Assert.Equal(PaperclipHttpKind.Unreachable, res.Kind);
-        // The .NET chain nests one sentence three deep; it is printed once, and
-        // the address appears once.
-        Assert.Equal(1, CountOf(res.Detail!, $"127.0.0.1:{refusing.Port}"));
-        var sentence = res.Detail!.Split(" (")[0];
-        Assert.Equal(1, CountOf(res.Detail!, sentence));
+        // The .NET chain nests one sentence three deep; the reason is printed once and
+        // carries no address (the caller's sentence adds it).
+        Assert.Equal(0, CountOf(res.Detail!, $"127.0.0.1:{refusing.Port}"));
+        Assert.Equal(1, CountOf(res.Detail!, res.Detail!.Split(" (")[0]));
+
+        var connect = await PaperclipConnect.RunAsync(url, k => new PaperclipHttp(url, k), u => true,
+            () => DateTime.UtcNow, (d, c) => Task.CompletedTask, default);
+        Assert.Equal(PaperclipConnectOutcome.Failed, connect.Outcome);
+        Assert.StartsWith($"Can't reach Paperclip at 127.0.0.1:{refusing.Port}: ", connect.Message);
+        Assert.Equal(1, CountOf(connect.Message!, $"127.0.0.1:{refusing.Port}"));
     }
 
     private static int CountOf(string text, string needle)

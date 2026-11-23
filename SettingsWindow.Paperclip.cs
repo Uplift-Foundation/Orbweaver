@@ -1,4 +1,5 @@
 using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Threading;
@@ -14,6 +15,25 @@ namespace Orbweaver
     internal sealed partial class SettingsWindow
     {
         private TextBlock? _paperclipStatus;
+
+        // What the user typed in the Address box, kept across the rebuilds a connect
+        // causes so a failed attempt does not put the remembered address back over
+        // it. Null until they type; cleared when a connect succeeds.
+        private string? _paperclipTyped;
+
+        // Settings has other buttons called "Reconnect" (OpenClaw's), and automation
+        // and screen readers find a button by its name, so ours say what they act on.
+        private static Button PaperclipButton(string content, string automationName)
+        {
+            var b = new Button { Content = content, HorizontalAlignment = HorizontalAlignment.Left };
+            AutomationProperties.SetName(b, automationName);
+            return b;
+        }
+
+        internal const string ConnectName = "Connect to Paperclip";
+        internal const string ReconnectName = "Reconnect to Paperclip";
+        internal const string DisconnectName = "Disconnect from Paperclip";
+        internal const string CancelName = "Cancel connecting to Paperclip";
 
         internal string? PaperclipStatusText => _paperclipStatus?.Text;
 
@@ -66,7 +86,7 @@ namespace Orbweaver
             if (conn.Phase == PaperclipPhase.Approving)
             {
                 rows.Add(NoteRow(Note(conn.Message)));
-                var cancel = new Button { Content = "Cancel", HorizontalAlignment = HorizontalAlignment.Left };
+                var cancel = PaperclipButton("Cancel", CancelName);
                 cancel.Click += (_, _) => conn.CancelConnect();
                 rows.Add(Row("", cancel));
                 return rows.ToArray();
@@ -91,13 +111,13 @@ namespace Orbweaver
             {
                 // The primary action: it recovers the connection, where Disconnect
                 // throws the key away, so only this one wears the accent.
-                var reconnect = new Button { Content = "Reconnect", HorizontalAlignment = HorizontalAlignment.Left };
+                var reconnect = PaperclipButton("Reconnect", ReconnectName);
                 reconnect.Classes.Add("accent");
                 reconnect.Click += (_, _) => _ = OnPaperclipConnectAsync(OrbweaverSettings.PaperclipUrl);
                 rows.Add(Row("", reconnect));
             }
 
-            var disconnect = new Button { Content = "Disconnect", HorizontalAlignment = HorizontalAlignment.Left };
+            var disconnect = PaperclipButton("Disconnect", DisconnectName);
             disconnect.Click += (_, _) => _ = OnPaperclipDisconnectAsync();
             rows.Add(Row("", disconnect));
 
@@ -117,7 +137,10 @@ namespace Orbweaver
             // An example address, not localhost: on a machine with no local
             // Paperclip an empty box must not imply one. 192.0.2.x is the
             // documentation range, so it cannot be mistaken for a real host.
-            var box = new TextBox { Text = suggested, Watermark = AddressExample, Width = 240 };
+            // What they typed wins over the suggestion, even after a failed connect
+            // rebuilt this row; an empty box they cleared stays empty.
+            var box = new TextBox { Text = _paperclipTyped ?? suggested, Watermark = AddressExample, Width = 240 };
+            suggested = box.Text ?? "";
             var unencrypted = Note("The key is sent unencrypted on this network.");
             var unencryptedRow = NoteRow(unencrypted);
             unencrypted.IsVisible = unencryptedRow.IsVisible = SendsKeyUnencrypted(suggested);
@@ -126,8 +149,9 @@ namespace Orbweaver
             // The row is hidden with it, or an empty padded bar is left behind.
             box.PropertyChanged += (_, e) =>
             {
-                if (e.Property == TextBox.TextProperty)
-                    unencrypted.IsVisible = unencryptedRow.IsVisible = SendsKeyUnencrypted(box.Text);
+                if (e.Property != TextBox.TextProperty) return;
+                _paperclipTyped = box.Text ?? "";
+                unencrypted.IsVisible = unencryptedRow.IsVisible = SendsKeyUnencrypted(box.Text);
             };
             rows.Add(Row("Address", box));
             rows.Add(unencryptedRow);
@@ -135,7 +159,7 @@ namespace Orbweaver
             // Nothing typed and nothing discovered: there is nothing to connect to,
             // so Connect is off and a line says what to do, rather than guessing
             // 127.0.0.1 on a machine that has no Paperclip.
-            var connect = new Button { Content = "Connect", HorizontalAlignment = HorizontalAlignment.Left };
+            var connect = PaperclipButton("Connect", ConnectName);
             var prompt = Note("Enter your Paperclip address.");
             var promptRow = NoteRow(prompt);
             void Sync()
@@ -210,6 +234,9 @@ namespace Orbweaver
             var running = conn.ConnectAsync(address, CancellationToken.None);
             Rebuild();                       // shows "Approve in your browser" + Cancel at once
             await running;
+            // A connect that succeeded has nothing left to keep; a failed one keeps
+            // what the user typed.
+            if (OrbweaverSettings.PaperclipEnabled) _paperclipTyped = null;
             Rebuild();
         }
 

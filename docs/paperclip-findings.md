@@ -126,6 +126,37 @@ holds a secrets directory and a database), and writes nothing.
   debounce, so it is about one poll plus 150 ms. The first publish at launch
   counts as a change.
 
+## Real-machine results (QA, 2026-11-23)
+
+As reported by QA and the lead, on a real Windows PC against the LAN Paperclip (the Mac mini) and on the mini itself. Builds named where they matter.
+
+**Worked on a real machine**
+
+- **Connect from the Settings UI on Windows.** Connect opened the approval page in Edge on the connected host; about 3 s after approval the group read "Connected", with the key and company stored by the UI itself. The `/api` poll resolution, storing the key only after `me` answers, and the single-company auto-pick were all exercised there.
+- **The company drew correctly** (39c9bcd9d): the lead with the broke mark, arrows to three reports, two asleep, one amber.
+- **A refused key** dims all four orbs with their marks hidden, and Settings says "Reconnect to Paperclip". After a Reconnect from the UI the key file reads the user only, inheritance off (it had been group-readable before the owner-only change).
+- **Cancel.** A real cancel from Settings answered 200 and the challenge then read `cancelled` (mini, 3bad4033c). The poll's failure-only log wrote 0 lines in 110 s while the app was polling.
+- **An unapproved attempt** polled for 600 s and stored nothing; a local Cancel stored nothing.
+- **Latency.** Amber appears about 0.2 s after the poll that sees the approval with the scan nudge (1.0 to 1.5 s without it). A real approval was seen on screen 0.8 to 1.3 s after it was created before the nudge.
+
+**Measured, and not explained**
+
+- **Amber clears about 3.3 to 3.5 s after the poll that sees the approval gone** (3.7 s before the nudge), then fades over about 0.8 s. The nudge helped the way in and not the way out. No hold on leaving amber was found in `SessionManager`, `OrbWindow` or the fold rule. The fade is the orb's own colour and dim fade. The delay is upstream of the apply; candidates are a scan pass already in flight on that PC, or a need still present after the rejection. Settled by the slow-phase log and a local-orb control, neither read yet.
+- **Launch on Windows.** The four Paperclip orbs were on screen about 3.2 s after launch (first read at about +1 s). It is the local orbs that arrive late: one at about +6 s and the rest at about +15 s. The scan runs its disk read, subprocess probes and apply one after another, nothing draws until the slowest finishes, and a tick that lands mid-pass is skipped, so one slow source delays every orb. That is the existing scan, not Paperclip's; it is its own bug. The slow-phase diagnostic added to name the phase wrote to stderr, which the Windows build (a WinExe) does not have, so it wrote nothing at 98f659c84; it now writes to `diagnostics.log` beside the crash log.
+- **A run shorter than the poll** (a 0.18 s failure was measured) never shows as working.
+
+**Never exercised on a real machine**
+
+- A **successful agent run under the native runner** (no run has succeeded there; the native runs that happened failed).
+- An **"Ask first" tool action request**: its row has never been seen, so the parser's keys remain guesses.
+- A **blocked task waiting on another task**, so the other `blockerAttention` states.
+- The **one-orb fold on a real screen**: a hook-firing agent next to a local session, and a company of more than eight agents folding and unfolding.
+- **Anything on a phone**: the roster rows, the old-build behaviour, and release 2's prompts.
+- **`local_trusted` connect**, and **local discovery on Windows** (the Paperclip there is on another machine).
+- A connect where the approval URL host differs from the address the user connected to (the LAN rewrite is written and unit-tested, not seen).
+- The "Paperclip found" tray hint and the launch discovery on a machine with a Paperclip running locally.
+- Windows: the tray Reconnect row, if the tray controller cannot be built headless on the CI runner (its tests skip there with a reason), and the other Windows-only checks beyond the key file ACL, which was run on the real PC.
+
 ## Not measured, and who settles it
 
 | open | settled by |

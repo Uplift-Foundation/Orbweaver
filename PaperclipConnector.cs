@@ -133,7 +133,7 @@ namespace Orbweaver
                     Phase = PaperclipPhase.Idle; Message = "";
                     break;
                 case PaperclipConnectOutcome.Expired:
-                    Phase = PaperclipPhase.Failed; Message = "The approval timed out. Try again.";
+                    Phase = PaperclipPhase.Failed; Message = $"The approval at {(Uri.TryCreate(baseUrl, UriKind.Absolute, out var shown) ? shown.Authority : baseUrl)} timed out. Try again.";
                     break;
                 default:
                     Phase = PaperclipPhase.Failed; Message = result.Message ?? "Could not connect to Paperclip.";

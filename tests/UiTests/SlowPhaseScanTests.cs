@@ -84,4 +84,46 @@ public class SlowPhaseScanTests : IDisposable
         Assert.Contains(lines, l => l.StartsWith("slow scan phase: apply took"));
         Assert.All(lines, l => { Assert.DoesNotContain("someone", l); Assert.DoesNotContain("private", l); });
     }
+
+    [AvaloniaFact]
+    public async Task AWholePassThatIsSlow_IsNamed_EvenWhenNoSinglePhaseIs()
+    {
+        LocalRow();
+        var lines = new List<string>();
+        var manager = Manager(TimeSpan.Zero, lines);
+        // Each phase is quick (120 ms) but the pass reads the clock about ten times, so the
+        // total is over a second though no phase is: the time is spread, and the
+        // total line says so.
+        manager.ScanClock = () => _now += TimeSpan.FromMilliseconds(120);
+        await manager.ScheduleScan();
+
+        Assert.DoesNotContain(lines, l => l.Contains("read status files") || l.Contains("agent teams") || l.Contains("apply"));
+        var total = Assert.Single(lines, l => l.StartsWith("slow scan phase: scan pass (total) took"));
+        Assert.EndsWith("session)", total.Replace("sessions)", "session)"));
+        Assert.DoesNotContain("someone", total);
+    }
+
+    [AvaloniaFact]
+    public async Task AWorkerThreadThatIsSlowToStart_IsNamed_WithNoCount()
+    {
+        LocalRow();
+        var lines = new List<string>();
+        var manager = Manager(TimeSpan.Zero, lines);
+        // The first read is the pass starting, the second is queueing the work; the
+        // third, inside the worker, is two seconds later: the pool was starved.
+        var calls = 0;
+        manager.ScanClock = () => ++calls == 3 ? _now += TimeSpan.FromSeconds(2) : _now;
+        await manager.ScheduleScan();
+
+        Assert.Equal("slow scan phase: waiting for a worker thread took 2000 ms", Assert.Single(lines, l => l.Contains("worker thread")));
+    }
+
+    [AvaloniaFact]
+    public async Task AFastPass_WritesNoTotalAndNoWorkerLine()
+    {
+        LocalRow();
+        var lines = new List<string>();
+        await Manager(TimeSpan.FromMilliseconds(10), lines).ScheduleScan();
+        Assert.Empty(lines);
+    }
 }

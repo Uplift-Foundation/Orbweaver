@@ -2416,15 +2416,24 @@ namespace Orbweaver
         {
             if (_scanInFlight) return;
             _scanInFlight = true;
+            var passStarted = ScanClock();
+            var passCount = 0;
             try
             {
                 var now = DateTime.UtcNow;
+                var queued = ScanClock();
                 var (found, probes) = await Task.Run(() =>
                 {
+                    // Time spent waiting for a worker thread is outside every
+                    // phase below, and a starved pool at launch would hide there.
+                    SlowPhase.Report("waiting for a worker thread", -1, ScanClock() - queued,
+                        SlowPhaseThreshold, SlowPhaseSink);
                     SyncAutoColorMarker();
                     var read = ReadStatusFilesTimed(now);
                     return (read, GatherProbes(read));
                 }).ConfigureAwait(true);
+
+                passCount = found.Count;
 
                 // The apply runs on the UI thread, so a slow one is a frozen UI.
                 Timed("apply", found.Count, () => { ScanAndUpdateCore(found, probes, now); return 0; });
@@ -2432,6 +2441,12 @@ namespace Orbweaver
             finally
             {
                 _scanInFlight = false;
+
+                // The whole pass, from the tick to the end of the apply: when it
+                // is slow and no single phase above is, the time is spread over
+                // many short ones or sits between them, and this says so.
+                SlowPhase.Report("scan pass (total)", passCount, ScanClock() - passStarted,
+                    SlowPhaseThreshold, SlowPhaseSink);
                 if (_nudge.OnScanFinished()) RestartDebounce();
             }
         }

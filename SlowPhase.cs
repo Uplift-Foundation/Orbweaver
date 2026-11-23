@@ -16,9 +16,10 @@ namespace Orbweaver
     {
         internal static readonly TimeSpan DefaultThreshold = TimeSpan.FromSeconds(1);
 
-        // Where a line goes by default: stderr, which under launchd is the
-        // keep-alive log. Only reached for a slow phase.
-        internal static readonly Action<string> DefaultSink = line => Console.Error.WriteLine("orbweaver: " + line);
+        // Where a line goes by default: diagnostics.log beside the crash log, on
+        // every platform. Not stderr: the Windows build has no console, so a line
+        // written there was lost. Only reached for a slow phase.
+        internal static readonly Action<string> DefaultSink = DiagnosticsLog.Write;
 
         internal static Func<TimeSpan> StopwatchClock()
         {
@@ -30,7 +31,15 @@ namespace Orbweaver
         internal static string? Line(string phase, TimeSpan elapsed, int count, TimeSpan threshold) =>
             elapsed < threshold
                 ? null
-                : $"slow scan phase: {phase} took {(long)elapsed.TotalMilliseconds} ms ({count} {(count == 1 ? "session" : "sessions")})";
+                : $"slow scan phase: {phase} took {(long)elapsed.TotalMilliseconds} ms"
+                  + (count < 0 ? "" : $" ({count} {(count == 1 ? "session" : "sessions")})");
+
+        // For a duration the caller measured itself.
+        internal static void Report(string phase, int count, TimeSpan elapsed, TimeSpan threshold, Action<string> sink)
+        {
+            var line = Line(phase, elapsed, count, threshold);
+            if (line != null) sink(line);
+        }
 
         internal static T Measure<T>(string phase, Func<T, int> countOf, Func<T> work,
             Func<TimeSpan> now, TimeSpan threshold, Action<string> sink)
