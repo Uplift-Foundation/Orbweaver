@@ -23,10 +23,14 @@ public class PaperclipTrayHintTests : IDisposable
         OrbweaverSettings.PaperclipHintShown = _shown;
     }
 
+    // Reported as skipped, with this reason, on a runner that cannot build the
+    // controller, so a leg where nothing was checked does not show as passed.
+    private const string NoController = "TrayIcon could not be constructed headless on this runner";
+
     private static TrayController? NewController()
     {
         try { return new TrayController(); }
-        catch { return null; }   // a TrayIcon may not construct headless, as TrayMenuTests
+        catch { return null; }   // a TrayIcon may not construct headless, as TrayMenuTests; callers skip
     }
 
     private static IEnumerable<string?> Headers(TrayController tray) =>
@@ -39,7 +43,7 @@ public class PaperclipTrayHintTests : IDisposable
     public void TheRowIsInTheMenu_WhenAPaperclipWasFoundAndNotYetUsed()
     {
         var tray = NewController();
-        if (tray is null) return;
+        if (tray is null) { Assert.Skip(NoController); return; }
         OrbweaverSettings.PaperclipEnabled = false;
         OrbweaverSettings.PaperclipHintShown = false;
         PaperclipHint.SetFoundForTests([Found]);
@@ -53,7 +57,7 @@ public class PaperclipTrayHintTests : IDisposable
     public void TheRowIsGone_OnceUsed_OnceConnected_OrWhenNothingWasFound()
     {
         var tray = NewController();
-        if (tray is null) return;
+        if (tray is null) { Assert.Skip(NoController); return; }
         OrbweaverSettings.PaperclipEnabled = false;
         OrbweaverSettings.PaperclipHintShown = false;
 
@@ -79,7 +83,7 @@ public class PaperclipTrayHintTests : IDisposable
     public void ReconnectIsInTheMenu_OnlyWhileTheKeyIsRefused_AndGoneOnceConnected()
     {
         var tray = NewController();
-        if (tray is null) return;
+        if (tray is null) { Assert.Skip(NoController); return; }
         OrbweaverSettings.PaperclipEnabled = true;
 
         PaperclipSessions.SetLinkForTests(PaperclipLink.Connected, "Connected");
