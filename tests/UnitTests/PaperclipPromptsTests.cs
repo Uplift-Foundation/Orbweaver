@@ -29,7 +29,12 @@ public class PaperclipPromptsTests
         bool IPromptSender.Prompt(string r, string s, string p, string? push) { Prompts.Add((r, s, p, push)); return true; }
         public readonly List<string> QuietPrompts = new();
         bool IPromptSender.PromptQuiet(string r, string s, string p) { QuietPrompts.Add(r); Prompts.Add((r, s, p, null)); return true; }
-        void IPromptSender.Resolved(string r, string s, string by, string? push) => Resolved.Add((r, s, by, push));
+        public bool ThrowOnResolved;
+        void IPromptSender.Resolved(string r, string s, string by, string? push)
+        {
+            if (ThrowOnResolved) throw new InvalidOperationException("boom secret-detail");
+            Resolved.Add((r, s, by, push));
+        }
         void IPromptSender.ResolvedQuiet(string r, string s, string by) { Quiet.Add(r); Resolved.Add((r, s, by, null)); }
         void IPromptSender.Refusal(string ph, string r, string s, string code) => Refusals.Add((ph, r, code));
         bool IPromptSender.PromptTo(string ph, string r, string s, string p) { PromptsTo.Add((ph, r)); return true; }
@@ -340,6 +345,38 @@ public class PaperclipPromptsTests
         Assert.Contains(_log, l => l.Contains("paperclip-answer-failed") || l.Contains("paperclip refuse"));
         await Answer(AnswerTo());
         Assert.Single(_act.Calls);
+    }
+
+    [Fact]
+    public async Task A_failure_after_the_action_is_logged_by_exception_type_only_and_does_not_stick_the_gate()
+    {
+        await Poll(Agent(needs: Approval()));
+        _sent.ThrowOnResolved = true;                                   // the send after a Done: outside the action's own catch
+        await Answer(AnswerTo());
+        var line = Assert.Single(_log, l => l.Contains("paperclip-answer-failed"));
+        Assert.EndsWith("InvalidOperationException", line);
+        Assert.DoesNotContain("secret-detail", string.Join("\n", _log));   // the type, never the message
+        Assert.Single(_act.Calls);
+
+        _sent.ThrowOnResolved = false;                                  // the gate was released: the next poll still runs
+        await Poll(Agent());
+        Assert.Equal(0, _p.PendingCount);
+    }
+
+    [Fact]
+    public async Task While_an_answer_is_in_flight_the_prompt_no_longer_counts_as_pending_for_its_row()
+    {
+        await Poll(Agent(needs: Approval()));
+        Assert.True(_p.HasPending(Sid));
+        _act.Hold = new TaskCompletionSource();
+        var answering = Answer(AnswerTo());
+        for (var i = 0; i < 500 && _act.Calls.Count == 0; i++) await Task.Yield();     // until the action has been called
+        Assert.Single(_act.Calls);
+        Assert.False(_p.HasPending(Sid));                                // marked answered before the call
+        Assert.Null(_p.ActivityFor(Sid));
+        _act.Hold.SetResult();
+        await answering;
+        Assert.Equal("phone:" + PhoneId, Assert.Single(_sent.Resolved).By);
     }
 
     [Fact]
