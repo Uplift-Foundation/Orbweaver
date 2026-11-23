@@ -124,6 +124,7 @@ namespace Orbweaver
             "lastUpdateCheckUtc", "lastRunVersion",
             "newChatRecentFolders", "newChatLastCli", "newChatLastProfile",
             "newChatLastProfiles",
+            "newChatResumeModes",
             "phoneLaunchProfiles",
             // CB-339: what a paired phone's folder picker may browse. See PhoneBrowseRoots.
             "phoneBrowseRoots", "phoneBrowseHome",
@@ -920,6 +921,10 @@ namespace Orbweaver
             // nor a downgrade loses a saved pick.
             public Dictionary<string, string> NewChatLastProfiles { get; init; } = new(StringComparer.Ordinal);
 
+            // CB-361: the CLIs whose New chat dialog was last left in Resume
+            // mode. Value is always "resume"; absence means New.
+            public Dictionary<string, string> NewChatResumeModes { get; init; } = new(StringComparer.Ordinal);
+
             // CB-316: the account a session started from a phone runs under when the phone names
             // none, per CLI ("ClaudeCode": ".claude-uplift"). A designated default, not a
             // last-used: it stays what the user said until they say otherwise. "default" names
@@ -1646,6 +1651,24 @@ namespace Orbweaver
             {
                 return _model.NewChatLastProfiles.TryGetValue(cli.ToString(), out var dir) ? dir : null;
             }
+        }
+
+        // CB-361: whether New chat was last left in Resume mode for this CLI.
+        internal static bool NewChatResumeModeFor(NewChatCli cli)
+        {
+            Load();
+            lock (Gate) return _model.NewChatResumeModes.ContainsKey(cli.ToString());
+        }
+
+        internal static void SetNewChatResumeMode(NewChatCli cli, bool resume)
+        {
+            Load();
+            lock (Gate)
+            {
+                if (resume) _model.NewChatResumeModes[cli.ToString()] = "resume";
+                else _model.NewChatResumeModes.Remove(cli.ToString());
+            }
+            Save();
         }
 
         internal static string? PhoneLaunchProfileFor(NewChatCli cli)
@@ -2839,6 +2862,16 @@ namespace Orbweaver
                         }
                     }
 
+                    if (root["newChatResumeModes"] is JsonObject resumeModes)
+                    {
+                        foreach (var (cliName, node) in resumeModes)
+                        {
+                            if (Enum.TryParse<NewChatCli>(cliName, out var parsedCli)
+                                && parsedCli.ToString() == cliName && Text(node) is not null)
+                                model.NewChatResumeModes[cliName] = "resume";
+                        }
+                    }
+
                     if (root["phoneBrowseRoots"] is JsonArray browseRoots)
                     {
                         model.PhoneBrowseRoots = [];
@@ -3575,6 +3608,7 @@ namespace Orbweaver
                         ["newChatLastProfile"] = _model.NewChatLastProfiles.TryGetValue(
                             nameof(NewChatCli.ClaudeCode), out var claudeLastProfile) ? claudeLastProfile : null,
                         ["newChatLastProfiles"] = NewChatLastProfilesNode(_model.NewChatLastProfiles),
+                        ["newChatResumeModes"] = NewChatLastProfilesNode(_model.NewChatResumeModes),
                         ["phoneLaunchProfiles"] = NewChatLastProfilesNode(_model.PhoneLaunchProfiles),
                         ["phoneBrowseRoots"] = phoneBrowseRoots,
                         ["phoneBrowseHome"] = _model.PhoneBrowseHome,
