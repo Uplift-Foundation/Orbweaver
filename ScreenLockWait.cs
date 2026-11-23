@@ -72,6 +72,7 @@ namespace Orbweaver
     //                                  pair, which says so.
     //   OpenClawSessions.Restart()   — a Task.Run supervisor loop.
     //   ClaudeCloudSessions.Restart()— a Task.Run poll loop.
+    //   PaperclipSessions.Restart()  — a Task.Run poll loop (CB-421).
     //
     // All three touch Dispatcher.UIThread.Post only to push results at the UI,
     // and those posts queue harmlessly until there is a dispatcher to drain

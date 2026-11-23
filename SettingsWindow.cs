@@ -26,7 +26,7 @@ namespace Orbweaver
     // Changes apply immediately. There is no OK/Cancel: this is a preferences
     // window for a menu-bar app, and a settings file that only commits on a
     // button is one more state to get wrong.
-    internal sealed class SettingsWindow : Window
+    internal sealed partial class SettingsWindow : Window
     {
         private static SettingsWindow? _open;
 
@@ -81,6 +81,7 @@ namespace Orbweaver
             _open.Show();
             _open.Activate();
             _open.StartStatusTicker();
+            _ = _open.DiscoverPaperclipAsync();
         }
 
         private SettingsWindow()
@@ -742,6 +743,10 @@ namespace Orbweaver
             // machine it is, which is why they sit together rather than one of
             // them living beside the gateway.
             root.Children.Add(Group("claude-cloud", "Claude Code in the cloud", Card(ClaudeCloudRows())));
+
+            // After the gateway and the cloud: a company of agents in a Paperclip
+            // you run, drawn as orbs (CB-421). Release 1 is view-only.
+            root.Children.Add(Group("paperclip", "Paperclip agents", Card(PaperclipRows())));
 
             // Beside the cloud section and not inside it (CB-306's
             // product-readiness round): it is on by default and governs
@@ -2235,6 +2240,8 @@ namespace Orbweaver
             // CB-276: independent of which sections are expanded, because a
             // collapsed group still has to be right when it is opened.
             if (HiddenOrbsKey() != _hiddenOrbsKey) Rebuild();
+
+            TickPaperclip();
 
             if (_openClawStatus is not null)
             {

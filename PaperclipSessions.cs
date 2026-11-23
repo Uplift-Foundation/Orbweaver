@@ -33,7 +33,8 @@ namespace Orbweaver
         int? BudgetPercent,                 // null = draw no ring
         DateTime LastActivity, string Url,
         bool Sleeping,
-        int? RunPid = null, string? RunSessionId = null);
+        int? RunPid = null, string? RunSessionId = null,
+        long BudgetCapCents = 0, long SpentCents = 0);   // the hover's "$0.26 of $50.00"
 
     // The poll loop (plan 2.5), shaped after ClaudeCloudSessions: a volatile
     // snapshot replaced whole, a pure StepAsync that takes its transport and

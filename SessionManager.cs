@@ -978,6 +978,24 @@ namespace Orbweaver
         // what "how long since this session last said anything" means throughout.
         internal sealed record ScanEntry(string SessionId, SessionStatus Status, DateTime Written);
 
+        // Remembers which Paperclip agents were awake lately, so a short run does
+        // not make the folded picture jump (PaperclipApi.UnfoldHold).
+        private readonly PaperclipScan _paperclipScan = new();
+
+        // Applied only while Paperclip is enabled and its snapshot is non-empty;
+        // with it off nothing changes from before (plan 2.9).
+        internal static bool PaperclipFoldAway(SessionStatus status)
+        {
+            if (!OrbweaverSettings.PaperclipEnabled) return false;
+            var agents = PaperclipSessions.Snapshot();
+            if (agents.Count == 0) return false;
+            if (status.Source != SessionSource.ClaudeCode) return false;
+            return PaperclipApi.IsRunProcess(status.Entrypoint, status.Cwd,
+                status.SessionPid > 0 ? status.SessionPid : null, status.SessionId,
+                agents.Where(a => a.RunPid != null).Select(a => a.RunPid!.Value).ToHashSet(),
+                agents.Where(a => !string.IsNullOrEmpty(a.RunSessionId)).Select(a => a.RunSessionId!).ToHashSet());
+        }
+
         // Whether the user wants this kind of session tracked at all.
         //
         // OpenClaw's switch predates this and means something stronger — while
@@ -1521,6 +1539,12 @@ namespace Orbweaver
             // `updated_at` back inside the window.
             if (staleAfter is not null
                 && status.Source != SessionSource.ClaudeCloud
+
+                // CB-421: an agent between runs is the normal state of a
+                // Paperclip company, not a husk. Its orb lasts until the agent
+                // is terminated or gone from a successful listing, switching
+                // the feature off, or disconnecting.
+                && status.Source != SessionSource.Paperclip
                 && status.State != "waiting"
                 && !(status.Source == SessionSource.OpenClaw && status.State == "generating")
 
@@ -2820,6 +2844,14 @@ namespace Orbweaver
                     session.LastActivity));
             }
 
+            // Paperclip agents (CB-421): one orb per agent, keyed "paperclip:<id>",
+            // the lead pointing at its manager. Empty and free unless
+            // paperclipEnabled is on - PaperclipSessions.Snapshot holds that gate.
+            // What the orb says is PaperclipScan's, so this is one call.
+            found.AddRange(_paperclipScan.Entries(
+                PaperclipSessions.Snapshot(), PaperclipSessions.Link, PaperclipSessions.StatusText,
+                OrbweaverSettings.PaperclipSleeping, DateTime.UtcNow));
+
             // Before InheritTerminalInfo, so this describes the files as the
             // hooks wrote them. It happens to be immune to the donation — pid and
             // source are not among the fields moved — but this ordering is the one
@@ -3100,6 +3132,14 @@ namespace Orbweaver
                 // when the connected gateway already draws it. See
                 // OpenClawCliSession.
                 if (!OpenClawCliSession.ShowHere(status))
+                {
+                    continue;   // removed in the pass below
+                }
+
+                // CB-421: a headless session Paperclip started to run one of its
+                // agents is the same work as that agent's orb, so the local row
+                // is folded away while Paperclip is connected and drawing.
+                if (PaperclipFoldAway(status))
                 {
                     continue;   // removed in the pass below
                 }
@@ -3642,6 +3682,10 @@ namespace Orbweaver
 
                 return OpenClawSessions.RoomChatFor(sessionId, status.Title, members);
             }
+
+            // A Paperclip agent has no conversation to open: talking to one is
+            // commenting on a task, which is Paperclip's page, not a chat panel.
+            if (status.Source == SessionSource.Paperclip) return null;
 
             if (status.Source == SessionSource.OpenClaw)
                 return OpenClawSessions.ChatFor(sessionId, status.Title);

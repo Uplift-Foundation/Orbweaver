@@ -395,7 +395,7 @@ namespace Orbweaver
                     last == null ? null : ResultWording(last.Status),
                     RingPercent(a.BudgetCents, a.SpentCents), lastActivity,
                     AgentUrl(c.BaseUrl, c.IssuePrefix, a.Id), sleeping,
-                    last?.ProcessPid, last?.SessionIdAfter));
+                    last?.ProcessPid, last?.SessionIdAfter, a.BudgetCents, a.SpentCents));
             }
             return result;
         }

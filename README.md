@@ -2052,6 +2052,20 @@ Two things a cloud orb draws that a local one does not. It wears a ring showing 
 
 Off means off: with the switch down the app asks the OS for no credential and opens no connection, and nothing can be sent. The same switch turns on reading, sending, archiving and deleting; there is no separate setting for any of them.
 
+## Paperclip agents (off by default)
+
+If you run a [Paperclip](https://github.com/paperclipai/paperclip) company, Orbweaver can draw its agents as orbs next to your terminal sessions: **Settings, Paperclip agents**. Each agent is one orb, the lead at the centre and its reports around it, with the same arrows a team gets. An orb is dimmed while its agent is asleep, working while a run is going, **amber with a "?" when something needs you** (a pending approval, an "Ask first" tool action, or a task Paperclip says needs attention), and carries a mark when the agent is broke (error or a failed last run), paused, or over its budget. A ring shows spend against the monthly cap once there is spend. Hover shows the task, the tool it is calling, how long it has been running, the last result and the budget. A click opens the agent in Paperclip; an amber orb opens the page that answers it.
+
+**Connecting is one approval and nothing is pasted.** Orbweaver looks for a Paperclip on this machine (its instance folder and `/api/health`) and offers **Paperclip found, show your company?** in Settings and once in the tray menu. **Connect** opens Paperclip's own "approve this app" page in your browser, the same approval its CLI uses; click Approve and Orbweaver receives its key. A Paperclip on another machine needs its address typed once and then the same approval; over plain `http` to a non-local address the key is sent unencrypted, and Settings says so. A Paperclip running without logins connects with no approval at all.
+
+- **The key lasts 30 days.** Paperclip issues it with that lifetime. When it stops working the orbs dim and Settings says **Reconnect to Paperclip**; one click and one approval restores them. Disconnecting revokes the key in Paperclip and deletes the local copy; if the revoke fails, the local copy is deleted anyway and Settings says the key may still be listed in Paperclip.
+- **Nothing is installed in your Paperclip org**: no hook, skill, MCP server or agent setting. Orbweaver reads Paperclip's API, which works in every agent mode. Where an agent's run also shows up as a local session, the local row is folded away so there is one orb per agent.
+- **Release 1 is view-only.** The key is full board power (Paperclip has no read-only key), so Orbweaver makes `GET`s and the two connect calls and nothing else: it does not approve, decline, wake, pause or resume. Answering in place comes later.
+- **Many agents.** Up to eight always show. Beyond that, sleeping agents with no reports fold into their lead as a "+N" count and unfold while working or needing you; **When agents are asleep** chooses fold, always show, or hide.
+- The board key is stored in `paperclip-credentials.json` beside the settings file (owner-only on macOS), never in `settings.json`.
+
+Two things to know that are not Orbweaver's to fix, measured on a Mac mini: on a Homebrew Mac the Paperclip launchd service's `PATH` excludes Homebrew, so agents that call `node` or `claude` can fail to start; and Paperclip's Claude sign-in could not parse Claude Code 2.1.330's output (2.1.286 worked). What was measured and what is assumed is in [`docs/paperclip-findings.md`](docs/paperclip-findings.md); `tools/paperclip-probe` is a read-only way to see what Orbweaver sees.
+
 ## What a paired phone can browse (CB-339)
 
 A paired phone's **New session** screen has a **Browse…** button that lists the folders on this computer, so the project folder does not have to be typed from memory. It sees folder names and three small badges (a git repository, a `CLAUDE.md`, a persona) and nothing else: never a file, never a file's contents.

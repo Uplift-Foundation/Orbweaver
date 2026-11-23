@@ -165,6 +165,13 @@ namespace Orbweaver
                     // is on.
                     ClaudeCloudSessions.Restart();
 
+                    // Paperclip (CB-421): the same kind of poll loop, and gated by
+                    // paperclipEnabled the same way. The config source is wired here so
+                    // the loop reads the real settings and key, and nothing earlier does.
+                    PaperclipSessions.ConfigSource = PaperclipConfigSource.Read;
+                    PaperclipSessions.Restart();
+                    PaperclipHint.StartAtLaunch();
+
                     // The phone relay too, for the same reason again: a
                     // WebSocket on pool threads. Behind the wait, a Mac that
                     // restarted locked (1.0.7's auto-update on the mini) was

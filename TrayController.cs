@@ -147,6 +147,7 @@ namespace Orbweaver
                             + $"|usage={SessionManager.Instance?.UsageOrbsVisible}"
                             + $"|muted={AudioMute.IsMuted}"
                             + $"|update={UpdateMenu.PendingVersion() ?? "-"}"
+                            + $"|paperclip={PaperclipHint.ShouldShow}"
                             + $"|{ClaudeDesktopManager.Digest()}";
             if (signature == _lastSignature) return;
 
@@ -334,6 +335,15 @@ namespace Orbweaver
             var updateItem = new NativeMenuItem(UpdateMenu.Label(UpdateMenu.PendingVersion()));
             updateItem.Click += (_, _) => UpdateMenu.Activate();
             menu.Add(updateItem);
+
+            // CB-421: a Paperclip was found on this machine and the user has not
+            // yet said yes or no. One row, until it is used.
+            if (PaperclipHint.ShouldShow)
+            {
+                var paperclipItem = new NativeMenuItem(PaperclipHint.Label);
+                paperclipItem.Click += (_, _) => { PaperclipHint.MarkUsed(); OpenSettings(); };
+                menu.Add(paperclipItem);
+            }
 
             var settingsItem = new NativeMenuItem("Settings…");
             settingsItem.Click += (_, _) => OpenSettings();

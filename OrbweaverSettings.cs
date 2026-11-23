@@ -90,6 +90,7 @@ namespace Orbweaver
             "openclawEnabled", "openclawHost", "openclawPort", "openclawFingerprint",
             "openclawReplyEnabled", "openclawApproveEnabled", "openclawActiveWithinMinutes",
             "claudeCloudEnabled", "bridgeCommandsEnabled",
+            "paperclipEnabled", "paperclipUrl", "paperclipCompanyId", "paperclipSleeping", "paperclipHintShown",
             // Still written, though nothing reads it into the model any more —
             // see OpenClawHeartbeatMode. Listed here so it does not also
             // round-trip through _unknownKeys, which Save would reject as a
@@ -337,6 +338,16 @@ namespace Orbweaver
             // asks the OS for the Claude Code login, and nobody should meet a
             // Keychain prompt they did not ask for.
             public bool ClaudeCloudEnabled { get; set; }
+
+            // Paperclip (CB-421). Off by default for the reason the two above are:
+            // nothing is contacted and nothing is stored until the user connects.
+            // The board key is deliberately not here: it is full board power and
+            // lives in PaperclipCredentials, 0600, outside this file.
+            public bool PaperclipEnabled { get; set; }
+            public string? PaperclipUrl { get; set; }
+            public string? PaperclipCompanyId { get; set; }
+            public string? PaperclipSleeping { get; set; }
+            public bool PaperclipHintShown { get; set; }
 
             // On by default (CB-306's product-readiness round): slash control
             // commands — /color, /rename, /model, /permissions, /think — reach a
@@ -1347,6 +1358,47 @@ namespace Orbweaver
         {
             get { Load(); lock (Gate) return _model.ClaudeCloudEnabled; }
             set { Load(); lock (Gate) _model.ClaudeCloudEnabled = value; Save(); }
+        }
+
+        public static bool PaperclipEnabled
+        {
+            get { Load(); lock (Gate) return _model.PaperclipEnabled; }
+            set { Load(); lock (Gate) _model.PaperclipEnabled = value; Save(); }
+        }
+
+        // The base URL of the Paperclip the user connected, "" until then.
+        public static string PaperclipUrl
+        {
+            get { Load(); lock (Gate) return _model.PaperclipUrl ?? ""; }
+            set { Load(); lock (Gate) _model.PaperclipUrl = value; Save(); }
+        }
+
+        public static string PaperclipCompanyId
+        {
+            get { Load(); lock (Gate) return _model.PaperclipCompanyId ?? ""; }
+            set { Load(); lock (Gate) _model.PaperclipCompanyId = value; Save(); }
+        }
+
+        // What to do with sleeping agents once a company outgrows the screen:
+        // "fold" (the default), "show" or "hide". Anything else reads as fold.
+        public static string PaperclipSleeping
+        {
+            get
+            {
+                Load();
+                lock (Gate) return NormalisePaperclipSleeping(_model.PaperclipSleeping);
+            }
+            set { Load(); lock (Gate) _model.PaperclipSleeping = NormalisePaperclipSleeping(value); Save(); }
+        }
+
+        internal static string NormalisePaperclipSleeping(string? value) =>
+            value is "show" or "hide" ? value : "fold";
+
+        // Whether the one-time "Paperclip found" hint has been used or dismissed.
+        public static bool PaperclipHintShown
+        {
+            get { Load(); lock (Gate) return _model.PaperclipHintShown; }
+            set { Load(); lock (Gate) _model.PaperclipHintShown = value; Save(); }
         }
 
         // Read on every send rather than cached, so the toggle takes effect on
@@ -2656,6 +2708,11 @@ namespace Orbweaver
                         VoiceInputEnabled = root["voiceInputEnabled"]?.GetValue<bool>() ?? false,
                         OpenClawEnabled = root["openclawEnabled"]?.GetValue<bool>() ?? false,
                         ClaudeCloudEnabled = root["claudeCloudEnabled"]?.GetValue<bool>() ?? false,
+                        PaperclipEnabled = root["paperclipEnabled"]?.GetValue<bool>() ?? false,
+                        PaperclipUrl = Text(root["paperclipUrl"]),
+                        PaperclipCompanyId = Text(root["paperclipCompanyId"]),
+                        PaperclipSleeping = Text(root["paperclipSleeping"]),
+                        PaperclipHintShown = root["paperclipHintShown"]?.GetValue<bool>() ?? false,
                         BridgeCommandsEnabled = root["bridgeCommandsEnabled"]?.GetValue<bool>() ?? true,
                         OpenClawHost = Text(root["openclawHost"]),
                         OpenClawPort = root["openclawPort"]?.GetValue<int>() ?? DefaultOpenClawPort,
@@ -3414,6 +3471,11 @@ namespace Orbweaver
                         ["voiceInputEnabled"] = _model.VoiceInputEnabled,
                         ["openclawEnabled"] = _model.OpenClawEnabled,
                         ["claudeCloudEnabled"] = _model.ClaudeCloudEnabled,
+                        ["paperclipEnabled"] = _model.PaperclipEnabled,
+                        ["paperclipUrl"] = _model.PaperclipUrl,
+                        ["paperclipCompanyId"] = _model.PaperclipCompanyId,
+                        ["paperclipSleeping"] = _model.PaperclipSleeping,
+                        ["paperclipHintShown"] = _model.PaperclipHintShown,
                         ["bridgeCommandsEnabled"] = _model.BridgeCommandsEnabled,
                         ["openclawHost"] = _model.OpenClawHost,
                         ["openclawPort"] = _model.OpenClawPort,
