@@ -757,14 +757,27 @@ public class NewChatWindowResumeTests : IDisposable
         Assert.Equal(0, launches);
     }
 
-    // The real hand-off: a worker reads, the dispatcher delivers.
+    // The real hand-off: a worker reads, the dispatcher delivers. Each read is
+    // held on an event, so "Loading…" and "…" are asserted while they are
+    // genuinely still on screen rather than raced against the worker.
     [AvaloniaFact]
     public void TheListAndCountsArriveThroughTheRealWorkerHandOff()
     {
         FreshSettings();
+        using var releaseList = new ManualResetEventSlim();
+        using var releaseCount = new ManualResetEventSlim();
         var reads = 0;
-        PastSessionIndex.LoadForTests = (_, _, _, _) => new[] { Session("a", "One") with { MessageCount = null } };
-        PastSessions.CountForTests = (_, _) => { Interlocked.Increment(ref reads); return 9; };
+        PastSessionIndex.LoadForTests = (_, _, _, _) =>
+        {
+            releaseList.Wait(TimeSpan.FromSeconds(30));
+            return new[] { Session("a", "One") with { MessageCount = null } };
+        };
+        PastSessions.CountForTests = (_, _) =>
+        {
+            Interlocked.Increment(ref reads);
+            releaseCount.Wait(TimeSpan.FromSeconds(30));
+            return 9;
+        };
         try
         {
             NewChatWindow.ResumeLoadInlineForTests = false;
@@ -772,22 +785,24 @@ public class NewChatWindowResumeTests : IDisposable
             window.LocalResumeRadio.IsChecked = true;
             Flush();
             Assert.Equal("Loading…", window.ResumeEmpty.Text);
+
+            releaseList.Set();
             WaitFor(() => window.ResumeList.ItemsSource is IEnumerable<PastSessionRow> r && r.Any());
 
             var row = Shown(window)[0];
-            var first = RowTexts(window, row);
+            Assert.Contains("…", string.Join(" ", RowTexts(window, row)));
             RowTexts(window, row); // realised again before the count lands: one read, not two
-            Assert.Contains("…", string.Join(" ", first));
 
-            var texts = new List<string>();
-            WaitFor(() =>
-            {
-                texts = RowTexts(window, row).ToList();
-                return texts.Any(t => t.EndsWith("· 9 messages"));
-            });
+            releaseCount.Set();
+            WaitFor(() => RowTexts(window, row).Any(t => t.EndsWith("· 9 messages")));
             Assert.Equal(1, reads);
         }
-        finally { PastSessions.CountForTests = null; }
+        finally
+        {
+            releaseList.Set();
+            releaseCount.Set();
+            PastSessions.CountForTests = null;
+        }
     }
 
     [AvaloniaFact]
