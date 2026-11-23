@@ -108,7 +108,7 @@ namespace Orbweaver
                 var stderr = process.StandardError.ReadToEndAsync();
                 if (!process.WaitForExit(10_000))
                 {
-                    try { process.Kill(entireProcessTree: true); } catch { }
+                    try { ProcessTreeKill.Kill(process); } catch { }
                     return null;
                 }
                 return stdout.Result + "\n" + stderr.Result;
