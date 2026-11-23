@@ -7,7 +7,7 @@ namespace Orbweaver
     // by docs/plans/paperclip-orbs-plan.md section 2.1 so the packages that
     // build on them (relay, orb drawing, wiring) compile in parallel; the
     // bodies are package A's.
-    internal enum PaperclipMark { None, Broke, Paused, OverBudget }
+    public enum PaperclipMark { None, Broke, Paused, OverBudget }
 
     internal enum PaperclipLink { Off, Connecting, Connected, NeedsReconnect, Unreachable }
 
