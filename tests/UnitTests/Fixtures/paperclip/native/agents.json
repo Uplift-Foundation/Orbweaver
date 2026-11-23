@@ -1,107 +1,10 @@
 [
   {
-    "id": "00000000-0000-4000-8000-000000000004",
-    "companyId": "00000000-0000-4000-8000-000000000002",
-    "name": "Juno Abernathy",
-    "role": "engineer",
-    "title": "Engineer",
-    "icon": null,
-    "appearance": {
-      "schemaVersion": 1,
-      "characterVersion": "cap-v1",
-      "paletteId": "arctic-blue"
-    },
-    "status": "idle",
-    "lifecycleState": "ready",
-    "lifecycleHolds": [],
-    "lifecycleVersion": 4,
-    "lifecycleError": null,
-    "reportsTo": "00000000-0000-4000-8000-000000000003",
-    "capabilities": null,
-    "adapterType": "paperclip_runner",
-    "adapterConfig": {
-      "model": "claude-sonnet-5-5",
-      "provider": "acpx",
-      "acpxAgent": "claude",
-      "timeoutSec": 1800,
-      "acpxPermissionMode": "approve-reads",
-      "paperclipSkillSync": {
-        "desiredSkills": []
-      },
-      "codexPermissionMode": "never",
-      "instructionsFilePath": "/Users/someone/.paperclip/instances/default/companies/00000000-0000-4000-8000-000000000002/agents/00000000-0000-4000-8000-000000000004/instructions/AGENTS.md",
-      "instructionsRootPath": "/Users/someone/.paperclip/instances/default/companies/00000000-0000-4000-8000-000000000002/agents/00000000-0000-4000-8000-000000000004/instructions",
-      "instructionsEntryFile": "AGENTS.md",
-      "instructionsBundleMode": "managed",
-      "env": {
-        "CLAUDE_CONFIG_DIR": {
-          "type": "plain",
-          "value": "***REDACTED***"
-        }
-      }
-    },
-    "runtimeConfig": {
-      "heartbeat": {
-        "enabled": false,
-        "wakeOnDemand": true,
-        "wakeOnAssignment": true,
-        "maxConcurrentRuns": 20
-      }
-    },
-    "defaultEnvironmentId": null,
-    "budgetMonthlyCents": 5000,
-    "spendMonthUtc": null,
-    "spentMonthlyCents": 0,
-    "pauseReason": null,
-    "pausedAt": null,
-    "errorReason": null,
-    "permissions": {
-      "canCreateAgents": true,
-      "canCreateSkills": true
-    },
-    "lastHeartbeatAt": "2026-11-23T03:01:19.419Z",
-    "metadata": null,
-    "createdByUserId": null,
-    "createdAt": "2026-11-23T02:38:40.525Z",
-    "updatedAt": "2026-11-23T03:39:16.648Z",
-    "urlKey": "juno-abernathy",
-    "avatarUrl": "/api/agent-avatars/cap-v1/arctic-blue/rest.png?size=512&scale=1",
-    "orgChainHealth": {
-      "status": "healthy",
-      "reason": "healthy",
-      "fullChain": [
-        {
-          "id": "00000000-0000-4000-8000-000000000004",
-          "companyId": "00000000-0000-4000-8000-000000000002",
-          "name": "Juno Abernathy",
-          "status": "idle",
-          "reportsTo": "00000000-0000-4000-8000-000000000003",
-          "depth": 0,
-          "relation": "self"
-        },
-        {
-          "id": "00000000-0000-4000-8000-000000000003",
-          "companyId": "00000000-0000-4000-8000-000000000002",
-          "name": "Jennifer Voss",
-          "status": "error",
-          "reportsTo": null,
-          "depth": 1,
-          "relation": "ancestor"
-        }
-      ],
-      "firstInvalidAncestor": null,
-      "invalidAncestors": [],
-      "repairGuidance": null,
-      "pausedAncestors": [],
-      "escalationWarning": null
-    }
-  },
-  {
     "id": "00000000-0000-4000-8000-000000000001",
     "companyId": "00000000-0000-4000-8000-000000000002",
     "name": "Nadia Okafor",
     "role": "pm",
-    "title": "Product Manager",
+    "title": "Example task",
     "icon": null,
     "appearance": {
       "schemaVersion": 1,
@@ -194,11 +97,109 @@
     }
   },
   {
+    "id": "00000000-0000-4000-8000-000000000004",
+    "companyId": "00000000-0000-4000-8000-000000000002",
+    "name": "Juno Abernathy",
+    "role": "engineer",
+    "title": "Example task",
+    "icon": null,
+    "appearance": {
+      "schemaVersion": 1,
+      "characterVersion": "cap-v1",
+      "paletteId": "arctic-blue"
+    },
+    "status": "error",
+    "lifecycleState": "ready",
+    "lifecycleHolds": [],
+    "lifecycleVersion": 4,
+    "lifecycleError": null,
+    "reportsTo": "00000000-0000-4000-8000-000000000003",
+    "capabilities": null,
+    "adapterType": "paperclip_runner",
+    "adapterConfig": {
+      "model": "claude-sonnet-5-5",
+      "homeMode": "preconfigured",
+      "provider": "acpx",
+      "acpxAgent": "claude",
+      "timeoutSec": 1800,
+      "acpxPermissionMode": "approve-all",
+      "paperclipSkillSync": {
+        "desiredSkills": []
+      },
+      "codexPermissionMode": "never",
+      "instructionsFilePath": "/Users/someone/.paperclip/instances/default/companies/00000000-0000-4000-8000-000000000002/agents/00000000-0000-4000-8000-000000000004/instructions/AGENTS.md",
+      "instructionsRootPath": "/Users/someone/.paperclip/instances/default/companies/00000000-0000-4000-8000-000000000002/agents/00000000-0000-4000-8000-000000000004/instructions",
+      "instructionsEntryFile": "AGENTS.md",
+      "instructionsBundleMode": "managed",
+      "env": {
+        "CLAUDE_CONFIG_DIR": {
+          "type": "plain",
+          "value": "***REDACTED***"
+        }
+      }
+    },
+    "runtimeConfig": {
+      "heartbeat": {
+        "enabled": false,
+        "wakeOnDemand": true,
+        "wakeOnAssignment": true,
+        "maxConcurrentRuns": 20
+      }
+    },
+    "defaultEnvironmentId": null,
+    "budgetMonthlyCents": 5000,
+    "spendMonthUtc": null,
+    "spentMonthlyCents": 0,
+    "pauseReason": null,
+    "pausedAt": null,
+    "errorReason": "ACP agent reported a terminal access failure.",
+    "permissions": {
+      "canCreateAgents": true,
+      "canCreateSkills": true
+    },
+    "lastHeartbeatAt": "2026-11-23T04:01:28.860Z",
+    "metadata": null,
+    "createdByUserId": null,
+    "createdAt": "2026-11-23T02:38:40.525Z",
+    "updatedAt": "2026-11-23T04:01:28.860Z",
+    "urlKey": "juno-abernathy",
+    "avatarUrl": "/api/agent-avatars/cap-v1/arctic-blue/rest.png?size=512&scale=1",
+    "orgChainHealth": {
+      "status": "healthy",
+      "reason": "healthy",
+      "fullChain": [
+        {
+          "id": "00000000-0000-4000-8000-000000000004",
+          "companyId": "00000000-0000-4000-8000-000000000002",
+          "name": "Juno Abernathy",
+          "status": "error",
+          "reportsTo": "00000000-0000-4000-8000-000000000003",
+          "depth": 0,
+          "relation": "self"
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000003",
+          "companyId": "00000000-0000-4000-8000-000000000002",
+          "name": "Jennifer Voss",
+          "status": "error",
+          "reportsTo": null,
+          "depth": 1,
+          "relation": "ancestor"
+        }
+      ],
+      "firstInvalidAncestor": null,
+      "invalidAncestors": [],
+      "repairGuidance": null,
+      "pausedAncestors": [],
+      "escalationWarning": null
+    }
+  },
+  {
     "id": "00000000-0000-4000-8000-000000000003",
     "companyId": "00000000-0000-4000-8000-000000000002",
     "name": "Jennifer Voss",
     "role": "cto",
-    "title": "CTO",
+    "title": "Example task",
     "icon": null,
     "appearance": {
       "schemaVersion": 1,
@@ -286,7 +287,7 @@
     "companyId": "00000000-0000-4000-8000-000000000002",
     "name": "Ines Carvalho",
     "role": "qa",
-    "title": "QA",
+    "title": "Example task",
     "icon": null,
     "appearance": {
       "schemaVersion": 1,

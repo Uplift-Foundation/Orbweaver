@@ -2,7 +2,7 @@
 
 Epic CB-419. **The requirement is the product plan** ("Orbweaver for Paperclip: the product"): your Paperclip company, alive on your desktop and in your pocket, and the thing that needs you one tap away. This document turns its release 1 ("see it") into something two engineers and QA can build, and fixes the release 2 ("act on it") contract now so release 1's does not have to be reopened.
 
-Revision 2. It replaces revision 1 (`f6e7700a0`), which designed a pasted key, no pushes and a legacy-mode dedupe as the main path.
+Revision 3. Revision 1 (`f6e7700a0`) designed a pasted key, no pushes and a legacy-mode dedupe as the main path; revision 2 (`0c7d29c3c`) rebuilt it on the product plan. This one adds the first run under Paperclip's own runner: a second, measured hook-firing mode, a real blocked task, and a real failed run.
 
 Desktop branch `feature/paperclip-orbs`, cut from `develop` at `c9b5bc047`. Mobile read at `Orbweaver-Mobile` `origin/develop` `7155aa3`. Line references are against those shas. Paperclip is `2026.1117.0`, authenticated mode, on the Mac mini.
 
@@ -43,12 +43,13 @@ All measured with a board key unless marked.
 | --- | --- |
 | `GET /api/companies` | array; `id`, `name`, `status`, `issuePrefix` |
 | `GET /api/companies/{id}/agents` | 9.6 KB for 4 agents, 11 ms. Used: `id`, `name`, `role`, `title`, `status`, `reportsTo`, `adapterType`, `budgetMonthlyCents`, `spentMonthlyCents`, `pauseReason`, `errorReason`, `lastHeartbeatAt`. **Carries `adapterConfig` with local paths: never log the body.** |
-| An agent in `error` | measured live: `status: "error"` with a one-sentence `errorReason` |
-| `GET …/live-runs` | `[]` idle. Running (measured under the legacy runner only): `id`, `agentId`, `status`, `startedAt`, `issueId`, `invocationSource`, `currentStatusMessage`, `currentToolName` |
-| `GET …/heartbeat-runs` | newest first; `limit`, `agentId`, `summary=true` work. **Rows vary:** the newest row (a failed run under the native runner) came back with 13 keys and `redacted: true` (`status`, `startedAt`, `finishedAt`, `durationMs`, no `errorCode`); the four older rows had 53 keys. Cause of the redaction not established. The parser must accept both. |
+| An agent in `error` | measured live, twice: `status: "error"` with a one-sentence `errorReason` (one from a refused task type, one from a failed run) |
+| `GET …/live-runs` | `[]` idle. Running, legacy runner (measured): `id`, `agentId`, `status`, `startedAt`, `issueId`, `invocationSource`, `currentStatusMessage` ("Receiving agent output"), `currentToolName`. Running, native runner (lead): `currentStatusMessage` was internal span text ("runner span: runner.process.launch …") and `currentToolName` was null. |
+| `GET …/heartbeat-runs` | newest first; `limit`, `agentId`, `summary=true` work. **Rows vary.** One failed run came back with 13 keys and `redacted: true` (`status`, `startedAt`, `finishedAt`, `durationMs`, no `errorCode`); cause not established. A later failed native run came back full (53 keys) with `errorCode: native_provider_terminal_failed` and a one-sentence `error`, but `adapterType`, `runtimeMode`, `processPid` and both session ids null. The parser must accept all three shapes. |
+| `GET /api/heartbeat-runs/{id}/events` | 64 events for that run, 74 KB. Includes `native.process_identity_recorded {processPid, processGroupId, hostname}` 0.6 s into the run, `hook.started` / `hook.completed` with `payload.event` (`SessionStart`, `UserPromptSubmit`), `turn.failed`. Not polled in release 1. |
 | `GET …/approvals?status=pending` | `[]` now, 7 ms. Two real pending approvals listed in 6 ms (lead). Row, measured from the two now-decided ones: `id`, `type`, `status`, `payload{title, summary, agentId}`, `requestedByAgentId`, `requestedByUserId`, `decisionNote`, `decidedAt`, `createdAt` |
 | `GET …/tools/action-requests` | 200 `{"actionRequests":[]}`, 2 ms. Defaults to `status=pending` (read from source). **A non-empty row has never been seen.** |
-| `GET …/issues?status=blocked` | 200 `[]`, 10 ms. A blocked issue has not been seen. Issue rows elsewhere carry `id`, `identifier`, `title`, `status`, `assigneeAgentId` |
+| `GET …/issues?status=blocked` | One real blocked issue, 3.5 KB: `id`, `identifier`, `title`, `status`, `assigneeAgentId`, `blockedTransitionAt`, and `blockerAttention{state: "needs_attention", reason: "attention_required", …}`. It was blocked by the failed run above, so the same agent is both `error` and the assignee of a blocked task. |
 | `GET …/sidebar-badges` | `{inbox, approvals, failedRuns, joinRequests, unreadIssueIds}`, 28 ms |
 | `GET …/dashboard` | `agents{active,running,paused,error}`, `tasks{…}`, `costs{monthSpendCents, monthBudgetCents, …}`, `pendingApprovals`, `budgets{…}` |
 | Spend | every agent: `budgetMonthlyCents: 5000`, `spentMonthlyCents: 0` after real runs. Paperclip's docs say subscription usage does not count against a budget (lead). |
@@ -72,24 +73,24 @@ Web pages, read from the UI bundle's route table, all under `<base>/<issuePrefix
 
 ### 1.5 Timing
 
-Measured under the legacy runner, one small org, one evening: 13 runs lasted 0.4 to 99 s, two under 5 s; a no-work wake showed `running` over REST for 3.7 s. **No run has completed under the native runner yet** (the org's Claude connection is still being set up), so these are not claims about it.
+Measured under the legacy runner, one small org, one evening: 13 runs lasted 0.4 to 99 s, two under 5 s; a no-work wake showed `running` over REST for 3.7 s. Under the native runner one run has happened and it failed after 8 s. **No native run has succeeded yet** (the org's Claude connection is still being set up), so none of this is a claim about a healthy native run.
 
 ### 1.6 Agent modes and the hook
 
 | Mode | Hook fires | Status |
 | --- | --- | --- |
-| Default runner (`paperclip_runner`, isolated home) | never | lead, read from code. All four agents are on it now. Nothing local to fold. |
-| "Preconfigured home" | yes | read from code; **not measured**. What its status file looks like is unknown. |
-| Legacy `claude_local` | yes | measured: `entrypoint: sdk-cli`; cwd `~/.paperclip/instances/<name>/workspaces/<agentId>` or `…/isolated-workspaces/<companyId>/<uuid>`; `session_pid` equals the run row's `processPid`; the status file's session id equals `sessionIdAfter`. Nothing from the environment is recorded. |
+| Default runner (`paperclip_runner`, isolated home) | never | lead, read from code; no run of this mode has been observed. Nothing local to fold. |
+| `paperclip_runner` with `homeMode: "preconfigured"` | **yes, measured** | Paperclip's own run events show `SessionStart` and two `UserPromptSubmit` hooks. Orbweaver's hook log, in the ordinary per-user status directory, has the same session going idle, generating, ended within 2 s, so the status file existed for about 2 s and was removed. The session's transcript rows say `entrypoint: sdk-ts` and cwd `~/.paperclip/instances/<name>/isolated-workspaces/<companyId>/<uuid>`. **The status file itself was not read** (it was gone); the hook copies `CLAUDE_CODE_ENTRYPOINT` into it, so `sdk-ts` is inferred, not observed. The Claude session id is **not** Paperclip's `normalizedSessionId`, and the run row has no pid or session id, so only the cwd identifies it. The transcript landed under the default Claude config root, not the one the agent's env named. |
+| Legacy `claude_local` | yes, measured | `entrypoint: sdk-cli`; cwd `…/workspaces/<agentId>` or `…/isolated-workspaces/<companyId>/<uuid>`; `session_pid` equals the run row's `processPid`; the status file's session id equals `sessionIdAfter`. Nothing from the environment is recorded. |
 
 ### 1.7 Assumed, and who settles it
 
 | Assumption | Settled by |
 | --- | --- |
 | A tool action request row names its agent (`agentId` or similar) and something to show (a tool name, a summary) | engineer A recaptures when the fixture org's "Ask first" action fires; until then the parser tries the likely keys and falls back to the company's top lead |
-| A `blocked` issue means a person is needed. One measured cancelled run said its issue was blocked on dependencies Paperclip resolves itself, so this may be too broad. | engineer A, on the first real blocked issue; product call if it is too broad |
-| `live-runs` rows under the native runner have the fields the legacy ones had | recapture (§10) |
-| "Preconfigured home" runs match the legacy fold rule | recapture with the one hook-firing agent the product plan keeps |
+| A blocked issue needs a person exactly when its `blockerAttention.state` is `needs_attention`. One real case measured; the other values of that field have not been seen (an earlier run was cancelled because its issue was blocked on dependencies Paperclip resolves itself, which is the case this field should exclude). | engineer A, on the first blocked issue that is waiting on another task |
+| What `live-runs` says during a healthy native run once past startup (a human sentence, a tool name, or more span text) | recapture (§10) |
+| The preconfigured-mode status file says `sdk-ts` and the isolated-workspace cwd, as its transcript does | engineer A reads the file during a run that lasts long enough to catch it |
 | `local_trusted` connect with no approval | QA, only if an instance in that mode exists; otherwise stated as unverified |
 | Windows instance folder; LAN behaviour from Windows | QA real-machine proof |
 | The five page URLs in §1.2 | QA clicks each kind once |
@@ -181,7 +182,7 @@ Orbs are removed only by switching off, disconnecting, or the agent being termin
 | 2 s | `agents`, `live-runs` | working and asleep; two of thirteen measured runs were under 5 s |
 | 4 s | `approvals?status=pending`, `tools/action-requests`, `issues?status=blocked` | needs-you is a slower state; 6, 2 and 10 ms measured |
 | on change | `heartbeat-runs?limit=20` when `live-runs` is non-empty, or any `lastHeartbeatAt` moved, or first tick | last result; legacy pid and session id |
-| on demand | `issues?status=in_progress` when a live run names an `issueId` not yet known | the hover's task line (filter value **assumed**; no task line if it fails) |
+| on demand | `issues?status=in_progress` when a live run names an `issueId` not yet known | the hover's task line (the `status` filter is measured for `blocked`, assumed for `in_progress`; no task line if it fails) |
 
 `sidebar-badges` and `dashboard` are not polled: the three lists already say which agent needs you, which the summaries do not.
 
@@ -206,7 +207,7 @@ Needs, one per item, attached to an agent:
 | --- | --- | --- | --- |
 | pending approval | `payload.agentId`, else `requestedByAgentId`, else the top lead | `payload.title`, else the type worded ("Hire", "Budget override", "Strategy", "Approval") | `approvals/<id>` |
 | pending tool action request | the row's agent, else the top lead | the row's tool or summary, else "Tool action" | `inbox/requests` |
-| blocked issue | `assigneeAgentId`; an unassigned blocked issue is ignored | "Blocked: <identifier> <title>" | `issues/<id>` |
+| blocked issue whose `blockerAttention.state` is `needs_attention` (or that has no `blockerAttention` at all) | `assigneeAgentId`; an unassigned one is ignored | "Blocked: <identifier> <title>" | `issues/<id>` |
 
 `Mark`, independent of `State`, first match wins:
 
@@ -217,6 +218,10 @@ Needs, one per item, attached to an agent:
 | 3 | agent `error` | Broke | `errorReason`, cut to 140 characters |
 | 4 | newest finished run `failed` or `timed_out` | Broke | "Last run failed" + `: <errorCode>` when the row has one / "Last run timed out" |
 | 5 | otherwise | None | |
+
+**`Activity` for the hover** is `currentToolName` when set; else `currentStatusMessage`, unless it looks internal, in which case it is dropped and the task line stands alone. Internal means it starts with `runner span:` or is a dotted identifier with no space before the first dot (`runner.process.launch`). The measured legacy sentence "Receiving agent output" passes; the measured native span text does not.
+
+An agent can be amber and broke at once (measured: a failed run blocked its task). Amber decides the state and the click; the mark's reason still shows in the hover.
 
 Broke clears on the next `succeeded` run, because rule 4 reads the newest finished run. `cancelled` and `interrupted` are not broke. `LastResult` wording for the hover: "succeeded", "failed", "timed out", "cancelled", "interrupted", "retry scheduled", or the raw status. A run row's `error` text is never shown (measured ones carry commands); `errorCode` and the agent's `errorReason` are.
 
@@ -252,9 +257,11 @@ Setting `paperclipSleeping`: `fold` | `show` | `hide`.
 - **Key** `"paperclip:" + agent.Id`. **Lead** `"paperclip:" + ReportsTo` when that agent is drawn; otherwise empty. The precedent for a lead with no process is the OpenClaw room, `SessionManager.cs:2582`.
 - **Stale timer:** exempt, beside the cloud exemption at `SessionManager.cs:1491`. An agent between runs is the normal state.
 - **Fold-away of a local row** (`PaperclipApi.IsRunProcess`), applied only while Paperclip is enabled and its snapshot is non-empty, at the `OpenClawCliSession.ShowHere` call site (`SessionManager.cs:3070`):
-  - `entrypoint` is `sdk-cli` **and** any of: the cwd has the consecutive segments `.paperclip`, `instances`, `<any>`, then `workspaces` or `isolated-workspaces`; the row's pid is a known run pid; the row's session id is a known run session id.
-  - This is **the rule for hook-firing modes**. Measured for legacy `claude_local`. **Not measured for "preconfigured home"**: if its cwd or entrypoint differs, the rule changes after the recapture in §10, and the product's "one orb" check on the hook-firing fixture agent is the gate.
-  - Under the default runner there is no local row and the rule never fires. Run rows there may be redacted, so the pid and session halves are simply empty.
+  - `entrypoint` starts with `sdk-` (measured: `sdk-cli` for legacy, `sdk-ts` for preconfigured) **and** any of: the cwd has the consecutive segments `.paperclip`, `instances`, `<any>`, then `workspaces` or `isolated-workspaces`; the row's pid is a known run pid; the row's session id is a known run session id.
+  - **The cwd half is the one that covers both measured modes.** The pid and session halves only ever match under legacy `claude_local`; under the native runner the run row carries neither and Paperclip's session id is a different id. They stay because they catch a legacy agent whose project workspace lies outside `.paperclip`.
+  - Both halves are required: `sdk-` alone is every headless Claude anyone runs, and a `.paperclip` cwd alone is a person's own terminal in a workspace.
+  - Under the isolated default runner there is no local row and the rule never fires.
+  - A preconfigured-mode agent whose workspace is outside `.paperclip` would be missed (no such agent exists to measure). The run's pid is available from the run's events (`native.process_identity_recorded`); reading events per live run is the fix if that case turns up, and is not built in release 1.
   - With Paperclip off, nothing changes from today.
 
 ## 3. Release 1, desktop: per-file change list
@@ -381,11 +388,11 @@ Read from the code at `7155aa3`, not run on a device. The roster decodes; the ro
 | Level | Class | Cases |
 | --- | --- | --- |
 | Unit | `PaperclipApiParseTests` | Every file in `native/` and `legacy-claude-local/` parses to the expected records: 4 agents with 3 reporting to 1; the `error` agent with its reason; a redacted run row and a full one in one listing; both decided approvals; empty lists. `[]`, `{}`, a row with no `id`, wrong types, truncated JSON: none throw. |
-| Unit | `PaperclipStateTests` | One case per row of the three tables in §2.6, plus precedence: a need beats a live run; `terminated` beats everything; Broke clears after a newer `succeeded`; `cancelled` is not Broke; a run `error` string never reaches any output. Statuses never captured are built from edited copies of the real files, and the test says so. |
-| Unit | `PaperclipNeedsTests` | Approval by `payload.agentId`, by `requestedByAgentId`, by neither (top lead); each approval type's wording; a tool action row under each candidate agent key and with none; a blocked issue assigned, unassigned (ignored), assigned to an unknown agent (ignored); each need's URL. |
+| Unit | `PaperclipStateTests` | One case per row of the three tables in §2.6, plus precedence: a need beats a live run; `terminated` beats everything; Broke clears after a newer `succeeded`; `cancelled` is not Broke; a run `error` string never reaches any output; the real agent that is both `error` and blocked is `waiting` with a Broke mark; `Activity` keeps "Receiving agent output", drops "runner span: runner.process.launch (124 ms)" and a bare dotted identifier, and prefers a tool name. Statuses never captured are built from edited copies of the real files, and the test says so. |
+| Unit | `PaperclipNeedsTests` | Approval by `payload.agentId`, by `requestedByAgentId`, by neither (top lead); each approval type's wording; a tool action row under each candidate agent key and with none; the real blocked issue (`needs_attention`) is a need on its assignee; the same row with another `blockerAttention.state` is not; with no `blockerAttention` it is; unassigned and unknown-assignee rows are ignored; each need's URL. |
 | Unit | `PaperclipFoldTests` | 8 agents: all drawn. 9: sleeping non-leads folded, count and names right. A folded agent unfolds on generating, waiting, each mark; stays for the hold; folds after. Leads and lead-less agents never fold. `show`, `hide`. Three-level chain. |
 | Unit | `PaperclipRingTests` | No ring for cap 0, spent 0, both 0; percent for a normal pair; over 100 capped. |
-| Unit | `PaperclipRunProcessTests` | The three real legacy hook files are run processes. Must be false: `entrypoint: cli` in the same cwd; `sdk-cli` in an ordinary repo with no pid or session match; a `.paperclip` path that is not a workspace. Windows separators. Empty pid and session sets (the native case) change nothing. |
+| Unit | `PaperclipRunProcessTests` | The three real legacy hook files are run processes. A row with `sdk-ts` and the measured isolated-workspace cwd, no pid or session match, is one (the preconfigured case; built in the test from the measured values and labelled so, since the file itself was never captured). Must be false: `entrypoint: cli` in the same cwd; `sdk-cli` or `sdk-ts` in an ordinary repo with no pid or session match; a `.paperclip` path that is not a workspace. Windows separators. |
 | Unit | `PaperclipDiscoveryTests` | The real `runtime-info.json` and config section give `127.0.0.1:3100`; a folder with only `config.json`; two instances; a malformed file is skipped; no folder gives the default candidate; a candidate whose health is not ok is dropped. |
 | Unit | `PaperclipConnectTests` | Fake API and clock: `local_trusted` connects with no challenge; approved stores the key only after `me` is 200; cancelled, expired and timed out store nothing; a non-http `approvalUrl` is refused; Cancel stops polling; disconnect revokes then deletes, and deletes even when the revoke fails. |
 | Unit | `PaperclipSessionsStepTests` | The cadences in §2.5 (what is called on which tick); backoff; 401 gives `NeedsReconnect` with the snapshot kept; unreachable keeps then dims after the grace; recovery clears both; several companies and none chosen; disabled makes no call. Every status-line string, including the expiry countdown. |
@@ -420,19 +427,21 @@ Install owner: QA. Take `/tmp/ow-install.lock` on the mini first and hash-check 
 
 | Folder | Files | State |
 | --- | --- | --- |
-| `native/` | `agents.json` (4 on `paperclip_runner`, one in `error`), `approvals-decided.json` (one approved, one rejected), `heartbeat-runs.json` (one redacted row, four full), `dashboard.json`, `sidebar-badges.json`, `org.json`, `runtime-info.json`, `config-server-section.json`, and the empty lists | current |
+| `native/` | `agents.json` (4 on `paperclip_runner`, two in `error`, one with `homeMode: preconfigured`), `issues-blocked.json` (the real blocked task, assigned to one of the `error` agents), `heartbeat-runs.json` (a full failed native row, a redacted row, a legacy success), `run-events-failed-run.reduced.json` (all 64 events of the failed run by type and time, with payloads kept only for the process-identity, hook and turn-failed events; **reduced, not verbatim**), `approvals-decided.json` (one approved, one rejected), `dashboard.json`, `sidebar-badges.json`, `org.json`, `runtime-info.json`, `config-server-section.json`, and the empty lists | current. `dashboard.json` and `sidebar-badges.json` predate the failed run. |
 | `legacy-claude-local/` | `agents.json`, `live-runs-running.json`, `heartbeat-runs.json`, `heartbeat-runs-summary.json`, `hook-status-during-run-{1,2,3}.json`, `ws-events-one-wake.jsonl` | **legacy mode only.** Kept because the fold-away rule is tested against them. Their `processPid`, session ids and `runtimeMode` say nothing about the native runner. |
 | top level | `companies.json`, `health.json` | current |
 
 **To recapture once an agent can run under the native runner** (engineer A, with the probe, read-only):
 
-1. `live-runs` during a native run: confirm the hover fields exist there.
-2. `heartbeat-runs` after a successful native run: which rows are redacted, and why.
+1. **A successful native run**: `live-runs` during it (what the status message says after startup), and its `heartbeat-runs` row. Waiting on the Claude connection, which may need one interactive sign-in.
+2. **A non-empty tool action request** row ("Ask first"). Waiting on the same thing. This is the least-known shape in the plan.
 3. A **pending** approval (not yet decided).
-4. A **non-empty tool action request** row. This is the least-known shape in the plan.
-5. A **blocked** issue, and whether it means a person is needed.
-6. An agent `paused` manually and one paused by budget (the fixture org's tiny-budget agent), and a non-zero `spentMonthlyCents` if metered billing ever produces one.
-7. The status file of the "preconfigured home" fixture agent during a run.
+4. A blocked issue that is waiting on another task, for the other `blockerAttention` states.
+5. An agent `paused` manually and one paused by budget, and a non-zero `spentMonthlyCents` if metered billing ever produces one.
+6. The preconfigured-mode **status file** itself, during a run long enough to read it.
+7. Why some run rows are redacted.
+
+The real blocked task and the two real `error` agents are already captured; the failed run will be fixed later, so those files are the record of it.
 
 Until each exists, its tests run on edited copies made inside the test and labelled as edited.
 
