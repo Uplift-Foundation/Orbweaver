@@ -453,3 +453,48 @@ public class PaperclipPromptsTests
         Assert.True(_p.HasPending(Sid));
     }
 }
+
+// CB-428: the own-wake window and a tool action's own expiry, and the pin between the mark's wording and the why.
+public class PaperclipPromptsRulesTests
+{
+    private static readonly DateTimeOffset T = DateTimeOffset.FromUnixTimeSeconds(1794111900);
+
+    [Theory]
+    [InlineData(5, true)]
+    [InlineData(30, true)]
+    [InlineData(31, false)]
+    [InlineData(-5, false)]            // a wake from the future is not one
+    public void A_break_within_thirty_seconds_of_a_wake_here_is_the_users_own(int secondsAgo, bool own)
+    {
+        var wakes = new Dictionary<string, DateTime> { ["a1"] = T.UtcDateTime.AddSeconds(-secondsAgo) };
+        Assert.Equal(own, PaperclipPrompts.OwnWake("paperclip:a1", T, wakes));
+        Assert.Equal(own, PaperclipPrompts.OwnWake("a1", T, wakes));                   // a bare agent id reads the same
+        Assert.False(PaperclipPrompts.OwnWake("paperclip:other", T, wakes));           // the control: another agent
+    }
+
+    [Fact]
+    public void A_tool_actions_own_expiry_is_the_prompts_when_it_is_sooner_and_a_later_or_missing_one_is_not()
+    {
+        var need = new PaperclipNeed("action", "x", "t", "u");
+        Assert.Equal(T.ToUnixTimeSeconds() + 86400, PaperclipPrompts.ExpiryFor(T, need));
+        Assert.Equal(T.ToUnixTimeSeconds() + 3600, PaperclipPrompts.ExpiryFor(T, need with { ExpiresAt = T.UtcDateTime.AddHours(1) }));
+        Assert.Equal(T.ToUnixTimeSeconds() + 86400, PaperclipPrompts.ExpiryFor(T, need with { ExpiresAt = T.UtcDateTime.AddDays(3) }));
+    }
+
+    // The why is read from the reason PaperclipApi.MarkFor words. If someone rewords a reason, this fails
+    // here and not as a wrong word on a phone.
+    [Fact]
+    public void Every_Broke_branch_of_MarkFor_maps_to_its_why()
+    {
+        PaperclipApi.RawAgent Agent(string status, string? err = null) =>
+            new("a", "A", "r", "t", status, null, "x", 0, 0, null, err, null);
+        PaperclipApi.RawRun Run(string status, string? code = null) => new("r", "a", status, null, null, code, null, null, null, false);
+        string Why(PaperclipApi.RawAgent a, PaperclipApi.RawRun? r) { var (m, reason) = PaperclipApi.MarkFor(a, r); Assert.Equal(PaperclipMark.Broke, m); return RelayRoster.WhyOf(reason); }
+
+        Assert.Equal("run_failed", Why(Agent("idle"), Run("failed")));
+        Assert.Equal("run_failed", Why(Agent("idle"), Run("failed", "process_lost")));
+        Assert.Equal("timed_out", Why(Agent("idle"), Run("timed_out")));
+        Assert.Equal("error", Why(Agent("error"), null));
+        Assert.Equal("error", Why(Agent("error", "adapter exploded at /Users/x/secret"), null));
+    }
+}

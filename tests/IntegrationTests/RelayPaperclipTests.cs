@@ -194,6 +194,33 @@ public class RelayPaperclipTests : IAsyncLifetime
         Assert.True(stray is null, "unexpected frame: " + stray?.GetRawText().Substring(0, 220));
     }
 
+    // CB-431: the roster a parked host serves is RelayService.RelayScan; a prompt must reach a phone from
+    // exactly that feed (rows from the headless scan, needs from the poll loop's own snapshot), with no UI.
+    [Fact]
+    public async Task With_the_UI_parked_the_headless_roster_carries_the_agent_and_its_approval_reaches_the_phone_as_an_amber()
+    {
+        var (client, identity, phone) = await Start();
+        var dir = Path.Combine(Path.GetTempPath(), "cb431-int-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            _agents = [Agent(new PaperclipNeed("approval", ApprovalId, "Hire a research agent", "http://pc/a", Tool: "Hire"))];
+            PaperclipSessions.SetSnapshotForTests(_agents);        // the poll loop's snapshot feeds the headless scan
+            PaperclipSessions.SetLinkForTests(PaperclipLink.Connected, "Connected");
+            var scan = RelayService.RelayScan(dir, () => new Dictionary<string, string>(), _ => true, DateTime.UtcNow.AddDays(3), onWindows: false);
+            Assert.Contains(scan, r => r.SessionId == Sid);
+            client.OnScanned(RelayService.Project(scan).Rows);
+            await client.OnStatuses(scan);
+            var env = await _stub.Next(e => IsEnvelope(e) && e.GetProperty("push").GetString() == "amber");
+            Assert.Equal(Sid, OpenAsPhone(env, phone, identity).GetProperty("session_id").GetString());
+        }
+        finally
+        {
+            PaperclipSessions.SetSnapshotForTests([]);
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
     [Fact]
     public void The_desktops_default_agents_are_the_pollers_snapshot()
     {

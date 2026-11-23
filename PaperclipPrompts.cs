@@ -146,6 +146,25 @@ namespace Orbweaver
 
         private void Remove(string key) { lock (_activityGate) _live.Remove(key); }
 
+        // frames-v16 prompt.expires_at: mint + 86400, or the item's own expiry when Paperclip gave one sooner
+        // (a tool action request lives an hour).
+        internal static long ExpiryFor(DateTimeOffset now, PaperclipNeed need)
+        {
+            var day = now.ToUnixTimeSeconds() + Lifetime;
+            return need.ExpiresAt is { } own ? Math.Min(day, new DateTimeOffset(DateTime.SpecifyKind(own, DateTimeKind.Utc)).ToUnixTimeSeconds()) : day;
+        }
+
+        // Plan rev 4 (own_wake): a break within 30 s of a Wake pressed on this desktop is the user's own doing.
+        internal static readonly TimeSpan OwnWakeWindow = TimeSpan.FromSeconds(30);
+
+        internal static bool OwnWake(string sessionId, DateTimeOffset now, IReadOnlyDictionary<string, DateTime> wakes)
+        {
+            var agent = sessionId.StartsWith(PaperclipScan.KeyPrefix, StringComparison.Ordinal) ? sessionId[PaperclipScan.KeyPrefix.Length..] : sessionId;
+            if (!wakes.TryGetValue(agent, out var at)) return false;
+            var age = now - new DateTimeOffset(DateTime.SpecifyKind(at, DateTimeKind.Utc));
+            return age >= TimeSpan.Zero && age <= OwnWakeWindow;
+        }
+
         internal static string PreviewOf(PaperclipNeed need, PaperclipAgent agent) =>
             PromptFrames.Cut(need.Title + "\n" + (!string.IsNullOrWhiteSpace(need.Summary) ? need.Summary
                 : $"{agent.Name}" + (string.IsNullOrWhiteSpace(agent.Role) ? "" : $" ({agent.Role})")), PromptFrames.MaxPreview);
@@ -154,7 +173,7 @@ namespace Orbweaver
         {
             var now = _now();
             var requestId = RelayLink.Ulid(now);
-            var expires = now.ToUnixTimeSeconds() + Lifetime;
+            var expires = ExpiryFor(now, need);
             var hash = ScreenHash(need.Kind, need.Id);
             var tool = need.Tool ?? (need.Kind == "action" ? "Tool action" : "Approval");
             var preview = PreviewOf(need, agent);

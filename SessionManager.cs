@@ -1715,6 +1715,23 @@ namespace Orbweaver
         // that predates the upgrade must not report it missing; left out with
         // a statusDir handed in, it is no second folder at all, so every test
         // written before the second folder existed still reads exactly one.
+        // CB-431: the Paperclip company in the roster a parked or unattended host serves. The live scan
+        // adds these rows in ScanAndUpdateCore, which only runs once the UI is attached; the poll loop
+        // (PaperclipSessions) runs without it, so its snapshot is carried here the same way. Without
+        // them a phone never sees the company, and PaperclipPrompts and the broke push, which need a
+        // row, have nothing to speak about.
+        private static readonly PaperclipScan HeadlessPaperclipScan = new();
+
+        internal static List<(string SessionId, SessionStatus Status)> HeadlessPaperclipRows(
+            List<(string SessionId, SessionStatus Status)> kept, DateTime now)
+        {
+            foreach (var e in HeadlessPaperclipScan.Entries(
+                         PaperclipSessions.Snapshot(), PaperclipSessions.Link, PaperclipSessions.StatusText,
+                         OrbweaverSettings.PaperclipSleeping, now, PaperclipSessions.Remembered))
+                kept.Add((e.SessionId, e.Status));
+            return kept;
+        }
+
         internal static List<(string SessionId, SessionStatus Status)> HeadlessSnapshot(
             string? statusDir = null,
             Func<Dictionary<string, string>?>? jobListing = null,
@@ -1741,7 +1758,7 @@ namespace Orbweaver
             {
                 // No directory yet means no sessions yet, which is an answer.
                 MirrorLog.SayOnce("headless-scan", $"dir={statusDir} unreadable");
-                return new List<(string, SessionStatus)>();
+                return HeadlessPaperclipRows(new List<(string, SessionStatus)>(), now);
             }
 
             var reads = NewestPerSession(current ?? new(), legacy ?? new());
@@ -1933,7 +1950,7 @@ namespace Orbweaver
             if (claudePids.Count > 0)
                 ApplyTeams(kept, teams is null ? AgentTeam.OfAll(claudePids) : teams(claudePids));
 
-            return kept;
+            return HeadlessPaperclipRows(kept, now);
         }
 
         // Team membership onto snapshot statuses, by the live scan's own rule

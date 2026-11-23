@@ -152,7 +152,7 @@ namespace Orbweaver
             // CB-428: the answerable Paperclip prompts, beside it.
             Paperclip = new PaperclipPrompts(this, _now, options.DesktopName, paperclipActions ?? (() => PaperclipSessions.Actions), Prompts.Nonces,
                 line => MirrorLog.Say("relay", line));
-            if (ownWake is not null) _link.OwnWake = ownWake;
+            _link.OwnWake = ownWake ?? ((sid, now) => PaperclipPrompts.OwnWake(sid, now, PaperclipSessions.Wakes()));
             _link.ActivityPrompts = sid => Prompts.ActivityFor(sid) ?? Paperclip.ActivityFor(sid);
             _link.ActivityDue += at => Defer(() => _ = FlushActivityLaterAsync(at));
             if (options.ActivityLog is { } activityLog)
