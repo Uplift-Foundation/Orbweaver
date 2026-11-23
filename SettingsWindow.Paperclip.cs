@@ -111,10 +111,18 @@ namespace Orbweaver
 
             var box = new TextBox { Text = suggested, Watermark = "http://127.0.0.1:3100", Width = 240 };
             var unencrypted = Note("The key is sent unencrypted on this network.");
-            unencrypted.IsVisible = SendsKeyUnencrypted(suggested);
-            box.TextChanged += (_, _) => unencrypted.IsVisible = SendsKeyUnencrypted(box.Text);
+            var unencryptedRow = NoteRow(unencrypted);
+            unencrypted.IsVisible = unencryptedRow.IsVisible = SendsKeyUnencrypted(suggested);
+            // The property, not TextChanged: the event is raised by the text input
+            // pipeline, and the note should follow the value however it changed.
+            // The row is hidden with it, or an empty padded bar is left behind.
+            box.PropertyChanged += (_, e) =>
+            {
+                if (e.Property == TextBox.TextProperty)
+                    unencrypted.IsVisible = unencryptedRow.IsVisible = SendsKeyUnencrypted(box.Text);
+            };
             rows.Add(Row("Address", box));
-            rows.Add(NoteRow(unencrypted));
+            rows.Add(unencryptedRow);
 
             var connect = new Button { Content = "Connect", HorizontalAlignment = HorizontalAlignment.Left };
             connect.Click += (_, _) => _ = OnPaperclipConnectAsync(string.IsNullOrWhiteSpace(box.Text)
