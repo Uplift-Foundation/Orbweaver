@@ -10,6 +10,8 @@ namespace Orbweaver
         internal static string NeedsUpdate(string machine) =>
             machine + " needs an Orbweaver update before it can list or resume sessions.";
 
+        internal static string UpdateToResume(string machine) => "Update Orbweaver on " + machine + " to resume sessions there.";
+
         internal static string Unreachable(string machine, string? why) =>
             "Couldn't reach " + machine + " for its sessions" + (string.IsNullOrWhiteSpace(why) ? "." : " (" + why + ").");
 

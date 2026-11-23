@@ -2118,7 +2118,7 @@ namespace Orbweaver
 
         // Local, or a remote machine that has answered and can list sessions.
         private bool ResumeHere =>
-            _machine is null || (_scope is { State: NewChatMachines.InfoState.Ready, AnyCli: true } && RemotePast is not null);
+            _machine is null || (_scope is { State: NewChatMachines.InfoState.Ready, AnyCli: true, Info.Resume: >= 1 } && RemotePast is not null);
 
         // The wire account for the far machine, as StartRemoteClicked sends it.
         private string RemoteAccount() =>
@@ -2167,7 +2167,9 @@ namespace Orbweaver
             // that cannot be asked, or is not ready, keeps the radio off.
             _localResumeRadio.IsEnabled = !remote || ResumeHere;
             ToolTip.SetTip(_localResumeRadio, remote && !ResumeHere
-                ? (RemotePast is null ? "Resume is not available on that machine from here." : "Resume is available once the machine answers.")
+                ? (RemotePast is null ? "Resume is not available on that machine from here."
+                    : _scope is { State: NewChatMachines.InfoState.Ready, Info.Resume: < 1 } ? PeerResumeCopy.UpdateToResume(_machine!.Name!)
+                    : "Resume is available once the machine answers.")
                 : null);
 
             _resumePane.IsVisible = ResumeActive;
@@ -2712,7 +2714,7 @@ namespace Orbweaver
 
             async Task<RemoteResumeResult> Run()
             {
-                try { return await remote.ResumeAsync(machine, cli, session.Id, account, CancellationToken.None); }
+                try { return await remote.ResumeAsync(machine, cli, session.Id, session.Cwd ?? "", account, CancellationToken.None); }
                 catch (Exception ex)
                 {
                     return new RemoteResumeResult(RemoteResumeOutcome.Failed, "Couldn't resume that session: " + ex.GetType().Name, false);

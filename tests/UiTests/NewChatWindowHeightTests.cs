@@ -352,7 +352,7 @@ public class NewChatWindowHeightTests : IDisposable
     public void TheHeightHoldsAcrossARemoteResumeAndItsStatuses()
     {
         var fake = new NewChatWindowMachineTests.FakeLauncher();
-        fake.Answers["mini"] = NewChatWindowMachineTests.Info(installed: ["claude", "codex"]);
+        fake.Answers["mini"] = NewChatWindowMachineTests.Info(installed: ["claude", "codex"]) with { Resume = 1 };
         var remote = new NewChatWindowRemoteResumeTests.FakeRemote
         {
             List = new(RemoteListOutcome.Ok, Enumerable.Range(0, 9)

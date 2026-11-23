@@ -542,12 +542,13 @@ public class NewChatWindowScreenshots : IDisposable
         private readonly FakePeers _inner = new();
         public IReadOnlyList<PastSessionRow> Rows = Array.Empty<PastSessionRow>();
         public IReadOnlyList<PeerMachine> Machines() => _inner.Machines();
-        public Task<PeerLaunchInfo?> InfoAsync(string machine, CancellationToken ct) => _inner.InfoAsync(machine, ct);
+        public async Task<PeerLaunchInfo?> InfoAsync(string machine, CancellationToken ct) =>
+            (await _inner.InfoAsync(machine, ct))! with { Resume = 1 };
         public Task<PeerLaunchResult> LaunchAsync(string machine, PeerLaunchSpec spec, CancellationToken ct) => _inner.LaunchAsync(machine, spec, ct);
         public Task<PeerDirResult> ListDirAsync(string machine, string path, CancellationToken ct) => _inner.ListDirAsync(machine, path, ct);
         public Task<RemoteListResult> ListAsync(string machine, NewChatCli cli, string profile, bool showOlder, CancellationToken ct) =>
             Task.FromResult(new RemoteListResult(RemoteListOutcome.Ok, Rows, null));
-        public Task<RemoteResumeResult> ResumeAsync(string machine, NewChatCli cli, string sessionId, string profile, CancellationToken ct) =>
+        public Task<RemoteResumeResult> ResumeAsync(string machine, NewChatCli cli, string sessionId, string cwd, string profile, CancellationToken ct) =>
             Task.FromResult(new RemoteResumeResult(RemoteResumeOutcome.Launched, null, false));
     }
 

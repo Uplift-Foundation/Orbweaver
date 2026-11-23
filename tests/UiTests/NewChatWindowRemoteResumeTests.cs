@@ -58,6 +58,7 @@ public class NewChatWindowRemoteResumeTests : IDisposable
         public Exception? ThrowList, ThrowResume;
         public List<(string machine, NewChatCli cli, string profile, bool older)> Listed = new();
         public List<(string machine, NewChatCli cli, string id, string profile)> Resumed = new();
+        public List<string> Cwds = new();
 
         public Task<RemoteListResult> ListAsync(string machine, NewChatCli cli, string profile, bool showOlder, CancellationToken ct)
         {
@@ -66,9 +67,10 @@ public class NewChatWindowRemoteResumeTests : IDisposable
             return Task.FromResult(List);
         }
 
-        public Task<RemoteResumeResult> ResumeAsync(string machine, NewChatCli cli, string sessionId, string profile, CancellationToken ct)
+        public Task<RemoteResumeResult> ResumeAsync(string machine, NewChatCli cli, string sessionId, string cwd, string profile, CancellationToken ct)
         {
             Resumed.Add((machine, cli, sessionId, profile));
+            Cwds.Add(cwd);
             if (ThrowResume is { } e) throw e;
             return Task.FromResult(Resume);
         }
@@ -94,11 +96,11 @@ public class NewChatWindowRemoteResumeTests : IDisposable
         new(new PastSession(cli, id, cwd, title, new DateTimeOffset(Now.AddHours(-hoursAgo), TimeSpan.Zero),
             messages, "", missing), live);
 
-    private static NewChatWindow Window(FakeRemote remote, NewChatWindowMachineTests.FakeLauncher? launcher = null)
+    private static NewChatWindow Window(FakeRemote remote, NewChatWindowMachineTests.FakeLauncher? launcher = null, int resumeLevel = 1)
     {
         FreshSettings();
         launcher ??= new NewChatWindowMachineTests.FakeLauncher();
-        launcher.Answers["mini"] = NewChatWindowMachineTests.Info(installed: ["claude", "codex"]);
+        launcher.Answers["mini"] = NewChatWindowMachineTests.Info(installed: ["claude", "codex"]) with { Resume = resumeLevel };
         NewChatWindow.PeerLauncherForTests = launcher;
         NewChatWindow.PeerLinkOnForTests = true;
         NewChatWindow.RemotePastForTests = remote;
@@ -241,6 +243,7 @@ public class NewChatWindowRemoteResumeTests : IDisposable
         Click(window.StartButton);
 
         Assert.Equal(("mini", NewChatCli.ClaudeCode, "a", RelayAccounts.Default), remote.Resumed.Single());
+        Assert.Equal("/srv/app", remote.Cwds.Single());
         Assert.Equal(PeerResumeCopy.Resumed("mini"), window.StatusLine.Text);
         Assert.True(window.StartButton.IsEnabled);
         Assert.True(window.MachineCombo.IsEnabled);
@@ -379,6 +382,18 @@ public class NewChatWindowRemoteResumeTests : IDisposable
         Flush();
 
         Assert.Equal("l", Shown(window).Single().Session.Id);
+    }
+
+    [AvaloniaFact]
+    public void AnOlderDeskThatDoesNotAdvertiseResumeSaysToUpdateWithoutAsking()
+    {
+        var remote = new FakeRemote { List = new(RemoteListOutcome.Ok, new[] { Row("a", "One") }, null) };
+        var window = Window(remote, resumeLevel: 0);
+
+        Assert.False(window.LocalResumeRadio.IsEnabled);
+        Assert.False(window.ResumePane.IsVisible);
+        Assert.Equal("Update Orbweaver on mini to resume sessions there.", ToolTip.GetTip(window.LocalResumeRadio));
+        Assert.Empty(remote.Listed);
     }
 
     [AvaloniaFact]
