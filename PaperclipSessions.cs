@@ -25,7 +25,10 @@ namespace Orbweaver
         // (and, for a tool action, when Paperclip lets it lapse). All optional.
         string? Summary = null,
         DateTime? CreatedAt = null,
-        DateTime? ExpiresAt = null);
+        DateTime? ExpiresAt = null,
+        // CB-428: what a phone's prompt calls it ("Hire", "Budget override", "Strategy", "Approval",
+        // "Tool action"). Null on a need no prompt is minted for.
+        string? Tool = null);
 
     internal sealed record PaperclipAgent(
         string Id, string Name, string Role, string Title,

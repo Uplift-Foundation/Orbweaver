@@ -37,22 +37,29 @@ namespace Orbweaver
         string Cwd,
         string State,
         string? ParentSessionId,
-        RelayPersona? Persona)
+        RelayPersona? Persona,
+        string? Broke = null)
     {
         // When this session entered State, as this desktop saw it. Not part of
         // what Project produces — the book stamps it — and not compared when
         // deciding whether anything changed.
         internal DateTimeOffset Since { get; init; }
 
+        // CB-428 (frames-v16): the why of a Paperclip row whose mark is Broke (run_failed, timed_out or error), else null. Like State it is not
+        // part of the shape: a break is a delta (carrying the "broke" push), never a roster.
         internal bool SameShape(RelaySession other) =>
             Cli == other.Cli && Cwd == other.Cwd && ParentSessionId == other.ParentSessionId && Persona == other.Persona;
     }
 
     // From is the state the session left (null when the state did not change):
     // CB-316's `done` push rides only the delta that moves generating -> idle.
-    internal sealed record RelayDelta(string SessionId, string? State, string? Title, DateTimeOffset? Since, bool Removed, string? From = null)
+    // BrokeWhy: set when the row's mark became Broke on this scan (frames-v16 broke_push.fires). The delta then
+    // always carries State and Since, restated when they did not change, so a break that moves
+    // neither still has a frame for the push to ride.
+    internal sealed record RelayDelta(string SessionId, string? State, string? Title, DateTimeOffset? Since, bool Removed, string? From = null, string? BrokeWhy = null)
     {
         internal bool Finished => From == RelayRoster.Generating && State == RelayRoster.Idle;
+        internal bool Broke => BrokeWhy is not null;
     }
 
     internal readonly record struct RelayUpdate(bool NeedsRoster, IReadOnlyList<RelayDelta> Deltas)
@@ -72,6 +79,13 @@ namespace Orbweaver
         // animates exactly those two, and treats everything else as idle. So
         // does this, rather than guessing a fourth state the phone would have
         // to draw.
+        // frames-v16 e.why, from the mark's reason as PaperclipApi.MarkFor words it. Nothing Paperclip wrote
+        // beyond that prefix is kept: an agent's error reason can hold a path.
+        internal static string WhyOf(string? markReason) =>
+            markReason is not null && markReason.StartsWith("Last run failed", StringComparison.Ordinal) ? "run_failed"
+            : markReason is not null && markReason.StartsWith("Last run timed out", StringComparison.Ordinal) ? "timed_out"
+            : "error";
+
         internal static string MapState(string? state) => state switch
         {
             Generating => Generating,
@@ -113,7 +127,8 @@ namespace Orbweaver
                     "",
                     MapState(s.Status.State),
                     paperclipIds.Contains(s.Status.Lead) ? s.Status.Lead : null,
-                    null)
+                    null,
+                    s.Status.Mark == PaperclipMark.Broke ? WhyOf(s.Status.MarkReason) : null)
                 : new RelaySession(
                     s.SessionId,
                     MirrorProtocol.CliFor(s.Status.Source),
@@ -251,15 +266,20 @@ namespace Orbweaver
                 var since = stateChanged ? now : old.Since;
                 _rows[row.SessionId] = row with { Since = since };
 
-                if (stateChanged || titleChanged)
+                // CB-428: once per entry into Broke, and only for a row already known: a row first
+                // seen Broke (start, reconnect, a new agent) is old news the roster already shows.
+                var broke = row.Cli == MirrorProtocol.CliPaperclip && row.Broke is not null && old.Broke is null;
+
+                if (stateChanged || titleChanged || broke)
                     deltas.Add(new RelayDelta(row.SessionId,
-                        stateChanged ? row.State : null,
+                        stateChanged || broke ? row.State : null,
                         titleChanged ? row.Title : null,
-                        stateChanged ? since : null,
+                        stateChanged || broke ? since : null,
                         Removed: false,
                         // A Paperclip agent finishing a routine run is not news (principle 4):
                         // no From, so no `done` push and no summary.
-                        From: stateChanged && row.Cli != MirrorProtocol.CliPaperclip ? old.State : null));
+                        From: stateChanged && row.Cli != MirrorProtocol.CliPaperclip ? old.State : null,
+                        BrokeWhy: broke ? row.Broke : null));
             }
 
             // Gone from the scan: one last delta saying it ended, and the row

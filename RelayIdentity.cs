@@ -62,6 +62,8 @@ namespace Orbweaver
             // CB-358: absent from the file until a prefs frame is accepted.
             [JsonPropertyName("done_alerts")] public string? DoneAlerts { get; set; }
             [JsonPropertyName("amber_members")] public bool? AmberMembers { get; set; }
+            // CB-428: absent until a prefs frame carrying broke_alerts is accepted (absent reads false).
+            [JsonPropertyName("broke_alerts")] public bool? BrokeAlerts { get; set; }
         }
 
         private sealed class Stored
@@ -281,6 +283,7 @@ namespace Orbweaver
                 if (p is null) return false;
                 p.DoneAlerts = prefs.DoneAlertsName;
                 p.AmberMembers = prefs.AmberMembers;
+                p.BrokeAlerts = prefs.BrokeAlerts;
                 return Save();
             }
         }
@@ -365,7 +368,7 @@ namespace Orbweaver
             // watch-signed answer is then bad_signature, which fails closed.
             RelayCrypto.FromHex(p.WatchPublic) is { } w && RelayCrypto.IsValidPublicKey(w) ? w : null,
             p.WatchAt,
-            AlertPrefs.FromStored(p.DoneAlerts, p.AmberMembers));
+            AlertPrefs.FromStored(p.DoneAlerts, p.AmberMembers, p.BrokeAlerts));
 
         private void EnsureLoaded()
         {

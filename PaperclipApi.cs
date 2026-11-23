@@ -354,11 +354,11 @@ namespace Orbweaver
             foreach (var a in c.Approvals)
                 Add(Resolve(a.PayloadAgentId, a.RequestedByAgentId),
                     new PaperclipNeed("approval", a.Id, a.Title ?? ApprovalWording(a.Type),
-                        ApprovalUrl(c.BaseUrl, c.IssuePrefix, a.Id), a.Summary, a.CreatedAt));
+                        ApprovalUrl(c.BaseUrl, c.IssuePrefix, a.Id), a.Summary, a.CreatedAt, Tool: ApprovalWording(a.Type)));
             foreach (var a in c.Actions)
                 Add(Resolve(a.AgentId),
                     new PaperclipNeed("action", a.Id, a.Summary ?? "Tool action",
-                        RequestsUrl(c.BaseUrl, c.IssuePrefix), a.Preview, a.CreatedAt, a.ExpiresAt));
+                        RequestsUrl(c.BaseUrl, c.IssuePrefix), a.Preview, a.CreatedAt, a.ExpiresAt, Tool: "Tool action"));
             foreach (var i in c.BlockedIssues)
             {
                 // An unassigned blocked issue is nobody's orb to light. Paperclip's
