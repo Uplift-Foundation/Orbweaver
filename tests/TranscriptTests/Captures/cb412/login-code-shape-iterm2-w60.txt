@@ -1,0 +1,21 @@
+❯ /login                                                    
+ 
+────────────────────────────────────────────────────────────
+  Login 
+ 
+  Browser didn't open? Use the URL below to sign in (c to  
+  copy) 
+ 
+https://claude.ai/oauth/authorize?xxxxxxxxxxxxxxxxxxxxxxxxxx
+xxxxxxxxxxxxxxxxxxx 
+ 
+  Paste code here if prompted 
+  ╭──────────────────────────────────────────────────────╮ 
+  │                                                      │ 
+  ╰──────────────────────────────────────────────────────╯ 
+  ✘ That doesn't look like the full code. 
+    Copy all of it, including the # in the middle. 
+ 
+  Esc to cancel 
+ 
+
