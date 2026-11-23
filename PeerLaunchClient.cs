@@ -15,7 +15,7 @@ namespace Orbweaver
     //     dropped link, a refusal. The window shows each in a reserved line.
     //   * **A dropped link fails every request pending on it at once**, rather
     //     than letting each run out its own clock.
-    internal sealed class PeerLaunchClient : IPeerLauncher
+    internal sealed class PeerLaunchClient : IPeerLauncher, IRemotePastSessions
     {
         internal static readonly TimeSpan InfoTimeout = TimeSpan.FromSeconds(5);
         // The far desk gives up reading a folder after 8 s and says so; this is
@@ -95,7 +95,11 @@ namespace Orbweaver
                 spec.Cwd, spec.Cli, "", "", spec.Account, "", "",
                 _seams.NewNonce(),
                 _seams.Now().Add(Lifetime).ToUnixTimeSeconds(),
-                "", "", CanTrust: true,
+                "", "",
+                // A resume cannot show the trust question (the Resume seam has
+                // no round trip for it), so the far desk closes such a pane and
+                // says why rather than holding it for two minutes.
+                CanTrust: spec.ResumeSessionId.Length == 0,
                 ResumeSessionId: spec.ResumeSessionId.Length > 0 ? spec.ResumeSessionId : null);
 
             (string Sig, string Cert)? signed;
@@ -180,6 +184,64 @@ namespace Orbweaver
             var parsed = reply.Body is { } b ? PeerLaunchWire.ParseResult(b) : null;
 
             return parsed ?? new PeerLaunchResult(false, PeerLaunchCodes.NoAnswer, null, "unreadable reply");
+        }
+
+        // ---- CB-434: IRemotePastSessions --------------------------------------------
+
+        // How many rows a window asks for (contract amendment 1).
+        internal const int WindowLimit = 2000;
+
+        public async Task<RemoteListResult> ListAsync(string machine, NewChatCli cli, string profile, bool showOlder, CancellationToken ct)
+        {
+            var wire = RelayAccounts.CliName(cli);
+            var page = await PastSessionsAsync(machine, new PastSessionQuery(wire, profile, showOlder, "", "", 0, WindowLimit), ct)
+                .ConfigureAwait(false);
+
+            if (!page.Ok)
+                return new RemoteListResult(RemoteListOutcome.Unreachable, [], ListWhy(page.Code));
+
+            var rows = page.Rows.Select(r => new PastSessionRow(
+                new PastSession(cli, r.Id, r.Cwd, r.Title, DateTimeOffset.FromUnixTimeSeconds(r.At), r.Count, "", r.Missing),
+                r.Live)).ToList();
+            return new RemoteListResult(RemoteListOutcome.Ok, rows, null, page.Total);
+        }
+
+        // A short reason for the window's "Couldn't reach <machine> for its
+        // sessions (…)"; null where the sentence needs none.
+        internal static string? ListWhy(string code) => code switch
+        {
+            PeerLaunchCodes.NoAnswer => null,
+            PeerLaunchCodes.LinkLost => "the link dropped",
+            PeerLaunchCodes.PeerLaunchOff => "it doesn't allow other desktops to start sessions",
+            _ => code,
+        };
+
+        public async Task<RemoteResumeResult> ResumeAsync(
+            string machine, NewChatCli cli, string sessionId, string cwd, string profile, CancellationToken ct)
+        {
+            var wire = RelayAccounts.CliName(cli);
+            var result = await LaunchAsync(machine, new PeerLaunchSpec(wire, cwd, profile) { ResumeSessionId = sessionId }, ct)
+                .ConfigureAwait(false);
+            return Resumed(result, cli, machine);
+        }
+
+        // The wire's answer as the window's outcome. resume_started is Codex's
+        // launched-without-a-watch; already_running carries the id to focus.
+        internal static RemoteResumeResult Resumed(PeerLaunchResult r, NewChatCli cli, string machine)
+        {
+            var name = RelayAccounts.CliName(cli);
+            return r.Code switch
+            {
+                PeerLaunchCodes.Launched when r.Ok => new(RemoteResumeOutcome.Launched, null, false, r.SessionId),
+                PeerLaunchCodes.ResumeStarted when r.Ok => new(RemoteResumeOutcome.Launched, null, true, r.SessionId),
+                RelayReplies.AlreadyRunning when r.Ok => new(RemoteResumeOutcome.AlreadyRunning, null, false, r.SessionId),
+                RelayReplies.ResumeUnsupported => new(RemoteResumeOutcome.Unsupported, r.Why, false),
+                RelayReplies.UnknownResume => new(RemoteResumeOutcome.Failed,
+                    machine + " no longer has that session in that folder.", false),
+                PeerLaunchCodes.NoAnswer => new(RemoteResumeOutcome.Unreachable, null, false),
+                PeerLaunchCodes.LinkLost => new(RemoteResumeOutcome.Unreachable, "the link dropped", false),
+                _ => new(RemoteResumeOutcome.Failed, PeerLaunchCopy.Explain(r.Code, r.Why, name, machine), false),
+            };
         }
 
         // CB-434: one page of the far desk's past sessions, on the list-dir

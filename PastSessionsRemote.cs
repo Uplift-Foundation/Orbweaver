@@ -34,6 +34,7 @@ namespace Orbweaver
         internal const int ResumeVersion = 1;
 
         internal const int PageSize = 50;
+        internal const int MaxLimit = 2000;
         internal const int MaxFolders = 64;
         internal const int MaxText = 256;
         internal const int MaxPath = 4096;
@@ -66,12 +67,15 @@ namespace Orbweaver
             // A row whose id could never be resumed from here is not offered:
             // it would only be refused when chosen.
             var rows = PastSessions.List(sessions, _seams.Live(), q.Text, q.Folder.Length == 0 ? null : q.Folder, now, q.Older)
-                .Where(r => LaunchGate.ResumeIdOk(r.Session.Id))
+                .Where(r => PastSessions.IsSafeId(r.Session.Id))
                 .ToList();
 
+            // Counts only for a page a person reads row by row (at most 50): a
+            // window that asks for 2,000 searches them and draws no count.
+            var counting = q.Limit <= PageSize;
             var elapsed = _seams.StartClock();
-            var page = rows.Skip(q.From).Take(PageSize)
-                .Select(r => ToWire(r, elapsed() < CountBudget ? _seams.Count(cli, r.Session.TranscriptPath) : null))
+            var page = rows.Skip(q.From).Take(Math.Clamp(q.Limit, 1, MaxLimit))
+                .Select(r => ToWire(r, counting && elapsed() < CountBudget ? _seams.Count(cli, r.Session.TranscriptPath) : null))
                 .ToList();
 
             var folders = q.From == 0
@@ -123,10 +127,13 @@ namespace Orbweaver
     // then the page.
     internal sealed class PeerPastSessionsServer(Func<bool> enabled, Func<PastSessionQuery, PeerPastSessionsResult> page)
     {
-        internal PeerPastSessionsResult Handle(JsonElement body)
+        // The reply body, encoded: the page names its CLI, which only the query knew.
+        internal JsonElement Handle(JsonElement body, out PeerPastSessionsResult result)
         {
-            if (!enabled()) return PeerPastSessionsResult.Fail(PeerLaunchCodes.PeerLaunchOff);
-            return PastSessionsWire.ParseQuery(body) is { } q ? page(q) : PeerPastSessionsResult.Fail(RelayReplies.BadFrame);
+            if (!enabled()) result = PeerPastSessionsResult.Fail(PeerLaunchCodes.PeerLaunchOff);
+            else if (PastSessionsWire.ParseQuery(body) is not { } q) result = PeerPastSessionsResult.Fail(RelayReplies.BadFrame);
+            else return PastSessionsWire.EncodePage(result = page(q), q.Cli);
+            return PastSessionsWire.EncodePage(result, "");
         }
 
         [ExcludeFromCodeCoverage]
@@ -149,22 +156,24 @@ namespace Orbweaver
             [property: JsonPropertyName("older")] bool Older,
             [property: JsonPropertyName("q")] string? Text,
             [property: JsonPropertyName("folder")] string? Folder,
-            [property: JsonPropertyName("from")] int From);
+            [property: JsonPropertyName("from")] int From,
+            [property: JsonPropertyName("limit")] int? Limit);
 
         private sealed record PageBody(
             [property: JsonPropertyName("ok")] bool Ok,
             [property: JsonPropertyName("code")] string? Code,
+            [property: JsonPropertyName("cli")] string? Cli,
             [property: JsonPropertyName("total")] int Total,
             [property: JsonPropertyName("from")] int From,
             [property: JsonPropertyName("rows")] IReadOnlyList<PeerPastSession>? Rows,
             [property: JsonPropertyName("folders")] IReadOnlyList<string>? Folders);
 
         internal static JsonElement EncodeQuery(PastSessionQuery q) =>
-            PeerProtocol.BodyOf(new QueryBody(q.Cli, q.Account, q.Older, q.Text, q.Folder, q.From));
+            PeerProtocol.BodyOf(new QueryBody(q.Cli, q.Account, q.Older, q.Text, q.Folder, q.From, q.Limit));
 
         // Null for anything but a whole query. cli and account are required
         // (account is always explicit between desks, as PeerLaunchSpec's is);
-        // q and folder may be empty or absent.
+        // q and folder may be empty or absent; limit absent is a page of 50.
         internal static PastSessionQuery? ParseQuery(JsonElement body)
         {
             if (body.ValueKind != JsonValueKind.Object) return null;
@@ -175,16 +184,17 @@ namespace Orbweaver
 
             return Sane(q!.Cli, 32, true) && Sane(q.Account, 256, true)
                 && Sane(q.Text, PastSessionsRemote.MaxText, false) && Sane(q.Folder, PastSessionsRemote.MaxPath, false)
-                && q.From >= 0
-                ? new PastSessionQuery(q.Cli!, q.Account!, q.Older, q.Text ?? "", q.Folder ?? "", q.From)
+                && q.From >= 0 && q.Limit is null or (>= 1 and <= PastSessionsRemote.MaxLimit)
+                ? new PastSessionQuery(q.Cli!, q.Account!, q.Older, q.Text ?? "", q.Folder ?? "", q.From, q.Limit ?? PastSessionsRemote.PageSize)
                 : null;
         }
 
-        internal static JsonElement EncodePage(PeerPastSessionsResult r) =>
+        // The reply names its CLI once (the rows do not). A refusal carries its
+        // code and nothing else.
+        internal static JsonElement EncodePage(PeerPastSessionsResult r, string cli) =>
             PeerProtocol.BodyOf(r.Ok
-                ? new PageBody(true, r.Code, r.Total, r.From, r.Rows, r.Folders.Count > 0 ? r.Folders : null)
-                // A refusal carries its code and nothing else.
-                : new PageBody(false, r.Code, 0, 0, null, null));
+                ? new PageBody(true, r.Code, cli, r.Total, r.From, r.Rows, r.Folders.Count > 0 ? r.Folders : null)
+                : new PageBody(false, r.Code, null, 0, 0, null, null));
 
         internal static PeerPastSessionsResult? ParsePage(JsonElement body)
         {
@@ -199,7 +209,7 @@ namespace Orbweaver
 
             var rows = p.Rows ?? [];
             var folders = p.Folders ?? [];
-            if (p.Total < 0 || p.From < 0 || rows.Count > PastSessionsRemote.PageSize || folders.Count > PastSessionsRemote.MaxFolders
+            if (p.Total < 0 || p.From < 0 || rows.Count > PastSessionsRemote.MaxLimit || folders.Count > PastSessionsRemote.MaxFolders
                 || rows.Any(r => !RowOk(r)) || folders.Any(f => !Sane(f, PastSessionsRemote.MaxPath, true)))
                 return null;
 
@@ -210,7 +220,7 @@ namespace Orbweaver
         // held to the gate's own shape here as well.
         private static bool RowOk(PeerPastSession? r) =>
             r is not null
-            && LaunchGate.ResumeIdOk(r.Id)
+            && PastSessions.IsSafeId(r.Id)
             && Sane(r.Cwd, PastSessionsRemote.MaxPath, false)
             && r.Title is not null && Sane(r.Title, PastSessions.TitleLength * 2, false)
             && r.At >= 0 && r.Count is null or >= 0;

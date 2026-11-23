@@ -96,7 +96,9 @@ namespace Orbweaver
     // the work — its index, its clock for the 30-day cut, its live set, its
     // search and folder filter — so the rows equal what that machine's own
     // New Chat would show. Text and Folder are "" for none; From is a row offset.
-    internal sealed record PastSessionQuery(string Cli, string Account, bool Older, string Text, string Folder, int From);
+    // Limit is 1 to 2,000 (contract amendment 1): the phone pages 50 at a
+    // time, a desktop window may ask for the newest 2,000 and search them itself.
+    internal sealed record PastSessionQuery(string Cli, string Account, bool Older, string Text, string Folder, int From, int Limit = PastSessionsRemote.PageSize);
 
     // One row. Never the transcript path. Count is null when the far desk had
     // no count ready within its budget; At is last activity, unix seconds.
@@ -121,6 +123,36 @@ namespace Orbweaver
 
     internal sealed record PeerMachine(string Name, bool Online);
 
+    // ---- CB-434: the window's seam for a remote Resume list ------------------------
+    //
+    // A separate interface (contract amendment 1). New Chat asks for the newest
+    // 2,000 rows for one CLI, account and window, and filters, searches and
+    // groups them with PastSessions.List as it does a local list. IsLive and
+    // FolderMissing are the far desk's and are never recomputed here. The real
+    // one is PeerLaunchClient, which maps the wire's codes onto these outcomes.
+    // Neither method throws.
+    internal enum RemoteListOutcome { Ok, NeedsUpdate, Unreachable }
+
+    internal enum RemoteResumeOutcome { Launched, AlreadyRunning, Unsupported, NeedsUpdate, Unreachable, Failed }
+
+    internal sealed record RemoteListResult(
+        RemoteListOutcome Outcome, IReadOnlyList<PastSessionRow> Rows, string? Why, int? Total = null);
+
+    internal sealed record RemoteResumeResult(
+        RemoteResumeOutcome Outcome, string? Message, bool IsCodex, string? SessionId = null);
+
+    internal interface IRemotePastSessions
+    {
+        Task<RemoteListResult> ListAsync(
+            string machine, NewChatCli cli, string profile, bool showOlder, CancellationToken ct);
+
+        // `cwd` is the row's folder as the far desk gave it: it is in the signed
+        // body and the far desk checks it against its own index.
+        Task<RemoteResumeResult> ResumeAsync(
+            string machine, NewChatCli cli, string sessionId, string cwd, string profile, CancellationToken ct);
+    }
+
+
     // The seam the window uses. The real one is PeerSessions.Launcher.
     internal interface IPeerLauncher
     {
@@ -143,10 +175,6 @@ namespace Orbweaver
         Task<PeerLaunchResult> TrustAsync(string machine, PeerLaunchTrust trust, bool trusted, CancellationToken ct) =>
             Task.FromResult(new PeerLaunchResult(false, PeerLaunchCodes.NoAnswer, null, null));
 
-        // CB-434: one page of the far desk's past sessions. Never throws. A
-        // default for the same reason as TrustAsync.
-        Task<PeerPastSessionsResult> PastSessionsAsync(string machine, PastSessionQuery query, CancellationToken ct) =>
-            Task.FromResult(PeerPastSessionsResult.Fail(PeerLaunchCodes.NoAnswer));
     }
 
     internal static class PeerLaunchCodes
@@ -174,5 +202,10 @@ namespace Orbweaver
         public const string TrustNeeded = "trust_needed";
         public const string TrustCancelled = "trust_cancelled";
         public const string TrustGone = "trust_gone";
+
+        // CB-434: a Codex resume with no first message was started, and its orb
+        // appears only once a message is sent (Codex fires no hook before).
+        // A peer launch-result code only; a phone never receives it.
+        public const string ResumeStarted = "resume_started";
     }
 }

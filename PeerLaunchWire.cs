@@ -147,7 +147,7 @@ namespace Orbweaver
                 && Sane(request.Sig, MaxText, true) && Sane(request.Cert, 32 * 1024, true)
                 && request.FirstMessage.Length <= 16 * 1024
                 && request.ExpiresAt > 0
-                && (string.IsNullOrEmpty(request.ResumeSessionId) || LaunchGate.ResumeIdOk(request.ResumeSessionId));
+                && (string.IsNullOrEmpty(request.ResumeSessionId) || PastSessions.IsSafeId(request.ResumeSessionId));
 
             return whole ? request : null;
         }

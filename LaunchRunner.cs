@@ -88,7 +88,13 @@ namespace Orbweaver
             // CB-434: already running, before anything else is looked at. A
             // second process on one conversation would fight the first, so the
             // caller is sent to the one that exists and nothing is started.
-            if (resume.Length > 0 && Local(resume) is not null) return new(RelayReplies.AlreadyRunning, null, resume);
+            // Matched on CLI and id, not account (contract amendment 2, section
+            // 4): account roots can share a projects folder, so the same session
+            // is listed under each, and an account match would start a second
+            // process on a conversation live under another. A live id under
+            // another CLI is not this session and falls through.
+            if (resume.Length > 0 && Local(resume) is { } live && MirrorProtocol.CliFor(live.Source) == f.Cli)
+                return new(RelayReplies.AlreadyRunning, null, resume);
 
             if (!TryAccount(f, out var profileDir)) return new(RelayReplies.UnknownAccount, null, null);
 
@@ -98,10 +104,12 @@ namespace Orbweaver
             if (Start(f, profileDir, out var pane) is { } failed) return new(failed.Code, failed.Why, null);
 
             // Codex fires no hook until the first prompt of a resumed session
-            // (CB-361, measured on the mini), so there is nothing to wait for:
-            // the caller says the orb appears when a message is sent.
-            if (resume.Length > 0 && LaunchGate.CliFor(f.Cli) == NewChatCli.Codex)
-                return new(RelayReplies.ResumeStarted, null, resume);
+            // (CB-361, measured on the mini), so with no message there is
+            // nothing to wait for: the caller says the orb appears when a
+            // message is sent. With one, its hook fires on that turn, and it
+            // waits like the others.
+            if (resume.Length > 0 && f.FirstMessage.Length == 0 && LaunchGate.CliFor(f.Cli) == NewChatCli.Codex)
+                return new(PeerLaunchCodes.ResumeStarted, null, resume);
 
             // Windows never reads: there is no seam that can read a console by
             // the pid StartWindows returns (CB-397 plan, point 6).
@@ -252,7 +260,7 @@ namespace Orbweaver
             var binary = launch.Locate(f.Cli)!;
             // ResumeRefusal has already held the id to IsSafeId, so ResumeArgs is never null here.
             var args = f.ResumeSessionId.Length > 0
-                ? NewChatCommand.ResumeArgs(cli, f.ResumeSessionId)!
+                ? NewChatCommand.ResumeArgs(cli, f.ResumeSessionId, f.FirstMessage)!
                 : NewChatCommand.LaunchArgs(cli, f.Model, f.ParentSessionId, f.FirstMessage);
             var name = NewChatLauncher.DisplayName(cli);
             if (launch.IsWindows)

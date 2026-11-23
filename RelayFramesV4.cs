@@ -64,13 +64,13 @@ namespace Orbweaver
         // The launch's optional account names one this desktop does not list.
         internal const string UnknownAccount = "unknown_account";
 
-        // CB-434 (frames-v17): resume. already_running and resume_started are
-        // ok codes carrying the session id; resume_started is Codex's, whose
-        // orb appears only after the first prompt. unknown_resume: no such
-        // session in this desk's index for that CLI and account, or not in that
-        // folder. resume_unsupported: the installed CLI cannot resume by id,
-        // with this desk's own sentence as `why`.
-        internal const string AlreadyRunning = "already_running", ResumeStarted = "resume_started",
+        // CB-434 (frames-v17): resume. already_running is an ok code carrying
+        // the session id. unknown_resume: no such session in this desk's index
+        // for that CLI and account, not in that folder, or (phone) outside the
+        // browse scope. resume_unsupported: the installed CLI cannot resume by
+        // id, with this desk's own sentence as `why`. resume_started is not
+        // here: a phone never receives it (PeerLaunchCodes.ResumeStarted).
+        internal const string AlreadyRunning = "already_running",
             UnknownResume = "unknown_resume", ResumeUnsupported = "resume_unsupported";
 
         // CB-339 (frames-v11 errors_added.sealed_err_codes): the folder picker's four. forbidden_path is
@@ -78,7 +78,7 @@ namespace Orbweaver
         internal const string ForbiddenPath = "forbidden_path", UnknownPath = "unknown_path",
             Unreadable = "unreadable", RateLimited = "rate_limited";
 
-        internal static readonly string[] OkCodes = [Watching, Unwatched, Typed, Launched, RunFrames.SetOk, AlreadyRunning, ResumeStarted];
+        internal static readonly string[] OkCodes = [Watching, Unwatched, Typed, Launched, RunFrames.SetOk, AlreadyRunning];
 
         internal static readonly string[] ErrCodes =
         [
@@ -222,7 +222,7 @@ namespace Orbweaver
             {
                 if (r.ValueKind != JsonValueKind.String) return new BadFrameRequest(reference, null);
                 resume = r.GetString()!;
-                if (resume.Length > 0 && !LaunchGate.ResumeIdOk(resume)) return new BadFrameRequest(reference, null);
+                if (resume.Length > 0 && !PastSessions.IsSafeId(resume)) return new BadFrameRequest(reference, null);
             }
             if (Str(f, "cwd") is not { } cwd || Str(f, "cli") is not { } cli || Str(f, "persona") is not { } persona
                 || Str(f, "model") is not { } model || Str(f, "first_message") is not { } message

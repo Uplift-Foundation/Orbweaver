@@ -351,11 +351,11 @@ namespace Orbweaver
 
             try
             {
-                var result = server.Handle(message.Body ?? default);
+                var body = server.Handle(message.Body ?? default, out var result);
                 // Codes and counts only: titles and folders never reach the log.
                 MirrorLog.Say("peer-past-sessions", $"from={machine} {result.Code} rows={result.Rows.Count}");
-                await _link.SendAsync(machine, PeerProtocol.Message(PeerProtocol.PastSessions, message.Id,
-                    body: PastSessionsWire.EncodePage(result))).ConfigureAwait(false);
+                await _link.SendAsync(machine, PeerProtocol.Message(PeerProtocol.PastSessions, message.Id, body: body))
+                    .ConfigureAwait(false);
             }
             catch (Exception e)
             {

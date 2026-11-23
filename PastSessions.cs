@@ -44,8 +44,10 @@ namespace Orbweaver
 
         // An id is only ever put on a command line if it is this. Every id the
         // three CLIs write is a UUID, so nothing real is lost, and it also
-        // passes NewChatCommand.CmdSafe for the Windows cmd /k line.
-        private static readonly Regex SafeId = new("^[A-Za-z0-9-]+$", RegexOptions.CultureInvariant);
+        // passes NewChatCommand.CmdSafe for the Windows cmd /k line. CB-434
+        // capped it at 128 so the local path, the peer link and both phones
+        // hold one rule (frames-v17); a real id is 36 characters.
+        private static readonly Regex SafeId = new("^[A-Za-z0-9-]{1,128}$", RegexOptions.CultureInvariant);
 
         internal static bool IsSafeId(string? id) => !string.IsNullOrEmpty(id) && SafeId.IsMatch(id);
 
