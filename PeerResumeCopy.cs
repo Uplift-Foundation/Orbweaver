@@ -12,6 +12,9 @@ namespace Orbweaver
 
         internal static string UpdateToResume(string machine) => "Update Orbweaver on " + machine + " to resume sessions there.";
 
+        internal static string Capped(string machine, int shown) =>
+            "Showing the newest " + shown.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " sessions on " + machine + ".";
+
         internal static string Unreachable(string machine, string? why) =>
             "Couldn't reach " + machine + " for its sessions" + (string.IsNullOrWhiteSpace(why) ? "." : " (" + why + ").");
 

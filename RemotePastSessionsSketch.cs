@@ -17,7 +17,7 @@ namespace Orbweaver
     internal enum RemoteResumeOutcome { Launched, AlreadyRunning, Unsupported, NeedsUpdate, Unreachable, Failed }
 
     internal sealed record RemoteListResult(
-        RemoteListOutcome Outcome, IReadOnlyList<PastSessionRow> Rows, string? Why);
+        RemoteListOutcome Outcome, IReadOnlyList<PastSessionRow> Rows, string? Why, int? Total = null);
 
     internal sealed record RemoteResumeResult(
         RemoteResumeOutcome Outcome, string? Message, bool IsCodex, string? SessionId = null);

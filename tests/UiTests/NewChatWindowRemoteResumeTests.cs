@@ -411,4 +411,48 @@ public class NewChatWindowRemoteResumeTests : IDisposable
         Assert.False(window.ResumePane.IsVisible);
         Assert.NotNull(ToolTip.GetTip(window.LocalResumeRadio));
     }
+
+    [AvaloniaFact]
+    public void ACappedListSaysItIsTheNewestN()
+    {
+        var rows = Enumerable.Range(0, 3).Select(i => Row("r" + i, "S" + i)).ToList();
+        var capped = Window(new FakeRemote { List = new(RemoteListOutcome.Ok, rows, null, Total: 2500) });
+        Assert.Equal("Showing the newest 3 sessions on mini.", capped.StatusLine.Text);
+
+        var whole = Window(new FakeRemote { List = new(RemoteListOutcome.Ok, rows, null, Total: 3) });
+        Assert.Null(whole.StatusLine.Text);
+        var unknown = Window(new FakeRemote { List = new(RemoteListOutcome.Ok, rows, null) });
+        Assert.Null(unknown.StatusLine.Text);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(@"C:\src\app", true, "app")]
+    [InlineData(@"C:\src\app\", true, "app")]
+    [InlineData("/srv/app/", true, "app")]
+    [InlineData(@"C:\", true, "C:")]
+    [InlineData("/", true, "/")]
+    [InlineData("/srv/app/", false, "app")]
+    public void AFolderLabelCutsARemotePathAtEitherSeparator(string path, bool remote, string expected) =>
+        Assert.Equal(expected, NewChatWindow.FolderLabel(path, remote));
+
+    [AvaloniaFact]
+    public void AWindowsDesksFoldersGroupFilterAndLabelOnAnyHost()
+    {
+        var remote = new FakeRemote
+        {
+            List = new(RemoteListOutcome.Ok, new[]
+            {
+                Row("a", "One", 1, @"C:\Users\w\src\app"), Row("b", "Two", 2, @"C:\Users\w\src\lib"),
+                Row("c", "Three", 3, @"C:\Users\w\src\app\")
+            }, null)
+        };
+        var window = Window(remote);
+
+        var folders = ((IEnumerable<NewChatWindow.ResumeFolder>)window.ResumeFolderFilter.ItemsSource!).ToList();
+        Assert.Equal(new[] { "All folders", "app", "lib" }, folders.Select(f => f.ToString()));
+
+        window.ResumeFolderFilter.SelectedItem = folders.Single(f => f.ToString() == "app");
+        Assert.Equal(new[] { "a", "c" }, Shown(window).Select(r => r.Session.Id));
+        Assert.Equal("app · 6 messages", NewChatWindow.ResumeDetail(Shown(window)[0], remote: true));
+    }
 }

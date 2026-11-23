@@ -2282,9 +2282,22 @@ namespace Orbweaver
         }
 
         // A folder-filter entry: null path is "All folders".
-        internal sealed record ResumeFolder(string? Path)
+        internal sealed record ResumeFolder(string? Path, bool Remote = false)
         {
-            public override string ToString() => Path is null ? "All folders" : System.IO.Path.GetFileName(Path.TrimEnd('/', '\\')) is { Length: > 0 } n ? n : Path;
+            public override string ToString() => Path is null ? "All folders" : FolderLabel(Path, Remote);
+        }
+
+        // The last segment of a folder. A far machine's paths follow its own
+        // separators, not this one's — a Windows desk's `C:\src\app` read on a Mac
+        // is one segment to Path.GetFileName, and a POSIX one on Windows is fine
+        // either way — so a remote path is cut at either separator.
+        internal static string FolderLabel(string path, bool remote)
+        {
+            var trimmed = path.TrimEnd('/', '\\');
+            var name = remote
+                ? trimmed[(trimmed.LastIndexOfAny(new[] { '/', '\\' }) + 1)..]
+                : System.IO.Path.GetFileName(trimmed);
+            return name.Length > 0 ? name : path;
         }
 
         // Reads off the UI thread; a result that arrives after the CLI, account
@@ -2351,6 +2364,10 @@ namespace Orbweaver
                     _resumeSessions = result.Rows.Select(r => r.Session).ToList();
                     _resumeRemoteLive = new HashSet<string>(result.Rows.Where(r => r.IsLive).Select(r => r.Session.Id), StringComparer.Ordinal);
                     BuildResumeFolderFilter();
+                    // The far desk caps what it returns; say so rather than let
+                    // a short list read as the whole history.
+                    if (result.Total is { } total && total > result.Rows.Count)
+                        _statusLine.Text = PeerResumeCopy.Capped(machine, result.Rows.Count);
                 }
                 else
                 {
@@ -2407,7 +2424,7 @@ namespace Orbweaver
             var keep = _resumeFolderWanted ?? (_resumeFolderFilter.SelectedItem as ResumeFolder)?.Path;
             _resumeFolderWanted = null;
             var items = new List<ResumeFolder> { new((string?)null) };
-            items.AddRange(PastSessions.Folders(_resumeSessions!).Select(f => new ResumeFolder(f)));
+            items.AddRange(PastSessions.Folders(_resumeSessions!).Select(f => new ResumeFolder(f, _resumeRemote)));
             _resumeFolderFilter.ItemsSource = items;
             var at = keep is null ? 0 : items.FindIndex(i => i.Path == keep);
             _resumeFolderFilter.SelectedIndex = at >= 0 ? at : 0;
@@ -2506,10 +2523,10 @@ namespace Orbweaver
         // `counting` is true while a lazily-read message count is still on its
         // way ("…"); a count that could not be read is left out rather than
         // shown as zero.
-        internal static string ResumeDetail(PastSessionRow row, int? count = null, bool counting = false)
+        internal static string ResumeDetail(PastSessionRow row, int? count = null, bool counting = false, bool remote = false)
         {
             var s = row.Session;
-            var folder = s.Cwd is null ? "unknown folder" : (System.IO.Path.GetFileName(s.Cwd.TrimEnd('/', '\\')) is { Length: > 0 } n ? n : s.Cwd);
+            var folder = s.Cwd is null ? "unknown folder" : FolderLabel(s.Cwd, remote);
             var detail = folder;
             if (counting) detail += " · …";
             else if ((count ?? s.MessageCount) is { } c) detail += " · " + c + (c == 1 ? " message" : " messages");
@@ -2572,7 +2589,7 @@ namespace Orbweaver
             // came over the wire, or left out.
             if (_resumeRemote)
             {
-                detail.Text = ResumeDetail(row);
+                detail.Text = ResumeDetail(row, remote: true);
                 return;
             }
 
