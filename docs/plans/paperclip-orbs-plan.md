@@ -549,8 +549,8 @@ Assumed, and who settles it:
 | Assumption | Settled by |
 | --- | --- |
 | A tool action request raised by a real agent run names that agent in `requestedByAgentId` | the first native run that reaches an "Ask first" tool; until then every real row seen names no agent and lands on the company's lead (§13.2) |
-| Both phones key a pending prompt by session and would overwrite a second one | phone engineer, by reading; the desktop rule in §13.4 is safe either way |
-| The phone sends `prefs` on every connect, not only on a change | phone engineer; if only on change, a fresh install sends it once at pairing |
+
+Settled by the phone engineer, read from the phone code on mobile PR 129, not run on a device here: both phones key a pending prompt by `request_id` and could hold several, but each draws one card per session (the newest), so one prompt per agent is the safe rule. iOS sends `prefs` on every welcome, on pairing, when a desk comes back and on a change. **Android sent no `prefs` frame at all before this work**; PR 129 adds one, so an Android phone gets no broke alert until it runs that build. Android has no push service: its alerts come from socket frames, the socket does not hand it the sealed `e`, and so its broke alert always reads "Needs attention", with the row saying the rest.
 
 ### 13.2 Desktop: acting (CB-427)
 
@@ -659,6 +659,7 @@ No hook, installer or packaging file changes, as in release 1; the five install 
     "rewrite": "title \"Orbweaver · <label>\"; body by why: run_failed \"Last run failed\", timed_out \"Last run timed out\", error \"Is in an error state\", anything else \"Needs attention\". push and t must agree or the relay's text stands.",
     "actions": "none. A tap opens the agent's row. Nothing resolves it and no resolve push follows.",
     "setting": "\"Agent broke\", on by default, sent as broke_alerts.",
+    "android": "no push service: the alert is raised from the envelope's push value on the socket, without e, so its body is always the fallback line",
     "watch": "the mirrored notification, no action",
     "old_builds": "never sent one, because they never send broke_alerts. One that reached an old iOS build would show the relay's text with no buttons."
   },
