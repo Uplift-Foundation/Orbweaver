@@ -57,6 +57,8 @@ namespace Orbweaver.Tests
             Cb327Captures.Run(Check);
             Cb330Captures.Run(Check);
             Cb356Captures.Run(Check);
+            Cb403Captures.Run(Check);
+            Cb412Checks.Run(Check);
 
             // --- the transcript ---
 
@@ -340,6 +342,16 @@ namespace Orbweaver.Tests
                  Do you want to proceed?
                  ❯ 1. Yes
                 """) is null);
+
+            // CB-400: `/mobile`'s screen is not a dialog but only Esc closes it, so it
+            // reads as one Close option with its rows; the idle prompt after Esc does not.
+            Check("an Esc-to-close overlay reads as one Close option carrying its body",
+                ChatTranscript.ParseDialog(PaneFixtures.MobileOverlay80x50) is { Body: not null } overlay
+                && overlay.Options.Count == 1 && overlay.Options[0].Key == "Escape" && overlay.Options[0].Label == "Close"
+                && overlay.Title == "Get the Claude app on your phone");
+            Check("the screen after Esc is not an overlay", ChatTranscript.ParseDialog(PaneFixtures.MobileAfterEsc) is null);
+            Check("a numbered dialog that also shows the footer is that dialog",
+                ChatTranscript.ParseDialog(PaneFixtures.MacModelSwitchDialog + "\n  Esc to close\n") is { Body: null, Options.Count: >= 2 });
 
             Check("options that don't start at 1 are refused", ChatTranscript.ParseDialog("""
                  Do you want to proceed?
@@ -1291,10 +1303,15 @@ namespace Orbweaver.Tests
                          ("Recently blocked (populated, stripped)", PaneFixtures.MiniRecentlyBlockedPopulatedStripped),
                      })
             {
-                Check($"/permissions {name} is not a dialog", ChatTranscript.ParseDialog(screen) is null,
-                    $"{ChatTranscript.ParseDialog(screen)?.Options.Count} options");
-                Check($"/permissions {name} reads as unknown, not a prompt",
-                    PaneScreen.Classify(screen) == PaneReading.Unknown, PaneScreen.Classify(screen).ToString());
+                // CB-400: a tab with the `▔` edge and an `Esc to cancel` footer is a pane
+                // Esc leaves (one Cancel option with a body); the populated Recently-blocked
+                // tab ends `Esc to approve 1 blocked` and stays unknown. Never a numbered
+                // dialog and never a prompt either way.
+                var pane = ChatTranscript.ParseDialog(screen);
+                Check($"/permissions {name} is not a numbered dialog", pane is null || pane.Body is not null,
+                    $"{pane?.Options.Count} options");
+                Check($"/permissions {name} is never a prompt",
+                    PaneScreen.Classify(screen) == (pane is null ? PaneReading.Unknown : PaneReading.Dialog), PaneScreen.Classify(screen).ToString());
             }
 
             // The populated tab is the case that matters, and the tab bar is
@@ -1637,10 +1654,10 @@ namespace Orbweaver.Tests
 
             // Blank rows never make something a dialog or a prompt that is not.
             var blanks = string.Concat(Enumerable.Repeat("\n", 30));
-            Check("/permissions with blank rows below is still not a dialog",
-                ChatTranscript.ParseDialog(PaneFixtures.PermissionsAllow + blanks) is null
+            Check("/permissions with blank rows below is still not a numbered dialog",
+                ChatTranscript.ParseDialog(PaneFixtures.PermissionsAllow + blanks) is { Body: not null }
                 && ChatTranscript.ParseAskForm(PaneFixtures.PermissionsAllow + blanks) is null
-                && PaneScreen.Classify(PaneFixtures.PermissionsAllow + blanks) == PaneReading.Unknown);
+                && PaneScreen.Classify(PaneFixtures.PermissionsAllow + blanks) == PaneReading.Dialog);
             Check("a numbered list above a live box with blank rows below is still prose",
                 ChatTranscript.ParseDialog("""
                     ⏺ Three things worth doing:
@@ -1685,6 +1702,63 @@ namespace Orbweaver.Tests
                     named?.Prompt.Title ?? "null");
                 Check($"…and its screen as a dialog ({name})", PaneScreen.Classify(screen) == PaneReading.Dialog);
             }
+            // CB-406: an agent team's lead, its pane cut to 35 columns by the
+            // teammate's split. The form reads exactly as it does full width,
+            // and an answer typed into "Type something." reads back whole even
+            // where Claude Code wrapped a word that would have ended at the edge.
+            var teamForm = ChatTranscript.ParseAskForm(PaneFixtures.TeamLeadNarrowForm);
+            Check("a team lead's form in a 35-column pane reads as its five options",
+                teamForm is not null && teamForm.Prompt.Title == "Which colour?" && teamForm.Prompt.Options.Count == 5
+                && teamForm.FreeTextKey == "4",
+                teamForm?.Prompt.Title ?? "null");
+            var typedRow = ChatTranscript.ParseDialog(PaneFixtures.TeamLeadNarrowFreeTextTyped)?.Options.FirstOrDefault(o => o.Key == "4");
+            Check("…and a long typed answer wrapped over four rows reads back whole",
+                typedRow?.Label == "my own answer and this is a much longer reply that will not fit on one row of a narrow pane",
+                typedRow?.Label ?? "null");
+
+            // CB-406: the free-text row with text in it reads as being edited;
+            // the same form untouched, or with the cursor on an empty
+            // "Type something.", does not.
+            Check("a form with text typed in its free-text row is being edited",
+                ChatTranscript.ParseAskForm(PaneFixtures.TeamLeadNarrowFreeTextTyped) is { } editing
+                && ChatTranscript.IsEditingFreeText(editing));
+            Check("…and the untouched form is not",
+                ChatTranscript.ParseAskForm(PaneFixtures.TeamLeadNarrowForm) is { } untouched
+                && !ChatTranscript.IsEditingFreeText(untouched));
+
+            // QA round 2: no real form reads as being edited unless text is in
+            // its free-text row. Swept over every capture here, so a new
+            // fixture is held to it too: of the forms, only the two typed-text
+            // captures qualify (four multi-selects among the rest, cursor on
+            // various rows, all with "Type something" still drawn).
+            var editingForms = typeof(PaneFixtures)
+                .GetFields(System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)
+                .Where(f => f.GetValue(null) is string text && ChatTranscript.ParseAskForm(text) is { } f2 && ChatTranscript.IsEditingFreeText(f2))
+                .Select(f => f.Name).OrderBy(n => n, StringComparer.Ordinal).ToList();
+            Check("only the typed-text captures read as a free-text row being edited",
+                editingForms.SequenceEqual(new[] { "QaFreeTextTyped", "QaTeamLeadShortPaneTyped", "TeamLeadNarrowFreeTextTyped" }),
+                string.Join(",", editingForms));
+
+            // QA's real 35x23 capture: the four-row answer reads back whole. The
+            // old wrap test (no slack) cut it after "answer that wraps over" —
+            // 27 + 1 + "several" ends at 35 — which is the type-failed QA saw.
+            var qaRow = ChatTranscript.ParseDialog(PaneFixtures.QaTeamLeadShortPaneTyped)?.Options.FirstOrDefault(o => o.Key == "3")?.Label;
+            Check("QA's 35x23 team-lead capture reads its typed row back whole",
+                qaRow == "QA test, ignore: a long peer answer that wraps over several rows of the narrow pane", qaRow ?? "null");
+
+            // QA round 1: the wrap test's boundary, on the real capture with only
+            // the continuation's first word resized. The line above is 28 wide
+            // on a 35-wide screen: a word of 5 would have fitted with room to
+            // spare (34), so it is not a wrap; 6 ends exactly at the edge (35),
+            // which Claude Code wraps; 7 runs past it (36).
+            foreach (var (word, joined) in new[] { ("narro", false), ("narrow", true), ("narrowe", true) })
+            {
+                var screen = PaneFixtures.TeamLeadNarrowFreeTextTyped.Replace("     narrow pane", "     " + word + " pane");
+                var row = ChatTranscript.ParseDialog(screen)?.Options.FirstOrDefault(o => o.Key == "4")?.Label ?? "";
+                Check($"a continuation whose first word ends at {28 + 1 + word.Length} of 35 is {(joined ? "" : "not ")}joined",
+                    row.EndsWith(word + " pane", StringComparison.Ordinal) == joined, row);
+            }
+
             Check("the cut-off border really is a pure rule on the last line",
                 ChatTranscript.IsHorizontalRule(PaneFixtures.MacNamedFormClippedName.TrimEnd().Split('\n')[^1].Trim()));
 
@@ -1711,9 +1785,11 @@ namespace Orbweaver.Tests
             // /permissions tab, a prose list above a live box, and a prompt keep
             // their readings with blank rows and a titled rule under them.
             var spacer = string.Concat(Enumerable.Repeat("\n", 25)) + "──────────────────────────────── qa ─";
-            Check("/permissions over blank rows and a bottom rule is still not a dialog",
-                ChatTranscript.ParseDialog(PaneFixtures.PermissionsAllow + spacer) is null
-                && PaneScreen.Classify(PaneFixtures.PermissionsAllow + spacer) == PaneReading.Unknown);
+            // The titled rule carries letters, so it is not an input box and the pane still
+            // reads as a pane to leave (CB-400), never as a numbered dialog or a prompt.
+            Check("/permissions over blank rows and a bottom rule is still not a numbered dialog",
+                ChatTranscript.ParseDialog(PaneFixtures.PermissionsAllow + spacer) is { Body: not null }
+                && PaneScreen.Classify(PaneFixtures.PermissionsAllow + spacer) == PaneReading.Dialog);
             Check("the window holds thirty drawn lines, not thirty rows",
                 ChatTranscript.WindowStart(Enumerable.Repeat("x", 40).Concat(Enumerable.Repeat("", 50)).ToArray()) == 10
                 && ChatTranscript.WindowStart(new[] { "a", "", "b" }) == 0);

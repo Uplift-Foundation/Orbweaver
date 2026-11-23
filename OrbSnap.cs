@@ -22,6 +22,13 @@ namespace Orbweaver
         // group and floats where it was dropped.
         internal sealed record Pair(string RootId) : SnapOutcome;
         internal sealed record LeaveToFree : SnapOutcome;
+
+        // CB-332: a team that is its user group's only occupant, dragged far
+        // enough from where it started. Not Leave, which would make a new
+        // singleton group at the drop — for a sole occupant that is a no-op.
+        // It is the orb menu's "Leave group": back to main. Arranged mode only;
+        // free mode lets the team go with LeaveToFree.
+        internal sealed record LeaveSole : SnapOutcome;
     }
 
     /// <summary>
@@ -76,8 +83,10 @@ namespace Orbweaver
         //             Leave.
         //   Leave:    no Join, the current group has at least one other disc, and
         //             every one of them is > leaveDip away edge to edge.
-        //   NoChange: otherwise, including when the moving team is its group's
-        //             only occupant. The 24..72 band between the two thresholds
+        //   LeaveSole / LeaveToFree: CB-332 — the moving team is its group's only
+        //             occupant and is > leaveDip from where it started
+        //             (`startDiscs`); LeaveToFree in free mode.
+        //   NoChange: otherwise. The 24..72 band between the two thresholds
         //             is the hysteresis: neither fires inside it.
         //
         // Free mode (F3) changes two things. A loose candidate is Paired with
@@ -88,7 +97,8 @@ namespace Orbweaver
         internal static SnapOutcome Decide(
             IReadOnlyList<(double X, double Y, double R)> moving, string currentGroupId,
             IReadOnlyList<SnapCandidate> candidates, bool free,
-            double joinDip = JoinDip, double leaveDip = LeaveDip)
+            double joinDip = JoinDip, double leaveDip = LeaveDip,
+            IReadOnlyList<(double X, double Y, double R)>? startDiscs = null)
         {
             if (moving.Count == 0) return new SnapOutcome.NoChange();
 
@@ -132,6 +142,19 @@ namespace Orbweaver
                 return !free ? new SnapOutcome.Leave()
                     : OrbGroups.IsPredefined(currentGroupId) ? new SnapOutcome.NoChange()
                     : new SnapOutcome.LeaveToFree();
+
+            // CB-332: the sole occupant has no other disc to be far from — the
+            // host leaves its group out of the candidates altogether, since
+            // every disc of it is the moving team — so it is measured against
+            // where the team stood when the drag began. A predefined group is
+            // not a group to leave, and a caller with no start discs (a test, a
+            // host without a session) gets today's NoChange. Free mode lets the
+            // team go (LeaveToFree); arranged it goes to main, like the menu.
+            if ((own is null || own.Value.Discs.Count == 0)
+                && startDiscs is { Count: > 0 }
+                && !OrbGroups.IsPredefined(currentGroupId)
+                && DiscGap(moving, startDiscs) > leaveDip)
+                return free ? new SnapOutcome.LeaveToFree() : new SnapOutcome.LeaveSole();
 
             return new SnapOutcome.NoChange();
         }

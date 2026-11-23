@@ -155,6 +155,10 @@ namespace Orbweaver
             // variable as the local panel's gate.
             Func<bool>? Shadow = null,
 
+            // CB-403: the clock the gate waits on while a screen settles into
+            // a prompt. Null is real time.
+            Func<TimeSpan, Task>? GateDelay = null,
+
             // CB-363: what a FILE request is answered against — the browse
             // settings, the disk BrowseRules reads, and the file reader. Read
             // once per request, off the frame loop. Null means this server does
@@ -170,7 +174,23 @@ namespace Orbweaver
             // Null on a harness that predates it, which reads Agents as before;
             // a peek that has nothing yet answers null, and the request is then
             // judged against the browse roots alone.
-            Func<IReadOnlyList<AgentRoster.Entry>?>? PeekAgents = null);
+            Func<IReadOnlyList<AgentRoster.Entry>?>? PeekAgents = null,
+
+            // CB-404: the model and effort each session runs, for the roster's
+            // `run` field, and the act of changing one for a `run` INPUT. Null is
+            // a server that offers neither: no `run` in the roster, so a near
+            // Buddy shows the controls disabled and never sends the flag.
+            // RunControlsHost reads cached readings only, so asking it on the
+            // peer pump costs no disk walk (the CB-306 freeze).
+            IRunControls? RunControls = null,
+
+            // CB-412: what a dialog or `/login` screen is read through, kept apart
+            // from CapturePane/CanReadPane because those also feed the typing gate,
+            // which stays on the tmux pane. Null falls back to that pair, so every
+            // harness built before this reads exactly as it did; LiveSeams wires the
+            // route-aware reader (tmux, iTerm2, kitty, WezTerm, a Windows console).
+            Func<SessionStatus, Task<string?>>? DialogCapture = null,
+            Func<SessionStatus, bool>? DialogCanRead = null);
 
         // What running a slash line on the far machine came to: one of
         // MirrorProtocol.ViaTyped/ViaControl/ViaRefused, and for a refusal the
@@ -179,6 +199,9 @@ namespace Orbweaver
 
         private readonly string _account;
         private readonly Seams _seams;
+
+        private Func<SessionStatus, Task<string?>>? DialogCapture => _seams.DialogCapture ?? _seams.CapturePane;
+        private Func<SessionStatus, bool>? DialogCanRead => _seams.DialogCanRead ?? _seams.CanReadPane;
         private readonly object _gate = new();
 
         // One subscription: someone is watching a session and wants what's new.
@@ -507,10 +530,13 @@ namespace Orbweaver
                 RecordStatus: status => RecordStatusFor(status, localSessions),
                 CapturePane: TerminalFocuser.CapturePane,
                 CanReadPane: TerminalFocuser.CanReadPane,
-                PressKey: TerminalFocuser.SendPaneKey,
-                TypeLiteral: TerminalFocuser.SendPaneText,
+                PressKey: (status, key) => LocalCliChatSession.PickPress(TerminalFocuser.RouteFor(status))(status, key),
+                TypeLiteral: (status, text) => LocalCliChatSession.PickType(TerminalFocuser.RouteFor(status))(status, text),
                 Shadow: RealShadowOn,
-                Files: LiveFiles);
+                Files: LiveFiles,
+                RunControls: RunControlsLive.Shared,
+                DialogCapture: status => LocalCliChatSession.PickCapture(TerminalFocuser.RouteFor(status))(status),
+                DialogCanRead: status => TerminalFocuser.CanReadPane(status) || ScreenReaders.For(status) is not null);
         }
 
         // CB-307: shadow mode, read the way the local panel's gate reads it —
@@ -557,7 +583,7 @@ namespace Orbweaver
         // Excluded from coverage along with the rest of LiveSeams: it scans
         // a real registry directory and checks a real process table.
         [ExcludeFromCodeCoverage]
-        private static SessionRegistry.Entry? RegistryEntryFor(SessionStatus status)
+        internal static SessionRegistry.Entry? RegistryEntryFor(SessionStatus status)
         {
             if (status.SessionPid <= 0) return null;
 
@@ -766,7 +792,8 @@ namespace Orbweaver
                     RouteFor(resolved.Value.SessionId),
                     PersonaFor(status, userConfigDirs, picturesById),
                     CommandRoutes: offered.Routes,
-                    Parked: parked ? true : null));
+                    Parked: parked ? true : null,
+                    Run: RunFor(status)));
             }
 
             // AgentRoster is Claude Code's authority, not a universal session
@@ -799,7 +826,8 @@ namespace Orbweaver
                         hasTranscript, _seams.CanType(status), string.IsNullOrWhiteSpace(status.Color) ? null : status.Color,
                         offered.Names, status.State, _seams.CanDeliver?.Invoke(status), RouteFor(session.SessionId),
                         PersonaFor(status, userConfigDirs, picturesById),
-                    CommandRoutes: offered.Routes));
+                    CommandRoutes: offered.Routes,
+                    Run: RunFor(status)));
                 }
             }
 
@@ -841,7 +869,8 @@ namespace Orbweaver
                         offered.Names, status.State, _seams.CanDeliver?.Invoke(status), RouteFor(sessionId),
                         PersonaFor(status, userConfigDirs, picturesById),
                     CommandRoutes: offered.Routes,
-                    Parked: HasTranscript(status) && ParkedNow(status) ? true : null));
+                    Parked: HasTranscript(status) && ParkedNow(status) ? true : null,
+                    Run: RunFor(status)));
                 }
             }
 
@@ -1162,15 +1191,17 @@ namespace Orbweaver
             var (status, name, refused) = await DialogSessionAsync(fromPeer, frame).ConfigureAwait(false);
             if (status is null) { AnswerLog("prompt", $"n={name} -> err code={refused}"); return; }
 
-            var prompt = await ReadPromptAsync(status).ConfigureAwait(false);
+            var (prompt, callWhy) = await ReadPromptAsync(status).ConfigureAwait(false);
+            // call=yes, or call=no:<fixed word> naming the condition that found none; never content.
+            var call = callWhy == AskFormTranscript.CallFound ? "call=yes" : "call=no:" + callWhy;
             if (prompt is null)
             {
-                AnswerLog("prompt", $"n={name} -> err code={MirrorProtocol.ErrNoPrompt}");
+                AnswerLog("prompt", $"n={name} -> err code={MirrorProtocol.ErrNoPrompt} {call}");
                 await ErrAsync(fromPeer, frame.Id, MirrorProtocol.ErrNoPrompt, name).ConfigureAwait(false);
                 return;
             }
 
-            AnswerLog("prompt", $"n={name} -> ok options={prompt.Options.Count} fp={prompt.Fingerprint}");
+            AnswerLog("prompt", $"n={name} -> ok options={prompt.Options.Count} fp={prompt.Fingerprint} {call}");
             await SendTransferAsync(fromPeer, frame.Id, MirrorProtocol.EncodePrompt(prompt),
                 new Dictionary<string, string> { [MirrorProtocol.FingerprintField] = prompt.Fingerprint }, sub: null)
                 .ConfigureAwait(false);
@@ -1213,8 +1244,8 @@ namespace Orbweaver
 
             var code = _seams.PressKey is not { } press
                 ? MirrorProtocol.ErrUnsupported
-                : await FormAnswer.AnswerAsync(status, _seams.CapturePane!, press, _seams.TypeLiteral,
-                    wanted, key, action, text).ConfigureAwait(false);
+                : await FormAnswer.AnswerAsync(status, DialogCapture!, press, _seams.TypeLiteral,
+                    wanted, key, action, text, why => AnswerLog("answer", $"n={name} {why}")).ConfigureAwait(false);
 
             var what = action is null ? $"key={key}" : $"act={action}";
             if (code is not null)
@@ -1245,7 +1276,7 @@ namespace Orbweaver
                      || Resolve(name, _seams.Agents(), _seams.LocalSessions()) is not { } resolved)
                 code = MirrorProtocol.ErrNoSession;
             else if (!_seams.ReplyEnabled(resolved.Status.Source)) code = MirrorProtocol.ErrReplyOff;
-            else if (_seams.CapturePane is null || !(_seams.CanReadPane?.Invoke(resolved.Status) ?? true))
+            else if (DialogCapture is null || !(DialogCanRead?.Invoke(resolved.Status) ?? true))
                 code = MirrorProtocol.ErrNoPane;
             else status = resolved.Status;
 
@@ -1253,13 +1284,14 @@ namespace Orbweaver
             return (status, name, code);
         }
 
-        private async Task<MirrorProtocol.WirePrompt?> ReadPromptAsync(SessionStatus status)
+        private async Task<(MirrorProtocol.WirePrompt? Prompt, string CallWhy)> ReadPromptAsync(SessionStatus status)
         {
             string? screen;
-            try { screen = await _seams.CapturePane!(status).ConfigureAwait(false); }
+            try { screen = await DialogCapture!(status).ConfigureAwait(false); }
             catch { screen = null; }
 
-            return MirrorProtocol.PromptFromScreen(screen, AskFormTranscript.CallFor(screen, status.TranscriptPath));
+            var (call, why) = AskFormTranscript.CallForWhy(screen, status.TranscriptPath);
+            return (MirrorProtocol.PromptFromScreen(screen, call), why);
         }
 
         // The sink for prompt and answer outcomes: the route, the key and the
@@ -2320,6 +2352,14 @@ namespace Orbweaver
             // runs on the frame loop, which must not stall a HELLO or a watch
             // for that long. The reply carries the frame's id, so it can go
             // whenever it is ready; SlashAsync catches its own failures.
+            // CB-404: a run change is resolved here too, and detached for the same
+            // reason: a control request waits on the far CLI's answer.
+            if (frame.Get(MirrorRun.Field) is { } runField)
+            {
+                RunInFlight = Task.Run(() => SetRunAsync(fromPeer, frame, status, runField, text));
+                return;
+            }
+
             if (frame.Num(MirrorProtocol.SlashField) == 1)
             {
                 SlashInFlight = Task.Run(() => SlashAsync(fromPeer, frame, status, text));
@@ -2466,6 +2506,56 @@ namespace Orbweaver
         // sleeping. Nothing in production reads it.
         internal Task SlashInFlight { get; private set; } = Task.CompletedTask;
 
+        // CB-404: what a session's `run` roster field says, or null for none. A
+        // host that throws costs that session its field, never the roster.
+        private PeerRun? RunFor(SessionStatus status)
+        {
+            if (_seams.RunControls is not { } run) return null;
+            try { return run.Read(status) is { } state ? MirrorRun.From(state) : null; }
+            catch (Exception e)
+            {
+                QuietLog($"run-read:{e.GetType().Name}", $"run read threw {e.GetType().Name}");
+                return null;
+            }
+        }
+
+        // CB-404: a `run` INPUT, held to the rules a phone's set_run is: the
+        // shape (field name, ID grammar), then the field's state as last read
+        // (off or another change running, then a value outside its choices), then the
+        // route.
+        // Answered OK with via=set, or via=refused with why and kind; never ERR,
+        // which is for a request that could not be served at all.
+        private async Task SetRunAsync(string fromPeer, MirrorProtocol.MirrorFrame frame, SessionStatus status,
+            string field, string value)
+        {
+            (string Code, string? Why)? answer;
+            string? note = null;
+            if (!RunFrames.FieldOk(field) || !RunFrames.IdOk(value))
+                answer = (RunFrames.BadValue, "that can't be passed to the CLI");
+            else if (_seams.RunControls is not { } run || run.Read(status) is not { } state)
+                answer = (RunFrames.Unavailable, RelayRemote.NoRunControlsWhy);
+            else if (RunFrames.Refusal(state, field, value, run.IsRunning(status)) is { } refused)
+                answer = refused;
+            else
+            {
+                RunSetResult result;
+                try { result = await run.SetAsync(status, field, value).ConfigureAwait(false); }
+                catch { result = new(RunSetKind.Failed, "that machine failed while changing it"); }
+                answer = result.Kind == RunSetKind.Sent ? null : RunFrames.Answer(result);
+                if (result.Kind == RunSetKind.Sent) note = result.Why;
+            }
+
+            var fields = MirrorRun.ReplyFields(answer?.Code, answer?.Why, note);
+            // The code a refusal carried, never its sentence or the value: what a
+            // hand check needs to tell busy from bad_value from a failed route.
+            InputLog("input", $"n={frame.Text("n")} -> ok via={fields["via"]} run={field}"
+                + (answer is { } a ? $" code={a.Code}" : ""));
+            await SendAsync(fromPeer, MirrorProtocol.BuildFrame(MirrorProtocol.Ok, frame.Id, fields)).ConfigureAwait(false);
+        }
+
+        // The last detached run change, for tests, as SlashInFlight is.
+        internal Task RunInFlight { get; private set; } = Task.CompletedTask;
+
         // No runner wired: type it where there is a pane, refuse where there is
         // not. The same split Offered makes for the roster, so what was offered
         // is what runs.
@@ -2488,7 +2578,7 @@ namespace Orbweaver
         private Task<(bool Typed, string? Refusal, string? Diagnostic)> GuardedTypeAsync(
             SessionStatus status, string text, string who) =>
             TypingGate.GuardedTypeAsync(status, text, _seams.TypeInto,
-                _seams.RecordStatus, _seams.CapturePane, _seams.CanReadPane, _seams.Shadow, InputLog, who);
+                _seams.RecordStatus, _seams.CapturePane, _seams.CanReadPane, _seams.Shadow, InputLog, who, _seams.GateDelay);
 
         // --- sending ------------------------------------------------------------
 

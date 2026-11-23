@@ -37,7 +37,13 @@ namespace Orbweaver
             // and the `at` of the last add or remove applied — which orders the
             // next one even after the key itself is gone.
             byte[]? WatchPublic = null,
-            long? WatchAt = null);
+            long? WatchAt = null,
+            // CB-358: the phone's last accepted prefs frame, null until it
+            // sends one. Kept here because the phone resends its choice only
+            // when it is running to see this desktop come back, and a
+            // suspended iPhone is not: without the file, every restart would
+            // put a "team leads only" phone back on a push per member.
+            AlertPrefs? Alerts = null);
 
         private sealed class StoredPhone
         {
@@ -53,6 +59,9 @@ namespace Orbweaver
             // CB-323: absent from the file until a key.add is accepted.
             [JsonPropertyName("watch_pub")] public string? WatchPublic { get; set; }
             [JsonPropertyName("watch_at")] public long? WatchAt { get; set; }
+            // CB-358: absent from the file until a prefs frame is accepted.
+            [JsonPropertyName("done_alerts")] public string? DoneAlerts { get; set; }
+            [JsonPropertyName("amber_members")] public bool? AmberMembers { get; set; }
         }
 
         private sealed class Stored
@@ -261,6 +270,21 @@ namespace Orbweaver
             }
         }
 
+        // CB-358. False if the phone is gone or the file could not be
+        // written: the choice then holds for this process only.
+        internal bool SaveAlerts(string phoneId, AlertPrefs prefs)
+        {
+            lock (_gate)
+            {
+                EnsureLoaded();
+                var p = _stored.Phones.FirstOrDefault(x => x.PhoneId == phoneId);
+                if (p is null) return false;
+                p.DoneAlerts = prefs.DoneAlertsName;
+                p.AmberMembers = prefs.AmberMembers;
+                return Save();
+            }
+        }
+
         internal void SaveReceive(string phoneId, ushort epoch, ulong counter)
         {
             lock (_gate)
@@ -340,7 +364,8 @@ namespace Orbweaver
             // A watch key that does not parse as a point is no key: every
             // watch-signed answer is then bad_signature, which fails closed.
             RelayCrypto.FromHex(p.WatchPublic) is { } w && RelayCrypto.IsValidPublicKey(w) ? w : null,
-            p.WatchAt);
+            p.WatchAt,
+            AlertPrefs.FromStored(p.DoneAlerts, p.AmberMembers));
 
         private void EnsureLoaded()
         {

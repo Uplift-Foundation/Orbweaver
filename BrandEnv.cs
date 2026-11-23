@@ -98,6 +98,11 @@ namespace Orbweaver
         // path. Unset means no log. No older spelling ever existed.
         internal const string ActivityLog = "ACTIVITY_LOG";
 
+        // CB-394: the status hook's deadline, in tenths of a second, for each
+        // Codex-daemon ps/lsof/tmux lookup. Unset means 20 (2 s); a test sets it
+        // short. No older spelling ever existed.
+        internal const string HookLookupTimeoutDs = "HOOK_LOOKUP_TIMEOUT_DS";
+
         internal static readonly IReadOnlyList<string> All =
         [
             SettingsDir, LogDir, StatusRoot, BundleRoot, ProfileRoot,
@@ -107,6 +112,7 @@ namespace Orbweaver
             Personas, TeamBuiltinRoles, TeamLiveNames, TeamWindowsUsers,
             ProbeScopes, ProbeCaps, ProbeAllowResolve,
             UpdateFeedUrl, UpdateCurrentVersion, NetworkTests, KeychainTests, RelayUrl, RelayTestHooks, ActivityLog,
+            HookLookupTimeoutDs,
         ];
 
         // Pure: the environment is a parameter, so the precedence is a test

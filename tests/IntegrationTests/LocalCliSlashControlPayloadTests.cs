@@ -71,6 +71,9 @@ public class LocalCliSlashControlPayloadTests
     [InlineData("/permissions plan", """{"subtype":"set_permission_mode","mode":"plan"}""")]
     [InlineData("/think 8000", """{"subtype":"set_max_thinking_tokens","max_thinking_tokens":8000}""")]
     [InlineData("/think default", """{"subtype":"set_max_thinking_tokens","max_thinking_tokens":null}""")]
+    // CB-404: effort, measured on stdio at 2.1.330 (on a bridge: M1, read only).
+    [InlineData("/effort high", """{"subtype":"apply_flag_settings","settings":{"effortLevel":"high"}}""")]
+    [InlineData("/effort default", """{"subtype":"apply_flag_settings","settings":{"effortLevel":null}}""")]
     public async Task EachControlCommandPostsTheMeasuredRequestToTheBridgeEventsPath(string line, string expected)
     {
         var api = new Api();

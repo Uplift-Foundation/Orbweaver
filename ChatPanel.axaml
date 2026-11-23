@@ -659,6 +659,29 @@
                                    FontSize="11" FontWeight="SemiBold"
                                    Foreground="#F2FFFFFF"/>
                     </ScrollViewer>
+                    <!-- A screen the terminal is showing that is not a question
+                         (CB-400: the /mobile QR overlay): its rows, drawn the way
+                         the terminal draws them. Monospace, never wrapped and a
+                         line height equal to the font size, so the half-block
+                         rows of a QR code touch. A white card with near-black
+                         text is the QR's own polarity plus a quiet zone: the
+                         terminal draws it in the default foreground, which is
+                         inverted on a dark theme. Scrolls sideways rather than
+                         wrapping, since a wrapped QR is not one, and down past a
+                         bounded height: the other screens Esc closes are 20 to 50
+                         rows, and Close under the card must stay on screen without
+                         scrolling the panel. Visible only for a prompt with a Body. -->
+                    <Border x:Name="PromptBodyCard" IsVisible="False"
+                            Background="#FFFFFF" CornerRadius="4" Padding="8">
+                        <ScrollViewer x:Name="PromptBodyScroll"
+                                      HorizontalScrollBarVisibility="Auto"
+                                      VerticalScrollBarVisibility="Auto"
+                                      MaxHeight="180">
+                            <TextBlock x:Name="PromptBody" TextWrapping="NoWrap"
+                                       FontSize="8" LineHeight="8"
+                                       Foreground="#FF111111"/>
+                        </ScrollViewer>
+                    </Border>
                     <ItemsControl x:Name="PromptOptions">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
@@ -698,6 +721,30 @@
                                 Background="#33FFFFFF" BorderBrush="#40FFFFFF"
                                 BorderThickness="1" Cursor="Hand" IsEnabled="False"
                                 PointerPressed="PromptFreeTextSend_PointerPressed">
+                            <TextBlock Text="Send" Foreground="#EEFFFFFF" FontSize="11"/>
+                        </Border>
+                    </Grid>
+                    <!-- CB-412: the sign-in URL of /login, drawn as a link the
+                         existing link handler opens, and the code field the
+                         browser's page hands back. The field is one line, is
+                         cleared before the send is awaited and is never bound to
+                         anything that persists. Visible only for a prompt whose
+                         Link / CodeEntry say so. -->
+                    <TextBlock x:Name="PromptLoginLink" IsVisible="False"
+                               TextWrapping="Wrap" FontSize="11" Cursor="Hand"
+                               TextDecorations="Underline" Foreground="#FF7FB8FF"
+                               PointerPressed="PromptLoginLink_PointerPressed"/>
+                    <Grid x:Name="PromptLoginCode" IsVisible="False" ColumnDefinitions="*,Auto">
+                        <TextBox x:Name="PromptLoginCodeBox" Grid.Column="0"
+                                 AcceptsReturn="False" FontSize="11"
+                                 PlaceholderText="Paste the code here"
+                                 KeyDown="PromptLoginCodeBox_KeyDown"
+                                 TextChanged="PromptLoginCodeBox_TextChanged"/>
+                        <Border x:Name="PromptLoginCodeSend" Grid.Column="1"
+                                Margin="4,0,0,0" Padding="9,4" CornerRadius="6"
+                                Background="#33FFFFFF" BorderBrush="#40FFFFFF"
+                                BorderThickness="1" Cursor="Hand" IsEnabled="False"
+                                PointerPressed="PromptLoginCodeSend_PointerPressed">
                             <TextBlock Text="Send" Foreground="#EEFFFFFF" FontSize="11"/>
                         </Border>
                     </Grid>

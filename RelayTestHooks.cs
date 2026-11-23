@@ -27,9 +27,16 @@ namespace Orbweaver
             Func<TimeSpan, CancellationToken, Task> delay, CancellationToken token)
         {
             Directory.CreateDirectory(dir);
-            void Log(string line) =>
-                File.AppendAllText(Path.Combine(dir, EventsFile),
-                    $"{now().UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture)} {line}\n");
+            // One writer at a time: the offer loop and OnRequest (raised on the relay's
+            // thread) both log, and on Windows two simultaneous appends to one file throw
+            // "being used by another process".
+            var logGate = new object();
+            void Log(string line)
+            {
+                lock (logGate)
+                    File.AppendAllText(Path.Combine(dir, EventsFile),
+                        $"{now().UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture)} {line}\n");
+            }
 
             var allowed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             void OnRequest(RelayLink.PairRequest r)

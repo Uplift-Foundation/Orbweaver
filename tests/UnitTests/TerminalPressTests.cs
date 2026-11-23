@@ -119,8 +119,42 @@ public class TerminalPressTests
     public void Left_and_other_names_are_still_not_keys_and_text_is_not_an_arrow()
     {
         Assert.Null(TerminalPress.Bytes("Left"));
-        Assert.Null(TerminalPress.Bytes("Escape"));
+        // Escape used to be pinned here as "not a key"; CB-400 makes it one, for an overlay's Close only (the gate's rule 7 and a fresh re-read decide when it may land).
+        Assert.Null(TerminalPress.Bytes("Tab"));
         Assert.Equal(0, TerminalPress.ArrowVirtualKey("2"));
         Assert.Equal(0, TerminalPress.ArrowVirtualKey("\u001b[D"));
+    }
+
+    // ---- CB-400: Escape, only so an overlay's Close can be pressed --------------
+
+    [Fact]
+    public void Escape_is_a_key_and_is_the_esc_byte()
+    {
+        Assert.Equal("\u001b", TerminalPress.Bytes("Escape"));
+        Assert.Null(TerminalPress.Bytes("Esc"));
+        Assert.Null(TerminalPress.Bytes("escape"));
+    }
+
+    [Fact]
+    public void A_console_escape_is_a_plain_esc_character_record_with_no_virtual_key()
+    {
+        var r = TerminalPress.ConsoleRecords(TerminalPress.Bytes("Escape")!);
+        Assert.Equal(2, r.Count);
+        // The form QA measured closing the real overlay on the Windows box; VK 0x1B was never tried.
+        Assert.All(r, x => Assert.Equal((0, '\u001b'), (x.VirtualKeyCode, x.Char)));
+        Assert.Equal([1, 0], r.Select(x => x.KeyDown));
+    }
+
+    [Fact]
+    public void Tmux_passes_Escape_as_its_key_name_after_a_capture()
+    {
+        Assert.Equal(["capture-pane", "-p", "-t", "%4", ";", "send-keys", "-t", "%4", "Escape"], TerminalPress.TmuxCaptureThenKey("%4", "Escape"));
+    }
+
+    [Fact]
+    public void Kitty_and_WezTerm_send_the_esc_byte_alone()
+    {
+        Assert.Equal("\u001b", TerminalPress.Kitty(S("7"), "\u001b").Stdin);
+        Assert.Equal("\u001b", TerminalPress.WezTerm(S("3"), "\u001b").Stdin);
     }
 }

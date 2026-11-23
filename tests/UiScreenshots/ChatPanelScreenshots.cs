@@ -429,6 +429,75 @@ public class ChatPanelScreenshots : IDisposable
         ScreenshotHelper.Capture(window, name);
     }
 
+    // CB-404: the flyout for a CLI session, built from the resolver exactly as
+    // a real session's options are — enabled, disabled with the reason as a
+    // line under each control, pending with the dial's confirmed level marked,
+    // and the typed route's warning that it also saves the default.
+    private static RemoteRunOptions CliOptions(string state)
+    {
+        var levels = new[] { "low", "medium", "high", "xhigh", "max" };
+        var catalogue = new RunCatalogue(new[]
+        {
+            new RunModel("opus", "Opus 5.5", "claude-opus-5-5", levels),
+            new RunModel("sonnet", "Sonnet 5.5", "claude-sonnet-5-5", levels),
+            new RunModel("haiku", "Haiku 4.5", "claude-haiku-4-5", null),
+        });
+        var at = new DateTimeOffset(2026, 11, 21, 12, 0, 0, TimeSpan.Zero);
+        var reading = new RunReading("claude-opus-5-5", "high", at, RunReadingSource.Transcript);
+        var none = Array.Empty<RunPending>();
+        return state switch
+        {
+            "disabled" => RunControlsResolver.Resolve(RunCli.Claude, RunRouteDecision.Unavailable(SlashRouting.PeerSocketReason), reading, catalogue, none),
+            "pending" => RunControlsResolver.Resolve(RunCli.Claude, new RunRouteDecision(RunRoute.Control, null, false), reading, catalogue,
+                new[] { new RunPending(RunField.Effort, "max", at.AddSeconds(1)) }),
+            "typed" => RunControlsResolver.Resolve(RunCli.Claude, new RunRouteDecision(RunRoute.Typed, null, true), reading, catalogue, none),
+            _ => RunControlsResolver.Resolve(RunCli.Claude, new RunRouteDecision(RunRoute.Control, null, false), reading, catalogue, none),
+        };
+    }
+
+    [AvaloniaTheory]
+    [InlineData("enabled", "chat-panel-run-cli-enabled.png")]
+    [InlineData("disabled", "chat-panel-run-cli-disabled.png")]
+    [InlineData("pending", "chat-panel-run-cli-pending.png")]
+    [InlineData("typed", "chat-panel-run-cli-typed.png")]
+    public void TheCliRunControlsFlyout(string state, string name)
+    {
+        var fake = NewFake(displayName: "claude");
+        fake.RunOptions = CliOptions(state);
+        ChatPanel.OpenFor(NewOrb(), fake);
+        ScreenshotHelper.Flush();
+
+        var content = ChatPanelTestAccess.Instance!.BuildRunFlyout(fake, fake.RunOptions);
+        var window = new Window
+        {
+            Width = 300,
+            SizeToContent = SizeToContent.Height,
+            Content = new Border
+            {
+                Background = new SolidColorBrush(Color.Parse("#FF2B2B30")),
+                Padding = new Thickness(12),
+                Child = content
+            }
+        };
+
+        ScreenshotHelper.Capture(window, name);
+    }
+
+    [AvaloniaFact]
+    public void ACliSessionsHeaderShowsItsModelAndEffort()
+    {
+        var fake = NewFake(new[]
+        {
+            new ChatTurn { Role = ChatRole.User, Mine = true, Text = "Use more effort on this one." },
+            new ChatTurn { Role = ChatRole.Assistant, Text = "Switching to xhigh." },
+        }, displayName: "claude");
+        fake.RunOptions = CliOptions("pending");
+
+        ChatPanel.OpenFor(NewOrb(), fake);
+        ScreenshotHelper.Flush();
+        ScreenshotHelper.CaptureAlreadyShown(ChatPanelTestAccess.Instance!, "chat-panel-run-cli-chip.png");
+    }
+
     // A session Claude Desktop hosts (CB-265): the transcript reads like any
     // other, and where the composer would be there is a sentence saying how to
     // send from here (CB-266: turn on Remote Control for the chat). A real

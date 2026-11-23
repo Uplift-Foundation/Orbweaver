@@ -1720,7 +1720,7 @@ public class LocalCliChatSessionTests : IDisposable
     // A pane that moves as a real one does: a screen, and every key pressed and
     // text typed recorded. Handed to the session through its capture, press and
     // type seams, so the shared procedure (FormAnswer) runs for real over it.
-    private sealed class Pane(string screen)
+    private class Pane(string screen)
     {
         public string Screen = screen;
         public List<string> Pressed { get; } = new();
@@ -2252,12 +2252,11 @@ public class LocalCliChatSessionTests : IDisposable
         Assert.Empty(session.History);
     }
 
-    // CB-307, the lead's decision: the guard ships log-only. With no marker
-    // and no variable (the test settings folder is empty and the variable
-    // unset), the real switch lets a refused send through — logged, not
-    // blocked, and no refusal note under it.
+    // CB-403: the guard enforces by default. With no marker and no variable
+    // (the test settings folder is empty and the variable unset), the real
+    // switch refuses: Failed, a note under the composer, nothing pending.
     [AvaloniaFact]
-    public async Task TheDefaultShadowSwitchIsLogOnly()
+    public async Task TheDefaultShadowSwitchEnforces()
     {
         var session = new LocalCliChatSession("s1", new SessionStatus
         {
@@ -2267,8 +2266,8 @@ public class LocalCliChatSessionTests : IDisposable
             Gate = _ => Task.FromResult(new TypingVerdict(false, TypingGate.UnreadableWhy)),
         };
 
-        Assert.Null(await session.RefuseIfNotAtPromptAsync());
-        Assert.Empty(session.History);
+        Assert.Equal(ChatSendOutcome.Failed, await session.RefuseIfNotAtPromptAsync());
+        Assert.NotEmpty(session.History);
     }
 
     // A pane that cannot be captured: the form could not be read, so the honest
@@ -2310,6 +2309,643 @@ public class LocalCliChatSessionTests : IDisposable
 
             await session.AnswerAsync(session.Prompt!.Options[1]);
             await Rescan(session);
+
+            Assert.Null(session.Prompt);
+        });
+    }
+
+    // --- CB-400: a screen that only Esc closes (the /mobile overlay) -------------
+
+    // The seams as the real ones behave: the verified press reads the pane, asks
+    // whether it is still the screen it was shown, and presses only if so. Counted,
+    // so "pressed once" and "never pressed" are measurements.
+    private sealed class OverlayPane(string screen) : Pane(screen)
+    {
+        public int Verified;
+
+        public Task<(bool Pressed, string? Before)> CaptureAndPress(
+            SessionStatus status, string key, Func<string?, bool> approved)
+        {
+            Verified++;
+            var before = Screen;
+            if (!approved(before)) return Task.FromResult((false, (string?)before));
+            Pressed.Add(key);
+            if (AfterPress(key) is { } next) Screen = next;
+            return Task.FromResult((true, (string?)before));
+        }
+    }
+
+    private static async Task<LocalCliChatSession> OverlayWaitingOn(
+        OverlayPane pane, Func<SessionStatus, Task<string?>>? readAnyRoute = null, bool tmux = true,
+        Func<SessionStatus, string, Func<string?, bool>, Task<(bool Pressed, string? Before)>>? press = null,
+        Func<SessionStatus, string, Task<bool>>? plain = null,
+        Func<SessionStatus, Task<string?>>? capture = null,
+        Func<DateTime>? clock = null)
+    {
+        var session = new LocalCliChatSession("s1", new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "idle", Title = "", TmuxPane = "%42",
+        })
+        {
+            Capture = capture ?? (tmux ? pane.Capture : (_ => Task.FromResult<string?>(null))),
+            PressKey = plain ?? pane.Press,
+            CaptureAndPress = press ?? pane.CaptureAndPress,
+            ReadAnyRoute = readAnyRoute ?? (_ => Task.FromResult<string?>(null)),
+            Clock = clock ?? (() => DateTime.UtcNow),
+        };
+
+        session.UpdateStatus(new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "waiting", Title = "", TmuxPane = "%42",
+        });
+
+        for (var i = 0; i < 200 && session.Prompt is null; i++)
+        {
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            await Task.Delay(5);
+        }
+
+        Assert.NotNull(session.Prompt);
+        return session;
+    }
+
+    private static string OverlayTitle => "Get the Claude app on your phone";
+
+    // The reason TypingGate gives for an overlay, as the note reads it back.
+    private static string OverlayReason(string title) => $"it is showing \"{title}\", which has to be closed first";
+
+    [AvaloniaFact]
+    public async Task AWaitingSessionOnTheOverlayShowsItsRowsAndACloseButton()
+    {
+        var session = await OverlayWaitingOn(new OverlayPane(PaneFixtures.MobileOverlay80x50));
+
+        Assert.Equal(OverlayTitle, session.Prompt!.Title);
+        var close = Assert.Single(session.Prompt.Options);
+        Assert.Equal("Escape", close.Key);
+        Assert.Equal("Close", close.Label);
+        Assert.NotNull(session.Prompt.Body);
+        Assert.Contains(session.Prompt.Body!, r => r.Contains('▀') || r.Contains('█') || r.Contains('▄'));
+    }
+
+    [AvaloniaFact]
+    public async Task CloseSendsEscapeOnceThroughTheVerifiedPressAndClearsThePrompt()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new OverlayPane(PaneFixtures.MobileOverlay80x50) { AfterPress = _ => PaneFixtures.MacPromptAfterEsc };
+            var session = await OverlayWaitingOn(pane);
+
+            await session.AnswerAsync(session.Prompt!.Options[0]);
+
+            Assert.Equal(1, pane.Verified);
+            Assert.Equal(new[] { "Escape" }, pane.Pressed);
+            Assert.Null(session.Prompt);
+            Assert.Empty(session.History);
+        });
+    }
+
+    // The pane is read by the press itself and the key goes only to the very overlay
+    // that was shown: the plain press (which has no re-read) is never used for Escape.
+    [AvaloniaFact]
+    public async Task CloseNeverUsesThePlainPressWhichHasNoReRead()
+    {
+        await WithReplyOn(async () =>
+        {
+            var plain = 0;
+            var pane = new OverlayPane(PaneFixtures.MobileOverlay80x50);
+            var session = await OverlayWaitingOn(pane, plain: (_, _) => { plain++; return Task.FromResult(true); });
+
+            await session.AnswerAsync(session.Prompt!.Options[0]);
+
+            Assert.Equal(0, plain);
+            Assert.Equal(1, pane.Verified);
+        });
+    }
+
+    // Esc at a working session interrupts the turn and a second one at an idle prompt
+    // opens the rewind picker: if the overlay is already gone at click time, nothing is pressed.
+    [AvaloniaFact]
+    public async Task CloseAfterTheOverlayAlreadyClosedPressesNothingAndSaysSo()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new OverlayPane(PaneFixtures.MobileOverlay80x50);
+            var session = await OverlayWaitingOn(pane);
+
+            pane.Screen = PaneFixtures.MacPromptAfterEsc;
+            await session.AnswerAsync(session.Prompt!.Options[0]);
+
+            Assert.Empty(pane.Pressed);
+            Assert.Equal(1, pane.Verified);
+            Assert.Equal(LocalCliChatSession.OverlayClosedNote, Assert.Single(session.History).Text);
+            Assert.Equal("That screen has already closed.", LocalCliChatSession.OverlayClosedNote);
+        });
+    }
+
+    // Same overlay still up but the press itself failed: the terminal's job, said so.
+    [AvaloniaFact]
+    public async Task CloseThatCouldNotBePressedOnTheSameOverlayPointsAtTheTerminal()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new OverlayPane(PaneFixtures.MobileOverlay80x50);
+            var session = await OverlayWaitingOn(
+                pane, press: (_, _, _) => Task.FromResult((false, (string?)PaneFixtures.MobileOverlay80x50)));
+
+            await session.AnswerAsync(session.Prompt!.Options[0]);
+
+            Assert.Equal(LocalCliChatSession.OverlayCloseFailedNote, Assert.Single(session.History).Text);
+            Assert.Equal("Couldn't close that from here. Press Esc in the terminal.", LocalCliChatSession.OverlayCloseFailedNote);
+
+            // Put back: the overlay is still up, so Close is offered again, once.
+            Assert.NotNull(session.Prompt);
+        });
+    }
+
+    // A route with no silent press at all comes back with nothing read.
+    [AvaloniaFact]
+    public async Task CloseOnARouteWithNoSilentPressPointsAtTheTerminal()
+    {
+        await WithReplyOn(async () =>
+        {
+            var session = await OverlayWaitingOn(
+                new OverlayPane(PaneFixtures.MobileOverlay80x50),
+                press: (_, _, _) => Task.FromResult((false, (string?)null)));
+
+            await session.AnswerAsync(session.Prompt!.Options[0]);
+
+            Assert.Equal(LocalCliChatSession.OverlayCloseFailedNote, Assert.Single(session.History).Text);
+        });
+    }
+
+    [AvaloniaFact]
+    public async Task CloseWithReplyingOffPressesNothing()
+    {
+        var before = OrbweaverSettings.ClaudeCodeReplyEnabled;
+        try
+        {
+            OrbweaverSettings.ClaudeCodeReplyEnabled = false;
+            var pane = new OverlayPane(PaneFixtures.MobileOverlay80x50);
+            var session = await OverlayWaitingOn(pane);
+
+            await session.AnswerAsync(session.Prompt!.Options[0]);
+
+            Assert.Equal(0, pane.Verified);
+            Assert.Empty(pane.Pressed);
+            Assert.Contains("Replying is off", Assert.Single(session.History).Text);
+        }
+        finally { OrbweaverSettings.ClaudeCodeReplyEnabled = before; }
+    }
+
+    // No tmux (a Windows console, kitty, WezTerm): the tmux capture is null, and the
+    // route's own reader is what finds the overlay.
+    [AvaloniaFact]
+    public async Task AnOverlayIsFoundThroughTheRouteReaderWhenTmuxReadsNothing()
+    {
+        var read = 0;
+        var session = await OverlayWaitingOn(
+            new OverlayPane(PaneFixtures.MobileOverlay80x50),
+            readAnyRoute: _ => { read++; return Task.FromResult<string?>(PaneFixtures.MobileOverlay80x50); },
+            tmux: false);
+
+        Assert.Equal(1, read);
+        Assert.Equal(OverlayTitle, session.Prompt!.Title);
+        Assert.NotNull(session.Prompt.Body);
+    }
+
+    // The control: the route reader hands over an ordinary numbered dialog and the
+    // panel shows nothing new, which is today's behaviour on a route with no tmux.
+    [AvaloniaFact]
+    public async Task ADialogFromTheRouteReaderIsNotShownByTheOverlayPath()
+    {
+        var session = await OverlayWaitingOn(
+            new OverlayPane(PaneFixtures.MacModelSwitchDialog),
+            readAnyRoute: _ => Task.FromResult<string?>(PaneFixtures.MacModelSwitchDialog),
+            tmux: false);
+
+        Assert.Equal("Waiting for input", session.Prompt!.Title);
+        Assert.Empty(session.Prompt.Options);
+        Assert.Null(session.Prompt.Body);
+    }
+
+    // The tmux capture is the one used when there is one: the route reader is only
+    // for when it is not, so an ordinary dialog costs no second read.
+    [AvaloniaFact]
+    public async Task TheRouteReaderIsNotAskedWhenTmuxHasAScreen()
+    {
+        var read = 0;
+        var session = await OverlayWaitingOn(
+            new OverlayPane(PaneFixtures.MacModelSwitchDialog),
+            readAnyRoute: _ => { read++; return Task.FromResult<string?>(null); });
+
+        Assert.Equal(0, read);
+        Assert.NotEmpty(session.Prompt!.Options);
+    }
+
+    // A read that began before the state left waiting must not paint an overlay once
+    // the session has gone idle: the route reader is slow and the Esc may have landed.
+    [AvaloniaFact]
+    public async Task AnOverlayReadThatFinishesAfterTheStateLeftWaitingIsDropped()
+    {
+        var gate = new TaskCompletionSource<string?>();
+        var session = new LocalCliChatSession("s1", new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "idle", Title = "", TmuxPane = "%42",
+        })
+        {
+            Capture = _ => Task.FromResult<string?>(null),
+            ReadAnyRoute = _ => gate.Task,
+        };
+        session.UpdateStatus(new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "waiting", Title = "", TmuxPane = "%42",
+        });
+        session.UpdateStatus(new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "idle", Title = "", TmuxPane = "%42",
+        });
+
+        gate.SetResult(PaneFixtures.MobileOverlay80x50);
+        for (var i = 0; i < 20; i++)
+        {
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            await Task.Delay(5);
+        }
+
+        Assert.Null(session.Prompt);
+    }
+
+    // An overlay's Close is never what a later ordinary dialog's button does: once the
+    // overlay is gone, the next prompt answers by its own key through the plain press.
+    [AvaloniaFact]
+    public async Task ADialogAfterAnOverlayAnswersByItsOwnKeyAndNotThroughClose()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new OverlayPane(PaneFixtures.MobileOverlay80x50);
+            var session = await OverlayWaitingOn(pane);
+
+            session.UpdateStatus(new SessionStatus
+            {
+                Source = SessionSource.ClaudeCode, State = "idle", Title = "", TmuxPane = "%42",
+            });
+            Assert.Null(session.Prompt);
+
+            pane.Screen = PaneFixtures.MacModelSwitchDialog;
+            session.UpdateStatus(new SessionStatus
+            {
+                Source = SessionSource.ClaudeCode, State = "waiting", Title = "", TmuxPane = "%42",
+            });
+            for (var i = 0; i < 200 && session.Prompt is null; i++)
+            {
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                await Task.Delay(5);
+            }
+
+            Assert.Null(session.Prompt!.Body);
+            await session.AnswerAsync(session.Prompt.Options[0]);
+
+            Assert.Equal(0, pane.Verified);
+            Assert.NotEqual("Escape", Assert.Single(pane.Pressed));
+        });
+    }
+
+    // Refusing a send while the overlay is up: the reason names the screen, the text
+    // stays in the composer (Failed, nothing pending) and no bubble of the user's is added.
+    [AvaloniaFact]
+    public async Task ASendWhileTheOverlayIsUpIsRefusedWithANoteThatNamesItAndKeepsTheText()
+    {
+        var session = Gated(_ => Task.FromResult(new TypingVerdict(false, OverlayReason(OverlayTitle))));
+
+        var outcome = await session.RefuseIfNotAtPromptAsync();
+
+        Assert.Equal(ChatSendOutcome.Failed, outcome);
+        var note = Assert.Single(session.History);
+        Assert.Equal(ChatRole.System, note.Role);
+        Assert.Equal(
+            "Not sent: this session is showing \"Get the Claude app on your phone\". "
+            + "Use the button above and send again. Your message is still in the box.",
+            note.Text);
+    }
+
+    // The two halves of the sentence are ours and A's: pin that the reason built by
+    // TypingGate is the one the note reads back, so rewording one cannot silently
+    // turn the note back into the dialog wording.
+    [Fact]
+    public void TheNoteReadsBackTheTitleOfTheReasonTypingGateBuilds() =>
+        Assert.Equal(
+            "Not sent: this session is showing \"Some Screen\". Use the button above and send again. Your message is still in the box.",
+            LocalCliChatSession.NotAtPromptNote(TypingGate.OverlayWhy("Some Screen")));
+
+    // A dialog's reason also starts "it is showing", and must keep its old wording.
+    [Theory]
+    [InlineData("it is showing a dialog: Permissions")]
+    [InlineData("it is showing \"x\" and more")]
+    [InlineData("it is showing \"unterminated")]
+    public void ADialogReasonKeepsTheDialogWording(string why) =>
+        Assert.StartsWith("This terminal isn't at its prompt — " + why, LocalCliChatSession.NotAtPromptNote(why));
+
+    [Fact]
+    public void AnAcceptedDeliveryToAWaitingSessionSaysItIsBlockedOnAScreen()
+    {
+        var note = LocalCliChatSession.DeliveryNote(new DeliveryReceipt(DeliveryResult.Accepted, "waiting"), "job-hunter");
+
+        Assert.Equal(
+            "Handed to job-hunter, but it is showing a screen that has to be closed or answered in its terminal first. "
+            + "It will read this once that is done.",
+            note);
+
+        // Controls: the other two Accepted arms are unchanged.
+        Assert.StartsWith("Handed to job-hunter. It's mid-turn",
+            LocalCliChatSession.DeliveryNote(new DeliveryReceipt(DeliveryResult.Accepted, "working"), "job-hunter"));
+        Assert.StartsWith("Handed to job-hunter for its next turn.",
+            LocalCliChatSession.DeliveryNote(new DeliveryReceipt(DeliveryResult.Accepted, "idle"), "job-hunter"));
+    }
+
+    // End to end on the message route: the registry says waiting, Claude Code accepts
+    // the message, and the note under it does not promise a next turn.
+    [AvaloniaFact]
+    public async Task SendingToABackgroundSessionThatIsWaitingNotesItIsBlockedOnAScreen()
+    {
+        var before = OrbweaverSettings.ClaudeCodeReplyEnabled;
+        try
+        {
+            OrbweaverSettings.ClaudeCodeReplyEnabled = true;
+            var (messenger, find) = FakeMessaging(RegistryEntry("s1", status: "waiting"));
+            var session = BackgroundSession(Transcript(User("seed", "seed")), messenger, find);
+
+            await session.SendAsync("check the deploy");
+
+            Assert.Contains(session.History, t => t.Text.Contains("has to be closed or answered in its terminal first"));
+            Assert.DoesNotContain(session.History, t => t.Text.Contains("for its next turn"));
+        }
+        finally { OrbweaverSettings.ClaudeCodeReplyEnabled = before; }
+    }
+
+    // --- CB-400: an overlay on show is refreshed on every scan ---------------------
+
+    private static SessionStatus WaitingStatus() => new()
+    {
+        Source = SessionSource.ClaudeCode, State = "waiting", Title = "", TmuxPane = "%42",
+    };
+
+    // Runs a scan and waits until its read has finished (counted by the capture seam), then
+    // lets the posted PromptChanged calls land.
+    private static async Task ScanAsync(LocalCliChatSession session, Func<int> reads)
+    {
+        var before = reads();
+        session.UpdateStatus(WaitingStatus());
+        for (var i = 0; i < 400 && reads() == before; i++) await Task.Delay(5);
+        for (var i = 0; i < 10; i++)
+        {
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            await Task.Delay(5);
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task AScanOfAnUnchangedOverlayDoesNotRebuildThePrompt()
+    {
+        var pane = new OverlayPane(PaneFixtures.MobileOverlay80x50);
+        var reads = 0;
+        var session = await OverlayWaitingOn(pane, capture: s => { reads++; return pane.Capture(s); });
+        var shown = session.Prompt;
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs(); // the first prompt's own notification
+        var changed = 0;
+        session.PromptChanged += () => changed++;
+
+        await ScanAsync(session, () => reads);
+
+        Assert.Same(shown, session.Prompt);
+        Assert.Equal(0, changed);
+    }
+
+    [AvaloniaFact]
+    public async Task AScanOfAnOverlayThatChangedWhileOpenUpdatesTheBody()
+    {
+        var pane = new OverlayPane(PaneFixtures.MobileOverlay80x50);
+        var reads = 0;
+        var session = await OverlayWaitingOn(pane, capture: s => { reads++; return pane.Capture(s); });
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs(); // the first prompt's own notification
+        var changed = 0;
+        session.PromptChanged += () => changed++;
+
+        pane.Screen = PaneFixtures.MobileOverlay80x50.Replace("Scan the QR code", "Scan the new code");
+        await ScanAsync(session, () => reads);
+
+        Assert.Equal(1, changed);
+        Assert.Contains(session.Prompt!.Body!, r => r.Contains("Scan the new code"));
+        Assert.Single(session.Prompt.Options);
+    }
+
+    // Close still works on the refreshed prompt: the fingerprint is of the new screen.
+    [AvaloniaFact]
+    public async Task CloseAfterARefreshPressesOnce()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new OverlayPane(PaneFixtures.MobileOverlay80x50) { AfterPress = _ => PaneFixtures.MacPromptAfterEsc };
+            var reads = 0;
+            var session = await OverlayWaitingOn(pane, capture: s => { reads++; return pane.Capture(s); });
+            pane.Screen = PaneFixtures.MobileOverlay80x50.Replace("Scan the QR code", "Scan the new code");
+            await ScanAsync(session, () => reads);
+
+            await session.AnswerAsync(session.Prompt!.Options[0]);
+
+            Assert.Equal(new[] { "Escape" }, pane.Pressed);
+        });
+    }
+
+    // A read that fails (null from every reader) is not a closed screen: the overlay and its
+    // Close stay, rather than being swapped for an empty prompt.
+    [AvaloniaFact]
+    public async Task AFailedReadKeepsTheOverlayOnShow()
+    {
+        var pane = new OverlayPane(PaneFixtures.MobileOverlay80x50);
+        var reads = 0;
+        var fail = false;
+        var session = await OverlayWaitingOn(pane, capture: s => { reads++; return fail ? Task.FromResult<string?>(null) : pane.Capture(s); });
+        var shown = session.Prompt;
+
+        fail = true;
+        await ScanAsync(session, () => reads);
+
+        Assert.Same(shown, session.Prompt);
+    }
+
+    // The overlay closed at the desk while the state is still waiting (a dialog came up):
+    // the scan shows what is there now, not the stale overlay.
+    [AvaloniaFact]
+    public async Task AScanThatFindsADialogWhereTheOverlayWasShowsTheDialog()
+    {
+        var pane = new OverlayPane(PaneFixtures.MobileOverlay80x50);
+        var reads = 0;
+        var session = await OverlayWaitingOn(pane, capture: s => { reads++; return pane.Capture(s); });
+
+        pane.Screen = PaneFixtures.MacModelSwitchDialog;
+        await ScanAsync(session, () => reads);
+
+        Assert.Null(session.Prompt!.Body);
+        Assert.NotEmpty(session.Prompt.Options);
+        Assert.NotEqual("Escape", session.Prompt.Options[0].Key);
+    }
+
+    // --- CB-400: multi-level screens and ordering -----------------------------------
+
+    // Another overlay: the same shape under a different title, which is what tells two screens
+    // apart (the fingerprint is the title plus the key and its label, not the body).
+    private static string AnotherOverlay =>
+        PaneFixtures.MobileOverlay80x50.Replace("Get the Claude app on your phone", "Another blocking screen");
+
+    // Pressed: the overlay just pressed, read again before the terminal redraws, is held back
+    // (no second box for a screen that is going away) until the settle window ends.
+    [AvaloniaFact]
+    public async Task TheOverlayJustPressedIsNotShownAgainUntilTheSettleWindowEnds()
+    {
+        await WithReplyOn(async () =>
+        {
+            var now = new DateTime(2026, 11, 21, 12, 0, 0, DateTimeKind.Utc);
+            var pane = new OverlayPane(PaneFixtures.MobileOverlay80x50);
+            var reads = 0;
+            var session = await OverlayWaitingOn(
+                pane, capture: s => { reads++; return pane.Capture(s); }, clock: () => now);
+
+            // The press lands but the redraw has not: the screen still reads as the overlay.
+            await session.AnswerAsync(session.Prompt!.Options[0]);
+            Assert.Null(session.Prompt);
+
+            await ScanAsync(session, () => reads);
+            Assert.Null(session.Prompt);
+
+            // Past the window the overlay is still there, so the press plainly did not take.
+            now += LocalCliChatSession.SettleAfterAnswer;
+            await ScanAsync(session, () => reads);
+            Assert.NotNull(session.Prompt);
+            Assert.NotNull(session.Prompt!.Body);
+        });
+    }
+
+    // The other half of "pressed": the press moved a multi-level screen to another overlay. The
+    // next scan shows it with its own prompt, with no note and no second click needed.
+    [AvaloniaFact]
+    public async Task APressThatLandsOnAnotherOverlayShowsItWithItsOwnButton()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new OverlayPane(PaneFixtures.MobileOverlay80x50) { AfterPress = _ => AnotherOverlay };
+            var reads = 0;
+            var session = await OverlayWaitingOn(pane, capture: s => { reads++; return pane.Capture(s); });
+            var first = session.Prompt!.Title;
+
+            await session.AnswerAsync(session.Prompt.Options[0]);
+            await ScanAsync(session, () => reads);
+
+            Assert.Equal(new[] { "Escape" }, pane.Pressed);
+            Assert.Empty(session.History);
+            Assert.NotNull(session.Prompt);
+            Assert.NotEqual(first, session.Prompt!.Title);
+            Assert.Single(session.Prompt.Options);
+        });
+    }
+
+    // Not pressed because the screen had already moved to another overlay: not "closed" and not
+    // a failure. It is shown with its own button and nothing is said.
+    [AvaloniaFact]
+    public async Task AClickOnAScreenThatBecameAnotherOverlayPressesNothingAndSaysNothing()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new OverlayPane(PaneFixtures.MobileOverlay80x50);
+            var session = await OverlayWaitingOn(pane);
+
+            pane.Screen = AnotherOverlay;
+            await session.AnswerAsync(session.Prompt!.Options[0]);
+            for (var i = 0; i < 10; i++) { Avalonia.Threading.Dispatcher.UIThread.RunJobs(); await Task.Delay(5); }
+
+            Assert.Empty(pane.Pressed);
+            Assert.Empty(session.History);
+            Assert.NotNull(session.Prompt);
+            Assert.Contains(session.Prompt!.Body!, r => r.Contains("Scan the QR code"));
+        });
+    }
+
+    // The real two-level case, from QA's captures: /mcp's detail page offers Go back, one press
+    // lands on the server list (still blocked), and the next scan shows it with its own Close.
+    [AvaloniaFact]
+    public async Task McpDetailOffersGoBackAndOnePressLandsOnTheListWithItsOwnClose()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new OverlayPane(PaneFixtures.McpDetail) { AfterPress = _ => PaneFixtures.McpList };
+            var reads = 0;
+            var session = await OverlayWaitingOn(pane, capture: s => { reads++; return pane.Capture(s); });
+
+            var detail = session.Prompt!;
+            var back = Assert.Single(detail.Options);
+            Assert.Equal(("Escape", "Go back"), (back.Key, back.Label));
+
+            await session.AnswerAsync(back);
+            Assert.Equal(new[] { "Escape" }, pane.Pressed);
+            Assert.Empty(session.History);
+
+            await ScanAsync(session, () => reads);
+
+            var list = session.Prompt!;
+            Assert.NotEqual(detail.Title, list.Title);
+            var close = Assert.Single(list.Options);
+            Assert.Equal(("Escape", "Close"), (close.Key, close.Label));
+            Assert.NotNull(list.Body);
+        });
+    }
+
+    // A stale click: the detail page's Go back was shown, the screen has since become the list.
+    // Escape would now close the whole list, not go back, so it is not pressed.
+    [AvaloniaFact]
+    public async Task AStaleGoBackClickAfterTheScreenBecameTheListPressesNothing()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new OverlayPane(PaneFixtures.McpDetail);
+            var session = await OverlayWaitingOn(pane);
+
+            pane.Screen = PaneFixtures.McpList;
+            await session.AnswerAsync(session.Prompt!.Options[0]);
+            for (var i = 0; i < 10; i++) { Avalonia.Threading.Dispatcher.UIThread.RunJobs(); await Task.Delay(5); }
+
+            Assert.Empty(pane.Pressed);
+            Assert.Equal("Close", Assert.Single(session.Prompt!.Options).Label);
+        });
+    }
+
+    // A route read that began before a click and finishes after it saw the screen before the key:
+    // it is dropped, so it cannot put the overlay back up under a press that already went out.
+    [AvaloniaFact]
+    public async Task ARouteReadThatFinishesAfterAClickIsDropped()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new OverlayPane(PaneFixtures.MobileOverlay80x50);
+            var tmuxReadable = true;
+            var gate = new TaskCompletionSource<string?>();
+            var reads = 0;
+            var session = await OverlayWaitingOn(
+                pane,
+                capture: s => tmuxReadable ? pane.Capture(s) : Task.FromResult<string?>(null),
+                readAnyRoute: _ => { reads++; return gate.Task; });
+            Assert.Equal(0, reads);
+
+            // The next scan finds no tmux and waits on the route reader...
+            tmuxReadable = false;
+            session.UpdateStatus(WaitingStatus());
+            for (var i = 0; i < 400 && reads == 0; i++) await Task.Delay(5);
+            Assert.Equal(1, reads);
+
+            // ...and a click goes out meanwhile.
+            await session.AnswerAsync(session.Prompt!.Options[0]);
+            Assert.Null(session.Prompt);
+
+            gate.SetResult(PaneFixtures.MobileOverlay80x50);
+            for (var i = 0; i < 20; i++) { Avalonia.Threading.Dispatcher.UIThread.RunJobs(); await Task.Delay(5); }
 
             Assert.Null(session.Prompt);
         });

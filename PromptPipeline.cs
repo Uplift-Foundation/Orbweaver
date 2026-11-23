@@ -21,9 +21,20 @@ namespace Orbweaver
         // with a quiet "Answered at the desk" alert.
         void Resolved(string requestId, string sessionId, string by, string? pushPlaintext);
         void Refusal(string phoneId, string requestId, string sessionId, string code);
+        // CB-401: one prompt, to one phone, with no push — the replay for a
+        // phone that came online (or resynced) after the prompt was minted.
+        // True when a frame was produced.
+        bool PromptTo(string phoneId, string requestId, string sessionId, string prompt);
         // CB-321 addendum 2: the persona this session's amber speaks as (its
         // roster row's), or null. A sender that knows no roster names none.
         PushPersona? PersonaFor(string sessionId) => null;
+
+        // CB-400: a prompt that goes to phones as a pending prompt only, with no
+        // push class (so no notification), and the resolve that closes it, also
+        // quiet. The defaults fall back to the alerting calls with no sealed push,
+        // so a sender that predates them still compiles; RelayClient overrides both.
+        bool PromptQuiet(string requestId, string sessionId, string prompt) => Prompt(requestId, sessionId, prompt, null);
+        void ResolvedQuiet(string requestId, string sessionId, string by) => Resolved(requestId, sessionId, by, null);
     }
 
     // CB-315 surface B, the desktop half of the amber loop:
@@ -97,6 +108,9 @@ namespace Orbweaver
             internal required string Prompt;
             internal required string? Push;
             internal required string Label;
+            // CB-400: an overlay is a screen someone opened on purpose at the desk, so
+            // it never buzzes a phone, going out and resolving with no push.
+            internal bool Quiet;
         }
 
         private readonly Seams _seams;
@@ -146,6 +160,10 @@ namespace Orbweaver
         // a queue of captures behind a slow pane would only grow.
         private int _scanning;
 
+        // Counts presses decided, so an answer can tell a press it raced from
+        // one it came after (PendingPrompt.LastPress).
+        private long _pressSeq;
+
         internal async Task OnScannedAsync(IReadOnlyList<(string SessionId, SessionStatus Status)> snapshot)
         {
             if (Interlocked.Exchange(ref _scanning, 1) == 1) return;
@@ -169,7 +187,13 @@ namespace Orbweaver
                     if (live is not null)
                     {
                         live.Status = status;
-                        if (fp?.Hash == live.Pending.ScreenHash) continue;
+                        // CB-400: a quiet prompt has no push carrying a copy and expires
+                        // after 30 minutes, so an overlay that is still up when its prompt
+                        // expires is settled and minted again, reaching the phones with a
+                        // fresh id and lifetime. An expired permission prompt or question
+                        // whose screen stands keeps its id, as before.
+                        var expiredQuiet = live.Quiet && _seams.Now().ToUnixTimeSeconds() >= live.Pending.ExpiresAt;
+                        if (fp?.Hash == live.Pending.ScreenHash && !expiredQuiet) continue;
                         // Another dialog in its place: the old request is gone
                         // (plan's wording) — nobody here can say who answered
                         // it, or whether anyone did. No dialog while the hook
@@ -177,10 +201,17 @@ namespace Orbweaver
                         Settle(sid, live, fp is null ? "desk" : "gone");
                     }
                     if (fp is null || screen is null) continue;
+                    // A form whose free-text field holds typed text is not one a
+                    // phone may press on: every digit would be typed into the
+                    // field (CB-406, the "1" at 21:49:12). Nothing is minted until
+                    // the desk sends or clears it; the prompt it replaced was
+                    // settled gone just above.
+                    var form = AskFormTranscript.ReadForm(screen, ask);
+                    if (form is not null && ChatTranscript.IsEditingFreeText(form)) continue;
                     // An AskUserQuestion form goes to the phone as a question
                     // (CB-323): CB-315 sent none, so the phone saw the session
                     // waiting with nothing to answer, and froze on it.
-                    Mint(sid, status, fp, screen, AskFormTranscript.ReadForm(screen, ask));
+                    Mint(sid, status, fp, screen, form);
                 }
             }
             // Fired and forgotten by the caller, like an answer: said, not lost,
@@ -202,8 +233,20 @@ namespace Orbweaver
         {
             Drop(sid);
             if (live.Pending.Answered) return;
-            _send.Resolved(live.Pending.RequestId, sid, by, PromptFrames.ResolvedPush(live.Pending.RequestId, sid, by, live.Label));
+            SendResolved(live, live.Pending.RequestId, sid, by);
             _seams.Log($"resolved {live.Pending.RequestId} {by}");
+        }
+
+        // A phone's sheet is not a terminal: the caption, at most twelve lines, and a
+        // last line "…" when it was cut.
+        internal const int OverlayPreviewLines = 12;
+        internal static string OverlayPreview(IReadOnlyList<string> caption) =>
+            string.Join("\n", caption.Count <= OverlayPreviewLines ? caption : caption.Take(OverlayPreviewLines).Append("…"));
+
+        private void SendResolved(Live live, string requestId, string sid, string by)
+        {
+            if (live.Quiet) _send.ResolvedQuiet(requestId, sid, by);
+            else _send.Resolved(requestId, sid, by, PromptFrames.ResolvedPush(requestId, sid, by, live.Label));
         }
 
         private void Mint(string sid, SessionStatus status, PromptFingerprint fp, string screen, AskForm? form = null)
@@ -212,43 +255,91 @@ namespace Orbweaver
             var requestId = RelayLink.Ulid(now);
             var expires = now.ToUnixTimeSeconds() + PromptFrames.Lifetime;
             var cli = MirrorProtocol.CliFor(status.Source);
-            var kind = form is null ? "permission" : "question";
+            // An overlay is a question too (CB-400): the phone draws a `question`
+            // generically, its preview as the prompt and one preselected choice,
+            // where a `permission` with one option would show "Allow this
+            // command to run?" and no buttons.
+            var login = fp.Login;
+            var kind = form is null && !fp.Overlay && login is null ? "permission" : "question";
+            var canPress = _seams.CanPress?.Invoke(status) ?? true;
             // A trust, update or hooks-review screen numbers its choices like a
             // permission dialog, so the fingerprint alone cannot tell them apart.
             // It goes to the phone as "Open on desk": the same prompt with no
             // options, and the gate refuses anything an answer names.
-            var questionOptions = form is null ? null : QuestionOptions(form);
-            var deskOnly = FirstRunDialogs.Is(screen) || !(_seams.CanPress?.Invoke(status) ?? true) || questionOptions is { Count: 0 };
+            // A /login screen (CB-412) is a question whose choices are the screen's
+            // own: the picker's digits, or Enter on the error screen. The URL step
+            // offers none, and that empty list is not "Open on desk" for it: it
+            // takes the code instead, where the route can type one.
+            var questionOptions = form is not null ? QuestionOptions(form)
+                : login is not null ? LoginOptions(login)
+                : fp.Overlay ? [new PromptOption(fp.Prompt.Options[0].Key, fp.Prompt.Options[0].Label, OptionKinds.Option, null)]
+                : null;
+            var deskOnly = FirstRunDialogs.Is(screen) || !canPress || (questionOptions is { Count: 0 } && login is not { Step: LoginStep.Url });
             var options = deskOnly ? [] : questionOptions ?? fp.Prompt.Options.Select(o =>
             {
                 var c = OptionKinds.Classify(kind, o.Label, o.Mode);
                 return new PromptOption(o.Key, o.Label, c.Kind, c.Scope, o.ScopeTruncated);
             }).ToList();
-            var preview = form is null ? string.Join("\n", fp.Preview) : QuestionPreview(form);
-            var tool = form is null ? ToolOf(fp.Preview) : "";
+            var preview = form is not null ? QuestionPreview(form) : login is not null ? LoginPreview(login)
+                : fp.Overlay ? OverlayPreview(fp.Preview) : string.Join("\n", fp.Preview);
+            var tool = login is not null ? LoginTool : form is null && !fp.Overlay ? ToolOf(fp.Preview) : "";
             // frames-v7-questions: what else the question takes, from the screen,
             // so the phone never has to guess. Neither on a question that went
             // out with nothing to answer.
             var multi = form is { MultiSelect: true } && options.Count > 0;
             var text = form is { MultiSelect: false, IsReview: false, FreeTextKey: not null } && options.Count > 0;
-            var prompt = PromptFrames.Prompt(requestId, sid, kind, cli, tool, preview, options, fp.Hash, expires, multi, text);
+            var code = login is { Step: LoginStep.Url } && !deskOnly;
+            var loginInfo = login is null ? null : new LoginInfo(StepName(login.Step), login.Step == LoginStep.Url ? login.Url : null, code);
+            var quiet = fp.Overlay || login is not null;
+            var prompt = PromptFrames.Prompt(requestId, sid, kind, cli, tool, preview, options, fp.Hash, expires, multi, text, quiet: quiet, login: loginInfo);
             var label = string.IsNullOrWhiteSpace(status.Title) ? _machine : $"{status.Title} on {_machine}";
             var persona = _send.PersonaFor(sid);
-            var push = PromptFrames.FitPush(requestId, sid, label, tool, form is null ? SummaryOf(tool) : AsksAQuestion, preview, expires, options, fp.Hash, persona);
+            var push = quiet ? null : PromptFrames.FitPush(requestId, sid, label, tool, form is null ? SummaryOf(tool) : AsksAQuestion, preview, expires, options, fp.Hash, persona);
 
             // A question presses only what it offered (the gate's rule 7).
-            var keys = form is null ? null : options.Select(o => o.Key).ToList();
-            var live = new Live { Pending = new PendingPrompt(requestId, sid, kind, fp.Hash, expires, deskOnly, keys, multi, text), Status = status, Prompt = prompt, Push = push?.Plaintext, Label = label };
+            var keys = form is null && !fp.Overlay && login is null ? null : options.Select(o => o.Key).ToList();
+            var live = new Live { Pending = new PendingPrompt(requestId, sid, kind, fp.Hash, expires, deskOnly, keys, multi, text, code), Status = status, Prompt = prompt, Push = push?.Plaintext, Label = label, Quiet = quiet };
             _live[sid] = live;
             // Before the send, so the activity frame that goes ahead of this
             // prompt's push already names it.
             // A question's line on the island is the question itself; its
             // preview's first line is the form's tab bar ("☐ Colour").
-            lock (_activityGate) _activity[sid] = new ActivityPrompt(requestId, tool, form is null ? RelayActivity.CommandOf(fp.Preview) : form.Prompt.Title);
-            _send.Prompt(requestId, sid, prompt, push?.Plaintext);
-            _seams.Log($"prompt {requestId} {fp.Hash}{(deskOnly ? " desk-only" : "")}{(push is null ? " no-e" : "")} "
+            lock (_activityGate) _activity[sid] = new ActivityPrompt(requestId, tool, form is null ? (login is not null ? LoginTool : fp.Overlay ? fp.Prompt.Title : RelayActivity.CommandOf(fp.Preview)) : form.Prompt.Title);
+            if (quiet) _send.PromptQuiet(requestId, sid, prompt);
+            else _send.Prompt(requestId, sid, prompt, push?.Plaintext);
+            _seams.Log($"prompt {requestId} {fp.Hash}{(deskOnly ? " desk-only" : "")}{(quiet ? " quiet" : push is null ? " no-e" : "")} "
                 + PushPersona.LogTagFor(persona, push is { PersonaDropped: false } && persona is not null));
         }
+
+        // CB-412: what a phone is told of /login. The tool name is fixed, and the
+        // URL step's preview never holds the URL (it travels in login.url alone).
+        internal const string LoginTool = "Login";
+        internal const string LoginUrlPreview = "Sign in with the link on your desk, then paste the code here.";
+
+        internal static string StepName(LoginStep step) => step switch
+        {
+            LoginStep.Url => "url",
+            LoginStep.Error => "error",
+            _ => "picker",
+        };
+
+        internal static string LoginPreview(LoginScreen login) =>
+            login.Step switch
+            {
+                // A refusal notice (CB-418) leads, so the phone sees why; the URL never does.
+                LoginStep.Url => string.Join("\n", login.Preview.Take(login.Preview.Count - 1).Append(LoginUrlPreview)),
+                // The picker's question ("Select login method:") is its title, the
+                // text above it the preview; the phone shows both, in screen order.
+                LoginStep.Picker => string.Join("\n", login.Preview.Append(login.Title)),
+                _ => string.Join("\n", login.Preview),
+            };
+
+        // The screen's own options, as plain choices: the digits, or Enter ("Try
+        // again"). The URL step has none.
+        internal static IReadOnlyList<PromptOption> LoginOptions(LoginScreen login) =>
+            login.Step == LoginStep.Url
+                ? []
+                : login.Options.Select(o => new PromptOption(o.Key, o.Label, OptionKinds.Option, null)).ToList();
 
         // frames-v3 push_plaintext_e.summary for a question.
         internal const string AsksAQuestion = "Asks a question";
@@ -308,7 +399,7 @@ namespace Orbweaver
         };
 
         // On every welcome, every pending prompt goes out again — same
-        // request_id, same bytes — unless it was answered or has expired, which
+        // request_id, same plaintext — unless it was answered or has expired, which
         // no phone could act on. Every one, not only those minted while the
         // relay was down: a frame written in the instant a socket drops is lost
         // with it and looks delivered, and a session blocked on someone who was
@@ -326,8 +417,39 @@ namespace Orbweaver
                 foreach (var live in _live.Values)
                 {
                     if (live.Pending.Answered || now >= live.Pending.ExpiresAt) continue;
-                    var sent = _send.Prompt(live.Pending.RequestId, live.Pending.SessionId, live.Prompt, live.Push);
+                    var sent = live.Quiet
+                        ? _send.PromptQuiet(live.Pending.RequestId, live.Pending.SessionId, live.Prompt)
+                        : _send.Prompt(live.Pending.RequestId, live.Pending.SessionId, live.Prompt, live.Push);
                     _seams.Log($"prompt-resent {live.Pending.RequestId}{(sent ? "" : " (still not sent)")}");
+                }
+            }
+            finally { _gate.Release(); }
+        }
+
+        // CB-401: a phone that comes online or resyncs gets every pending
+        // prompt, to it alone. The desk-welcome replay above cannot cover it:
+        // the desk's socket never dropped, so a prompt sent in the instant
+        // before the phone reconnected is delivered to nobody, and nothing
+        // would ever send it again (an AskUserQuestion's Q1 was lost this way
+        // on 2026-11-21; the phone only saw Q2). Same request_id and plaintext,
+        // and no push: the phone is looking at the app, and its PromptBook
+        // replaces by request_id, so a prompt it already holds is harmless.
+        // That is also why a desk reconnect sends an online phone each prompt
+        // twice — Disconnected marks every phone offline, so its presence on
+        // the next welcome counts as coming online: once from the welcome
+        // replay (with push) and once from this one (quiet). Accepted rather
+        // than deduped; the second copy only replaces the first.
+        internal async Task ResendPendingToAsync(string phoneId)
+        {
+            await _gate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                var now = _seams.Now().ToUnixTimeSeconds();
+                foreach (var live in _live.Values)
+                {
+                    if (live.Pending.Answered || now >= live.Pending.ExpiresAt) continue;
+                    var sent = _send.PromptTo(phoneId, live.Pending.RequestId, live.Pending.SessionId, live.Prompt);
+                    _seams.Log($"prompt-resent {live.Pending.RequestId} to {phoneId}{(sent ? "" : " (not sent)")}");
                 }
             }
             finally { _gate.Release(); }
@@ -340,16 +462,40 @@ namespace Orbweaver
         {
             // Gate (a)'s breakdown starts here: when the answer reached the desk.
             _seams.Log($"answer {answer.RequestId} from {phoneId}");
+            // Read before queueing on the gate: a no-effect outcome stamped after
+            // this is one the answer could not have seen (CB-406, see
+            // PendingPrompt.LastPress).
+            var arrivedAt = Interlocked.Read(ref _pressSeq);
             await _gate.WaitAsync().ConfigureAwait(false);
             try
             {
                 var live = _live.Values.FirstOrDefault(l => l.Pending.RequestId == answer.RequestId);
+                if (live is not null && live.Pending.LastPress > arrivedAt)
+                {
+                    Refuse(phoneId, answer, AnswerGate.NotPending);
+                    return;
+                }
                 var fresh = live is null ? null : await _seams.Capture(live.Status).ConfigureAwait(false);
                 var d = AnswerGate.Decide(live?.Pending, answer, fresh, phoneId, phoneIdPublic, _seams.Now(), _nonces, watchPublic,
                     AskFormTranscript.CallFor(fresh, live?.Status.TranscriptPath));
                 if (!d.Press)
                 {
                     Refuse(phoneId, answer, d.Code!);
+                    // CB-406: an id this desk does not hold at all — settled
+                    // already, or minted before a restart emptied _live — is
+                    // over, so the phones are told so, and a stale card clears
+                    // the moment it is tapped. Measured: two prompts for one
+                    // question stayed on Warren's phone, seven taps refused
+                    // not_pending and none of them resolved. Only for an
+                    // unknown id: a held prompt refused not_pending is a press
+                    // in flight, and that press resolves it. Reached only past
+                    // the gate's signature check (rule 1
+                    // comes first), so nobody unpaired can resolve anything.
+                    if (live is null && d.Code == AnswerGate.NotPending)
+                    {
+                        _send.ResolvedQuiet(answer.RequestId, answer.SessionId, "gone");
+                        _seams.Log($"resolved {answer.RequestId} gone (unknown on answer)");
+                    }
                     return;
                 }
 
@@ -357,7 +503,9 @@ namespace Orbweaver
                 // line can press this dialog again.
                 var pending = live!.Pending;
                 pending.Answered = true;
-                var outcome = d.Keys is { } ticks
+                var outcome = d.IsLoginCode
+                    ? await PressCodeAsync(live.Status, pending, answer.RequestId, d.Text!).ConfigureAwait(false)
+                    : d.Keys is { } ticks
                     ? await PressOptionsAsync(live.Status, pending, answer.RequestId, ticks).ConfigureAwait(false)
                     : d.Text is { } typed
                     ? await PressOtherAsync(live.Status, pending, answer.RequestId, d.Key!, typed).ConfigureAwait(false)
@@ -373,7 +521,7 @@ namespace Orbweaver
                     // settled for everyone, by an actor nobody can name.
                     _seams.Log($"warning press-landed-elsewhere {answer.RequestId} {d.Key}");
                     Drop(answer.SessionId);
-                    _send.Resolved(answer.RequestId, answer.SessionId, "unknown", PromptFrames.ResolvedPush(answer.RequestId, answer.SessionId, "unknown", live.Label));
+                    SendResolved(live, answer.RequestId, answer.SessionId, "unknown");
                     _seams.Log($"resolved {answer.RequestId} unknown");
                     return;
                 }
@@ -393,14 +541,31 @@ namespace Orbweaver
                 {
                     _seams.Log($"press-no-effect {answer.RequestId}");
                     _send.Refusal(phoneId, answer.RequestId, answer.SessionId, AnswerGate.StalePrompt);
-                    // Left in place, answered: the dialog is still up and is the
-                    // desk's to answer now. Not minted again while its hash
-                    // stands, and settled silently when the session moves on.
+                    // Left in place and NOT answered (CB-406). It used to stay
+                    // marked answered, "settled silently when the session moves
+                    // on" — but the refusal reaches only the phone that tapped,
+                    // and the phone keeps the card regardless, so nobody was
+                    // ever told the prompt was over. Measured: a typed answer
+                    // that failed its read-back, then a press that landed in the
+                    // still-open field, left two prompts on Warren's phone long
+                    // after the question had left the screen, every retry
+                    // refused not_pending. Unanswered, a retry is decided by the
+                    // gate like any answer (the screen must still be this
+                    // dialog), and the scan sends resolved when it moves on. Not
+                    // minted again while its hash stands, as before. This
+                    // subsumes CB-400's overlay case (an Esc that moved
+                    // nothing is harmless to press again), which develop
+                    // un-answered on its own.
+                    pending.Answered = false;
+                    // Stamped when the outcome is known: an answer read before
+                    // this (queued behind the press) raced it and is refused; one
+                    // after it is a retry.
+                    pending.LastPress = Interlocked.Increment(ref _pressSeq);
                     return;
                 }
 
                 Drop(answer.SessionId);
-                _send.Resolved(answer.RequestId, answer.SessionId, "phone:" + phoneId, PromptFrames.ResolvedPush(answer.RequestId, answer.SessionId, "phone:" + phoneId, live.Label));
+                SendResolved(live, answer.RequestId, answer.SessionId, "phone:" + phoneId);
                 _seams.Log($"resolved {answer.RequestId} phone:{phoneId}");
             }
             // The caller fires this and forgets it, so an exception here would
@@ -454,6 +619,11 @@ namespace Orbweaver
         private async Task<PressOutcome> PressOnceAsync(SessionStatus status, PendingPrompt pending, string requestId, string key)
         {
             if (await PressAsync(status, pending, requestId, key).ConfigureAwait(false) is { } early) return early;
+            return await WaitGoneAsync(status, pending).ConfigureAwait(false);
+        }
+
+        private async Task<PressOutcome> WaitGoneAsync(SessionStatus status, PendingPrompt pending, bool refusedAgain = false)
+        {
             // The same test as before (the approved dialog's hash is gone), asked
             // sooner and again: a dialog that is still up after SettleDelay of
             // looks is as stale as it was after one look at SettleDelay. A single
@@ -465,7 +635,9 @@ namespace Orbweaver
             {
                 await _seams.Delay(SettlePoll).ConfigureAwait(false);
                 var recapture = await _seams.Capture(status).ConfigureAwait(false);
-                gone = AnswerGate.PressTookEffect(pending, recapture, AskFormTranscript.CallFor(recapture, status.TranscriptPath)) ? gone + 1 : 0;
+                var took = AnswerGate.PressTookEffect(pending, recapture, AskFormTranscript.CallFor(recapture, status.TranscriptPath))
+                    || (refusedAgain && LoginScreen.Read(recapture) is { Step: LoginStep.Url, FieldEmpty: true });
+                gone = took ? gone + 1 : 0;
                 if (gone >= 2) return PressOutcome.Took;
             }
             return PressOutcome.NoEffect;
@@ -528,10 +700,31 @@ namespace Orbweaver
         private async Task<PressOutcome> PressOtherAsync(SessionStatus status, PendingPrompt pending, string requestId, string row, string note)
         {
             if (await ApprovedFormAsync(status, pending).ConfigureAwait(false) is not { } form) return PressOutcome.Changed;
-            var code = await FormAnswer.AnswerAsync(status, _seams.Capture, _seams.PressKey, _seams.TypeLiteral, form.Fingerprint, row, null, note)
-                .ConfigureAwait(false);
+            var code = await FormAnswer.AnswerAsync(status, _seams.Capture, _seams.PressKey, _seams.TypeLiteral, form.Fingerprint, row, null, note,
+                why => _seams.Log($"{why} {requestId}")).ConfigureAwait(false);
             if (code is null) _seams.Log($"press {requestId} other");
             return OutcomeOf(code);
+        }
+
+        // CB-412 code: LoginAnswer reads the URL step (this hash, field empty), types
+        // the code without Enter, reads the tail back, and only then presses Enter
+        // on a last look at the same screen. The code is held in this one argument
+        // from the gate to the type call: not logged, not in a field. The log
+        // carries the outcome name alone; LoginAnswer's own codes are fixed words.
+        private async Task<PressOutcome> PressCodeAsync(SessionStatus status, PendingPrompt pending, string requestId, string code)
+        {
+            var press = _seams.CaptureAndPress ?? ((st, key, approved) => CaptureThenPress(st, key, approved));
+            var outcome = await LoginAnswer.SubmitCodeAsync(status, new LoginCapture(_seams.Capture), new LoginType(_seams.TypeLiteral),
+                    new LoginCaptureAndPress(press), _seams.Delay, pending.ScreenHash, code)
+                .ConfigureAwait(false);
+            if (outcome is not null) return OutcomeOf(outcome);
+            _seams.Log($"press {requestId} code");
+            // Took only when the URL step is gone: a wrong code comes back as the
+            // error screen, which hashes differently, and a screen that never moved
+            // is NoEffect.
+            // CB-418: a second refusal redraws the identical screen, so the hash never
+            // goes. The code was consumed all the same when the box is empty again.
+            return await WaitGoneAsync(status, pending, refusedAgain: true).ConfigureAwait(false);
         }
 
         // tell: press the option, wait for the dialog to clear (the CLI then

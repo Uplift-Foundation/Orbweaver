@@ -33,13 +33,45 @@ namespace Orbweaver
             [property: JsonPropertyName("nonce")] string Nonce,
             [property: JsonPropertyName("expires_at")] long ExpiresAt,
             [property: JsonPropertyName("sig")] string Sig,
-            [property: JsonPropertyName("cert")] string Cert);
+            [property: JsonPropertyName("cert")] string Cert,
+            // CB-397: unsigned; only says this desk can show the trust question.
+            [property: JsonPropertyName("can_trust"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool CanTrust = false);
 
         private sealed record ResultBody(
             [property: JsonPropertyName("ok")] bool Ok,
             [property: JsonPropertyName("code")] string? Code,
             [property: JsonPropertyName("session_id")] string? SessionId,
-            [property: JsonPropertyName("why")] string? Why);
+            [property: JsonPropertyName("why")] string? Why,
+            [property: JsonPropertyName("trust"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] PeerLaunchTrust? Trust = null);
+
+        // CB-397: the body of `launch-trust`. The folder, CLI and account are
+        // not here; see PeerTrustAnswer.
+        internal sealed record TrustRequest(
+            [property: JsonPropertyName("token")] string Token,
+            [property: JsonPropertyName("answer")] string Answer,
+            [property: JsonPropertyName("nonce")] string Nonce,
+            [property: JsonPropertyName("expires_at")] long ExpiresAt,
+            [property: JsonPropertyName("sig")] string Sig,
+            [property: JsonPropertyName("cert")] string Cert);
+
+        internal static JsonElement EncodeTrust(TrustRequest request) => PeerProtocol.BodyOf(request);
+
+        internal static TrustRequest? ParseTrust(JsonElement body)
+        {
+            if (body.ValueKind != JsonValueKind.Object) return null;
+
+            TrustRequest? request;
+            try { request = body.Deserialize<TrustRequest>(PeerProtocol.Json); }
+            catch (JsonException) { return null; }
+
+            var whole = request is not null
+                && Sane(request.Token, 64, true) && Sane(request.Nonce, 256, true)
+                && Sane(request.Sig, MaxText, true) && Sane(request.Cert, 32 * 1024, true)
+                && request.Answer is PeerTrustAnswer.Trust or PeerTrustAnswer.Cancel
+                && request.ExpiresAt > 0;
+
+            return whole ? request : null;
+        }
 
         // --- launch-info ---------------------------------------------------------
 
@@ -119,7 +151,7 @@ namespace Orbweaver
         // --- launch-result -------------------------------------------------------
 
         internal static JsonElement EncodeResult(PeerLaunchResult result) =>
-            PeerProtocol.BodyOf(new ResultBody(result.Ok, result.Code, result.SessionId, result.Why));
+            PeerProtocol.BodyOf(new ResultBody(result.Ok, result.Code, result.SessionId, result.Why, result.Trust));
 
         internal static PeerLaunchResult? ParseResult(JsonElement body)
         {
@@ -134,7 +166,78 @@ namespace Orbweaver
                 || !Sane(parsed.Why, MaxText, required: false))
                 return null;
 
-            return new PeerLaunchResult(parsed.Ok, parsed.Code!, parsed.SessionId, parsed.Why);
+            // A question belongs to trust_needed and to nothing else, and it
+            // is believed only whole: a half-read question is no answer.
+            var trust = parsed.Trust;
+            if (parsed.Code == PeerLaunchCodes.TrustNeeded)
+            {
+                if (trust is null || !Sane(trust.Token, 64, true) || !Sane(trust.Cli, 32, true)
+                    || !Sane(trust.Cwd, MaxText, true) || trust.ExpiresAt <= 0)
+                    return null;
+            }
+            else trust = null;
+
+            return new PeerLaunchResult(parsed.Ok, parsed.Code!, parsed.SessionId, parsed.Why, trust);
+        }
+
+        // --- list-dir ------------------------------------------------------------
+
+        internal const int MaxDirItems = 500;
+
+        private sealed record ListDirRequestBody([property: JsonPropertyName("path")] string? Path);
+
+        private sealed record DirBody(
+            [property: JsonPropertyName("ok")] bool Ok,
+            [property: JsonPropertyName("code")] string? Code,
+            [property: JsonPropertyName("path")] string? Path,
+            [property: JsonPropertyName("parent")] string? Parent,
+            [property: JsonPropertyName("truncated")] bool Truncated,
+            [property: JsonPropertyName("items")] IReadOnlyList<PeerDirItem>? Items);
+
+        internal static JsonElement EncodeListDirRequest(string path) =>
+            PeerProtocol.BodyOf(new ListDirRequestBody(path));
+
+        // Null unless the path is present and shaped as the phone's list_dir
+        // path is (BrowseRules.PathShapeOk). Empty is the top level.
+        internal static string? ParseListDirRequest(JsonElement body)
+        {
+            if (body.ValueKind != JsonValueKind.Object) return null;
+
+            ListDirRequestBody? parsed;
+            try { parsed = body.Deserialize<ListDirRequestBody>(PeerProtocol.Json); }
+            catch (JsonException) { return null; }
+
+            // Deserializing an object never yields null, so only the path's own absence is a case.
+            return parsed!.Path is { } p && BrowseRules.PathShapeOk(p) ? p : null;
+        }
+
+        internal static JsonElement EncodeDir(PeerDirResult result) =>
+            PeerProtocol.BodyOf(result.Listing is { } l && result.Ok
+                ? new DirBody(true, result.Code, l.Path, l.Parent, l.Truncated, l.Items)
+                // A refusal carries its code and nothing else.
+                : new DirBody(false, result.Code, null, null, false, null));
+
+        internal static PeerDirResult? ParseDir(JsonElement body)
+        {
+            if (body.ValueKind != JsonValueKind.Object) return null;
+
+            DirBody? parsed;
+            try { parsed = body.Deserialize<DirBody>(PeerProtocol.Json); }
+            catch (JsonException) { return null; }
+
+            if (!Sane(parsed!.Code, 64, required: true)) return null;
+            if (!parsed.Ok) return PeerDirResult.Fail(parsed.Code!);
+
+            var items = parsed.Items ?? [];
+
+            if (!Sane(parsed.Path, MaxText, required: false) || !Sane(parsed.Parent, MaxText, required: false)
+                || items.Count > MaxDirItems
+                || items.Any(i => i is null || !Sane(i.Name, 1024, required: true)
+                    || !Sane(i.Path, MaxText, required: false) || !Sane(i.Drive, 8, required: false)))
+                return null;
+
+            return new PeerDirResult(true, parsed.Code!,
+                new PeerDirListing(parsed.Path ?? "", parsed.Parent ?? "", parsed.Truncated, items));
         }
 
         // Present (when required), bounded, and free of control characters:

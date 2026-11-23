@@ -1,7 +1,9 @@
 using System.Linq;
 using System.Reflection;
 using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Xunit;
 
@@ -476,6 +478,22 @@ public class NewChatWindowScreenshots : IDisposable
 
         public Task<PeerLaunchResult> LaunchAsync(string machine, PeerLaunchSpec spec, CancellationToken ct) =>
             Task.FromResult(Result);
+
+        // CB-397: the far machine's trust question and the window's answer to it.
+        public PeerLaunchResult TrustResult = new(true, "launched", "s1", null);
+        public TaskCompletionSource<PeerLaunchResult>? PendingTrust;
+
+        public Task<PeerLaunchResult> TrustAsync(string machine, PeerLaunchTrust trust, bool trusted, CancellationToken ct) =>
+            PendingTrust?.Task ?? Task.FromResult(TrustResult);
+
+        // CB-357 (reopened): a far machine's folders, one level under its root.
+        public Task<PeerDirResult> ListDirAsync(string machine, string path, CancellationToken ct) =>
+            Task.FromResult(path == "/Users/forbidden" ? PeerDirResult.Fail("forbidden_path")
+                : path.Length == 0
+                ? new PeerDirResult(true, "ok", new PeerDirListing("", "", false,
+                    [new PeerDirItem("warren", "/Users/warren", null, true), new PeerDirItem("Source", "/Users/warren/Source")]))
+                : new PeerDirResult(true, "ok", new PeerDirListing(path, "/Users/warren", false,
+                    [new PeerDirItem("ledger"), new PeerDirItem("ledger-web"), new PeerDirItem("orbweaver"), new PeerDirItem("scratch")])));
     }
 
     private static NewChatWindow PeerWindow(FakePeers peers)
@@ -489,6 +507,37 @@ public class NewChatWindowScreenshots : IDisposable
         NewChatWindow.PeerLauncherForTests = peers;
         NewChatWindow.PeerLinkOnForTests = true;
         return NewWindow();
+    }
+
+    // CB-357 (reopened): the remote folder browser, one level into the far
+    // machine's Source folder, with the Choose button live.
+    [AvaloniaFact]
+    public async Task RemoteFolderBrowserInsideAFolder()
+    {
+        var browser = new RemoteFolderBrowser(new FakePeers(), "mini");
+        browser.Show();
+        await browser.NavigateAsync("/Users/warren/Source");
+        Dispatcher.UIThread.RunJobs();
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        ScreenshotHelper.Capture(browser, "new-chat-remote-folder-browser.png");
+
+        Assert.True(browser.ChooseButton.IsEnabled);
+        Assert.Equal("/Users/warren/Source", browser.Chosen);
+        browser.Close();
+    }
+
+    // The same browser after the far desk refused a folder.
+    [AvaloniaFact]
+    public async Task RemoteFolderBrowserRefused()
+    {
+        var browser = new RemoteFolderBrowser(new FakePeers(), "mini");
+        browser.Show();
+        await browser.NavigateAsync("");
+        await browser.NavigateAsync("/Users/forbidden");
+        Dispatcher.UIThread.RunJobs();
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        ScreenshotHelper.Capture(browser, "new-chat-remote-folder-browser-refused.png");
+        browser.Close();
     }
 
     // A remote machine selected: its recents, its accounts, its CLIs (Grok
@@ -535,8 +584,92 @@ public class NewChatWindowScreenshots : IDisposable
         ScreenshotHelper.CaptureAlreadyShown(window, "new-chat-window-machine-refused.png");
     }
 
+    // CB-397: the far machine is asking whether to trust the folder; Start sends the
+    // question's own folder, so the panel's text is what a person would read.
+    private static NewChatWindow AskedWindow(FakePeers peers, bool hooks = false)
+    {
+        peers.Result = new PeerLaunchResult(false, PeerLaunchCodes.TrustNeeded, null, null,
+            new PeerLaunchTrust("TOKEN", "claude", "/Users/warren/Source/ledger", 1_800_000_000, hooks));
+        var window = PeerWindow(peers);
+        window.Show();
+        ScreenshotHelper.Flush();
+        window.MachineCombo.SelectedIndex = 1;
+        ScreenshotHelper.Flush();
+        window.StartButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        ScreenshotHelper.Flush();
+        return window;
+    }
+
+    private static void ClickTrust(Button b)
+    {
+        b.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        ScreenshotHelper.Flush();
+    }
+
+    [AvaloniaFact]
+    public void TrustQuestionAsking()
+    {
+        var window = AskedWindow(new FakePeers());
+
+        ScreenshotHelper.CaptureAlreadyShown(window, "new-chat-window-trust-asking.png");
+
+        Assert.True(window.TrustPanel.IsVisible);
+        Assert.Equal("Trust this folder on mini?", window.TrustTitle.Text);
+    }
+
+    // The far screen carried Claude Code's own hooks warning: the body gains one line.
+    [AvaloniaFact]
+    public void TrustQuestionAskingWithAHooksWarning()
+    {
+        var window = AskedWindow(new FakePeers(), hooks: true);
+
+        ScreenshotHelper.CaptureAlreadyShown(window, "new-chat-window-trust-asking-hooks.png");
+
+        Assert.True(window.TrustHooks.IsVisible);
+    }
+
+    [AvaloniaFact]
+    public void TrustQuestionTrusting()
+    {
+        var window = AskedWindow(new FakePeers { PendingTrust = new() });
+        ClickTrust(window.TrustYes);
+
+        ScreenshotHelper.CaptureAlreadyShown(window, "new-chat-window-trust-trusting.png");
+
+        Assert.Equal("Trusting it on mini…", window.StatusLine.Text);
+        Assert.False(window.TrustYes.IsEnabled);
+    }
+
+    [AvaloniaFact]
+    public void TrustQuestionCancelled()
+    {
+        var window = AskedWindow(new FakePeers { TrustResult = new PeerLaunchResult(false, PeerLaunchCodes.TrustCancelled, null, null) });
+        ClickTrust(window.TrustNo);
+
+        ScreenshotHelper.CaptureAlreadyShown(window, "new-chat-window-trust-cancelled.png");
+
+        Assert.Equal("Cancelled. Nothing was trusted, and mini closed the session.", window.StatusLine.Text);
+        Assert.False(window.TrustPanel.IsVisible);
+    }
+
+    [AvaloniaFact]
+    public void TrustQuestionExpired()
+    {
+        var wait = new TaskCompletionSource();
+        NewChatWindow.TrustWaitForTests = _ => wait.Task;
+        var window = AskedWindow(new FakePeers());
+        wait.SetResult();
+        ScreenshotHelper.Flush();
+
+        ScreenshotHelper.CaptureAlreadyShown(window, "new-chat-window-trust-expired.png");
+
+        Assert.Equal("Nobody answered in time, so mini closed the session. Nothing was trusted.", window.StatusLine.Text);
+        Assert.False(window.TrustPanel.IsVisible);
+    }
+
     private static void ClearSeams()
     {
+        NewChatWindow.TrustWaitForTests = null;
         NewChatAvailability.CurrentForTests = null;
         NewChatLauncher.LaunchForTests = null;
         NewChatWindow.CurrentStatusesForTests = null;

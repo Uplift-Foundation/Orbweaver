@@ -37,6 +37,58 @@ namespace Orbweaver
         internal static string Launched(string cli, string machine) =>
             CliName(cli) + " is starting on " + machine + ". Its orb appears when " + machine + " next reports its sessions.";
 
+        // CB-397: the trust question the far machine put to this desktop.
+        internal static string TrustAsking(string cli, string machine) =>
+            CliName(cli) + " on " + machine + " is asking whether to trust this folder.";
+
+        internal static string TrustTitle(string machine) => "Trust this folder on " + machine + "?";
+
+        internal static string TrustWarning(string cli) =>
+            CliName(cli) + " will be able to read, edit and run files there.";
+
+        // Added under the body only when the far screen carried the CLI's own
+        // hooks warning (PeerLaunchTrust.Hooks).
+        internal static string TrustHooks(string machine) =>
+            "This folder declares hooks that run commands on " + machine + " without asking.";
+
+        internal static string Trusting(string machine) => "Trusting it on " + machine + "…";
+
+        internal static string TrustCancelled(string machine) =>
+            "Cancelled. Nothing was trusted, and " + machine + " closed the session.";
+
+        internal static string TrustCancelledUnconfirmed(string machine) =>
+            "Cancelled here. " + machine + " didn't confirm, and closes the session itself within two minutes.";
+
+        internal static string TrustExpired(string machine) =>
+            "Nobody answered in time, so " + machine + " closed the session. Nothing was trusted.";
+
+        // What an answer to the question came back as. An answer that finds
+        // no question (gone or timed out) reads as expired; a Cancel nobody
+        // confirmed says so; everything else is a launch's own sentence.
+        internal static string AfterAnswer(PeerLaunchResult result, bool trusted, string cli, string machine)
+        {
+            if (result.Ok) return Launched(cli, machine);
+            if (result.Code is PeerLaunchCodes.TrustGone or RelayReplies.Expired) return TrustExpired(machine);
+            if (!trusted)
+            {
+                if (result.Code == PeerLaunchCodes.TrustCancelled) return TrustCancelled(machine);
+                if (result.Code is PeerLaunchCodes.NoAnswer or PeerLaunchCodes.LinkLost) return TrustCancelledUnconfirmed(machine);
+            }
+            return Explain(result.Code, result.Why, cli, machine);
+        }
+
+        // CB-357: why a far machine's folder listing was refused, in the same
+        // voice as Explain. The browse codes are the far desk's own (the phone's
+        // list_dir codes); the peer ones fall through to Explain.
+        internal static string ExplainBrowse(string code, string machine) => code switch
+        {
+            RelayReplies.ForbiddenPath => machine + " doesn't share that folder.",
+            RelayReplies.UnknownPath => "That folder doesn't exist on " + machine + ".",
+            RelayReplies.Unreadable => machine + " could not read that folder.",
+            RelayReplies.RateLimited => machine + " is busy. Try again in a moment.",
+            _ => Explain(code, null, "claude", machine),
+        };
+
         // One sentence per refusal code. The phone's own explanations (its
         // ClientFrames.explain), with "the desk" replaced by the machine's name,
         // so the same failure reads the same on whichever device asked. `why` is

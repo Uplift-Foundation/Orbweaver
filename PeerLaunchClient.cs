@@ -18,6 +18,9 @@ namespace Orbweaver
     internal sealed class PeerLaunchClient : IPeerLauncher
     {
         internal static readonly TimeSpan InfoTimeout = TimeSpan.FromSeconds(5);
+        // The far desk gives up reading a folder after 8 s and says so; this is
+        // a little longer so its answer wins over our own clock.
+        internal static readonly TimeSpan ListTimeout = TimeSpan.FromSeconds(10);
         // The receiver waits up to 30 s for the new session to check in.
         internal static readonly TimeSpan LaunchTimeout = TimeSpan.FromSeconds(45);
 
@@ -31,6 +34,11 @@ namespace Orbweaver
         internal delegate Task<(string Sig, string Cert)?> Signer(
             string machine, PeerLaunchWire.LaunchRequest unsigned);
 
+        // CB-397: signs a trust answer for one paired machine; null when this
+        // desk cannot (no identity, no pairing).
+        internal delegate Task<(string Sig, string Cert)?> TrustSigner(
+            string machine, PeerTrustAnswer.Fields fields);
+
         internal sealed record Seams(
             Func<string, PeerProtocol.PeerMessage, Task<bool>> Send,
             Func<IReadOnlyList<PeerMachine>> Machines,
@@ -39,7 +47,9 @@ namespace Orbweaver
         {
             internal TimeSpan InfoWait { get; init; } = InfoTimeout;
             internal TimeSpan LaunchWait { get; init; } = LaunchTimeout;
+            internal TimeSpan ListWait { get; init; } = ListTimeout;
             internal Func<string> NewNonce { get; init; } = RandomNonce;
+            internal TrustSigner? TrustSign { get; init; }
         }
 
         private sealed record Pending(string Machine, TaskCompletionSource<PeerProtocol.PeerMessage?> Reply);
@@ -47,6 +57,11 @@ namespace Orbweaver
         private readonly Seams _seams;
         private readonly object _gate = new();
         private readonly Dictionary<string, Pending> _pending = new();
+
+        // CB-397: the launch behind each question this desk was asked, so the
+        // answer is signed over the values this desk actually sent.
+        private sealed record Asked(string Machine, string Cwd, string Cli, string Account, string LaunchNonce, long ExpiresAt);
+        private readonly Dictionary<string, Asked> _asked = new();
 
         internal PeerLaunchClient(Seams seams) => _seams = seams;
 
@@ -61,14 +76,26 @@ namespace Orbweaver
             return reply?.Body is { } body ? PeerLaunchWire.ParseInfo(body) : null;
         }
 
+        // A question the far desk has given up is dropped here, on the next
+        // launch or answer: nothing else would ever remove it, and a desktop
+        // app runs for weeks.
+        private void SweepExpired()
+        {
+            var now = _seams.Now().ToUnixTimeSeconds();
+            lock (_gate)
+                foreach (var token in _asked.Where(a => a.Value.ExpiresAt <= now).Select(a => a.Key).ToList())
+                    _asked.Remove(token);
+        }
+
         public async Task<PeerLaunchResult> LaunchAsync(
             string machine, PeerLaunchSpec spec, CancellationToken ct)
         {
+            SweepExpired();
             var unsigned = new PeerLaunchWire.LaunchRequest(
                 spec.Cwd, spec.Cli, "", "", spec.Account, "", "",
                 _seams.NewNonce(),
                 _seams.Now().Add(Lifetime).ToUnixTimeSeconds(),
-                "", "");
+                "", "", CanTrust: true);
 
             (string Sig, string Cert)? signed;
 
@@ -88,8 +115,58 @@ namespace Orbweaver
 
             var body = PeerLaunchWire.EncodeLaunch(unsigned with { Sig = s.Sig, Cert = s.Cert });
 
+            var result = await AskForResultAsync(machine, PeerProtocol.Launch, body, ct).ConfigureAwait(false);
+
+            if (result.Code != PeerLaunchCodes.TrustNeeded) return result;
+
+            // The question is believed only for the folder and CLI this desk
+            // asked for; anything else is not an answer to this launch.
+            if (result.Trust is not { } trust || trust.Cwd != spec.Cwd || trust.Cli != spec.Cli)
+                return new PeerLaunchResult(false, PeerLaunchCodes.NoAnswer, null, "unexpected trust question");
+
+            lock (_gate) _asked[trust.Token] = new Asked(machine, spec.Cwd, spec.Cli, spec.Account, unsigned.Nonce, trust.ExpiresAt);
+            return result;
+        }
+
+        public async Task<PeerLaunchResult> TrustAsync(
+            string machine, PeerLaunchTrust trust, bool trusted, CancellationToken ct)
+        {
+            SweepExpired();
+            Asked? asked;
+            lock (_gate)
+                asked = _asked.GetValueOrDefault(trust.Token) is { } a
+                    && string.Equals(a.Machine, machine, StringComparison.OrdinalIgnoreCase) ? a : null;
+
+            // Never a question this desk was asked: nothing is sent.
+            if (asked is null) return new PeerLaunchResult(false, PeerLaunchCodes.TrustGone, null, null);
+
+            var fields = new PeerTrustAnswer.Fields(
+                trust.Token, trusted ? PeerTrustAnswer.Trust : PeerTrustAnswer.Cancel,
+                asked.Cwd, asked.Cli, asked.Account, asked.LaunchNonce,
+                _seams.NewNonce(), _seams.Now().Add(Lifetime).ToUnixTimeSeconds());
+
+            (string Sig, string Cert)? signed;
+            try { signed = _seams.TrustSign is { } sign ? await sign(machine, fields).ConfigureAwait(false) : null; }
+            catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                return new PeerLaunchResult(false, PeerLaunchCodes.CannotSign, null, e.GetType().Name);
+            }
+
+            if (signed is not { } s)
+                return new PeerLaunchResult(false, PeerLaunchCodes.CannotSign, null, "no pairing for that machine");
+
+            lock (_gate) _asked.Remove(trust.Token);
+
+            var body = PeerLaunchWire.EncodeTrust(new PeerLaunchWire.TrustRequest(
+                fields.Token, fields.Answer, fields.Nonce, fields.ExpiresAt, s.Sig, s.Cert));
+            return await AskForResultAsync(machine, PeerProtocol.LaunchTrust, body, ct).ConfigureAwait(false);
+        }
+
+        private async Task<PeerLaunchResult> AskForResultAsync(
+            string machine, string type, JsonElement body, CancellationToken ct)
+        {
             var reply = await AskAsync(
-                machine, PeerProtocol.Launch, body, PeerProtocol.LaunchResult, _seams.LaunchWait, ct)
+                machine, type, body, PeerProtocol.LaunchResult, _seams.LaunchWait, ct)
                 .ConfigureAwait(false);
 
             if (reply is null)
@@ -104,7 +181,25 @@ namespace Orbweaver
             return parsed ?? new PeerLaunchResult(false, PeerLaunchCodes.NoAnswer, null, "unreadable reply");
         }
 
-        // Fed by PeerMirrorHost for `launch-info` and `launch-result`.
+        public async Task<PeerDirResult> ListDirAsync(string machine, string path, CancellationToken ct)
+        {
+            var reply = await AskAsync(
+                machine, PeerProtocol.ListDirGet, PeerLaunchWire.EncodeListDirRequest(path),
+                PeerProtocol.ListDir, _seams.ListWait, ct).ConfigureAwait(false);
+
+            if (reply is null)
+            {
+                bool lost;
+                lock (_gate) lost = _lost.Contains(machine);
+                return PeerDirResult.Fail(lost ? PeerLaunchCodes.LinkLost : PeerLaunchCodes.NoAnswer);
+            }
+
+            return reply.Body is { } b && PeerLaunchWire.ParseDir(b) is { } parsed
+                ? parsed
+                : PeerDirResult.Fail(PeerLaunchCodes.NoAnswer);
+        }
+
+        // Fed by PeerMirrorHost for `launch-info`, `launch-result` and `list-dir`.
         internal void OnReply(string machine, PeerProtocol.PeerMessage message)
         {
             Pending? pending;
@@ -208,6 +303,17 @@ namespace Orbweaver
                 var signature = await sign(LaunchGate.PeerMessage(receiverPin, LaunchGate.Body(fields)))
                     .ConfigureAwait(false);
 
+                return (RelayCrypto.Base64Url(signature.Sig), Convert.ToBase64String(signature.CertificateDer));
+            };
+
+        // The real trust signer: the same key and certificate as SignerFor,
+        // over PeerTrustAnswer's own domain.
+        internal static TrustSigner TrustSignerFor(
+            Func<string, string?> pinFor, Func<byte[], Task<PeerIdentity.Signature>> sign) =>
+            async (machine, fields) =>
+            {
+                if (pinFor(machine) is not { Length: > 0 } receiverPin) return null;
+                var signature = await sign(PeerTrustAnswer.Message(receiverPin, PeerTrustAnswer.Body(fields))).ConfigureAwait(false);
                 return (RelayCrypto.Base64Url(signature.Sig), Convert.ToBase64String(signature.CertificateDer));
             };
 

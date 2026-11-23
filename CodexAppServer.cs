@@ -176,6 +176,13 @@ namespace Orbweaver
         internal const string RateLimitsRequest =
             "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"account/rateLimits/read\",\"params\":null}";
 
+        // CB-404: the models this Codex offers (measured at 0.154.0 and 0.167.0:
+        // result.data[] with id, displayName, hidden, supportedReasoningEfforts;
+        // an unknown method answers an `error` with no result). Same id, so
+        // ResultFrom finds it the same way.
+        internal const string ModelListRequest =
+            "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"model/list\",\"params\":{}}";
+
         // The one line worth reading out of the stream.
         //
         // Newline-delimited JSON carrying responses *and* notifications, so this
@@ -249,7 +256,7 @@ namespace Orbweaver
         // nothing at all. So the requests go out, the response is read, and the
         // process is killed rather than asked to leave.
         [ExcludeFromCodeCoverage]
-        internal static string? Ask(string codex, string? codexHome)
+        internal static string? Ask(string codex, string? codexHome, string request = RateLimitsRequest)
         {
             Process? process = null;
             try
@@ -279,7 +286,7 @@ namespace Orbweaver
                 var stderr = process.StandardError.ReadToEndAsync();
 
                 process.StandardInput.WriteLine(InitializeRequest);
-                process.StandardInput.WriteLine(RateLimitsRequest);
+                process.StandardInput.WriteLine(request);
                 process.StandardInput.Flush();
 
                 var reader = Task.Run(() =>

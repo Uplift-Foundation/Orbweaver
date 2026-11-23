@@ -156,8 +156,36 @@ public class PromptWireTests
     [InlineData("my own…", "your own answer", false)]
     [InlineData("…", "anything", false)]
     [InlineData("Type something.", "my own answer", false)]
+    // CB-406: a row cut at a word boundary — more rows than the parser joins
+    // — is the answer's opening words. One cut mid-word is not.
+    [InlineData("my own", "my own answer", true)]
+    [InlineData("my ow", "my own answer", false)]
+    [InlineData("", "my own answer", false)]
+    [InlineData("my own answer and more", "my own answer", false)]
+    // QA round 1 edges: a trailing or doubled space at the cut, and a non-ASCII
+    // word either side of it.
+    [InlineData("my own", "my own  answer", true)]
+    [InlineData("my own answer", "my own answer ", true)]
+    [InlineData("café au", "café au lait", true)]
+    [InlineData("go 🚀", "go 🚀 now", true)]
+    [InlineData("go 🚀", "go 🚀🚀 now", false)]
     public void TheRowReadsBackAsWhatWasTyped(string label, string text, bool shown) =>
         Assert.Equal(shown, FormAnswer.ShowsTyped(label, text));
+
+    // CB-406, end to end on the real capture: the free-text row of a team
+    // lead's 35-column form, with a long answer typed in, reads back as that
+    // answer, so the read-back passes and Enter is pressed.
+    [Fact]
+    public void ALongAnswerTypedIntoANarrowTeamLeadsFormReadsBackAsTyped()
+    {
+        const string typed = "my own answer and this is a much longer reply that will not fit on one row of a narrow pane";
+        var form = MirrorProtocol.PromptFromScreen(PaneFixtures.TeamLeadNarrowForm)!;
+        var filled = MirrorProtocol.PromptFromScreen(PaneFixtures.TeamLeadNarrowFreeTextTyped)!;
+
+        Assert.Equal("4", form.FreeTextKey);
+        Assert.Equal("4", filled.CursorKey);
+        Assert.True(FormAnswer.ShowsTyped(filled.Options.Single(o => o.Key == form.FreeTextKey).Label, typed));
+    }
 
     // --- the client's reading of a reply (coverage QA asked for) ---------------
 
@@ -169,10 +197,14 @@ public class PromptWireTests
         Assert.NotNull(RemoteMirrorClient.PromptOutcomeOf(true, null, good).Prompt);
         Assert.Equal(new RemoteMirrorClient.PromptOutcome(null, MirrorProtocol.ErrNoPrompt),
             RemoteMirrorClient.PromptOutcomeOf(false, MirrorProtocol.ErrNoPrompt, null));
-        // Never answered: no code at all.
-        Assert.Equal(MirrorProtocol.ErrUnsupported, RemoteMirrorClient.PromptOutcomeOf(false, null, null).Error);
-        // An OK whose payload is not a prompt.
-        Assert.Equal(new RemoteMirrorClient.PromptOutcome(null, MirrorProtocol.ErrUnsupported),
+        // Never answered: no code at all. Not "unsupported", which a session treats as final (CB-407).
+        Assert.Equal(MirrorProtocol.ErrNoReply, RemoteMirrorClient.PromptOutcomeOf(false, null, null).Error);
+        Assert.NotEqual(MirrorProtocol.ErrUnsupported, MirrorProtocol.ErrNoReply);
+        // The codes the far side really sends are still passed through as they are.
+        foreach (var code in new[] { MirrorProtocol.ErrUnsupported, MirrorProtocol.ErrNoPane, MirrorProtocol.ErrReplyOff })
+            Assert.Equal(code, RemoteMirrorClient.PromptOutcomeOf(false, code, null).Error);
+        // An OK whose payload is not a prompt is no reply either.
+        Assert.Equal(new RemoteMirrorClient.PromptOutcome(null, MirrorProtocol.ErrNoReply),
             RemoteMirrorClient.PromptOutcomeOf(true, null, "nope"u8.ToArray()));
     }
 
@@ -181,7 +213,9 @@ public class PromptWireTests
     {
         Assert.Null(RemoteMirrorClient.AnswerErrorOf(true, null));
         Assert.Equal(MirrorProtocol.ErrBadKey, RemoteMirrorClient.AnswerErrorOf(false, MirrorProtocol.ErrBadKey));
-        Assert.Equal(MirrorProtocol.ErrUnsupported, RemoteMirrorClient.AnswerErrorOf(false, null));
+        Assert.Equal(MirrorProtocol.ErrNoReply, RemoteMirrorClient.AnswerErrorOf(false, null));
+        foreach (var code in new[] { MirrorProtocol.ErrUnsupported, MirrorProtocol.ErrNoPane, MirrorProtocol.ErrReplyOff })
+            Assert.Equal(code, RemoteMirrorClient.AnswerErrorOf(false, code));
     }
 
     [Fact]

@@ -146,6 +146,8 @@ public class RelayRemoteTests
         public readonly List<(string Phone, string Session, JsonElement Body)> Windows = [];
         public void Reply(string phoneId, string? sessionId, string plaintext) { lock (this) Replies.Add((phoneId, sessionId, J(plaintext))); }
         public void Window(string phoneId, string sessionId, string plaintext) { lock (this) Windows.Add((phoneId, sessionId, J(plaintext))); }
+        public readonly List<(string Phone, string Session, string Plain)> Runs = [];
+        public void Run(string phoneId, string sessionId, string plaintext) { lock (this) Runs.Add((phoneId, sessionId, plaintext)); }
         public readonly List<(string Phone, string Hash, JsonElement Body)> Images = [];
         public bool ImagesDeliver = true;
         public Action? OnImage;
@@ -179,11 +181,16 @@ public class RelayRemoteTests
 
         public List<NewChatAccounts.Choice> AccountChoices = [new("Default", null), new("~/.claude-uplift", ".claude-uplift"), new("~/.codex-b", ".codex-b")];
         public string? Designated;
+        public string Home = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "cb397-home"));
+        // CB-397: what the launched pane shows; null means no trust seams at all.
+        public string? PaneShows;
+        public readonly List<string> PaneClosed = [];
         public Func<SessionStatus, string, Task<string?>> Summarizer = (_, reply) => Task.FromResult<string?>("summary of " + reply);
 
         public World(bool windows = false, string? binary = "/bin/claude", (string?, string?)? place = null, int? pid = 42,
-            bool accounts = true, bool summarizes = true)
+            bool accounts = true, bool summarizes = true, string? paneShows = null, IRunControls? run = null)
         {
+            PaneShows = paneShows;
             Windows = windows;
             Binary = binary;
             MacPlace = place ?? ("%1", null);
@@ -202,13 +209,19 @@ public class RelayRemoteTests
                     _ => DirExists,
                     () => "/bin/zsh",
                     (command, cwd) => { MacStarts.Add((command, cwd)); return MacPlace; },
-                    psi => { WindowsStarts.Add(psi); return WindowsPid; }),
+                    psi => { WindowsStarts.Add(psi); return WindowsPid; },
+                    () => Home,
+                    PaneShows is null ? null : new LaunchRunner.TrustSeams(
+                        _ => Task.FromResult<string?>(PaneShows),
+                        (_, _, _) => Task.FromResult((false, (string?)null)),
+                        pane => { PaneClosed.Add(pane); return Task.CompletedTask; })),
                 Log.Add)
             {
                 Images = h => Bundles.GetValueOrDefault(h),
                 Accounts = accounts ? new RelayRemote.AccountSeams(_ => AccountChoices, _ => Designated) : null,
                 Summarize = summarizes ? (s, reply) => Summarizer(s, reply) : null,
                 Settle = () => Task.CompletedTask,
+                RunControls = run,
             }, Sent, Nonces);
         }
 
@@ -464,6 +477,25 @@ public class RelayRemoteTests
         await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, cli: "grok", cwd: "C:\\w", message: "say % & hi"));
         Assert.Equal(["launched", "typed"], Codes(w));
         Assert.Equal(["C:\\g\\grok.exe", "--", "say % & hi"], w.WindowsStarts.Single().ArgumentList);
+    }
+
+    // CB-397: the phone keeps today's rule that first-run dialogs are desk-only, and a
+    // launch that lands on a trust prompt now says so instead of "never checked in".
+    // The pane is left open for the desk, nothing is pressed, and the contract's arrays
+    // are exactly what they were.
+    [Fact]
+    public async Task A_phone_launch_that_lands_on_a_trust_prompt_says_so_and_leaves_the_pane()
+    {
+        var screen = TrustScreens.OnNo;
+        var w = new World(paneShows: screen);
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, cwd: TrustScreens.Folder, message: ""));
+
+        var reply = w.Sent.Replies.Single().Body;
+        Assert.Equal("launch_failed", reply.GetProperty("code").GetString());
+        Assert.Equal("Claude Code is asking whether to trust that folder. Answer it on the desk.", reply.GetProperty("why").GetString());
+        Assert.Empty(w.PaneClosed);
+        Assert.DoesNotContain("trust_needed", RelayReplies.ErrCodes);
+        Assert.DoesNotContain("trust_needed", RelayReplies.CodesWithWhy);
     }
 
     [Fact]
@@ -825,8 +857,10 @@ public class RelayRemoteTests
         await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, account: ".claude-uplift"));
 
         Assert.Equal(["launched", "typed"], Codes(w));
-        Assert.Equal(NewChatCommand.LaunchLine("/bin/zsh", "/bin/claude", [], (NewChatCli.ClaudeCode, ".claude-uplift")), w.MacStarts.Single().Command);
+        Assert.Equal(NewChatCommand.LaunchLine("/bin/zsh", "/bin/claude", [], (NewChatCli.ClaudeCode, Path.Combine(w.Home, ".claude-uplift"))), w.MacStarts.Single().Command);
+        Assert.True(Path.IsPathRooted(Path.Combine(w.Home, ".claude-uplift")));
         Assert.Contains("env CLAUDE_CONFIG_DIR=", w.MacStarts.Single().Command);
+        Assert.Contains(Path.Combine(w.Home, ".claude-uplift"), w.MacStarts.Single().Command);
     }
 
     [Fact]
@@ -868,7 +902,7 @@ public class RelayRemoteTests
 
         Assert.Equal(["launched", "typed"], Codes(w));
         var start = w.WindowsStarts.Single();
-        Assert.Equal(["cmd.exe", "/k", "set \"CLAUDE_CONFIG_DIR=.claude-uplift\" && \"C:\\bin\\claude.exe\""], start.ArgumentList);
+        Assert.Equal(["cmd.exe", "/k", "set \"CLAUDE_CONFIG_DIR=" + Path.Combine(w.Home, ".claude-uplift") + "\" && \"C:\\bin\\claude.exe\""], start.ArgumentList);
     }
 
     [Fact]
@@ -944,5 +978,239 @@ public class RelayRemoteTests
     {
         var w = new World();
         Assert.Empty(w.Remote.Watchers("nope"));
+    }
+
+    // ---- CB-404: frames-v13 set_run and run ------------------------------------------
+
+    private sealed class FakeRun : IRunControls
+    {
+        public RunState? State = Run("opus");
+        public RunSetResult Result = RunSetResult.Sent;
+        public bool Throws, Running;
+        public readonly List<(string Field, string Value)> Sets = [];
+        public int Reads;
+        public Action? OnRead;
+
+        public RunState? Read(SessionStatus status)
+        {
+            Reads++;
+            OnRead?.Invoke();
+            if (Throws) throw new IOException("busy");
+            return State;
+        }
+
+        public bool IsRunning(SessionStatus status) => Running;
+
+        public Task<RunSetResult> SetAsync(SessionStatus status, string field, string value)
+        {
+            Sets.Add((field, value));
+            return Task.FromResult(Result);
+        }
+    }
+
+    private static RunState Run(string model, string? off = null, string? pending = null) => new(
+        new RunFieldState(model, pending, [new("opus", "Opus"), new("sonnet", "Sonnet")], off, null),
+        new RunFieldState("high", null, [new("low", "low"), new("high", "high")], null, null),
+        false);
+
+    private static void Ticks(World w, int n)
+    {
+        for (var i = 0; i < n; i++) w.Remote.Tick(w.Now);
+    }
+
+    [Fact]
+    public async Task Set_run_reaches_the_host_and_answers_ok_set_then_sends_the_state()
+    {
+        var run = new FakeRun();
+        var w = new World(run: run);
+        w.Files["/t"] = Lines(1);
+        w.Sessions(("s1", Watched("/t")));
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r0", "s1", null));
+        run.State = Run("opus", pending: "sonnet");
+
+        await w.Remote.HandleAsync("ph", [], new SetRunRequest("r1", "s1", "model", "sonnet"));
+
+        Assert.Equal(("model", "sonnet"), run.Sets.Single());
+        var ok = w.Sent.Replies.Last();
+        Assert.Equal(("s1", "ok", "set", "s1"), (ok.Session, ok.Body.GetProperty("t").GetString(),
+            ok.Body.GetProperty("code").GetString(), ok.Body.GetProperty("session_id").GetString()));
+        // The pending frame follows the answer at once, not a tick later.
+        Assert.Equal("sonnet", J(w.Sent.Runs.Last().Plain).GetProperty("model").GetProperty("pending").GetString());
+    }
+
+    [Theory]
+    [InlineData(1, "bad_value", null)]
+    [InlineData(2, "unavailable", "no bridge")]
+    [InlineData(3, "set_failed", "Model 'x' not found")]
+    public async Task A_route_that_refuses_answers_its_code_and_why_under_the_session_ck(int kind, string code, string? why)
+    {
+        var run = new FakeRun { Result = new RunSetResult((RunSetKind)kind, why) };
+        var w = new World(run: run);
+        w.Sessions(("s1", Status()));
+
+        await w.Remote.HandleAsync("ph", [], new SetRunRequest("r1", "s1", "effort", "high"));
+
+        var (_, session, err) = w.Sent.Replies.Single();
+        Assert.Equal(("s1", "err", code), (session, err.GetProperty("t").GetString(), err.GetProperty("code").GetString()));
+        Assert.Equal(why, err.TryGetProperty("why", out var y) ? y.GetString() : null);
+        Assert.Empty(w.Sent.Runs);
+    }
+
+    [Fact]
+    public async Task Unknown_session_then_off_then_running_then_bad_value_are_answered_before_the_route()
+    {
+        var run = new FakeRun();
+        var w = new World(run: run);
+        w.Sessions(("s1", Status()));
+
+        await w.Remote.HandleAsync("ph", [], new SetRunRequest("a", "nope", "model", "opus"));
+        run.State = Run("opus", off: "no terminal");
+        await w.Remote.HandleAsync("ph", [], new SetRunRequest("b", "s1", "model", "sonnet"));
+        run.State = Run("opus");
+        run.Running = true;
+        await w.Remote.HandleAsync("ph", [], new SetRunRequest("c", "s1", "model", "sonnet"));
+        run.Running = false;
+        await w.Remote.HandleAsync("ph", [], new SetRunRequest("d", "s1", "model", "haiku"));
+
+        Assert.Equal(["unknown_session", "unavailable", "unavailable", "bad_value"],
+            w.Sent.Replies.Select(r => r.Body.GetProperty("code").GetString()).ToArray());
+        Assert.Equal(("nope", "no terminal", RunFrames.BusyWhy), (w.Sent.Replies[0].Session,
+            w.Sent.Replies[1].Body.GetProperty("why").GetString(), w.Sent.Replies[2].Body.GetProperty("why").GetString()));
+        Assert.Empty(run.Sets);
+    }
+
+    [Fact]
+    public async Task A_pending_change_does_not_block_the_next()
+    {
+        var run = new FakeRun { State = Run("opus", pending: "sonnet") };
+        var w = new World(run: run);
+        w.Sessions(("s1", Status()));
+
+        await w.Remote.HandleAsync("ph", [], new SetRunRequest("r", "s1", "effort", "low"));
+
+        Assert.Equal("set", w.Sent.Replies.Single().Body.GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task Set_run_on_a_desk_with_no_run_controls_is_unavailable_with_a_why()
+    {
+        var w = new World();
+        w.Sessions(("s1", Status()));
+        await w.Remote.HandleAsync("ph", [], new SetRunRequest("r", "s1", "model", "opus"));
+
+        var err = w.Sent.Replies.Single().Body;
+        Assert.Equal(("unavailable", RelayRemote.NoRunControlsWhy),
+            (err.GetProperty("code").GetString(), err.GetProperty("why").GetString()));
+        w.Remote.SendRunStates();
+        Assert.Empty(w.Sent.Runs);
+
+        // A host that offers nothing for the session answers the same.
+        var none = new World(run: new FakeRun { State = null });
+        none.Sessions(("s1", Status()));
+        await none.Remote.HandleAsync("ph", [], new SetRunRequest("r", "s1", "model", "opus"));
+        Assert.Equal("unavailable", none.Sent.Replies.Single().Body.GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task A_subscribing_watch_gets_the_run_frame_right_after_ok_watching_and_a_page_does_not()
+    {
+        var run = new FakeRun();
+        var w = new World(run: run);
+        w.Files["/t"] = Lines(3);
+        w.Sessions(("s1", Watched("/t")));
+
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r0", "s1", null));
+        Assert.Single(w.Sent.Runs);
+        // Again on a re-watch, though the bytes did not change.
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r1", "s1", null));
+        Assert.Equal(2, w.Sent.Runs.Count);
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r2", "s1", 2));
+        Assert.Equal(2, w.Sent.Runs.Count);
+    }
+
+    [Fact]
+    public async Task Run_frames_go_to_watchers_only_when_their_bytes_change()
+    {
+        var run = new FakeRun();
+        var w = new World(run: run);
+        w.Files["/t"] = Lines(1);
+        w.Files["/u"] = Lines(1);
+        w.Sessions(("s1", Watched("/t")), ("s2", Watched("/u")));
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r0", "s1", null));
+        await w.Remote.HandleAsync("ph2", [], new WatchRequest("r1", "s1", null));
+        Assert.Equal(2, w.Sent.Runs.Count);                          // one each, after ok watching
+        var reads = run.Reads;
+
+        Ticks(w, RelayRemote.RunEveryTicks - 1);
+        Assert.Equal(reads, run.Reads);                              // not at the window cadence
+        Ticks(w, 1);
+        Assert.Equal(reads + 1, run.Reads);                          // one read for two watchers; s2 unwatched
+        Assert.Equal(2, w.Sent.Runs.Count);                          // unchanged: nothing
+
+        run.State = Run("sonnet");
+        Ticks(w, RelayRemote.RunEveryTicks);
+        Assert.Equal(4, w.Sent.Runs.Count);
+        Assert.All(w.Sent.Runs, r => Assert.Equal("s1", r.Session));
+        Assert.Equal("sonnet", J(w.Sent.Runs.Last().Plain).GetProperty("model").GetProperty("id").GetString());
+    }
+
+    [Fact]
+    public async Task An_unwatch_stops_run_frames_and_a_reconnect_starts_them_afresh()
+    {
+        var run = new FakeRun();
+        var w = new World(run: run);
+        w.Files["/t"] = Lines(1);
+        w.Sessions(("s1", Watched("/t")));
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r0", "s1", null));
+        await w.Remote.HandleAsync("ph", [], new UnwatchRequest("r1", "s1"));
+        run.State = Run("sonnet");
+        w.Remote.SendRunStates();
+        Assert.Single(w.Sent.Runs);
+
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r2", "s1", null));
+        w.Remote.Disconnected();
+        w.Remote.SendRunStates();
+        Assert.Equal(2, w.Sent.Runs.Count);
+    }
+
+    [Fact]
+    public async Task A_host_that_throws_or_offers_nothing_sends_no_frame_and_logs_only_the_kind()
+    {
+        var run = new FakeRun { Throws = true };
+        var w = new World(run: run);
+        w.Files["/t"] = Lines(1);
+        w.Sessions(("s1", Watched("/t")));
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r0", "s1", null));
+
+        Assert.Empty(w.Sent.Runs);
+        Assert.Contains("run s1: IOException", w.Log);
+
+        run.Throws = false;
+        run.State = null;
+        w.Remote.SendRunStates();
+        Assert.Empty(w.Sent.Runs);
+    }
+
+    [Fact]
+    public async Task A_session_or_watch_that_goes_while_the_host_is_read_is_not_sent_to()
+    {
+        var run = new FakeRun();
+        var w = new World(run: run);
+        w.Files["/t"] = Lines(1);
+        w.Files["/u"] = Lines(1);
+        w.Sessions(("s1", Watched("/t")), ("s2", Watched("/u")));
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r0", "s1", null));
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r1", "s2", null));
+        var sent = w.Sent.Runs.Count;
+        var reads = run.Reads;
+
+        // The read is not under the lock: while s1 is being read, both sessions leave
+        // the roster, which ends both watches. Neither is sent a frame.
+        run.State = Run("sonnet");
+        run.OnRead = () => w.Sessions();
+        w.Remote.SendRunStates();
+
+        Assert.Equal(sent, w.Sent.Runs.Count);
+        Assert.Equal(reads + 1, run.Reads);
     }
 }

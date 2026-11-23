@@ -8,25 +8,24 @@ namespace Orbweaver
     // switch both gates read — the local panel's and the mirror's remote typing
     // paths (TypingGate.GuardedTypeAsync) — on the machine doing the typing.
     //
-    // **Log-only is the default.** The lead's decision, told to Warren: the
-    // guard ships watching, not blocking, on every machine, and enforcing is a
-    // follow-up once real logs show it makes no wrong calls. A real refusal
-    // with no way around it is what started this ticket's last two rounds.
+    // **Enforcing is the default (CB-403).** It shipped log-only, and the log
+    // it produced was the evidence against that: on the mini a refusal
+    // (`check=no-box-top shadow=1`) was followed by `-> ok via=typed`, twice —
+    // text typed into a pane that was not at its prompt, reported as sent, the
+    // sender's panel showing nothing wrong. A guard that logs and types anyway
+    // protects nobody, so with nothing set the gate refuses.
     //
-    // How each machine says otherwise, strongest first:
+    // How a machine says otherwise, strongest first:
     //
     //  1. The environment variable (ORBWEAVER_LOCAL_GATE_SHADOW, through
     //     BrandEnv). "0" enforces; any other non-blank value is log-only. It
-    //     wins over both marker files, so it can be left in a profile and
+    //     wins over the marker file, so it can be left in a profile and
     //     flipped without touching the settings folder.
-    //  2. The `local-gate-shadow` marker in the settings folder: log-only. It
-    //     meant that before the default flipped, and still does, so a machine
-    //     that has one installed is unchanged. With both markers present it
-    //     wins — when the two disagree, the one that cannot block anyone does.
-    //  3. The `local-gate-enforce` marker in the settings folder: enforce.
-    //     Opt-in, for a terminal-less machine (the mini under launchd) where
-    //     there is no profile to set a variable in.
-    //  4. Nothing set: log-only.
+    //  2. The `local-gate-shadow` marker in the settings folder: log-only, the
+    //     explicit opt-out for a machine with no profile to set a variable in.
+    //  3. Nothing set: enforce. The `local-gate-enforce` marker is what
+    //     opting in used to take; it is redundant now and harmless, kept so a
+    //     machine that has one is unchanged.
     //
     // Pure, with the directory, the variable and the file check handed in, so
     // the rule is asserted without touching a disk. A file check that throws
@@ -40,12 +39,11 @@ namespace Orbweaver
         {
             if (!string.IsNullOrWhiteSpace(envValue)) return envValue.Trim() != "0";
 
-            if (string.IsNullOrEmpty(settingsDir)) return true;
+            if (string.IsNullOrEmpty(settingsDir)) return false;
 
-            if (Exists(fileExists, Path.Combine(settingsDir, MarkerFileName))) return true;
-            if (Exists(fileExists, Path.Combine(settingsDir, EnforceMarkerFileName))) return false;
-
-            return true;
+            // The enforce marker is not read: it and "nothing set" are the same
+            // answer now, and shadow wins if both files are present.
+            return Exists(fileExists, Path.Combine(settingsDir, MarkerFileName));
         }
 
         private static bool Exists(Func<string, bool> fileExists, string path)

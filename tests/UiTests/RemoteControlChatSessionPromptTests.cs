@@ -242,6 +242,33 @@ public class RemoteControlChatSessionPromptTests
         Assert.Equal(1, h.Asks);
     }
 
+    // CB-406, the measured bug: a PROMPT that queued ten seconds behind other
+    // peer traffic on the far side timed out, the timeout read as unsupported,
+    // and the panel stopped asking for good — the form vanished and the
+    // question could not be answered from the MacBook at all. Driven through
+    // the real mapping of a no-reply outcome, not a hand-picked reply kind.
+    [AvaloniaFact]
+    public async Task APromptThatTimesOutKeepsTheFormAndTheAsking()
+    {
+        var h = new Harness();
+        var timedOut = MapFetch(new RemoteMirrorClient.PromptOutcome(null, RemoteMirrorClient.PromptOutcomeOf(false, null, null).Error));
+        h.Replies.Enqueue(Shown("fp1"));
+        h.Replies.Enqueue(timedOut);
+        h.Replies.Enqueue(timedOut);
+        h.Replies.Enqueue(Shown("fp1"));
+        h.Open();
+        await h.Settle();
+        Assert.NotNull(h.Session.Prompt);
+
+        h.Tick(); await h.Settle();
+        h.Tick(); await h.Settle();
+        Assert.NotNull(h.Session.Prompt);
+
+        h.Tick(); await h.Settle();
+        Assert.Equal(4, h.Asks);
+        Assert.Equal("Which exhibit?", h.Session.Prompt!.Title);
+    }
+
     [AvaloniaFact]
     public async Task NothingReadableClearsTheFormAndATransientFailureLeavesItAlone()
     {
@@ -401,6 +428,218 @@ public class RemoteControlChatSessionPromptTests
         Assert.Equal(1, h.Asks);
     }
 
+    // --- CB-407: a request that got no reply is not "unsupported" -------------------
+
+    // What a timed-out PROMPT becomes on this side, through the real client mapping.
+    private static PromptReply TimedOut() =>
+        MapFetch(RemoteMirrorClient.PromptOutcomeOf(false, null, null));
+
+    // Three slow replies in a row turned prompts off for the rest of the session. They are
+    // transient: the next poll asks again, and the form shows when the far side answers.
+    [AvaloniaFact]
+    public async Task ThreeTimeoutsDoNotLatchAndTheNextPollShowsTheForm()
+    {
+        var h = new Harness();
+        for (var i = 0; i < 3; i++) h.Replies.Enqueue(TimedOut());
+        h.Replies.Enqueue(Shown("fp1"));
+
+        h.Open();
+        await h.Settle();
+        for (var i = 0; i < 3; i++) { h.Tick(); await h.Settle(); }
+
+        Assert.Equal(4, h.Asks);
+        Assert.Equal("Which exhibit?", h.Session.Prompt!.Title);
+    }
+
+    // The controls: each of the three codes the far side really sends still stops the asking.
+    [AvaloniaFact]
+    public async Task EachOfTheThreeRealCodesStillLatchesAndTheTimeoutDoesNot()
+    {
+        foreach (var code in new[] { MirrorProtocol.ErrUnsupported, MirrorProtocol.ErrNoPane, MirrorProtocol.ErrReplyOff })
+        {
+            var h = new Harness();
+            h.Replies.Enqueue(MapFetch(RemoteMirrorClient.PromptOutcomeOf(false, code, null)));
+            h.Open();
+            await h.Settle();
+            h.Tick(); await h.Settle();
+            h.Session.PanelOpened(); await h.Settle();
+
+            Assert.True(1 == h.Asks, $"{code} should latch, asks={h.Asks}");
+        }
+
+        var slow = new Harness();
+        slow.Replies.Enqueue(TimedOut());
+        slow.Open();
+        await slow.Settle();
+        slow.Tick(); await slow.Settle();
+        Assert.Equal(2, slow.Asks);
+    }
+
+    // A later form on the same session is asked for after an earlier timeout, which is
+    // what the ticket's second form never was.
+    [AvaloniaFact]
+    public async Task ALaterFormIsAskedForAfterAnEarlierTimeout()
+    {
+        var h = new Harness();
+        h.Replies.Enqueue(Shown("fp1"));
+        h.Replies.Enqueue(TimedOut());
+        h.Replies.Enqueue(new PromptReply(PromptReplyKind.NoPrompt));
+        h.Replies.Enqueue(Shown("fp2", "Which month?"));
+        h.Open();
+        await h.Settle();
+        Assert.Equal("Which exhibit?", h.Session.Prompt!.Title);
+
+        for (var i = 0; i < 3; i++) { h.Tick(); await h.Settle(); }
+
+        Assert.Equal(4, h.Asks);
+        Assert.Equal("Which month?", h.Session.Prompt!.Title);
+    }
+
+    // A timed-out ANSWER may have landed. The same form read straight away is held back like
+    // after any answer; a read that finds a different screen shows it at once.
+    [AvaloniaFact]
+    public async Task ATimedOutAnswerReReadsAndShowsWhatTheFarScreenIsNow()
+    {
+        var h = new Harness();
+        h.Replies.Enqueue(Shown("fp1"));
+        h.Replies.Enqueue(Shown("fp2", "Which month?"));
+        h.NextAnswer = new AnswerReply(MapAnswerCode(RemoteMirrorClient.AnswerErrorOf(false, null)));
+        h.Open();
+        await h.Settle();
+
+        await h.Session.AnswerAsync(h.Session.Prompt!.Options[0]);
+        await h.Settle();
+
+        Assert.Contains(h.Session.History, t => t.Text.Contains("Didn't hear back from", StringComparison.Ordinal));
+        Assert.Equal(2, h.Asks);
+        Assert.Equal("Which month?", h.Session.Prompt!.Title);
+    }
+
+    [AvaloniaFact]
+    public async Task ATimedOutAnswerHoldsTheSameFormBackUntilTheSettleWindowEnds()
+    {
+        var h = new Harness();
+        h.Replies.Enqueue(Shown("fp1"));
+        h.Replies.Enqueue(Shown("fp1"));   // read straight away: the answer may be landing
+        h.Replies.Enqueue(Shown("fp1"));   // read after the window: it plainly did not land
+        h.NextAnswer = new AnswerReply(AnswerKind.NoReply);
+        h.Open();
+        await h.Settle();
+
+        await h.Session.AnswerAsync(h.Session.Prompt!.Options[0]);
+        await h.Settle();
+        Assert.Null(h.Session.Prompt);
+
+        h.Now += RemoteControlChatSession.SettleAfterAnswer;
+        h.Tick(); await h.Settle();
+
+        Assert.Equal(3, h.Asks);
+        Assert.NotNull(h.Session.Prompt);
+    }
+
+    // The press did land (the reply was only late): the first read is still the old form, held
+    // back; once the window has passed the screen is what replaced it, and the answered form's
+    // buttons are never offered again.
+    [AvaloniaFact]
+    public async Task ATimedOutAnswerThatLandedNeverOffersTheAnsweredFormAgain()
+    {
+        var h = new Harness();
+        h.Replies.Enqueue(Shown("fp1"));
+        h.Replies.Enqueue(Shown("fp1"));                                  // the far screen not redrawn yet
+        h.Replies.Enqueue(Shown("fp2", "Which month?"));                  // after the window: what replaced it
+        h.NextAnswer = new AnswerReply(AnswerKind.NoReply);
+        h.Open();
+        await h.Settle();
+
+        await h.Session.AnswerAsync(h.Session.Prompt!.Options[0]);
+        await h.Settle();
+        Assert.Null(h.Session.Prompt);
+
+        h.Now += RemoteControlChatSession.SettleAfterAnswer;
+        h.Tick(); await h.Settle();
+
+        Assert.Equal("Which month?", h.Session.Prompt!.Title);
+        Assert.Equal(3, h.Asks);
+    }
+
+    // The other arm of the wake-up in the no-reply case: a form was handed over (an earlier read)
+    // with no poll loop running, so there is nobody waiting to wake. The answer still notes that
+    // nothing came back, and does not throw.
+    [AvaloniaFact]
+    public async Task ATimedOutAnswerWithNoPollLoopWaitingStillNotesItAndDoesNotThrow()
+    {
+        var h = new Harness();
+        h.Session.ApplyReply(Shown("fp1"));
+        h.NextAnswer = new AnswerReply(AnswerKind.NoReply);
+
+        await h.Session.AnswerAsync(h.Session.Prompt!.Options[0]);
+        await h.Settle();
+
+        Assert.Contains(h.Session.History, t => t.Text.Contains("Didn't hear back", StringComparison.Ordinal));
+        Assert.Equal(0, h.Asks);
+    }
+
+
+    [AvaloniaFact]
+    public async Task ATimedOutAnswerDoesNotStopTheAsking()
+    {
+        var h = new Harness();
+        h.Replies.Enqueue(Shown("fp1"));
+        h.NextAnswer = new AnswerReply(AnswerKind.NoReply);
+        h.Open();
+        await h.Settle();
+
+        await h.Session.AnswerAsync(h.Session.Prompt!.Options[0]);
+        await h.Settle();
+        var before = h.Asks;
+        h.Tick(); await h.Settle();
+
+        Assert.True(h.Asks > before);
+    }
+
+    // CB-400's overlay prompts (a screen only Esc leaves, carried with its rows and one Close)
+    // travel the same request and the same rule: a timed-out PROMPT or ANSWER is transient.
+    private static PromptReply OverlayShown(string fp) => new(PromptReplyKind.Prompt,
+        new ChatPrompt("Get the Claude app on your phone",
+            new[] { new ChatPromptOption("Escape", "Close") }, Body: new[] { "Get the Claude app on your phone", "Scan it" }), fp);
+
+    [AvaloniaFact]
+    public async Task AnOverlayIsShownAfterTimeoutsLikeAnyOtherForm()
+    {
+        var h = new Harness();
+        h.Replies.Enqueue(TimedOut());
+        h.Replies.Enqueue(TimedOut());
+        h.Replies.Enqueue(OverlayShown("ov1"));
+
+        h.Open();
+        await h.Settle();
+        for (var i = 0; i < 2; i++) { h.Tick(); await h.Settle(); }
+
+        Assert.Equal(3, h.Asks);
+        Assert.NotNull(h.Session.Prompt!.Body);
+    }
+
+    [AvaloniaFact]
+    public async Task ATimedOutCloseDoesNotLatchAndTheOverlayIsReReadBeforeItsButtonReturns()
+    {
+        var h = new Harness();
+        h.Replies.Enqueue(OverlayShown("ov1"));
+        h.Replies.Enqueue(OverlayShown("ov1"));   // straight away: the Esc may be landing
+        h.Replies.Enqueue(new PromptReply(PromptReplyKind.NoPrompt));   // then it had
+        h.NextAnswer = new AnswerReply(MapAnswerCode(RemoteMirrorClient.AnswerErrorOf(false, null)));
+        h.Open();
+        await h.Settle();
+
+        await h.Session.AnswerAsync(h.Session.Prompt!.Options[0]);
+        await h.Settle();
+        Assert.Null(h.Session.Prompt);                       // held back, not offered again blind
+        Assert.Contains(h.Session.History, t => t.Text.Contains("Didn't hear back", StringComparison.Ordinal));
+
+        h.Tick(); await h.Settle();
+        Assert.Equal(3, h.Asks);                             // asking went on: nothing latched
+        Assert.Null(h.Session.Prompt);                       // and the overlay is gone
+    }
+
     [AvaloniaFact]
     public async Task AFailedAnswerSaysSoAndAsksAgainSoTheButtonsComeBack()
     {
@@ -508,6 +747,7 @@ public class RemoteControlChatSessionPromptTests
             (MirrorProtocol.ErrReplyOff, PromptReplyKind.Unsupported),
             (MirrorProtocol.ErrNoSession, PromptReplyKind.Transient),
             ("something-new", PromptReplyKind.Transient),
+            (MirrorProtocol.ErrNoReply, PromptReplyKind.Transient),
             (null, PromptReplyKind.Transient),
         };
 
@@ -527,6 +767,7 @@ public class RemoteControlChatSessionPromptTests
             (MirrorProtocol.ErrUnsupported, AnswerKind.Unsupported),
             (MirrorProtocol.ErrNoPane, AnswerKind.Unsupported),
             (MirrorProtocol.ErrReplyOff, AnswerKind.Unsupported),
+            (MirrorProtocol.ErrNoReply, AnswerKind.NoReply),
             ("something-new", AnswerKind.Failed),
         };
 

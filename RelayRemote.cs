@@ -20,6 +20,9 @@ namespace Orbweaver
         // CB-321: one persona_image window; false when nothing was produced
         // (the phone is offline or the link is down), which ends the transfer.
         bool ImageWindow(string phoneId, string hash, string plaintext);
+
+        // CB-404: a frames-v13 run state frame to a phone watching the session.
+        void Run(string phoneId, string sessionId, string plaintext);
     }
 
     internal sealed class RelayRemote
@@ -37,7 +40,10 @@ namespace Orbweaver
             Func<string, bool> DirectoryExists,
             Func<string> Shell,
             Func<string, string, (string? Pane, string? Why)> PlaceMac,
-            Func<ProcessStartInfo, int?> StartWindows);
+            Func<ProcessStartInfo, int?> StartWindows,
+            Func<string>? Home = null,
+            LaunchRunner.TrustSeams? Trust = null,
+            Func<string, string>? Resolve = null);
 
         internal sealed record Seams(
             Func<DateTimeOffset> Now,
@@ -70,6 +76,10 @@ namespace Orbweaver
             // CB-339: the folder picker. Off by default so a test that does not care gets
             // forbidden_path for a list_dir, as a desk with nothing to share would.
             internal BrowseSeams? Browse { get; init; }
+
+            // CB-404: the run controls a set_run drives and a run frame reports.
+            // Null means none: no run frames, and every set_run is unavailable.
+            internal IRunControls? RunControls { get; init; }
         }
 
         // The filesystem a list_dir reads, the settings it reads them under (resolved on each
@@ -90,6 +100,16 @@ namespace Orbweaver
         private readonly object _gate = new();
         private readonly Dictionary<(string Phone, string Session), TranscriptWatcher> _watches = new();
         private IReadOnlyList<(string SessionId, SessionStatus Status)> _snapshot = [];
+
+        // CB-404: the run frame each watch was last sent, so one goes only when
+        // its bytes change (the SendCaps rule). Dropped with the watch, so a
+        // re-watch after a reconnect is sent the current state at once.
+        private readonly Dictionary<(string Phone, string Session), string> _runSent = new();
+        private int _ticks;
+
+        // Run state is read from transcripts and panes, so it is looked at on
+        // every eighth tick (one second) rather than at the window cadence.
+        internal const int RunEveryTicks = 8;
 
         // CB-321: one picture per phone at a time, later requests queued, and a
         // generation per phone that going offline bumps, so a transfer in
@@ -121,7 +141,7 @@ namespace Orbweaver
             lock (_gate)
             {
                 _snapshot = snapshot;
-                foreach (var key in _watches.Keys.Where(k => Local(k.Session) is null).ToList()) _watches.Remove(key);
+                foreach (var key in _watches.Keys.Where(k => Local(k.Session) is null).ToList()) Drop(key);
             }
         }
 
@@ -179,9 +199,16 @@ namespace Orbweaver
         {
             lock (_gate)
             {
-                foreach (var key in _watches.Keys.Where(k => k.Phone == phoneId).ToList()) _watches.Remove(key);
+                foreach (var key in _watches.Keys.Where(k => k.Phone == phoneId).ToList()) Drop(key);
                 AbandonImages(phoneId);
             }
+        }
+
+        // Under _gate.
+        private void Drop((string Phone, string Session) key)
+        {
+            _watches.Remove(key);
+            _runSent.Remove(key);
         }
 
         // Under _gate. The queue goes, and the transfer in flight stops at its
@@ -205,6 +232,7 @@ namespace Orbweaver
             lock (_gate)
             {
                 _watches.Clear();
+                _runSent.Clear();
                 foreach (var phone in _imageQueues.Keys.ToList()) AbandonImages(phone);
             }
         }
@@ -224,6 +252,41 @@ namespace Orbweaver
                     continue;
                 }
                 foreach (var window in windows) _send.Window(w.PhoneId, w.SessionId, window);
+            }
+            if (++_ticks % RunEveryTicks == 0) SendRunStates();
+        }
+
+        // CB-404: each watched session's run frame, to the phones watching it,
+        // when its bytes changed since that phone was last sent one. The host
+        // is read once per session, however many phones watch it.
+        internal void SendRunStates(string? onlySession = null)
+        {
+            if (_seams.RunControls is not { } run) return;
+            List<(string Phone, string Session)> keys;
+            lock (_gate) keys = _watches.Keys.Where(k => onlySession is null || k.Session == onlySession).ToList();
+            foreach (var session in keys.Select(k => k.Session).Distinct())
+            {
+                if (Local(session) is not { } status) continue;
+                RunState? state;
+                try { state = run.Read(status); }
+                catch (Exception e)
+                {
+                    _seams.Log($"run {session}: {e.GetType().Name}");
+                    continue;
+                }
+                if (state is null) continue;
+                var frame = RunFrames.State(session, state);
+                foreach (var key in keys.Where(k => k.Session == session))
+                {
+                    lock (_gate)
+                    {
+                        // A watch that ended while the host was being read is not sent to.
+                        if (!_watches.ContainsKey(key)) continue;
+                        if (_runSent.TryGetValue(key, out var last) && last == frame) continue;
+                        _runSent[key] = frame;
+                    }
+                    _send.Run(key.Phone, session, frame);
+                }
             }
         }
 
@@ -250,6 +313,8 @@ namespace Orbweaver
             PersonaImageRequest p => Task.Run(() => ImageAsync(phoneId, p)),
             // CB-339: a folder listing, built off the pump with its own clock on the read.
             ListDirRequest d => ListDirAsync(phoneId, d),
+            // CB-404: a run change, off the pump — a control request waits on the CLI's answer.
+            SetRunRequest r => Task.Run(() => SetRunAsync(phoneId, r)),
             // The only other kind RelayRequests makes.
             _ => Task.Run(() => Err(phoneId, request.Ref, RelayReplies.BadFrame, ((BadFrameRequest)request).SessionId)),
         };
@@ -302,6 +367,53 @@ namespace Orbweaver
             foreach (var frame in frames) _send.Reply(phoneId, null, frame);
         }
 
+        // frames-v13 set_run, after the parser's bad_frame: unknown_session, then
+        // the field's state (unavailable when it is off or the host is running
+        // another change to the session,
+        // bad_value when the value is not one of its choices as last written),
+        // then the route, whose failure is set_failed. `ok set` says the route
+        // ran, not that it took: the confirming run frame says that.
+        private async Task SetRunAsync(string phoneId, SetRunRequest r)
+        {
+            if (Local(r.SessionId) is not { } status)
+            {
+                RunErr(phoneId, r, RelayReplies.UnknownSession);
+                return;
+            }
+            if (_seams.RunControls is not { } run || run.Read(status) is not { } state)
+            {
+                RunErr(phoneId, r, RunFrames.Unavailable, NoRunControlsWhy);
+                return;
+            }
+            if (RunFrames.Refusal(state, r.Field, r.Value, run.IsRunning(status)) is { } refused)
+            {
+                RunErr(phoneId, r, refused.Code, refused.Why);
+                return;
+            }
+
+            var result = await run.SetAsync(status, r.Field, r.Value).ConfigureAwait(false);
+            if (result.Kind != RunSetKind.Sent)
+            {
+                var (code, why) = RunFrames.Answer(result);
+                RunErr(phoneId, r, code, why);
+                return;
+            }
+            _seams.Log($"ok {RelayLink.Safe(r.Ref)} {RunFrames.SetOk} {r.Field}");
+            _send.Reply(phoneId, r.SessionId, RelayReplies.Ok(r.Ref, RunFrames.SetOk, r.SessionId));
+            // The pending frame now, rather than at the next one-second look.
+            SendRunStates();
+        }
+
+        // frames-v13: every set_run reply travels under the session's ck, the
+        // unknown_session one included, since the request named it.
+        private void RunErr(string phoneId, SetRunRequest r, string code, string? why = null)
+        {
+            _seams.Log($"err {RelayLink.Safe(r.Ref)} {code}");
+            _send.Reply(phoneId, r.SessionId, RelayReplies.Err(r.Ref, code, r.SessionId, why));
+        }
+
+        internal const string NoRunControlsWhy = "This desk can't change that session's model or effort.";
+
         private void Err(string phoneId, string reference, string code, string? sessionId = null, string? why = null)
         {
             _seams.Log($"err {RelayLink.Safe(reference)} {code}");
@@ -332,8 +444,15 @@ namespace Orbweaver
             // Subscribe (idempotent): a fresh watcher and a fresh backfill, so a
             // phone that re-watches after a reconnect starts from a clean slate.
             var (total, windows) = watcher.Start();
-            lock (_gate) _watches[(phoneId, w.SessionId)] = watcher;
+            lock (_gate)
+            {
+                _watches[(phoneId, w.SessionId)] = watcher;
+                _runSent.Remove((phoneId, w.SessionId));
+            }
             Ok(phoneId, w.Ref, RelayReplies.Watching, w.SessionId, total);
+            // frames-v13: the run frame between `ok watching` and the backfill,
+            // always, so a phone that re-watches is never left holding a stale one.
+            SendRunStates(w.SessionId);
             foreach (var window in windows) _send.Window(phoneId, w.SessionId, window);
         }
 
@@ -356,7 +475,7 @@ namespace Orbweaver
                 Err(phoneId, u.Ref, RelayReplies.UnknownSession, u.SessionId);
                 return;
             }
-            lock (_gate) _watches.Remove((phoneId, u.SessionId));
+            lock (_gate) Drop((phoneId, u.SessionId));
             Ok(phoneId, u.Ref, RelayReplies.Unwatched, u.SessionId);
         }
 
@@ -460,7 +579,7 @@ namespace Orbweaver
                 return;
             }
 
-            var outcome = await runner.RunAsync(f).ConfigureAwait(false);
+            var outcome = await runner.RunAsync(f, LaunchRunner.TrustPolicy.Report).ConfigureAwait(false);
             if (outcome.SessionId is not { } sessionId)
             {
                 Err(phoneId, r.Ref, outcome.Code, why: outcome.Why);

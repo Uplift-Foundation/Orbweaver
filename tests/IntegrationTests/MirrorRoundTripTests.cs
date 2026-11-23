@@ -27,20 +27,25 @@ namespace Orbweaver.Tests;
 [Collection("ConfigDirEnv")]
 public partial class MirrorRoundTripTests : IDisposable
 {
-    private readonly string _dir;
-    private readonly string? _previousConfigDir;
+    // Assigned inside MirrorGate.Hold, so not readonly.
+    private string _dir = "";
+    private string? _previousConfigDir;
 
     public MirrorRoundTripTests()
     {
-        _previousConfigDir = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
-        _dir = Path.Combine(Path.GetTempPath(), "cb-mirror-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_dir);
+        MirrorGate.Shared.Hold(() =>
+        {
+            _previousConfigDir = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
+            _dir = Path.Combine(Path.GetTempPath(), "cb-mirror-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(_dir);
+        });
     }
 
     public void Dispose()
     {
         Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", _previousConfigDir);
         try { Directory.Delete(_dir, recursive: true); } catch { }
+        MirrorGate.Shared.Leave();
     }
 
     // --- the claim ------------------------------------------------------------
@@ -823,13 +828,15 @@ public partial class MirrorRoundTripTests : IDisposable
         Assert.Equal(MirrorProtocol.ErrNotAtPrompt, outcome.Error);
         Assert.False(string.IsNullOrEmpty(outcome.Why));
         Assert.Empty(harness.Typed);
-        Assert.Equal(1, harness.Captures);
+        Assert.Equal(9, harness.Captures); // CB-403: first look + 8 re-judges, then refused
 
         // Logged with the reason and never the text.
         var line = Assert.Single(log, l => l.Contains(MirrorProtocol.ErrNotAtPrompt));
         Assert.Contains("why=" + outcome.Why, line);
         Assert.Contains(" lines=", line);
-        Assert.EndsWith(" check=no-prompt-mark", line);
+        // CB-400: the Allow tab has the `▔` edge and an `Esc to cancel` footer, so it is now
+        // named as a pane to leave rather than "no prompt mark". Still refused, still not typed.
+        Assert.EndsWith(" check=overlay", line);
         Assert.DoesNotContain("please carry on", string.Join("\n", log));
 
         // And the near panel's sentence quotes it.
@@ -864,7 +871,9 @@ public partial class MirrorRoundTripTests : IDisposable
 
         Assert.Equal(MirrorProtocol.ErrNotAtPrompt, outcome.Error);
         Assert.Equal(TypingGate.WaitingWhy, outcome.Why);
-        Assert.Equal(0, harness.Captures);
+        // CB-400: the screen is now read once, only to name an overlay if that is
+        // what the record is waiting on. It is a prompt here, so the wording stays.
+        Assert.Equal(1, harness.Captures);
         Assert.Empty(harness.Typed);
     }
 
@@ -2034,6 +2043,71 @@ public partial class MirrorRoundTripTests : IDisposable
         Assert.DoesNotContain(log, l => prompt.Options.Any(o => l.Contains(o.Label)));
     }
 
+    // CB-407: a form squeezed to twelve columns with its top still on screen. Its free-text
+    // row wrapped ("Type somethi ng."), the form reader missed it and declined, and the far
+    // side served the screen as a plain dialog: title "prefer?", options "Apple Apple", "Type
+    // somethi ng.", "Chat". The question and labels are the transcript's, whole, at any width,
+    // and the fingerprint is the 80-column form's, so an answer made at either lands.
+    [Fact]
+    public async Task ATwelveColumnFormIsServedWithTheTranscriptsQuestionAndLabels()
+    {
+        var harness = new Harness(_dir) { Screen = Cb407Captures.Screen("mirror-form-12col-pane") };
+        harness.AddSession("evidence", Cb407Captures.PathOf("mirror-form-12col-transcript-row.jsonl"));
+        await harness.HandshakeAsync("evidence");
+
+        var (prompt, error) = await harness.Client.FetchPromptAsync("evidence");
+
+        Assert.Null(error);
+        Assert.Equal("Which fruit do you prefer?", prompt!.Title);
+        Assert.Equal(["Apple", "Banana", "Cherry", "Type something.", "Chat about this"], prompt.Options.Select(o => o.Label));
+        Assert.Equal(["1", "2", "3", "4", "5"], prompt.Options.Select(o => o.Key));
+        Assert.Equal("4", prompt.FreeTextKey);
+
+        // The same question at 80 columns, with its own transcript row, is the same prompt.
+        harness.Screen = Cb407Captures.Screen("mirror-form-80col-pane");
+        var wide = (await harness.Client.FetchPromptAsync("evidence")).Prompt!;
+        Assert.Equal(wide.Fingerprint, prompt.Fingerprint);
+
+        harness.Screen = Cb407Captures.Screen("mirror-form-12col-pane");
+        Assert.Null(await harness.Client.AnswerPromptAsync("evidence", "2", prompt.Fingerprint));
+        Assert.Equal(new[] { "2" }, harness.Pressed);
+    }
+
+    // CB-407: the prompt log line says whether a transcript call was found, and when not which
+    // condition failed, as a fixed word and never any content, on the ok line and the err line.
+    [Theory]
+    [InlineData("mirror-form-12col-pane", "mirror-form-12col-transcript-row.jsonl", true, "call=yes")]
+    [InlineData("mirror-form-12col-pane", null, true, "call=no:no-pending-call")]        // a transcript with no pending call: served as the plain dialog
+    public async Task The_prompt_log_line_names_whether_a_call_was_found(string screen, string? rows, bool ok, string expected)
+    {
+        var harness = new Harness(_dir) { Screen = Cb407Captures.Screen(screen) };
+        var log = new List<string>();
+        harness.Server.AnswerLog = (_, detail) => log.Add(detail);
+        harness.AddSession("evidence", rows is null ? WriteTranscript("plain.jsonl", Conversation(2)) : Cb407Captures.PathOf(rows));
+        await harness.HandshakeAsync("evidence");
+
+        await harness.Client.FetchPromptAsync("evidence");
+
+        var line = Assert.Single(log, l => l.Contains("-> ok") || l.Contains("-> err"));
+        Assert.Equal(ok, line.Contains("-> ok"));
+        Assert.EndsWith(" " + expected, line);
+        Assert.DoesNotContain("Apple", line);
+    }
+
+    [Fact]
+    public async Task The_err_line_for_no_prompt_names_why_no_call_was_found()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MacPromptAfterEsc };
+        var log = new List<string>();
+        harness.Server.AnswerLog = (_, detail) => log.Add(detail);
+        harness.AddSession("evidence", WriteTranscript("plain2.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+
+        await harness.Client.FetchPromptAsync("evidence");
+
+        Assert.EndsWith($"-> err code={MirrorProtocol.ErrNoPrompt} call=no:no-footer", Assert.Single(log));
+    }
+
     // CB-353: a far pane with the jira-board mod docked beside the chat serves the clean
     // prompt, identical to the one its hand-cut twin serves, and pressing a key on it works.
     [Theory]
@@ -2082,6 +2156,323 @@ public partial class MirrorRoundTripTests : IDisposable
         Assert.Equal(MirrorProtocol.ErrNoPrompt,
             await harness.Client.AnswerPromptAsync("evidence", "1", prompt.Fingerprint));
         Assert.Empty(harness.Pressed);
+    }
+
+    // --- CB-407: a request nobody answers in time is not "unsupported" ---------------
+
+    // Two different failures, and the harness has one switch for each. DropRequests: the request
+    // never reaches the far side (nothing is read, nothing pressed). DropReplies: the far side
+    // gets it and does the work, and only its reply is lost or late, which is what both
+    // machines' logs showed in the ticket: the mini served every PROMPT and its reply left
+    // about ten seconds later, after the MacBook had given up.
+
+    // The request is lost: the PROMPT is not answered within the timeout. The client reports
+    // no-reply, not unsupported, and a later request on the same link, once requests arrive
+    // again, is answered normally. Nothing latches on the client.
+    [Fact]
+    public async Task ALostPromptRequestIsNoReplyAndTheNextRequestIsAnsweredNormally()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniAskForm };
+        harness.AddSession("evidence", WriteTranscript("lost-prompt-request.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+        harness.Client.TimeoutOverrideForTests = TimeSpan.FromMilliseconds(200);
+
+        harness.DropRequests = true;
+        var (none, error) = await harness.Client.FetchPromptAsync("evidence");
+        Assert.Null(none);
+        Assert.Equal(MirrorProtocol.ErrNoReply, error);
+        Assert.NotEqual(MirrorProtocol.ErrUnsupported, error);
+
+        harness.DropRequests = false;
+        harness.Client.TimeoutOverrideForTests = null;
+        var (prompt, again) = await harness.Client.FetchPromptAsync("evidence");
+        Assert.Null(again);
+        Assert.NotNull(prompt);
+    }
+
+    // An ANSWER whose request never arrives: no-reply, and nothing was pressed.
+    [Fact]
+    public async Task ALostAnswerRequestIsNoReplyAndNothingIsPressed()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniAskForm };
+        harness.AddSession("evidence", WriteTranscript("lost-answer-request.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+        var prompt = (await harness.Client.FetchPromptAsync("evidence")).Prompt!;
+        harness.Client.TimeoutOverrideForTests = TimeSpan.FromMilliseconds(200);
+
+        harness.DropRequests = true;
+        var code = await harness.Client.AnswerPromptAsync("evidence", "2", prompt.Fingerprint);
+
+        Assert.Equal(MirrorProtocol.ErrNoReply, code);
+        Assert.Empty(harness.Pressed);
+    }
+
+    // The real case from the ticket's logs: the far side gets the PROMPT, serves it, and the
+    // reply is late. The client reports no-reply and the next PROMPT is answered normally.
+    [Fact]
+    public async Task ALostPromptReplyIsNoReplyAndTheFarSideDidServeIt()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniAskForm };
+        harness.AddSession("evidence", WriteTranscript("lost-prompt-reply.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+        harness.Client.TimeoutOverrideForTests = TimeSpan.FromMilliseconds(200);
+        var capturesBefore = harness.Captures;
+
+        harness.DropReplies = true;
+        var (none, error) = await harness.Client.FetchPromptAsync("evidence");
+
+        Assert.Null(none);
+        Assert.Equal(MirrorProtocol.ErrNoReply, error);
+        Assert.True(harness.Captures > capturesBefore, "the far side read its pane: the request arrived");
+
+        harness.DropReplies = false;
+        harness.Client.TimeoutOverrideForTests = null;
+        Assert.NotNull((await harness.Client.FetchPromptAsync("evidence")).Prompt);
+    }
+
+    // The case that matters for an ANSWER: the far side presses the key and only the reply is
+    // late. The client sees no-reply but the key landed exactly once.
+    [Fact]
+    public async Task ALostAnswerReplyIsNoReplyAndTheFarSideDidPressTheKey()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniAskForm };
+        harness.AddSession("evidence", WriteTranscript("lost-answer-reply.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+        var prompt = (await harness.Client.FetchPromptAsync("evidence")).Prompt!;
+        harness.Client.TimeoutOverrideForTests = TimeSpan.FromMilliseconds(200);
+
+        harness.DropReplies = true;
+        var code = await harness.Client.AnswerPromptAsync("evidence", "2", prompt.Fingerprint);
+
+        Assert.Equal(MirrorProtocol.ErrNoReply, code);
+        Assert.Equal(new[] { "2" }, harness.Pressed);
+    }
+
+    // And why the panel re-reads before it offers the buttons again: the same answer retried
+    // with the same fingerprint, after the press landed and the far screen moved on, is refused
+    // and presses nothing a second time. The screen went to the prompt (no form any more) or to
+    // the next form (a different fingerprint); each is its own refusal.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ARetriedAnswerAfterTheLostReplyIsRefusedAndPressesNothingTwice(bool nextFormShows)
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniAskForm };
+        harness.AfterPress = _ => nextFormShows
+            ? PaneFixtures.MiniAskForm.Replace("☐ xxx xxxx", "☒ xxx xxxx")
+            : PaneFixtures.MacPromptAfterEsc;
+        harness.AddSession("evidence", WriteTranscript("retry-" + nextFormShows + ".jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+        var prompt = (await harness.Client.FetchPromptAsync("evidence")).Prompt!;
+        harness.Client.TimeoutOverrideForTests = TimeSpan.FromMilliseconds(200);
+
+        harness.DropReplies = true;
+        Assert.Equal(MirrorProtocol.ErrNoReply, await harness.Client.AnswerPromptAsync("evidence", "2", prompt.Fingerprint));
+        Assert.Equal(new[] { "2" }, harness.Pressed);
+
+        harness.DropReplies = false;
+        harness.Client.TimeoutOverrideForTests = null;
+        var retried = await harness.Client.AnswerPromptAsync("evidence", "2", prompt.Fingerprint);
+
+        Assert.Equal(nextFormShows ? MirrorProtocol.ErrPromptChanged : MirrorProtocol.ErrNoPrompt, retried);
+        Assert.Equal(new[] { "2" }, harness.Pressed);
+    }
+
+    // --- CB-400: a screen only Esc closes (the /mobile overlay) -----------------
+
+    // The far terminal is on the QR overlay. Over the real link the prompt arrives with
+    // its rows and one Close, and the answer presses Escape on the far pane exactly once.
+    [Fact]
+    public async Task AFarOverlayArrivesWithItsBodyAndCloseSendsEscapeOnce()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MobileOverlay80x50, Record = "waiting" };
+        harness.AddSession("evidence", WriteTranscript("overlay.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+
+        var (prompt, error) = await harness.Client.FetchPromptAsync("evidence");
+
+        Assert.Null(error);
+        Assert.Equal("Get the Claude app on your phone", prompt!.Title);
+        var close = Assert.Single(prompt.Options);
+        Assert.Equal(("Escape", "Close"), (close.Key, close.Label));
+        Assert.NotNull(prompt.Body);
+        Assert.Contains(prompt.Body!, r => r.Contains("Scan the QR code"));
+
+        Assert.Null(await harness.Client.AnswerPromptAsync("evidence", "Escape", prompt.Fingerprint));
+
+        Assert.Equal(new[] { "Escape" }, harness.Pressed);
+        Assert.Empty(harness.Typed);
+    }
+
+    // Once the far screen has changed, the same answer presses nothing: Esc at a working
+    // session interrupts the turn and a second one at an idle prompt opens the rewind picker.
+    [Fact]
+    public async Task AnEscapeAnswerAfterTheFarScreenChangedPressesNothing()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MobileOverlay80x50, Record = "waiting" };
+        harness.AddSession("evidence", WriteTranscript("overlay-gone.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("evidence");
+        var prompt = (await harness.Client.FetchPromptAsync("evidence")).Prompt!;
+
+        harness.Screen = PaneFixtures.MacPromptAfterEsc;
+
+        Assert.Equal(MirrorProtocol.ErrNoPrompt,
+            await harness.Client.AnswerPromptAsync("evidence", "Escape", prompt.Fingerprint));
+        Assert.Empty(harness.Pressed);
+    }
+
+    // And Escape can never be pressed on anything but the overlay: a numbered dialog
+    // does not offer it, so it is refused as a key that is not on the screen.
+    [Fact]
+    public async Task EscapeAskedOfANumberedDialogIsRefusedAndPressesNothing()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MiniExitDialog };
+        harness.AddSession("ll", WriteTranscript("not-overlay.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("ll");
+        var prompt = (await harness.Client.FetchPromptAsync("ll")).Prompt!;
+        Assert.Null(prompt.Body);
+
+        Assert.Equal(MirrorProtocol.ErrBadKey, await harness.Client.AnswerPromptAsync("ll", "Escape", prompt.Fingerprint));
+        Assert.Empty(harness.Pressed);
+    }
+
+    // Typed text is discarded by the overlay, never queued, so a send during it is
+    // refused with a reason that names the screen, whichever way the gate found out:
+    // the record says waiting (the screen is read to name it), or only the screen says.
+    [Theory]
+    [InlineData("waiting")]
+    [InlineData("idle")]
+    public async Task TypingDuringAnOverlayIsRefusedAndTheReasonNamesIt(string record)
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.MobileOverlay80x50, Record = record };
+        harness.AddSession("openclaw", WriteTranscript("overlay-typing-" + record + ".jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("openclaw", "hello there");
+
+        Assert.Equal(MirrorProtocol.ErrNotAtPrompt, outcome.Error);
+        Assert.Equal(TypingGate.OverlayWhy("Get the Claude app on your phone"), outcome.Why);
+        Assert.Empty(harness.Typed);
+
+        // The near panel's sentence carries that reason, so the phone and the panel say the same thing.
+        Assert.Contains("Get the Claude app on your phone",
+            RemoteControlChatSession.TypingRefusal(outcome.Error, "openclaw", outcome.Why));
+    }
+
+    // The message route has no pane to read, so it cannot name the screen, but the far
+    // record's status rides back and the near note says the session is blocked on one.
+    [Fact]
+    public async Task AMessageToAWaitingSessionCarriesItsStatusBack()
+    {
+        var harness = new Harness(_dir, wireDelivery: true)
+        {
+            CanType = false,
+            CanDeliverAnswer = true,
+            DeliverAgentStatus = "waiting",
+        };
+        harness.AddSession("job-hunter", WriteTranscript("headless-waiting.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("job-hunter");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("job-hunter", "hello");
+
+        Assert.Null(outcome.Error);
+        Assert.Equal(MirrorProtocol.ViaMessage, outcome.Via);
+        Assert.Equal("waiting", outcome.AgentStatus);
+        Assert.Equal("hello", Assert.Single(harness.Delivered).Text);
+
+        var note = RemoteControlChatSession.DeliveredRemotelyNote("job-hunter", outcome.AgentStatus);
+        Assert.Equal(
+            "Handed to job-hunter, but it is showing a screen that has to be closed or answered in its terminal first. "
+            + "It will read this once that is done.",
+            note);
+
+        // Controls: the other two arms keep their wording.
+        Assert.StartsWith("Handed to job-hunter. It's mid-turn", RemoteControlChatSession.DeliveredRemotelyNote("job-hunter", "working"));
+        Assert.StartsWith("Handed to job-hunter for its next turn.", RemoteControlChatSession.DeliveredRemotelyNote("job-hunter", "idle"));
+        Assert.StartsWith("Handed to job-hunter for its next turn.", RemoteControlChatSession.DeliveredRemotelyNote("job-hunter", null));
+    }
+
+    private static MirrorProtocol.WirePrompt WithBody(IReadOnlyList<string> body) =>
+        new("t", new[] { new MirrorProtocol.WireOption("Escape", "Close") }, "fp", Body: body);
+
+    private static IReadOnlyList<string> RoundTrip(IReadOnlyList<string> body) =>
+        MirrorProtocol.DecodePrompt(MirrorProtocol.EncodePrompt(WithBody(body)))!.Body!;
+
+    // Cut at rows: 61 rows come out as the first 60 verbatim and the marker, which rides one row
+    // beyond the bound, the same shape the reader makes.
+    [Fact]
+    public void ASixtyOneRowBodyIsCutAndTheLastRowSaysSo()
+    {
+        var rows = Enumerable.Range(1, 61).Select(i => "row " + i).ToList();
+
+        var got = RoundTrip(rows);
+
+        Assert.Equal(MirrorProtocol.MaxBodyLines + 1, got.Count);
+        Assert.Equal(rows.Take(MirrorProtocol.MaxBodyLines), got.Take(MirrorProtocol.MaxBodyLines));
+        Assert.Equal(MirrorProtocol.BodyCutMarker, got[^1]);
+    }
+
+    // Cut at columns: a 201-character row is clipped to 200 and the last row says so.
+    [Fact]
+    public void ATwoHundredAndOneColumnRowIsClippedAndTheLastRowSaysSo()
+    {
+        var rows = new List<string> { "short", new string('x', MirrorProtocol.MaxBodyChars + 1), "after" };
+
+        var got = RoundTrip(rows);
+
+        Assert.Equal(new string('x', MirrorProtocol.MaxBodyChars), got[1]);
+        Assert.Equal("short", got[0]);
+        Assert.Equal("after", got[2]);
+        Assert.Equal(MirrorProtocol.BodyCutMarker, got[^1]);
+        Assert.Equal(4, got.Count);
+    }
+
+    // The controls: exactly at both bounds nothing is cut and nothing is added.
+    [Fact]
+    public void ABodyAtBothBoundsIsNotCut()
+    {
+        var atBounds = Enumerable.Range(0, MirrorProtocol.MaxBodyLines).Select(_ => new string('y', MirrorProtocol.MaxBodyChars)).ToList();
+
+        Assert.Equal(atBounds, RoundTrip(atBounds));
+    }
+
+    // What the reader hands over when it cut (60 rows and its marker, 61 in all) crosses the wire
+    // and the decoder unchanged: neither adds a second marker nor drops a row.
+    [Fact]
+    public void ABodyTheReaderAlreadyMarkedIsNotMarkedAgain()
+    {
+        var marked = Enumerable.Range(1, MirrorProtocol.MaxBodyLines).Select(i => "row " + i)
+            .Append(OverlayScreen.CutMarker).ToList();
+
+        Assert.Equal(MirrorProtocol.MaxBodyLines + 1, marked.Count);
+        Assert.Equal(marked, RoundTrip(marked));
+        Assert.Equal(OverlayScreen.CutMarker, MirrorProtocol.BodyCutMarker);
+    }
+
+    // A marker alone on a short body (a reader that cut at columns) still stays one marker.
+    [Fact]
+    public void AShortBodyMarkedForAColumnCutKeepsOneMarker()
+    {
+        var marked = new List<string> { "a", "b", OverlayScreen.CutMarker };
+
+        Assert.Equal(marked, RoundTrip(marked));
+    }
+
+    // An empty body is not a cut and not a marked one: it stays empty, with no marker added.
+    [Fact]
+    public void AnEmptyBodyStaysEmpty() => Assert.Empty(RoundTrip(new List<string>()));
+
+    // Either direction of version skew: a frame with no body decodes with none, which is
+    // what an older far side sends and what every ordinary dialog sends.
+    [Fact]
+    public void AFrameWithNoBodyDecodesWithNone()
+    {
+        const string json = "{\"title\":\"t\",\"options\":[{\"key\":\"1\",\"label\":\"Yes\"}],\"fp\":\"abc\"}";
+
+        var decoded = MirrorProtocol.DecodePrompt(System.Text.Encoding.UTF8.GetBytes(json))!;
+
+        Assert.Null(decoded.Body);
+        Assert.Null(AskFormView.FromWire(decoded).Body);
     }
 
     [Fact]
@@ -2420,6 +2811,29 @@ public partial class MirrorRoundTripTests : IDisposable
     }
 
     // The cursor below the row moves up to it.
+    // CB-406: a free-text answer whose row never shows the text is refused
+    // type-failed, and the far side's log says why in numbers — the line the
+    // next real failure is diagnosed from — never the text.
+    [Fact]
+    public async Task AFreeTextAnswerRefusedAtTheReadBackIsLoggedWithoutTheText()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.QaFormQ1 };
+        harness.AddSession("qa", WriteTranscript("readback.jsonl", Conversation(2)));
+        var downs = 0;
+        harness.AfterPress = key => key == "Down" && ++downs == 2 ? PaneFixtures.QaCursorOnFreeText : null;
+        var log = new List<string>();
+        harness.Server.AnswerLog = (_, detail) => log.Add(detail);
+        await harness.HandshakeAsync("qa");
+        var prompt = (await harness.Client.FetchPromptAsync("qa")).Prompt!;
+
+        Assert.Equal(MirrorProtocol.ErrTypeFailed,
+            await harness.Client.AnswerFreeTextAsync("qa", prompt.FreeTextKey!, prompt.Fingerprint, "my own answer"));
+
+        Assert.Contains(log, l => l.StartsWith("n=qa readback stage=typed ", StringComparison.Ordinal) && l.Contains("wanted=13"));
+        Assert.DoesNotContain(log, l => l.Contains("my own answer"));
+        Assert.DoesNotContain("Enter", harness.Pressed);
+    }
+
     [Fact]
     public async Task FreeTextFromBelowTheRowMovesUp()
     {
@@ -2651,11 +3065,42 @@ public partial class MirrorRoundTripTests : IDisposable
         Assert.Contains("shadow=1", line.Detail);
         Assert.Contains(shape switch
         {
-            "dialog" => "kind=unreadable",
+            "dialog" => "kind=other",
             "record-waiting" => "kind=record-waiting",
             _ => "kind=allowed",
         }, line.Detail);
         Assert.DoesNotContain(log, l => l.Detail.Contains("please carry on") || l.Detail.Contains("Add a new rule"));
+    }
+
+    // CB-403: a pane that is a dialog for a moment and then a prompt is typed
+    // into once it reads as one, and the sender sees an ordinary success.
+    [Fact]
+    public async Task ADialogThatClearsWhileTheGateWaitsIsTypedInto()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.PermissionsAllow };
+        var waits = 0;
+        harness.OnGateWait = () => { if (++waits == 2) harness.Screen = PaneFixtures.MacPromptAfterEsc; };
+        harness.AddSession("openclaw", WriteTranscript("settle.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        Assert.Null(await harness.Client.SendInputAsync("openclaw", "please carry on"));
+        Assert.Equal(new[] { ("openclaw", "please carry on") }, harness.Typed);
+        Assert.Equal(3, harness.Captures);
+    }
+
+    // CB-403: the evidence from the mini — a refused screen must come back to
+    // the sender as not-at-prompt with nothing typed, with no shadow switch set.
+    [Fact]
+    public async Task WithNothingSetAnUnreadableScreenIsRefusedNotTypedBlind()
+    {
+        var harness = new Harness(_dir) { Screen = "" };
+        harness.AddSession("openclaw", WriteTranscript("blind.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("openclaw");
+
+        var outcome = await harness.Client.SendInputDetailedAsync("openclaw", "please carry on");
+
+        Assert.Equal(MirrorProtocol.ErrNotAtPrompt, outcome.Error);
+        Assert.Empty(harness.Typed);
     }
 
     [Fact]
@@ -2708,7 +3153,8 @@ public partial class MirrorRoundTripTests : IDisposable
             CapturePane: harness.CaptureScreen,
             CanReadPane: _ => true,
             Shadow: () => shadow,
-            Log: (what, detail) => log.Add((what, detail))));
+            Log: (what, detail) => log.Add((what, detail)),
+            Delay: _ => Task.CompletedTask));
         harness.AddSession("openclaw", WriteTranscript("shadow-host-" + shadow + ".jsonl", Conversation(2)));
         await harness.HandshakeAsync("openclaw");
 
@@ -2738,6 +3184,42 @@ public partial class MirrorRoundTripTests : IDisposable
         Assert.False(harness.Client.SpeaksPrompts("qa"));
         var prompt = (await harness.Client.FetchPromptAsync("qa")).Prompt!;
         Assert.Equal(MirrorProtocol.ErrUnsupported, await harness.Client.AnswerPromptAsync("qa", "1", prompt.Fingerprint));
+    }
+
+    // CB-412: a dialog is read through DialogCapture when one is wired, so a session
+    // the typing gate's tmux read cannot see (iTerm2, a Windows console) still gets
+    // its prompt, and the gate's own pair is left alone.
+    [Fact]
+    public async Task ADialogIsReadThroughTheDialogSeamWhenOneIsWired()
+    {
+        var harness = new Harness(_dir) { Screen = "nothing readable by the gate", PaneReadable = false, DialogScreen = PaneFixtures.QaFormQ1 };
+        harness.AddSession("qa", WriteTranscript("dialogseam.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+
+        Assert.Equal(4, (await harness.Client.FetchPromptAsync("qa")).Prompt!.Options.Count);
+        Assert.True(harness.DialogReads > 0);
+    }
+
+    [Fact]
+    public async Task ADialogSeamThatCannotReadTheRouteIsNoPane()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.QaFormQ1, DialogScreen = PaneFixtures.QaFormQ1, DialogReadable = false };
+        harness.AddSession("qa", WriteTranscript("dialogseam-off.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+
+        Assert.Equal(MirrorProtocol.ErrNoPane, (await harness.Client.FetchPromptAsync("qa")).Error);
+    }
+
+    [Fact]
+    public async Task AnAnswerVerifiesAgainstTheDialogSeamsScreen()
+    {
+        var harness = new Harness(_dir) { Screen = "gate sees nothing", DialogScreen = PaneFixtures.QaFormQ1 };
+        harness.AddSession("qa", WriteTranscript("dialogseam-answer.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+
+        var prompt = (await harness.Client.FetchPromptAsync("qa")).Prompt!;
+        Assert.Null(await harness.Client.AnswerPromptAsync("qa", "1", prompt.Fingerprint));
+        Assert.Equal(new[] { "1" }, harness.Pressed);
     }
 
     // No route check wired is "readable": the capture itself decides.
@@ -4338,6 +4820,12 @@ public partial class MirrorRoundTripTests : IDisposable
         public bool PressThrows { get; set; }
         public bool PaneReadable { get; set; } = true;
 
+        // CB-412: the dialog reader, apart from the typing gate's. Null leaves the
+        // server on CapturePane/CanReadPane, as every harness before this was.
+        public string? DialogScreen { get; set; }
+        public bool DialogReadable { get; set; } = true;
+        public int DialogReads { get; private set; }
+
         // The far screen moving after a key or typed text, as a real one
         // does: return the next screen, or null to leave it as it is.
         public Func<string, string?>? AfterPress { get; set; }
@@ -4347,9 +4835,16 @@ public partial class MirrorRoundTripTests : IDisposable
 
         // CB-307: the typing gate's shadow mode on the far machine.
         public bool ShadowOn { get; set; }
+        public Action? OnGateWait { get; set; }
 
         // A capture that throws rather than answering.
         public bool CaptureThrows { get; set; }
+
+        // CB-407: two different lost messages. DropRequests loses what the client sends, so the
+        // far side never sees it; DropReplies loses what the far side sends back, so it did the
+        // work and only the answer never arrived.
+        public bool DropRequests { get; set; }
+        public bool DropReplies { get; set; }
         public int RecordReads { get; private set; }
 
         public bool ReplyEnabled { get; init; } = true;
@@ -4417,7 +4912,7 @@ public partial class MirrorRoundTripTests : IDisposable
         public Harness(string dir, bool wireDelivery = false, bool machineUserConfigDirs = false, bool wireSlash = false,
             LastTurnCache? lastTurns = null, bool ungated = false, bool noTypeLiteral = false,
             bool noPressKey = false, bool noCanReadPane = false, Func<PeerFileEnv>? files = null,
-            Func<IReadOnlyList<AgentRoster.Entry>?>? peekAgents = null)
+            Func<IReadOnlyList<AgentRoster.Entry>?>? peekAgents = null, IRunControls? run = null)
         {
             _dir = dir;
 
@@ -4475,6 +4970,13 @@ public partial class MirrorRoundTripTests : IDisposable
                 RecordStatus: ungated ? null : ReadRecord,
                 CapturePane: ungated ? null : CaptureScreen,
                 CanReadPane: ungated || noCanReadPane ? null : _ => PaneReadable,
+                DialogCapture: ungated ? null : status =>
+                {
+                    if (DialogScreen is null) return CaptureScreen(status);
+                    DialogReads++;
+                    return Task.FromResult<string?>(DialogScreen);
+                },
+                DialogCanRead: _ => DialogScreen is null ? noCanReadPane || PaneReadable : DialogReadable,
                 PressKey: ungated || noPressKey ? null : (_, key) =>
                 {
                     if (PressThrows) throw new InvalidOperationException("tmux went away");
@@ -4484,6 +4986,7 @@ public partial class MirrorRoundTripTests : IDisposable
                     return Task.FromResult(true);
                 },
                 Shadow: () => ShadowOn,
+                GateDelay: _ => { OnGateWait?.Invoke(); return Task.CompletedTask; },
                 TypeLiteral: ungated || noTypeLiteral ? null : (_, text) =>
                 {
                     if (TypeLiteralFails) return Task.FromResult(false);
@@ -4494,7 +4997,9 @@ public partial class MirrorRoundTripTests : IDisposable
                 // CB-363: null unless a test serves files, so every harness
                 // above keeps a far side that never says rf=1.
                 Files: files,
-                PeekAgents: peekAgents));
+                PeekAgents: peekAgents,
+                // CB-404: null unless a test drives run controls.
+                RunControls: run));
 
             // The far machine's clock, parked beside the fixture's own instant.
             //
@@ -4678,6 +5183,7 @@ public partial class MirrorRoundTripTests : IDisposable
             ToServer.Add(line);
 
             if (CourierThrows) throw new IOException("the relay went away");
+            if (DropRequests) return true;
 
             var frame = MirrorProtocol.TryParseFrame(line);
             if (frame is null) return false;
@@ -4721,6 +5227,7 @@ public partial class MirrorRoundTripTests : IDisposable
             ToClient.Add(line);
 
             if (CourierThrows) throw new IOException("the relay went away");
+            if (DropReplies) return true;
 
             var frame = MirrorProtocol.TryParseFrame(line);
             if (frame is null) return false;

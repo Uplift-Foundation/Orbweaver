@@ -459,7 +459,7 @@ namespace Orbweaver
             candidates.Sort((a, b) => Compare(a.Name, b.Name));
             var truncated = read.More || candidates.Count > BrowseLimits.MaxEntries;
             var items = candidates.Take(BrowseLimits.MaxEntries)
-                .Select(c => Markers(fs, c.Canonical, new BrowseItem(c.Name, Hidden: c.Hidden))).ToList();
+                .Select(c => Markers(fs, roots, c.Canonical, new BrowseItem(c.Name, Hidden: c.Hidden))).ToList();
             var parent = Equal(canonical, outer.Path, fs) ? "" : ParentOf(canonical, fs);
             return new BrowseOutcome(null, new BrowseListing(canonical, parent, outer.Path, items, truncated), canonical);
         }
@@ -493,13 +493,16 @@ namespace Orbweaver
         {
             var ordered = roots.Where(r => r.Home)
                 .Concat(roots.Where(r => !r.Home).OrderBy(r => r.Path, Comparer<string>.Create(Compare))).ToList();
-            var items = ordered.Select(r => Markers(fs, r.Path, new BrowseItem(
-                LastComponent(r.Path, fs), r.Path, fs.IsWindows ? r.Path[..2] : null, r.Home))).ToList();
+            var items = ordered.Select(r => new BrowseItem(
+                LastComponent(r.Path, fs), r.Path, fs.IsWindows ? r.Path[..2] : null, r.Home))
+                .Select(i => Markers(fs, roots, i.Path!, i)).ToList();
             return new BrowseListing("", "", "", items, false);
         }
 
-        // The three markers, read from the folder itself. A folder the desk cannot read has none.
-        private static BrowseItem Markers(IBrowseFileSystem fs, string folder, BrowseItem item) => item with
+        // The three markers, read from the folder itself. A folder the desk cannot read has none, and a
+        // folder behind a macOS privacy prompt is not read at all (ProtectedFolders).
+        private static BrowseItem Markers(IBrowseFileSystem fs, List<Root> roots, string folder, BrowseItem item) =>
+            ProtectedFolders.IsProtected(fs, folder, roots.Select(r => r.Path)) ? item : item with
         {
             Git = fs.Lookup(folder, ".git") is not null,
             Claude = fs.Lookup(folder, "CLAUDE.md") is { Kind: not BrowseKind.Dir },
@@ -548,8 +551,11 @@ namespace Orbweaver
     {
         internal const string CapsCk = "caps";
 
-        internal static readonly string Caps =
-            new CanonicalJson().Str("t", "caps").Array("caps", [CanonicalJson.Quote("list_dir")]).ToString();
+        // CB-404: frames-v13 adds run_options; the names are byte-sorted.
+        internal static readonly string Caps = CapsFrame("list_dir", RunFrames.Cap);
+
+        internal static string CapsFrame(params string[] names) =>
+            new CanonicalJson().Str("t", "caps").Array("caps", names.Select(CanonicalJson.Quote)).ToString();
 
         private static string Entry(BrowseItem e)
         {

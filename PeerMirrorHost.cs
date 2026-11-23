@@ -46,6 +46,7 @@ namespace Orbweaver
         private PeerLaunchInfoSource? _launchInfo;
         private Func<string, JsonElement, Task<PeerLaunchResult>>? _launchHandler;
         private PeerLaunchClient? _launchClient;
+        private PeerBrowseServer? _browse;
 
         internal PeerMirrorHost(OpenClawIdentitySeams? openClawIdentity = null)
         {
@@ -57,10 +58,14 @@ namespace Orbweaver
                 OwnCertificate: PeerIdentity.HandshakeCertificateAsync));
             _link.PeerDisconnected += OpenClawSessions.ForgetPeerProfileVoices;
             _link.PeerDisconnected += machine => LaunchClient?.OnDisconnected(machine);
+            _link.PeerDisconnected += machine => _launchDisconnected?.Invoke(machine);
             _link.PeerConnected += _ => OpenClawSessions.RequestPeerProfileVoices();
         }
 
         internal PeerLink Link => _link;
+
+        private Func<string, JsonElement, Task<PeerLaunchResult>>? _trustHandler;
+        private Action<string>? _launchDisconnected;
 
         internal PeerLaunchClient? LaunchClient
         {
@@ -74,10 +79,16 @@ namespace Orbweaver
         internal void ServeLaunch(
             PeerLaunchInfoSource? info,
             Func<string, JsonElement, Task<PeerLaunchResult>>? handler,
-            PeerLaunchClient? client)
+            PeerLaunchClient? client,
+            PeerBrowseServer? browse = null,
+            Func<string, JsonElement, Task<PeerLaunchResult>>? trustHandler = null,
+            Action<string>? onDisconnected = null)
         {
             lock (_gate)
             {
+                _trustHandler = trustHandler;
+                _launchDisconnected = onDisconnected;
+                _browse = browse;
                 _launchInfo = info;
                 _launchHandler = handler;
                 _launchClient = client;
@@ -221,8 +232,20 @@ namespace Orbweaver
                     if (MayAsk(machine)) _ = Task.Run(() => AnswerLaunchAsync(machine, message));
                     return;
 
+                // CB-397: the signed answer to a trust question. Off the
+                // link's queue for the same reason: it can wait 30 s for a
+                // check-in. Answered as a launch-result on the same id.
+                case PeerProtocol.LaunchTrust:
+                    if (MayAsk(machine)) _ = Task.Run(() => AnswerLaunchAsync(machine, message, trust: true));
+                    return;
+
+                case PeerProtocol.ListDirGet:
+                    if (MayAsk(machine)) _ = Task.Run(() => AnswerListDirAsync(machine, message));
+                    return;
+
                 case PeerProtocol.LaunchInfo:
                 case PeerProtocol.LaunchResult:
+                case PeerProtocol.ListDir:
                     if (MayAsk(machine)) LaunchClient?.OnReply(machine, message);
                     return;
             }
@@ -289,10 +312,30 @@ namespace Orbweaver
             }
         }
 
-        private async Task AnswerLaunchAsync(string machine, PeerProtocol.PeerMessage message)
+        private async Task AnswerListDirAsync(string machine, PeerProtocol.PeerMessage message)
+        {
+            PeerBrowseServer? server;
+            lock (_gate) server = _browse;
+
+            // No server wired is an older desk's silence: the asker times out.
+            if (server is null) return;
+
+            try
+            {
+                var result = await server.HandleAsync(message.Body ?? default).ConfigureAwait(false);
+                await _link.SendAsync(machine, PeerProtocol.Message(PeerProtocol.ListDir, message.Id,
+                    body: PeerLaunchWire.EncodeDir(result))).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                MirrorLog.Say("peer-list-dir-failed", $"from={machine} {e.GetType().Name}");
+            }
+        }
+
+        private async Task AnswerLaunchAsync(string machine, PeerProtocol.PeerMessage message, bool trust = false)
         {
             Func<string, JsonElement, Task<PeerLaunchResult>>? handler;
-            lock (_gate) handler = _launchHandler;
+            lock (_gate) handler = trust ? _trustHandler : _launchHandler;
 
             PeerLaunchResult result;
 

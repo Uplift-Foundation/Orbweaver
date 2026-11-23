@@ -379,6 +379,68 @@ public class GroupBackdropsTests : IDisposable
         Assert.NotEqual(after.Width, GroupBackdrops.StateOf("g-h")!.Value.Width);
     }
 
+    // CB-332: a group of one orb is easy to grab; the drawn silhouette is unchanged.
+    [AvaloniaFact]
+    public void AGroupOfOneOrbHasAHitAreaAtLeast24DipWideAndTheSameDrawnOutline()
+    {
+        var one = new List<OrbWindow> { Orb("solo", 300, 300) };
+        GroupBackdrops.Update(new[] { Spec("g-solo", "circle", one) });
+
+        var centre = new Point(one[0].Position.X + one[0].CentreDip, one[0].Position.Y + one[0].CentreDip);
+        var drawn = GroupOutline.SignedDistanceInside(centre, GroupBackdrops.OutlineOf("g-solo"));
+        var hit = GroupOutline.SignedDistanceInside(centre, GroupBackdrops.HitAreaOf("g-solo"));
+
+        Assert.Equal(one[0].OrbRadius + GroupBackdrops.PaddingDip, drawn, 0);
+        Assert.True(hit - one[0].OrbRadius >= GroupBackdrops.SoleHitPaddingDip - 0.5,
+            $"hit margin {hit - one[0].OrbRadius}");
+
+        // A press 20 DIP past the orb's edge — outside the drawn ring — catches.
+        var probe = new Point(centre.X + one[0].OrbRadius + 20, centre.Y);
+        Assert.True(GroupOutline.SignedDistanceInside(probe, GroupBackdrops.OutlineOf("g-solo")) < 0);
+        var told = new List<bool>();
+        GroupBackdrops.HitTestTick(probe, false, (_, catches) => told.Add(catches));
+        Assert.Equal(new[] { true }, told);
+
+        // And one 26 DIP past it does not.
+        GroupBackdrops.HitTestTick(new Point(centre.X + one[0].OrbRadius + 26, centre.Y), false, (_, catches) => told.Add(catches));
+        Assert.Equal(new[] { true, false }, told);
+    }
+
+    // CB-332: two one-orb groups close enough that their widened hit areas
+    // overlap. Neither wins in this code: each backdrop classifies the cursor on
+    // its own and both catch it; which window then receives the press is the
+    // window server's order, which this change does not touch.
+    [AvaloniaFact]
+    public void OverlappingHitAreasOfTwoOneOrbGroupsBothCatchTheCursor()
+    {
+        var a = new List<OrbWindow> { Orb("a-solo", 300, 300) };
+        var b = new List<OrbWindow> { Orb("b-solo", 370, 300) };
+        GroupBackdrops.Update(new[] { Spec("g-a1", "circle", a), Spec("g-b1", "circle", b) });
+
+        var ca = new Point(a[0].Position.X + a[0].CentreDip, a[0].Position.Y + a[0].CentreDip);
+        var cb = new Point(b[0].Position.X + b[0].CentreDip, b[0].Position.Y + b[0].CentreDip);
+        var mid = new Point((ca.X + cb.X) / 2, (ca.Y + cb.Y) / 2);
+
+        // Outside both drawn rings (10 DIP past each orb), inside both hit areas.
+        Assert.True(GroupOutline.SignedDistanceInside(mid, GroupBackdrops.OutlineOf("g-a1")) < 0);
+        Assert.True(GroupOutline.SignedDistanceInside(mid, GroupBackdrops.OutlineOf("g-b1")) < 0);
+
+        var told = new List<bool>();
+        GroupBackdrops.HitTestTick(mid, false, (_, catches) => told.Add(catches));
+
+        Assert.Equal(new[] { true, true }, told);
+    }
+
+    [AvaloniaFact]
+    public void AGroupOfSeveralOrbsKeepsTheDrawnOutlineAsItsHitArea()
+    {
+        var (a, _) = TwoGroups();
+        GroupBackdrops.Update(new[] { Spec("g-a", "heart", a) });
+
+        Assert.Equal(GroupBackdrops.OutlineOf("g-a"), GroupBackdrops.HitAreaOf("g-a"));
+        Assert.Empty(GroupBackdrops.HitAreaOf("nope"));
+    }
+
     [AvaloniaFact]
     public void OutlineOfIsTheDrawnSilhouetteInScreenUnitsAndEmptyWithoutABackdrop()
     {

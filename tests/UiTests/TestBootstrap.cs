@@ -106,6 +106,8 @@ internal static class TestBootstrap
         // Dispatcher.UIThread.Post without ever awaiting it, and the posted
         // job ran on whichever later test next pumped the dispatcher.
         TextToSpeech.SilenceForTests = true;
+        // CB-404: no run-controls probe (claude -p, codex app-server) ever starts in a suite.
+        RunSourcesLive.ProbesOffForTests = true;
         ChimePlayer.SilenceForTests = true;
 
         // CB-302: no test reads the developer's real mouse. ThoughtBubbles and

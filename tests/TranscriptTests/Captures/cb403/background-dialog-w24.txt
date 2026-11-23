@@ -1,0 +1,23 @@
+  authentication · run
+  /mcp
+
+────────────────────────
+  Background this
+  session?
+  1 team will be
+  stopped.
+
+  ❯ 1. Background
+       anyway (tasks
+       will be
+       stopped)
+    2. Stay
+
+  Enter to confirm ·
+  Esc to cancel
+
+✽ Considering…
+  ⎿  Tip: Use /btw to
+     ask a side question
+     without
+     interrupting Claude

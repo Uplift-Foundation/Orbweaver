@@ -1,0 +1,30 @@
+
+ ▐▛███▛█   Claude Code v2.1.330
+▝▜██████▀  Opus 5.5 with medium effort · Claude Team
+ ▝▝   ▝▝   /private/tmp/cb407-mini · /rc
+
+
+❯ Use the AskUserQuestion tool to ask which fruit I prefer, with options apple
+  banana cherry. Nothing else.
+────────────────────────────────────────────────────────────────────────────────
+ ☐ Fruit
+
+Which fruit do you prefer?
+
+❯ 1. Apple
+     Apple
+  2. Banana
+     Banana
+  3. Cherry
+     Cherry
+  4. Type something.
+────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+
+
+
+
+
+

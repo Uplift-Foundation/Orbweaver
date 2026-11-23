@@ -313,10 +313,12 @@ public class PeerFileProtocolTests
         r.Hold = new ManualResetEventSlim();
         r.Reading.Reset();
 
-        var refresh = Task.Run(() => r.Memo.Read());
+        // Both on dedicated threads: the 2 s deadline below is for Peek's lock, not
+        // for how long a busy runner's shared pool takes to start a task.
+        var refresh = Task.Factory.StartNew(() => r.Memo.Read(), TaskCreationOptions.LongRunning);
         Assert.True(r.Reading.Wait(TimeSpan.FromSeconds(10)));
 
-        var peek = Task.Run(() => r.Memo.Peek());
+        var peek = Task.Factory.StartNew(() => r.Memo.Peek(), TaskCreationOptions.LongRunning);
         Assert.True(peek.Wait(TimeSpan.FromSeconds(2)), "Peek waited on the refresh's lock");
         Assert.Same(first, peek.Result);
 

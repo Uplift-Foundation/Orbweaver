@@ -688,7 +688,7 @@ namespace Orbweaver
     // and FastIsSet likewise says whether fast mode was chosen or is the default.
     // CanResetToDefault is whether a "Default" choice may be offered at all.
     public sealed record RemoteRunOptions(
-        string ModelId,
+        string? ModelId,
         IReadOnlyList<RemoteRunChoice> Models,
         string? ThinkingId,
         string? ThinkingDefaultLabel,
@@ -697,7 +697,44 @@ namespace Orbweaver
         bool FastIsSet,
         bool Locked,
         bool CanResetToDefault,
-        string ChipText);
+        string ChipText)
+    {
+        // CB-404. A control that cannot be used is drawn, greyed, with this as
+        // the reason under it and in its tooltip; null is enabled. Locked is one
+        // source of the model's reason.
+        public string? ModelDisabledReason { get; init; }
+        public string? EffortDisabledReason { get; init; }
+
+        // A set this app made that no reading has confirmed: ModelId/ThinkingId
+        // then hold the chosen value, and the Confirmed ids what was last read.
+        public bool ModelPending { get; init; }
+        public bool EffortPending { get; init; }
+        public string? ConfirmedModelId { get; init; }
+        public string? ConfirmedEffortId { get; init; }
+
+        // Where the reading came from.
+        public RunReadingSource Source { get; init; } = RunReadingSource.Gateway;
+
+        // The line under the controls when the route also changes the default
+        // for new sessions (Claude Code's typed route, a Codex before 0.164).
+        public string? DefaultWarning { get; init; }
+
+        // Something to say about the last change that is not a failure: it was
+        // sent, but by a route the person should know about (a bridge that did
+        // not answer, so it was typed, which also saved the default). Drawn as
+        // information, never in the failure colour.
+        public string? Note { get; init; }
+        public bool SavesDefault { get; init; }
+
+        // The last change to that field a reading contradicted or that timed
+        // out; null once a newer change is made.
+        public string? ModelFailure { get; init; }
+        public string? EffortFailure { get; init; }
+
+        // OpenClaw's extras. Every other CLI has neither.
+        public bool HasFast { get; init; } = true;
+        public bool HasTimeLimit { get; init; } = true;
+    }
 
     // A session whose model, thinking level and fast mode a person may change from
     // the panel (CB-270 Stage 4).
@@ -816,7 +853,27 @@ namespace Orbweaver
         string? ElsewhereLabel = null,
         // CB-307 item 3: "Question 2 of 4" for a multi-question form, or null
         // when the form's current question cannot be told from the screen.
-        string? Progress = null);
+        string? Progress = null,
+        // CB-400: the rows of a screen that is not a dialog at all (`/mobile`'s QR
+        // screen) as drawn, so a panel can show them. Non-null means the prompt is
+        // such an overlay: one `Close` option that presses Escape. Null for every
+        // dialog.
+        IReadOnlyList<string>? Body = null,
+        // CB-412: the https sign-in URL of `/login`'s URL step, drawn as a link.
+        // Null on every other prompt. Goes nowhere else: not Body, not a log.
+        string? Link = null,
+        // CB-412: draw a one-line code field and Send (the URL step on a route
+        // that can be pressed silently). Answered through IRemoteChatLoginCode.
+        bool CodeEntry = false);
+
+    // CB-412: the code the browser shows after sign-in, typed into `/login`'s
+    // "Paste code here" field. Its own interface, like IRemoteChatFreeText, so a
+    // session that cannot do it does not offer the field. The code is passed
+    // straight through and never stored.
+    public interface IRemoteChatLoginCode
+    {
+        Task SubmitLoginCodeAsync(string code);
+    }
 
     // One slash command a CLI understands, offered the same way typing "/" in
     // its own terminal would. Name includes the leading "/" so the panel can

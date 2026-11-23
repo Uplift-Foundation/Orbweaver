@@ -29,9 +29,13 @@
     <Content Include="Fixtures\pages\*.json" CopyToOutputDirectory="PreserveNewest" />
     <!-- CB-308: the real GitHub releases API responses and SHA256SUMS.txt, captured 2026-11-06. -->
     <Content Include="Fixtures\update\*" CopyToOutputDirectory="PreserveNewest" />
+    <!-- CB-404: run-controls parser fixtures, captured 2026-11-21. -->
+    <Content Include="Fixtures\run\*" CopyToOutputDirectory="PreserveNewest" />
     <!-- CB-314: the phone relay's contract vectors, copied from Orbweaver-Mobile contracts/ (see Fixtures/relay/SOURCE.md). -->
     <Content Include="Fixtures\relay\*.json" CopyToOutputDirectory="PreserveNewest" />
     <!-- CB-313: real terminal captures, shared with tools/screen-read-probe. -->
+    <!-- CB-397: the CB-327 Claude Code folder-trust captures (tmux capture-pane -p, byte for byte). -->
+    <Content Include="Fixtures\trust\*" Link="TrustFixtures\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Fixtures\screens\*" Link="ScreenReadFixtures\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
@@ -63,6 +67,10 @@
     <Compile Include="..\TranscriptTests\Cb327Captures.cs" />
     <Compile Include="..\TranscriptTests\Cb330Captures.cs" />
     <Compile Include="..\TranscriptTests\Cb356Captures.cs" />
+    <Compile Include="..\TranscriptTests\Cb407Captures.cs" />
+    <Compile Include="..\TranscriptTests\Cb412Captures.cs" />
+    <Compile Include="..\TranscriptTests\Cb412Checks.cs" />
+    <Compile Include="..\TranscriptTests\Cb403Captures.cs" />
     <Compile Include="..\TranscriptTests\AskFormFixtures.cs" />
     <!-- CB-316: the desktop's v4 vector generator, so the unit suite proves it
          reproduces the committed frames-v4-vectors.json byte for byte. -->

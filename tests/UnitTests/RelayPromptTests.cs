@@ -232,6 +232,43 @@ public class RelayPromptVectorTests
         return PromptFrames.FitPush(Str(i, "request_id"), Str(i, "session_id"), Str(i, "label"), Str(i, "tool"), Str(i, "summary"),
             Str(i, "preview"), i.GetProperty("expires_at").GetInt64(), options, Str(i, "screen_hash"));
     }
+
+    // ---- CB-400: the quiet prompt vector ---------------------------------------
+
+    [Fact]
+    public void The_quiet_prompt_vector_is_rebuilt_byte_for_byte_ends_in_quiet_true_and_seals()
+    {
+        var fp = PromptFingerprint.Of(PaneFixtures.MobileOverlay80x50)!;
+        var box = P.GetProperty("prompt_quiet");
+        var json = JsonDocument.Parse(Str(box, "plaintext")).RootElement;
+        var rebuilt = PromptFrames.Prompt(Str(json, "request_id"), Str(json, "session_id"), "question", "claude", "",
+            PromptPipeline.OverlayPreview(fp.Preview), [new PromptOption("Escape", "Close", OptionKinds.Option, null)], fp.Hash,
+            json.GetProperty("expires_at").GetInt64(), quiet: true);
+
+        AssertSealed(box, EpochKey0, DesktopToPhone, rebuilt);
+        Assert.Equal(("quiet", true), (json.EnumerateObject().Last().Name, json.EnumerateObject().Last().Value.GetBoolean()));
+        // The fingerprint and the request id are untouched by the key: the same frame without it
+        // is the frame minus its last member, and the hash is the overlay's own.
+        Assert.Equal(fp.Hash, Str(json, "screen_hash"));
+        var without = PromptFrames.Prompt(Str(json, "request_id"), Str(json, "session_id"), "question", "claude", "",
+            PromptPipeline.OverlayPreview(fp.Preview), [new PromptOption("Escape", "Close", OptionKinds.Option, null)], fp.Hash,
+            json.GetProperty("expires_at").GetInt64());
+        Assert.Equal(without[..^1] + ",\"quiet\":true}", rebuilt);
+        Assert.NotEqual(P.GetProperty("prompt").GetProperty("nonce").GetString(), box.GetProperty("nonce").GetString());
+    }
+
+    [Fact]
+    public void The_frames_v3_example_prompt_and_every_other_vector_box_carry_no_quiet_key()
+    {
+        Assert.DoesNotContain("quiet", Str(P.GetProperty("prompt"), "plaintext"));
+        foreach (var r in P.GetProperty("resolved").EnumerateArray().Concat(P.GetProperty("refusals").EnumerateArray()))
+            Assert.DoesNotContain("quiet", Str(r, "plaintext"));
+        var permission = PromptFrames.Prompt("r", "s", "permission", "claude", "Bash", "p", [], "h", 1);
+        var question = PromptFrames.Prompt("r", "s", "question", "claude", "", "p", [], "h", 1, multi: true, text: true);
+        Assert.DoesNotContain("quiet", permission);
+        Assert.DoesNotContain("quiet", question);
+    }
+
 }
 
 // The generator's two helpers, restated here rather than referenced: the
@@ -459,5 +496,43 @@ public class RelayPromptRuleTests
         Assert.True(fit.LabelsCut);
         Assert.False(fit.DetailCut);
         Assert.Equal("short detail", JsonDocument.Parse(fit.Plaintext).RootElement.GetProperty("detail").GetString());
+    }
+
+    // ---- CB-400: an overlay's fingerprint ---------------------------------------
+
+    [Fact]
+    public void An_overlay_fingerprints_by_its_caption_and_its_one_option()
+    {
+        var fp = PromptFingerprint.Of(PaneFixtures.MobileOverlay80x50)!;
+
+        Assert.True(fp.Overlay);
+        Assert.Equal(OverlayScreen.Read(PaneFixtures.MobileOverlay80x50)!.Caption, fp.Preview);
+        Assert.EndsWith("\nEscape. Close", fp.Canonical);
+        Assert.DoesNotContain(fp.Canonical, c => c is '█' or '▀' or '▄');
+        Assert.Equal(PromptFingerprint.HashOf(fp.Canonical), fp.Hash);
+        Assert.Equal("Escape", Assert.Single(fp.Prompt.Options).Key);
+        Assert.NotNull(fp.Prompt.Body);
+    }
+
+    [Fact]
+    public void The_same_overlay_hashes_the_same_after_typing_and_a_dialog_is_not_flagged()
+    {
+        Assert.Equal(PromptFingerprint.Of(PaneFixtures.MobileOverlay80x50)!.Hash, PromptFingerprint.Of(PaneFixtures.MobileOverlayAfterTyping)!.Hash);
+        Assert.False(PromptFingerprint.Of(PaneFixtures.MacModelSwitchDialog)!.Overlay);
+    }
+
+    [Fact]
+    public void The_screen_after_esc_has_no_fingerprint()
+    {
+        Assert.Null(PromptFingerprint.Of(PaneFixtures.MobileAfterEsc));
+    }
+
+    [Fact]
+    public void The_quiet_key_is_written_after_text_only_when_set()
+    {
+        var plain = PromptFrames.Prompt("r", "s", "question", "claude", "", "p", [], "h", 1, multi: true, text: true);
+        Assert.DoesNotContain("quiet", plain);
+        var quiet = PromptFrames.Prompt("r", "s", "question", "claude", "", "p", [], "h", 1, multi: true, text: true, quiet: true);
+        Assert.EndsWith(",\"text\":true,\"quiet\":true}", quiet);
     }
 }

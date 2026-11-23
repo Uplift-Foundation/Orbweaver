@@ -1,0 +1,40 @@
+ ▐▛███▛█   Claude Code v2.1.330
+▝▜██████▀  Opus 5.5 · API Usage Billing
+ ▝▝   ▝▝   ~/scratch/login-fixture
+
+▎ Auto mode is now Claude Code's default permission mode.
+▎ Auto mode lets Claude handle permission prompts automatically. Claude checks each tool call for
+▎ risky actions and prompt injection before executing, runs the ones it assesses as lower-risk, and
+▎ blocks the rest.
+▎ https://code.claude.com/docs/en/permission-modes
+
+❯ /login
+  ⎿  Login interrupted
+
+❯ /login
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Login
+
+  Using 3rd-party platforms
+
+  ❯ 1. Amazon Bedrock · interactive setup
+    2. Microsoft Foundry · opens docs
+    3. Google Vertex AI · interactive setup
+    4. Go back
+
+  Foundry: https://code.claude.com/docs/en/microsoft-foundry
+
+  Esc to cancel
+
+
+
+
+
+
+
+
+
+
+
+

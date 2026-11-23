@@ -111,6 +111,13 @@ namespace Orbweaver
         public const string ErrBadHash = "bad-hash";
         public const string ErrUnsupported = "unsupported";
 
+        // Never on the wire: made here when a request got no reply at all (nothing came back
+        // within the timeout, the relay could not be reached, or an OK carried a payload that
+        // is not what was asked for). It says nothing about what the far side can do, so it is
+        // never read as ErrUnsupported, which a session treats as final (CB-407, and
+        // CB-406, where it took a form off the MacBook's panel for good).
+        public const string ErrNoReply = "no-reply";
+
         // The far session's own registry entry is gone — CB-105's messaging
         // path found no ~/.claude/sessions file for it at all, which almost
         // always means the background job it named has since stopped. There
@@ -667,7 +674,14 @@ namespace Orbweaver
             // which is the whole of how a peer learns it has cleared. An older
             // Buddy reading this ignores the member and draws the orb at full
             // brightness, which still beats the no-orb it got before.
-            [property: JsonPropertyName("parked")] bool? Parked = null);
+            [property: JsonPropertyName("parked")] bool? Parked = null,
+
+            // CB-404: the session's model and effort as the far Buddy's
+            // RunControlsHost reads them (MirrorRun). Its presence is how a near
+            // Buddy knows the far one understands the `run` INPUT flag. Null for
+            // a session that has no run controls there, and then omitted, so an
+            // ordinary roster keeps its CB-216 hash.
+            [property: JsonPropertyName("run")] PeerRun? Run = null);
 
         // The portable part of LocalPersona.Persona. Avatar is the already
         // bounded image bytes, never AvatarPath: the latter has meaning only
@@ -1197,7 +1211,12 @@ namespace Orbweaver
             [property: JsonPropertyName("review")] IReadOnlyList<WireReviewItem>? Review = null,
             [property: JsonPropertyName("submitKey")] string? SubmitAnswersKey = null,
             [property: JsonPropertyName("cancelKey")] string? CancelKey = null,
-            [property: JsonPropertyName("cursor")] string? CursorKey = null);
+            [property: JsonPropertyName("cursor")] string? CursorKey = null,
+            // CB-400: the rows of a screen that is not a question (the /mobile
+            // overlay), so the near panel can draw what the far terminal shows.
+            // Optional both ways: an older peer ignores the property and still
+            // gets a working Close button, and a frame without it decodes as null.
+            [property: JsonPropertyName("body")] IReadOnlyList<string>? Body = null);
 
         public sealed record WireReviewItem(
             [property: JsonPropertyName("q")] string Question,
@@ -1221,7 +1240,16 @@ namespace Orbweaver
 
             if (AskFormTranscript.ReadForm(screen, call) is { } form) return Bounded(form);
 
-            return ChatTranscript.ParseDialog(screen) is { } dialog
+            // The transcript says this screen is an AskUserQuestion (a call is pending and
+            // the form footer is drawn) and neither form reader could place it. The screen's
+            // own numbered reading is then the wrong thing to serve: it glues each label to
+            // its description row and keeps one row of a wrapped title, and it looks
+            // plausible (CB-407). Nothing is offered, and the person is sent to the terminal.
+            // An overlay is not that: it has no numbered rows to glue, and reads as its own.
+            var dialog = ChatTranscript.ParseDialog(screen);
+            if (call is not null && dialog?.Body is null && AskFormTranscript.HasFormFooter(screen)) return null;
+
+            return dialog is not null
                 ? Bounded(new AskForm(dialog, Array.Empty<AskTab>(), -1, null, null))
                 : null;
         }
@@ -1242,7 +1270,37 @@ namespace Orbweaver
             return new WirePrompt(title, options, PromptFingerprint(title, options, form.CurrentTab, ticked, wireTabs),
                 wireTabs, form.CurrentTab, Known(form.FreeTextKey), Known(form.ChatAboutKey),
                 form.MultiSelect, ticked, form.HasSubmitRow, review,
-                Known(form.SubmitAnswersKey), Known(form.CancelKey), Known(form.CursorKey));
+                Known(form.SubmitAnswersKey), Known(form.CancelKey), Known(form.CursorKey),
+                BoundedBody(form.Prompt.Body));
+        }
+
+        // CB-400: an overlay's rows, held to what a peer will accept — at most MaxBodyLines
+        // of MaxBodyChars each, the same bounds OverlayScreen.Read applies, so a hostile or
+        // buggy far side cannot make this side draw an unbounded block. Null stays null: no
+        // body is how an ordinary dialog says it is not an overlay.
+        public const int MaxBodyLines = 60;
+        public const int MaxBodyChars = 200;
+
+        // What the last row says when the body was cut, at rows or at columns, so a reader is
+        // never shown a screen that looks whole and is not. The reader (OverlayScreen.CutMarker)
+        // uses the same text, and a test pins that. The marker rides one row beyond MaxBodyLines,
+        // so a cut body is at most MaxBodyLines + 1 rows. A body already inside both bounds, a
+        // marked one included, passes unchanged, so cutting at the reader, the encoder and the
+        // decoder says it once.
+        public const string BodyCutMarker = "… (more in the terminal)";
+
+        private static IReadOnlyList<string>? BoundedBody(IReadOnlyList<string>? body)
+        {
+            if (body is null) return null;
+
+            var marked = body.Count > 0 && body[^1] == BodyCutMarker;
+            var content = marked ? body.Take(body.Count - 1).ToList() : body;
+            var cut = marked || content.Count > MaxBodyLines || content.Any(l => l.Length > MaxBodyChars);
+            if (!cut) return body.ToList();
+
+            var rows = content.Take(MaxBodyLines).Select(l => Clip(l, MaxBodyChars)).ToList();
+            rows.Add(BodyCutMarker);
+            return rows;
         }
 
         private static string Clip(string text, int max) => text.Length <= max ? text : text[..max];
@@ -1275,7 +1333,11 @@ namespace Orbweaver
             try
             {
                 var prompt = JsonSerializer.Deserialize<WirePrompt>(bytes);
-                return prompt is { Title: not null, Options: not null, Fingerprint: not null } ? prompt : null;
+                // The body is bounded on the way in as well as out (CB-400): this side
+                // draws it, and the far side is not trusted to have kept to the limits.
+                return prompt is { Title: not null, Options: not null, Fingerprint: not null }
+                    ? prompt with { Body = BoundedBody(prompt.Body) }
+                    : null;
             }
             catch (JsonException)
             {

@@ -23,7 +23,7 @@ public class MirrorEdgeCaseTests : IDisposable
     private const string Account = ".claude-board";
     private const string Name = "job-hunter";
 
-    private readonly string _dir;
+    private string _dir = "";   // assigned inside MirrorGate.Hold, so not readonly
     private readonly List<(string SessionId, SessionStatus Status)> _sessions = new();
     private readonly List<AgentRoster.Entry> _agents = new();
     private readonly List<string> _toClient = new();
@@ -42,15 +42,19 @@ public class MirrorEdgeCaseTests : IDisposable
 
     public MirrorEdgeCaseTests()
     {
-        _dir = Path.Combine(Path.GetTempPath(), "cb-edge-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_dir);
-        Build();
+        MirrorGate.Shared.Hold(() =>
+        {
+            _dir = Path.Combine(Path.GetTempPath(), "cb-edge-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(_dir);
+            Build();
+        });
     }
 
     public void Dispose()
     {
         RemoteControlSessions.ResetForTests();
         try { Directory.Delete(_dir, recursive: true); } catch { }
+        MirrorGate.Shared.Leave();
     }
 
     // --- asking about nothing --------------------------------------------------
@@ -252,6 +256,24 @@ public class MirrorEdgeCaseTests : IDisposable
         Assert.Equal(
             RemoteMirrorClient.MirrorAvailability.Unknown,
             _client.StateFor(Name).Availability);
+    }
+
+    // CB-406: a PROMPT or ANSWER the far side never replied to is no-reply,
+    // which the panel asks again after, and never unsupported, which it treats
+    // as final. Measured live: one PROMPT queued ten seconds behind other peer
+    // traffic on the mini, timed out on the MacBook, and the form was gone
+    // from the panel for good.
+    [Fact]
+    public async Task APromptOrAnswerWithNoReplyIsNoReplyNotUnsupported()
+    {
+        AddSession();
+        await Handshake();
+
+        _dropEverything = true;
+        _client.TimeoutOverrideForTests = TimeSpan.FromMilliseconds(250);
+
+        Assert.Equal(MirrorProtocol.ErrNoReply, (await _client.FetchPromptAsync(Name)).Error);
+        Assert.Equal(MirrorProtocol.ErrNoReply, await _client.AnswerPromptAsync(Name, "1", "fp"));
     }
 
     // Asked once and answered, the roster is not asked for again — every

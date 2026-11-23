@@ -28,6 +28,8 @@ namespace Orbweaver
             new[] { "Do you trust the contents of this directory" },
             new[] { "Do you trust the files in this folder" },
             new[] { "Allow external CLAUDE.md file imports" },
+            // Claude Code 2.1.325+ (CB-327 capture, CB-397).
+            new[] { "Accessing workspace:", "Yes, I trust this folder" },
             // Codex and Grok: folder trust.
             new[] { "Trusting the directory allows" },
             new[] { "Grok Build may run or modify contents in this directory" },

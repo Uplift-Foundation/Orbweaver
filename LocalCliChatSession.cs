@@ -43,9 +43,9 @@ namespace Orbweaver
     //    boundary row read before it. The contract's "TurnUpdated carries the whole turn" holds
     //    trivially, since the whole turn is all there ever is.
     internal sealed class LocalCliChatSession :
-        IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatPrompts, IRemoteChatFreeText,
+        IRemoteChatSession, IRemoteChatBacklog, IRemoteChatComposer, IRemoteChatPrompts, IRemoteChatFreeText, IRemoteChatLoginCode,
         IRemoteChatImages, IRemoteChatSlashCommands, IRemoteChatSlashRunner, IRemoteChatElsewhere, IRemoteChatReadOnly,
-        IRemoteChatPeerInbound, IRemoteChatFiles, IDisposable
+        IRemoteChatPeerInbound, IRemoteChatFiles, IRemoteChatRunOptions, IDisposable
     {
         // How much of the tail to read when the panel first opens.
         //
@@ -138,7 +138,8 @@ namespace Orbweaver
                                    Func<SessionStatus, bool>? focusDesktop = null,
                                    Action<SessionStatus, string>? focusTerminal = null,
                                    Func<string, string?>? readSettings = null,
-                                   Func<string, bool, PeerInboundWrite>? applySetting = null)
+                                   Func<string, bool, PeerInboundWrite>? applySetting = null,
+                                   RunControlsHost? runControls = null)
         {
             SessionId = sessionId;
             _status = status;
@@ -158,6 +159,9 @@ namespace Orbweaver
             _readSettings = readSettings ?? PeerInboundSettingsFile.ReadText;
             _applySetting = applySetting ?? PeerInboundSettingsFile.Apply;
             _announced = DesktopView();
+            _runHost = runControls ?? RunControlsLive.Shared;
+            _runHost.Changed += OnRunHostChanged;
+            _runShown = RunSignature(RunOptions);
         }
 
         // CB-266: what sending into a Remote Control-bridged Claude Desktop chat
@@ -237,6 +241,7 @@ namespace Orbweaver
 
             _status = status;
             AnnounceView();
+            AnnounceRun();
             if (!string.IsNullOrEmpty(status.Title)) DisplayName = status.Title;
 
             // CB-267: the scan is also when replying gets switched on or off, the
@@ -268,7 +273,15 @@ namespace Orbweaver
             // This does not spin: a refresh always ends with a prompt set, even
             // when the screen could not be read, because "something is waiting
             // and I can't tell you what" is itself an answer.
-            if (Prompt is null && !_refreshing) _ = RefreshPromptAsync();
+            //
+            // An overlay on show is read again on every scan too (CB-400): some of
+            // these screens change while open (/status tabs, /usage's live figures),
+            // and a snapshot left in the panel would go on showing what the desk
+            // no longer does.
+            // A `/login` screen is read again on every scan as well (CB-412): the picker
+            // becomes the sign-in URL, the URL becomes an error, and a prompt left on
+            // the first would offer buttons for a screen that is gone.
+            if ((Prompt is null || _overlayHash is not null || _loginHash is not null) && !_refreshing) _ = RefreshPromptAsync();
         }
 
         // Idempotent, and called from both construction-time binding and every
@@ -376,6 +389,7 @@ namespace Orbweaver
 
         public void Dispose()
         {
+            _runHost.Changed -= OnRunHostChanged;
             _watcher?.Dispose();
             _watcher = null;
             _poll?.Stop();
@@ -383,6 +397,71 @@ namespace Orbweaver
             _debounce?.Stop();
             _debounce = null;
         }
+
+        // --- CB-404: model and effort ---------------------------------------
+
+        // The windowless host does the reading and the setting for every local
+        // CLI (RunControlsHost); this session only asks it and says when the
+        // answer moved. One host for the panel, the phone and the mirror, so a
+        // change made from any of them is pending for all three.
+        private readonly RunControlsHost _runHost;
+        private string _runShown = "";
+
+        public RemoteRunOptions? RunOptions =>
+            _runHost.Options(_status) is { } o ? (_runNote is null ? o : o with { Note = _runNote }) : null;
+
+        // The host's word on the last set when it went but has something to say
+        // (RunSetKind.Sent with a Why). Cleared by the next set of either field.
+        private string? _runNote;
+
+        public event Action? RunOptionsChanged;
+
+        public Task<string?> SetModelAsync(string? id) => SetRunAsync(RunField.Model, id);
+
+        public Task<string?> SetThinkingAsync(string? id) => SetRunAsync(RunField.Effort, id);
+
+        // Fast mode and the time limit are OpenClaw's, and HasFast/HasTimeLimit
+        // keep the flyout from offering them here.
+        public Task<string?> SetFastModeAsync(bool? on) => Task.FromResult<string?>(RunText.NoRoute);
+
+        public int? TimeoutMinutes { get => null; set { } }
+
+        private async Task<string?> SetRunAsync(RunField field, string? value)
+        {
+            // No "Default" is offered for a CLI session (CanResetToDefault is
+            // false), so a null here is not a choice anyone made.
+            if (value is null) return field == RunField.Model ? "name a model" : "name an effort level";
+            _runNote = null;
+            var result = await _runHost.SetAsync(_status, field, value);
+            // Sent with a sentence is a note, not a refusal: the panel draws it
+            // as information, and the set is pending like any other.
+            if (result.Kind == RunSetKind.Sent) _runNote = result.Why;
+            AnnounceRun();
+            return result.Kind == RunSetKind.Sent ? null : result.Why;
+        }
+
+        // The host says a pending change moved; it may say so off the UI thread.
+        private void OnRunHostChanged(string sessionId)
+        {
+            if (!string.Equals(sessionId, _status.SessionId, StringComparison.Ordinal)) return;
+            if (Dispatcher.UIThread.CheckAccess()) AnnounceRun();
+            else Dispatcher.UIThread.Post(AnnounceRun);
+        }
+
+        // Raised only when what the panel would draw changed, so a 2 s poll does
+        // not rebuild an open flyout under the pointer.
+        internal void AnnounceRun()
+        {
+            var now = RunSignature(RunOptions);
+            if (now == _runShown) return;
+            _runShown = now;
+            RunOptionsChanged?.Invoke();
+        }
+
+        internal static string RunSignature(RemoteRunOptions? o) => o is null ? "" : string.Join("\u001f",
+            o.ChipText, o.ModelId, o.ThinkingId, o.ModelDisabledReason, o.EffortDisabledReason, o.ModelPending, o.EffortPending,
+            o.ConfirmedModelId, o.ConfirmedEffortId, o.DefaultWarning, o.ModelFailure, o.EffortFailure, o.Note,
+            string.Join(",", o.Models.Select(m => m.Id + "=" + m.Label)), string.Join(",", o.ThinkingChoices.Select(c => c.Id)));
 
         // --- reading ---
 
@@ -500,6 +579,10 @@ namespace Orbweaver
         // whole lines only.
         private void Pump()
         {
+            // CB-404: a new transcript row is also a new reading, which can
+            // confirm or contradict a pending change.
+            AnnounceRun();
+
             // Not before the opening read has landed. Watch() starts the poll
             // immediately after kicking off LoadInitialAsync, so without this a
             // tick that beat the initial read's post back to the UI thread would
@@ -1296,6 +1379,13 @@ namespace Orbweaver
                 $"Handed to {name}. It's mid-turn and will read this when that turn ends — "
                 + "the message shows here once it has.",
 
+            // CB-400: Claude Code accepts and queues a message for a session sitting on
+            // a screen it must be closed or answered at, so "for its next turn" would
+            // promise a turn that is not coming until someone deals with that screen.
+            DeliveryResult.Accepted when string.Equals(receipt.AgentStatus, "waiting", StringComparison.Ordinal) =>
+                $"Handed to {name}, but it is showing a screen that has to be closed or answered in its terminal first. "
+                + "It will read this once that is done.",
+
             DeliveryResult.Accepted =>
                 $"Handed to {name} for its next turn. It arrives as a message from {Brand.DisplayName}, "
                 + "not keystrokes, so built-in slash commands won't run.",
@@ -1418,7 +1508,7 @@ namespace Orbweaver
 
         [ExcludeFromCodeCoverage]
         private Task<TypingVerdict> RealGate(SessionStatus status) =>
-            TypingGate.JudgeAsync(
+            TypingGate.JudgeWithWaitAsync(
                 status,
                 s => SessionPark.RecordStatus(s.SessionPid, SessionId),
                 TerminalFocuser.CapturePane,
@@ -1504,9 +1594,20 @@ namespace Orbweaver
 
         private static string SetOrEmpty(string? value) => string.IsNullOrEmpty(value) ? "empty" : "set";
 
+        // TypingGate.OverlayWhy(title) is `it is showing "<title>", which has to be
+        // closed first`. The note wants the title back out of it; the pair is pinned
+        // by a test that builds the reason with OverlayWhy and reads it here.
+        private const string OverlayWhyOpen = "it is showing \"";
+        private const string OverlayWhyClose = "\", which has to be closed first";
+
         internal static string NotAtPromptNote(string? why) =>
-            "This terminal isn't at its prompt" + (string.IsNullOrEmpty(why) ? "" : " — " + why)
-            + ". Nothing was typed; answer that screen in the terminal and send again.";
+            why is not null && why.StartsWith(OverlayWhyOpen, StringComparison.Ordinal)
+                && why.EndsWith(OverlayWhyClose, StringComparison.Ordinal)
+                ? "Not sent: this session is showing \""
+                  + why[OverlayWhyOpen.Length..^OverlayWhyClose.Length]
+                  + "\". Use the button above and send again. Your message is still in the box."
+                : "This terminal isn't at its prompt" + (string.IsNullOrEmpty(why) ? "" : " — " + why)
+                  + ". Nothing was typed; answer that screen in the terminal and send again.";
 
         // The body of a delivered message, unwrapped from the tag Claude Code's
         // own transcript holds it in.
@@ -1647,6 +1748,89 @@ namespace Orbweaver
                 // have been given in the terminal while it did.
                 if (!_waiting) return;
 
+                // CB-400: a screen that is not a question but has to be closed (the
+                // /mobile QR overlay). Read first, off the tmux capture when there
+                // is one and otherwise off the route's own reader (a Windows console
+                // has no tmux), and only for this: an ordinary dialog on a non-tmux
+                // route is still not read here. A prompt carrying the overlay's rows
+                // answers through a verified Escape (AnswerOverlayAsync), so its
+                // fingerprint is remembered the way a form's is.
+                var overlayScreen = screen ?? await ReadAnyRoute(_status);
+                if (screen is null && (generation != _generation || !_waiting)) return;
+
+                // Nothing could read the pane this time. For an overlay already on show
+                // that is a failed read, not a closed screen: keep it (and its Close)
+                // rather than swapping it for an empty prompt on a transient failure.
+                if (overlayScreen is null && _overlayHash is not null) return;
+
+                // A question form first, though: one only the transcript can read looks like
+                // a bordered pane too, and showing it as an overlay would offer Escape where
+                // it has answers. (OverlayScreen.Read already steps aside for a numbered
+                // dialog; this is the form's half of that.)
+                var formAsk = screen is null ? null : AskFormTranscript.CallFor(screen, _status.TranscriptPath);
+                var isForm = screen is not null && AskFormTranscript.ReadForm(screen, formAsk) is not null;
+
+                // CB-412: `/login`, before the overlay and the dialog readers, which
+                // would otherwise take its picker for a permission dialog. Remembered
+                // by hash the way an overlay is, so a press is verified against it.
+                if (!isForm && LoginScreen.Read(overlayScreen) is { } login)
+                {
+                    if (_closedLoginHash is not null)
+                    {
+                        if (login.Hash == _closedLoginHash && Clock() - _closedLoginAt < SettleAfterAnswer) return;
+                        _closedLoginHash = null;
+                    }
+
+                    _overlayHash = null;
+                    _formFingerprint = null;
+                    _loginHash = login.Hash;
+                    _loginCodeEntry = login.Step == LoginStep.Url && CanPress(_status);
+
+                    // Only when the screen changed: typing a code must not rebuild
+                    // the panel's prompt under the field.
+                    if (Prompt is null || _shownLoginHash != login.Hash)
+                    {
+                        _shownLoginHash = login.Hash;
+                        SetPrompt(LoginScreen.ToPrompt(login, CanPress(_status)));
+                    }
+
+                    return;
+                }
+
+                _loginHash = null;
+                _shownLoginHash = null;
+                _closedLoginHash = null;
+
+                if (!isForm && OverlayScreen.Read(overlayScreen) is { } overlay)
+                {
+                    // The same screen reads as an overlay twice over (Read here, Of
+                    // there), so Of always has a fingerprint to give.
+                    var hash = PromptFingerprint.Of(overlayScreen)!.Hash;
+
+                    // The overlay just pressed, read again before the terminal has redrawn,
+                    // is not shown again: a button on a screen that is going away invites a
+                    // second click. Held back until the screen is another one (a multi-level
+                    // screen's next level has its own title) or it has stayed long enough
+                    // that the press plainly did not take.
+                    if (_closedOverlayHash is not null)
+                    {
+                        if (hash == _closedOverlayHash && Clock() - _closedOverlayAt < SettleAfterAnswer) return;
+                        _closedOverlayHash = null;
+                    }
+
+                    _overlayHash = hash;
+                    _formFingerprint = null;
+
+                    // Only when the screen's words changed: a re-read of the same overlay
+                    // must not rebuild the panel's prompt under the pointer.
+                    var shown = OverlayScreen.ToPrompt(overlay);
+                    if (!SameOverlay(Prompt, shown)) SetPrompt(shown);
+                    return;
+                }
+
+                _overlayHash = null;
+                _closedOverlayHash = null;
+
                 // A prompt with no options is the honest outcome when the dialog
                 // could not be read: something is waiting, we cannot say what,
                 // and the panel offers the terminal instead of a guess.
@@ -1686,6 +1870,9 @@ namespace Orbweaver
                     _answeredFingerprint = null;
                 }
 
+                // The ordinary dialog's own fingerprint, for the verified press above.
+                _dialogHash = parsed is { Options.Count: > 0 } && screen is not null ? PromptFingerprint.Of(screen)?.Hash : null;
+
                 SetPrompt(parsed ?? new ChatPrompt("Waiting for input", Array.Empty<ChatPromptOption>()));
             }
             finally
@@ -1696,9 +1883,85 @@ namespace Orbweaver
 
         // The pane seams, so a test can hand over a screen and count what an
         // answer sends. The defaults are the real tmux/terminal reads and presses.
-        internal Func<SessionStatus, string, Task<bool>> PressKey { get; init; } = TerminalFocuser.SendPaneKey;
-        internal Func<SessionStatus, Task<string?>> Capture { get; init; } = TerminalFocuser.CapturePane;
-        internal Func<SessionStatus, string, Task<bool>> TypeLiteral { get; init; } = TerminalFocuser.SendPaneText;
+        //
+        // CB-412: route-aware, so `/login` (and any ordinary dialog) in iTerm2, kitty,
+        // WezTerm or a Windows console is read and pressed, not only one in tmux.
+        // tmux stays on exactly the calls it always made, so those sessions behave
+        // byte for byte as before. The typing gate is a separate seam and still reads
+        // the tmux pane directly.
+        internal Func<SessionStatus, string, Task<bool>> PressKey { get; init; } =
+            RealPress;
+        internal Func<SessionStatus, Task<string?>> Capture { get; init; } =
+            RealCapture;
+        internal Func<SessionStatus, string, Task<bool>> TypeLiteral { get; init; } =
+            RealType;
+
+        // The real defaults: they ask the machine which route the session is on and
+        // then run a tmux, osascript or console call, so a headless run cannot execute
+        // them. The choice they make is PickCapture/PickPress/PickType, which the
+        // route table test covers.
+        [ExcludeFromCodeCoverage]
+        private static Task<bool> RealPress(SessionStatus s, string key) => PickPress(TerminalFocuser.RouteFor(s))(s, key);
+
+        [ExcludeFromCodeCoverage]
+        private static Task<string?> RealCapture(SessionStatus s) => PickCapture(TerminalFocuser.RouteFor(s))(s);
+
+        [ExcludeFromCodeCoverage]
+        private static Task<bool> RealType(SessionStatus s, string text) => PickType(TerminalFocuser.RouteFor(s))(s, text);
+
+        [ExcludeFromCodeCoverage]
+        private static bool RealCanPress(SessionStatus s) => TerminalFocuser.CanPressSilently(s);
+
+        [ExcludeFromCodeCoverage]
+        private static TerminalTyping.Route RealRouteOf(SessionStatus s) => TerminalFocuser.RouteFor(s);
+
+        internal static Func<SessionStatus, Task<string?>> PickCapture(TerminalTyping.Route route) =>
+            route == TerminalTyping.Route.Tmux ? TerminalFocuser.CapturePane : RealReadAnyRoute;
+
+        internal static Func<SessionStatus, string, Task<bool>> PickPress(TerminalTyping.Route route) =>
+            route == TerminalTyping.Route.Tmux ? TerminalFocuser.SendPaneKey : TerminalFocuser.PressKey;
+
+        internal static Func<SessionStatus, string, Task<bool>> PickType(TerminalTyping.Route route) =>
+            route == TerminalTyping.Route.Tmux ? TerminalFocuser.SendPaneText : TerminalFocuser.TypeQuietly;
+
+        // Whether a key can be pressed here without bringing the terminal forward
+        // (Terminal.app cannot), and the wait between read-backs of a typed code.
+        internal Func<SessionStatus, TerminalTyping.Route> RouteOf { get; init; } = RealRouteOf;
+        internal static bool IsVerifiedRoute(TerminalTyping.Route route) =>
+            route is not (TerminalTyping.Route.Tmux or TerminalTyping.Route.None);
+        internal Func<SessionStatus, bool> CanPress { get; init; } = RealCanPress;
+        internal Func<TimeSpan, Task> LoginDelay { get; init; } = t => Task.Delay(t);
+
+        // CB-400: the overlay's two seams. ReadAnyRoute is the route-aware reader
+        // (tmux, kitty, WezTerm, a Windows console), used only to notice an
+        // overlay; CaptureAndPress is the verified press that re-reads, asks
+        // whether it is still the same overlay, and only then sends the key.
+        internal Func<SessionStatus, Task<string?>> ReadAnyRoute { get; init; } = RealReadAnyRoute;
+        internal Func<SessionStatus, string, Func<string?, bool>, Task<(bool Pressed, string? Before)>> CaptureAndPress { get; init; }
+            = TerminalFocuser.CaptureAndPress;
+
+        [ExcludeFromCodeCoverage]
+        private static Task<string?> RealReadAnyRoute(SessionStatus status) =>
+            ScreenReaders.For(status) is { } reader ? reader.ReadAsync(status) : Task.FromResult<string?>(null);
+
+        private static bool SameOverlay(ChatPrompt? shown, ChatPrompt next) =>
+            shown is { Body: { } body } && shown.Title == next.Title && body.SequenceEqual(next.Body!)
+            && shown.Options.Select(o => o.Label).SequenceEqual(next.Options.Select(o => o.Label));
+
+        // CB-412: the `/login` screen on show, by hash, and whether it takes a code.
+        // _shownLoginHash is the one the panel's prompt was built from; the pair
+        // _closedLoginHash/_closedLoginAt hold back the screen just pressed until it
+        // moves on, as the overlay's do.
+        private string? _loginHash, _shownLoginHash, _closedLoginHash, _dialogHash;
+        private bool _loginCodeEntry;
+        private DateTime _closedLoginAt;
+
+        // The fingerprint of the overlay on show, or null when the prompt is anything else.
+        private string? _overlayHash;
+
+        // The overlay a click just pressed Escape on, and when. See RefreshPromptAsync.
+        private string? _closedOverlayHash;
+        private DateTime _closedOverlayAt;
 
         // The fingerprint of the question form on show, or null when the prompt
         // is an ordinary dialog (or nothing).
@@ -1729,6 +1992,9 @@ namespace Orbweaver
         // does not.
         internal void SetPrompt(ChatPrompt? prompt)
         {
+            // A cleared prompt is no overlay, so a later ordinary dialog is never
+            // answered as one.
+            if (prompt is null) { _overlayHash = null; _loginHash = null; _shownLoginHash = null; _loginCodeEntry = false; }
             Prompt = prompt;
             Dispatcher.UIThread.Post(() => PromptChanged?.Invoke());
         }
@@ -1746,6 +2012,18 @@ namespace Orbweaver
             if (!_format.ReplyEnabled())
             {
                 Note("Replying is off, so this can only be answered in the terminal.");
+                return;
+            }
+
+            if (_overlayHash is { } overlayHash)
+            {
+                await AnswerOverlayAsync(overlayHash);
+                return;
+            }
+
+            if (_loginHash is { } loginHash)
+            {
+                await AnswerLoginAsync(option.Key, loginHash);
                 return;
             }
 
@@ -1776,8 +2054,18 @@ namespace Orbweaver
             // A capture already in flight saw the screen before this key, and is
             // dropped when it returns; bumped again once the key is down.
             _generation++;
+            // CB-412: a route that had no dialog buttons before this (iTerm2, kitty,
+            // WezTerm, a Windows console) does not start with a blind press: the key
+            // goes only if the screen re-read just before it is still the dialog that
+            // was shown. tmux presses exactly as it always did.
             bool pressed;
-            try { pressed = await PressKey(_status, option.Key); }
+            var verified = _dialogHash is { } shownHash && IsVerifiedRoute(RouteOf(_status));
+            try
+            {
+                pressed = verified
+                    ? (await CaptureAndPress(_status, option.Key, seen => PromptFingerprint.Of(seen)?.Hash == _dialogHash)).Pressed
+                    : await PressKey(_status, option.Key);
+            }
             finally { _generation++; }
 
             if (pressed) return;
@@ -1787,6 +2075,132 @@ namespace Orbweaver
             // Put it back. Clearing optimistically is right when the keystroke
             // lands, and leaves the panel silent about a session that is still
             // stopped when it doesn't.
+            if (_waiting) await RefreshPromptAsync();
+        }
+
+        internal const string OverlayClosedNote = "That screen has already closed.";
+        internal const string OverlayCloseFailedNote = "Couldn't close that from here. Press Esc in the terminal.";
+
+        // Close for an overlay. Escape is the one key here that is dangerous
+        // unchecked: at a working session it interrupts the turn, and at an idle
+        // prompt a second one opens the rewind picker. So it is never pressed
+        // blind: the press re-reads the screen, asks whether it is still the very
+        // overlay that was shown, and only then sends the key. One press per click,
+        // never a retry.
+        private async Task AnswerOverlayAsync(string hash)
+        {
+            SetPrompt(null);
+            _generation++;
+
+            (bool Pressed, string? Before) result;
+            try
+            {
+                result = await CaptureAndPress(
+                    _status, OverlayScreen.CloseKey, screen => PromptFingerprint.Of(screen)?.Hash == hash);
+            }
+            finally { _generation++; }
+
+            // Pressed: the screen is gone or is the next level of the same one (/mcp's detail goes
+            // back to its list, which is still blocked and has its own button). Either way the
+            // next scan shows what is there, and the one just pressed is not shown again meanwhile.
+            if (result.Pressed)
+            {
+                _closedOverlayHash = hash;
+                _closedOverlayAt = Clock();
+
+                // No read here: it would see the screen mid-redraw and, with the record
+                // still waiting, put an empty "Waiting for input" box up for a moment. The
+                // next scan reads it (there is no prompt, so it does).
+                return;
+            }
+
+            // Not pressed because the screen was no longer the one shown. Another overlay is
+            // not a failure and not "closed": it is shown with its own button, with nothing
+            // said. A screen that is not an overlay at all means the overlay is gone. Anything
+            // else (no readable route, or the same overlay and a press that failed) is the
+            // terminal's job.
+            var changed = result.Before is not null && PromptFingerprint.Of(result.Before)?.Hash != hash;
+            if (!(changed && OverlayScreen.Read(result.Before) is not null))
+            {
+                Note(changed ? OverlayClosedNote : OverlayCloseFailedNote);
+            }
+
+            if (_waiting) await RefreshPromptAsync();
+        }
+
+        internal const string LoginChangedNote = "That sign-in screen had changed, so nothing was pressed. Here is the current one.";
+        internal const string LoginGoneNote = "That sign-in screen has already closed.";
+        internal const string LoginFailedNote = "Couldn't answer that in the terminal. Finish signing in there.";
+        internal const string LoginNotEmptyNote = "The code field in the terminal isn't empty, so nothing was typed. Clear it there first.";
+        internal const string LoginUnverifiedNote = "Couldn't confirm the code was typed, so it was not sent. Finish in the terminal.";
+
+        internal static string LoginRefusalNote(string code) => code switch
+        {
+            LoginAnswer.PromptChanged => LoginChangedNote,
+            LoginAnswer.NoPrompt => LoginGoneNote,
+            LoginAnswer.NotEmpty => LoginNotEmptyNote,
+            LoginAnswer.Unverified => LoginUnverifiedNote,
+            _ => LoginFailedNote,
+        };
+
+        // Every login answer is a verified press: the key goes only if the screen
+        // re-read just before it is still the one that was shown.
+        private async Task AnswerLoginAsync(string key, string hash)
+        {
+            SetPrompt(null);
+            _generation++;
+
+            string? code;
+            try { code = await LoginAnswer.PressAsync(_status, (s, k, ok) => CaptureAndPress(s, k, ok), hash, key); }
+            catch (Exception) { code = LoginAnswer.PressFailed; }
+            finally { _generation++; }
+
+            await FinishLoginAnswerAsync(code, hash);
+        }
+
+        // The code goes from the panel's control to the type call in this one
+        // parameter. It is never stored, logged, noted or put in an exception message.
+        public async Task SubmitLoginCodeAsync(string code)
+        {
+            if (!_format.ReplyEnabled())
+            {
+                Note("Replying is off, so this can only be answered in the terminal.");
+                return;
+            }
+
+            if (_loginHash is not { } hash || !_loginCodeEntry)
+            {
+                Note(LoginGoneNote);
+                return;
+            }
+
+            SetPrompt(null);
+            _generation++;
+
+            string? result;
+            try
+            {
+                result = await LoginAnswer.SubmitCodeAsync(
+                    _status, s => Capture(s), (s, text) => TypeLiteral(s, text), (s, k, ok) => CaptureAndPress(s, k, ok), LoginDelay, hash, code);
+            }
+            catch (Exception) { result = LoginAnswer.TypeFailed; }
+            finally { _generation++; }
+
+            await FinishLoginAnswerAsync(result, hash);
+        }
+
+        private async Task FinishLoginAnswerAsync(string? code, string hash)
+        {
+            if (code is null)
+            {
+                // Pressed: the next scan shows what is there, and the screen just
+                // answered is not shown again while the terminal redraws.
+                _closedLoginHash = hash;
+                _closedLoginAt = Clock();
+                return;
+            }
+
+            Note(LoginRefusalNote(code));
             if (_waiting) await RefreshPromptAsync();
         }
 

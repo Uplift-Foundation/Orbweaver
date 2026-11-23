@@ -1001,6 +1001,75 @@ public partial class RelayLinkTests : IDisposable
         Assert.Empty(link.SendRefusal("ph_unknown", Rid, "sess-1", AnswerGate.Replayed));
     }
 
+    // ---- CB-401: prompts for a phone that arrives late -----------------------------
+
+    [Fact]
+    public void A_prompt_replayed_to_one_phone_is_a_quiet_action_with_the_original_bytes()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var frames = link.SendPromptTo(phone.Id, Rid, "sess-1", "{\"t\":\"prompt\"}");
+        var env = J(Assert.Single(frames));
+        Assert.Equal((Rid, "action", "none"), (env.GetProperty("id").GetString(), env.GetProperty("class").GetString(), env.GetProperty("push").GetString()));
+        Assert.False(env.TryGetProperty("e", out _));                       // no push, so no sealed alert either
+        Assert.Equal("prompt", phone.OpenFromDesktop(frames[0]).GetProperty("t").GetString());
+        Assert.Equal(Ck(CoalesceKey(phone.Base()), "sess-1"), env.GetProperty("ck").GetString());
+    }
+
+    [Fact]
+    public void A_replayed_prompt_is_not_sent_to_an_unknown_phone_or_before_the_welcome()
+    {
+        var (link, _, phone, _, _) = Paired();
+        Assert.Empty(link.SendPromptTo("ph_unknown", Rid, "sess-1", "{}"));
+        link.OnFrame("""{"t":"err","ref":"hello","code":"version"}""");
+        Assert.Empty(link.SendPromptTo(phone.Id, Rid, "sess-1", "{}"));
+    }
+
+    [Fact]
+    public void A_phone_coming_online_asks_for_the_pending_prompts_once()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var asked = new List<string>();
+        link.PhoneNeedsPrompts += asked.Add;
+
+        link.OnFrame(Presence(phone.Id, false));                            // offline: nothing
+        Assert.Empty(asked);
+        link.OnFrame(Presence(phone.Id, true));                             // offline -> online
+        Assert.Equal([phone.Id], asked);
+        link.OnFrame(Presence(phone.Id, true));                             // online -> online
+        Assert.Single(asked);
+        link.OnFrame(Presence("ph_stranger", true));                        // not paired
+        Assert.Single(asked);
+    }
+
+    [Fact]
+    public void Presence_and_resync_before_the_welcome_ask_for_nothing()
+    {
+        var (link, _, phone, _, _) = Paired();
+        link.Disconnected();                                                // not welcomed, phone marked offline
+        var asked = new List<string>();
+        link.PhoneNeedsPrompts += asked.Add;
+
+        link.OnFrame(Presence(phone.Id, true));
+        link.OnFrame($$"""{"t":"resync","peer_id":"{{phone.Id}}"}""");
+        Assert.Empty(asked);
+    }
+
+    [Fact]
+    public void A_resync_from_an_online_paired_phone_asks_for_the_pending_prompts()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var asked = new List<string>();
+        link.PhoneNeedsPrompts += asked.Add;
+
+        link.OnFrame($$"""{"t":"resync","peer_id":"{{phone.Id}}"}""");
+        Assert.Equal([phone.Id], asked);
+
+        link.OnFrame("""{"t":"resync","peer_id":"ph_stranger"}""");         // unknown
+        link.OnFrame(Presence(phone.Id, false));
+        link.OnFrame($$"""{"t":"resync","peer_id":"{{phone.Id}}"}""");      // paired but offline
+        Assert.Single(asked);
+    }
+
     [Fact]
     public void Nothing_is_sent_while_not_welcomed()
     {
@@ -1332,6 +1401,22 @@ public partial class RelayLinkTests : IDisposable
         Assert.Empty(link.SendWindow("ph_nobody", "s1", "{}"));
         link.OnFrame(Presence(phone.Id, false));
         Assert.Empty(link.SendWindow(phone.Id, "s1", "{}"));               // a watch dies with presence; never queued
+    }
+
+    [Fact]
+    public void A_run_frame_seals_as_state_on_the_run_ck_to_an_online_phone_only()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var ck = RelayCrypto.Ck(RelayCrypto.CoalesceKey(phone.Base()), RunFrames.CkFor("s1"));
+
+        var run = link.SendRun(phone.Id, "s1", """{"t":"run"}""").Single();
+        Assert.Equal(("state", ck), (J(run).GetProperty("class").GetString(), CkOf(run)));
+        Assert.Equal("run", phone.OpenFromDesktop(run).GetProperty("t").GetString());
+        Assert.Empty(link.SendRun("ph_nobody", "s1", "{}"));
+        link.OnFrame(Presence(phone.Id, false));
+        Assert.Empty(link.SendRun(phone.Id, "s1", "{}"));                 // watchers only; never queued
+        link.Disconnected();
+        Assert.Empty(link.SendRun(phone.Id, "s1", "{}"));
     }
 
     [Fact]

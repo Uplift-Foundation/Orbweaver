@@ -10,6 +10,14 @@ namespace Orbweaver
         internal const string TimeLimitLabel = "Time limit";
         internal const string DefaultLabel = "Default";
 
+        // CB-404: why a conversation's controls are shown but cannot be used.
+        internal const string SurfaceReason =
+            "this chat's model is its channel's setting, so changing it here would change how the agent answers everyone there";
+        internal const string ReplyOffReason =
+            "replying to OpenClaw chats is off in Settings, and changing the model needs the same permission";
+        internal const string NoPatchReason =
+            "the gateway hasn't given this app permission to change a conversation's model";
+
         internal const string LockedModelTip =
             "The model can't be changed for this conversation while it is running on its current one.";
 

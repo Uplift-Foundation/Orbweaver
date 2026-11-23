@@ -31,6 +31,7 @@ namespace Orbweaver
         public static List<Row> Map(IEnumerable<string> lines)
         {
             var mapped = new List<Row>();
+            var afterLogin = false;
 
             foreach (var line in lines)
             {
@@ -45,9 +46,18 @@ namespace Orbweaver
                 // is about to be discarded.
                 if (!IsInteresting(line)) continue;
 
+                // CB-412: what `/login` printed when it ended ("Login
+                // interrupted") is the row right after the command's own row. It is
+                // shown verbatim as a system turn and nothing is removed: the
+                // "Login reached its time limit" turn above it stays as what
+                // happened. Only that adjacency is matched, never the wording.
+                var wasAfterLogin = afterLogin;
+                afterLogin = line.Contains("<command-name>/login</command-name>", StringComparison.Ordinal);
+
                 try
                 {
                     using var doc = JsonDocument.Parse(line);
+                    if (wasAfterLogin && LoginOutcome(doc.RootElement) is { } outcome) { mapped.Add(outcome); continue; }
                     MapRow(doc.RootElement, mapped);
                 }
                 catch
@@ -57,6 +67,23 @@ namespace Orbweaver
             }
 
             return mapped;
+        }
+
+        private const string StdoutOpen = "<local-command-stdout>", StdoutClose = "</local-command-stdout>";
+
+        private static Row? LoginOutcome(JsonElement root)
+        {
+            if (Str(root, "type") != "user" || Bool(root, "isSidechain")) return null;
+            if (!root.TryGetProperty("message", out var message) || !message.TryGetProperty("content", out var content)
+                || content.ValueKind != JsonValueKind.String) return null;
+
+            var text = (content.SafeString() ?? "").Trim();
+            if (!text.StartsWith(StdoutOpen, StringComparison.Ordinal) || !text.EndsWith(StdoutClose, StringComparison.Ordinal)) return null;
+
+            var inner = text[StdoutOpen.Length..^StdoutClose.Length].Trim();
+            if (inner.Length == 0) return null;
+
+            return new Row(Str(root, "uuid"), new ChatTurn { Role = ChatRole.System, Text = inner, IsComplete = true, At = Time(root) });
         }
 
         // A false positive costs nothing: a tool result whose text happens to
@@ -558,7 +585,18 @@ namespace Orbweaver
         //
         // Null on anything unexpected, and every caller treats null as "send the
         // person to the terminal".
-        public static ChatPrompt? ParseDialog(string screen) => ParseDialogCore(screen, out _, out _);
+        //
+        // CB-400: a screen that is not a dialog at all but is drawn over the
+        // conversation and closed only by Esc (`/mobile`'s QR screen) reads as a
+        // one-option prompt with a Body, from OverlayScreen. It is the fallback
+        // after ParseDialogCore, never before it, so a real dialog always wins,
+        // and ParseDialogCore itself is untouched: everything that reads options
+        // (the ask-form parser, the fingerprint's numbered branch) sees what it
+        // always did. One line here carries it to PaneScreen, TypingGate, the
+        // mirror's PromptFromScreen and the local chat session.
+        public static ChatPrompt? ParseDialog(string screen) =>
+            ParseDialogCore(screen, out _, out _)
+            ?? (OverlayScreen.Read(screen) is { } overlay ? OverlayScreen.ToPrompt(overlay) : null);
 
         // ParseDialog, also handing back the cleaned lines and the index of
         // option 1, so ParseAskForm reads the same option run rather than a
@@ -746,9 +784,16 @@ namespace Orbweaver
                 if (text.Length == 0 || OptionLine.IsMatch(text) || IsHorizontalRule(text) || IsHint(text)) break;
                 if (ContentColumn(lines[k]) < labelColumn) break;
 
+                // One column of slack: Claude Code wraps a line one short of
+                // the screen, so a word that would end exactly at the edge is
+                // still sent down. Measured on 2.1.330 in a 35-column pane
+                // (PaneFixtures.TeamLeadNarrowFreeTextTyped): "not fit on one row of
+                // a" (28) + " narrow" ends at 35 and was wrapped, and the row's
+                // last line was lost — the read-back of a typed answer then
+                // failed and the phone's answer was never sent (CB-406).
                 var firstWord = text.Split(' ', 2)[0];
                 var above = lines[previous].TrimEnd().Length;
-                if (above + 1 + firstWord.Length <= width) break;
+                if (above + 1 + firstWord.Length < width) break;
 
                 // A terminal also breaks a word at a hyphen ("cb313-" / "probe"); that one is
                 // rejoined without the space it never had. A label that truly ends in " -"
@@ -853,8 +898,23 @@ namespace Orbweaver
                 return o with { Label = label };
             }).ToList();
 
-            var freeText = options.FirstOrDefault(o => o.Label.StartsWith(FreeTextLabel, StringComparison.Ordinal))?.Key;
-            var chatAbout = options.FirstOrDefault(o => o.Label.StartsWith(ChatAboutLabel, StringComparison.Ordinal))?.Key;
+            // A pane about twelve columns wide wraps even these two fixed rows ("Type
+            // somethi ng.", "Chat" / "about this"), and a form whose free-text row was
+            // missed here was declined as no form at all (CB-407). So each is also found
+            // by its letters with spaces ignored, "Chat about this" by being the last
+            // row right under the free-text row and a start of that label; and a row
+            // found that way is given its whole label.
+            var freeText = options.FirstOrDefault(o => o.Label.StartsWith(FreeTextLabel, StringComparison.Ordinal))?.Key
+                ?? options.FirstOrDefault(o => LettersStart(o.Label, FreeTextLabel))?.Key;
+            var chatAbout = options.FirstOrDefault(o => o.Label.StartsWith(ChatAboutLabel, StringComparison.Ordinal))?.Key
+                // Keys are the digits ParseDialog read off the numbered rows, so they always parse.
+                ?? (freeText is not null
+                    ? options.FirstOrDefault(o => o.Key == (int.Parse(freeText) + 1).ToString() && o == options[^1] && LettersStart(ChatAboutLabel, o.Label))?.Key
+                    : null);
+            options = options.Select(o =>
+                o.Key == freeText && !o.Label.StartsWith(FreeTextLabel, StringComparison.Ordinal) ? o with { Label = FreeTextRowLabel }
+                : o.Key == chatAbout && !o.Label.StartsWith(ChatAboutLabel, StringComparison.Ordinal) ? o with { Label = ChatAboutLabel }
+                : o).ToList();
 
             // The Submit tab's own screen: "Review your answers", the answers as
             // "● question" / "→ answer" pairs, then Submit answers / Cancel.
@@ -938,6 +998,19 @@ namespace Orbweaver
                 KeyOf(SubmitAnswersLabel), KeyOf(CancelLabel));
         }
 
+        // Whether the form's free-text row is being typed into: no row reads
+        // "Type something" any more (its label is what was typed), there is a
+        // "Chat about this" row, and the cursor is on the row just above it,
+        // where Claude Code always draws the free-text row. A digit pressed now
+        // goes into that field as text rather than choosing an option — the
+        // second half of CB-406: a phone's "1" landed in a field a failed typed
+        // answer had left open, and pressed nothing. Measured on 2.1.330
+        // (PaneFixtures.TeamLeadNarrowFreeTextTyped).
+        internal static bool IsEditingFreeText(AskForm form) =>
+            !form.IsReview && form.FreeTextKey is null
+            && int.TryParse(form.ChatAboutKey, out var chat)
+            && form.CursorKey == (chat - 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+
         internal const string ReviewHeading = "Review your answers";
         internal const string SubmitAnswersLabel = "Submit answers";
         internal const string CancelLabel = "Cancel";
@@ -949,6 +1022,13 @@ namespace Orbweaver
         internal const string NextRowLabel = "Next";
 
         internal const string FreeTextLabel = "Type something";
+        internal const string FreeTextRowLabel = "Type something.";
+
+        // Whether `text` begins with `wanted`, comparing letters only: every space gone,
+        // because a narrow pane breaks the rows inside words.
+        internal static bool LettersStart(string text, string wanted) =>
+            Regex.Replace(text, @"\s+", "").StartsWith(Regex.Replace(wanted, @"\s+", ""), StringComparison.Ordinal)
+            && Regex.Replace(text, @"\s+", "").Length >= 3;
         internal const string ChatAboutLabel = "Chat about this";
 
         private static bool IsTabBar(string line) =>

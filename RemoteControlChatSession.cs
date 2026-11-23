@@ -829,6 +829,12 @@ namespace Orbweaver
         // driven from a test with a hand-built outcome.
         internal ChatSendOutcome ApplySlashOutcome(ChatTurn mine, string line, RemoteMirrorClient.InputOutcome outcome)
         {
+            if (outcome.Error == MirrorProtocol.ErrNoReply)
+            {
+                Note(NoReplyNote(FarTitle));
+                return ChatSendOutcome.Sent;
+            }
+
             if (outcome.Error is not null)
             {
                 Note(TypingRefusal(outcome.Error, FarTitle, outcome.Why));
@@ -951,11 +957,27 @@ namespace Orbweaver
             // change on the other machine and one is a locked door: ErrReplyOff
             // is that machine's owner having switched replying off, and a
             // request arriving over a wire does not change it.
+            // No reply in time is not a refusal (CB-406): the far side may well
+            // have typed it — CB-403's proof C measured exactly that — so the
+            // pending turn stays to be settled by the far transcript, the box
+            // is cleared like any send (the text is in the bubble above), and
+            // the note says to look before sending it again.
+            if (outcome.Error == MirrorProtocol.ErrNoReply)
+            {
+                Note(NoReplyNote(FarTitle));
+                return ChatSendOutcome.Sent;
+            }
+
             _pending = null;
 
             Note(TypingRefusal(outcome.Error, FarTitle, outcome.Why));
             return ChatSendOutcome.Failed;
         }
+
+        // What a send that got no answer in time says: not that it failed.
+        internal static string NoReplyNote(string remoteName) =>
+            $"{remoteName}'s machine didn't answer in time, so this may have been delivered. "
+            + "Check the conversation before sending it again.";
 
         // What the panel says when a message was handed to a background
         // job's own messaging socket rather than typed into a terminal —
@@ -970,6 +992,12 @@ namespace Orbweaver
             agentStatus == "working"
                 ? $"Handed to {remoteName}. It's mid-turn and will read this when that turn ends — "
                   + "the message shows here once it has."
+                // CB-400: waiting means a screen that has to be closed or answered at
+                // its terminal; Claude Code queues the message behind it, and "next
+                // turn" would promise one that is not coming until that is done.
+                : agentStatus == "waiting"
+                    ? $"Handed to {remoteName}, but it is showing a screen that has to be closed or answered in its terminal first. "
+                      + "It will read this once that is done."
                 : $"Handed to {remoteName} for its next turn. It arrives as a message from {Brand.DisplayName}, "
                   + "not keystrokes, so built-in slash commands won't run.";
 
@@ -1199,6 +1227,7 @@ namespace Orbweaver
             if (_disposed) return;
             _disposed = true;
             StopPromptPolling();
+            DisposeRun();
 
             RemoteControlSessions.MirrorChanged -= OnMirrorChanged;
 

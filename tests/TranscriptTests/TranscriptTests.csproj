@@ -20,6 +20,8 @@
          knows what a window is, which is the property that makes them testable
          at all. -->
     <Compile Include="../../ChatTranscript.cs" />
+    <Compile Include="../../OverlayScreen.cs" />
+    <Compile Include="../../LoginScreen.cs" />
     <Compile Include="../../PaneColumns.cs" />
     <Compile Include="../../RelayedMessage.cs" />
     <Compile Include="../../CompactionNote.cs" />
@@ -43,6 +45,8 @@
     <Compile Include="../../OpenClawAttachmentKind.cs" />
     <Compile Include="../../OpenClawAudioKind.cs" />
     <Compile Include="../../RemoteChat.cs" />
+    <!-- CB-404: RemoteRunOptions carries RunReadingSource; just the enum, not the core. -->
+    <Compile Include="../../RunReadingSource.cs" />
     <!-- RemoteChat.cs's SlashCommand references SlashRouteKind, which lives in
          SlashRoute.cs (CB-306). This console exe compiles RemoteChat.cs in
          rather than referencing the app, so the enum has to come in with it;

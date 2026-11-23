@@ -1,0 +1,23 @@
+Viewing @helper · esc to return
+You are "helper", a teammate on team qa403. Your only job is to wait idle until told otherwise. Do not run any
+tools or take any actions. Reply only with "helper standing by." and then stop. If you receive a later
+message, follow it.
+
+ ▐▛███▛█   Claude Code v2.1.330
+▝▜██████▀  Opus 5.5 with medium effort · Claude Team
+ ▝▝   ▝▝   /private/tmp/cb403qa-proj · /rc
+
+
+✻ Baking… (10m 14s)
+  ⎿  Tip: Use /btw to ask a side question without interrupting Claude
+
+──────────────────────────────────────────────────────────────────────────────────────────────────── @helper ─
+❯ Message @helper…
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 | ~/cb403qa-proj | 30% (7d:44%) | [.claude]
+  ↑/↓ to select · ctrl+x ctrl+k to stop all agents
+
+  ◯ main
+❯ ⏺ helper   Idle helper teammate                                                                    10m 22s
+  ◯ helper2  Idle helper2 teammate                                                                     4m 8s
+  ◯ helper3  Reviews every generated invoice against the ledger export and reports mismatches in to…   4m 6s

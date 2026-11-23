@@ -38,7 +38,47 @@ namespace Orbweaver
 
     // What came back. `Code` is "launched" on success; otherwise one of the
     // phone's refusal codes, or one of PeerLaunchCodes below.
-    internal sealed record PeerLaunchResult(bool Ok, string Code, string? SessionId, string? Why);
+    //
+    // CB-397: `Trust` is set only with PeerLaunchCodes.TrustNeeded.
+    internal sealed record PeerLaunchResult(bool Ok, string Code, string? SessionId, string? Why, PeerLaunchTrust? Trust = null);
+
+    // CB-397: the far desk's question, "trust this folder?". The token names
+    // the pending launch on that desk; Cli and Cwd are what that desk says it
+    // started, which the asking window checks against what it sent. It
+    // authorises nothing: only the signed `launch-trust` answer does.
+    internal sealed record PeerLaunchTrust(
+        [property: JsonPropertyName("token")] string Token,
+        [property: JsonPropertyName("cli")] string Cli,
+        [property: JsonPropertyName("cwd")] string Cwd,
+        [property: JsonPropertyName("expires_at")] long ExpiresAt,
+        // Display only and unsigned: the far screen carries the CLI's own
+        // warning that the folder configures hooks that run commands. It
+        // changes what the dialog says, never what an answer authorises.
+        [property: JsonPropertyName("hooks"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Hooks = false);
+
+    // One folder in a far machine's listing. Path and Drive are set only at
+    // the top level (the roots); below it a folder is reached by Name.
+    internal sealed record PeerDirItem(
+        [property: JsonPropertyName("name")] string Name,
+        [property: JsonPropertyName("path")] string? Path = null,
+        [property: JsonPropertyName("drive")] string? Drive = null,
+        [property: JsonPropertyName("home")] bool Home = false,
+        [property: JsonPropertyName("git")] bool Git = false,
+        [property: JsonPropertyName("claude")] bool Claude = false,
+        [property: JsonPropertyName("persona")] bool Persona = false);
+
+    // A folder listing as the far desk's own browse rules produced it. Path is
+    // empty at the top level; Parent is empty at a root.
+    internal sealed record PeerDirListing(
+        string Path, string Parent, bool Truncated, IReadOnlyList<PeerDirItem> Items);
+
+    // What `list-dir` carried: a listing, or the one code that refused it. The
+    // codes are BrowseRules' (forbidden_path, unknown_path, unreadable, bad_frame)
+    // plus PeerLaunchCodes' (peer_launch_off, no_answer, link_lost).
+    internal sealed record PeerDirResult(bool Ok, string Code, PeerDirListing? Listing)
+    {
+        internal static PeerDirResult Fail(string code) => new(false, code, null);
+    }
 
     internal sealed record PeerMachine(string Name, bool Online);
 
@@ -53,6 +93,16 @@ namespace Orbweaver
         Task<PeerLaunchInfo?> InfoAsync(string machine, CancellationToken ct);
 
         Task<PeerLaunchResult> LaunchAsync(string machine, PeerLaunchSpec spec, CancellationToken ct);
+
+        // The far desk's folders at `path` ("" is its top level). Never throws:
+        // every failure is a PeerDirResult with a code.
+        Task<PeerDirResult> ListDirAsync(string machine, string path, CancellationToken ct);
+
+        // CB-397: answers a PeerLaunchCodes.TrustNeeded question, Trust or
+        // Cancel. Never throws. A default so a launcher that cannot ask
+        // answers "no answer" instead of every implementer changing at once.
+        Task<PeerLaunchResult> TrustAsync(string machine, PeerLaunchTrust trust, bool trusted, CancellationToken ct) =>
+            Task.FromResult(new PeerLaunchResult(false, PeerLaunchCodes.NoAnswer, null, null));
     }
 
     internal static class PeerLaunchCodes
@@ -71,5 +121,14 @@ namespace Orbweaver
         // bad_signature, which would blame the far machine for something that
         // never left this one.
         public const string CannotSign = "cannot_sign";
+
+        // CB-397. The far desk started the CLI and it is asking whether to
+        // trust the folder (the result carries PeerLaunchResult.Trust); the
+        // asker was cancelled or answered no; the far desk no longer holds
+        // that question (expired, answered at the desk, or never its own).
+        // None of these is in RelayReplies.ErrCodes: that array is the phone's contract.
+        public const string TrustNeeded = "trust_needed";
+        public const string TrustCancelled = "trust_cancelled";
+        public const string TrustGone = "trust_gone";
     }
 }

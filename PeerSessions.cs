@@ -57,7 +57,10 @@ namespace Orbweaver
                     () => OrbweaverSettings.PeerLaunchInboundEnabled,
                     () => RemoteControlSessions.LocalSessions().Select(s => s.Status).ToList()),
                 PeerLaunchServer.Shared.HandleAsync,
-                client);
+                client,
+                PeerBrowseServer.ForThisDesk(() => OrbweaverSettings.PeerLaunchInboundEnabled),
+                PeerLaunchServer.Shared.HandleTrustAsync,
+                machine => _ = PeerLaunchServer.Shared.OnDisconnectedAsync(machine));
 
         // What New Chat asks to start a session on another desktop: null until
         // the link is running.
@@ -84,7 +87,12 @@ namespace Orbweaver
             PeerLaunchClient.SignerFor(
                 machine => PeerIdentity.PeerFor(machine)?.Pin,
                 message => PeerIdentity.SignAsync(message)),
-            () => DateTimeOffset.UtcNow));
+            () => DateTimeOffset.UtcNow)
+        {
+            TrustSign = PeerLaunchClient.TrustSignerFor(
+                machine => PeerIdentity.PeerFor(machine)?.Pin,
+                message => PeerIdentity.SignAsync(message)),
+        });
 
         // The running link's host, or — only in a test, only when no real one
         // is running — the stand-in UseClientForTests installed. The real host
@@ -307,6 +315,34 @@ namespace Orbweaver
             }
         }
 
+        // Longer than ConnectAsync's own clock (CB-411), so the inner timeout
+        // fires first and explains itself; this outer one exists only for a
+        // dial that fails to come back at all.
+        internal static TimeSpan DialBound(TimeSpan dialTimeout) => dialTimeout + TimeSpan.FromSeconds(5);
+
+        // One dial, bounded from outside as well (CB-411): ConnectAsync has its
+        // own clock, but one dial that ever failed to come back would hold the
+        // SingleFlight tick, and with it every later dial. Never throws.
+        internal static async Task<bool> DialPeerAsync(string machine, Func<Task<bool>> connect, TimeSpan bound)
+        {
+            try
+            {
+                return await connect().WaitAsync(bound).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                MirrorLog.SayOnce($"peer-dial-abandoned:{machine}",
+                    $"to={machine} dial did not return within its bound; moving on");
+            }
+            catch (Exception ex)
+            {
+                MirrorLog.SayOnce($"peer-dial-failed:{machine}",
+                    $"to={machine} {ex.GetType().Name}: {ex.Message}");
+            }
+
+            return false;
+        }
+
         [ExcludeFromCodeCoverage]
         private static async Task DialOnceAsync()
         {
@@ -357,20 +393,17 @@ namespace Orbweaver
 
             foreach (var peer in worth)
             {
-                try
-                {
-                    await host.Link
-                        .ConnectAsync(peer.Machine, peer.Address, peer.Port)
-                        .ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    MirrorLog.SayOnce($"peer-dial-failed:{peer.Machine}",
-                        $"to={peer.Machine} {ex.GetType().Name}: {ex.Message}");
-                }
+                await DialPeerAsync(
+                    peer.Machine,
+                    () => host.Link.ConnectAsync(peer.Machine, peer.Address, peer.Port),
+                    DialBound(host.Link.DialTimeout)).ConfigureAwait(false);
             }
 
             await AskWhatTheyHaveAsync(host).ConfigureAwait(false);
+
+            // CB-402: the drawn rows converge on what the client knows within
+            // one tick, even when no roster reply registered a change.
+            RemoteControlSessions.RepublishIfOutOfStep();
         }
 
         // Asks every connected machine what sessions it has.
