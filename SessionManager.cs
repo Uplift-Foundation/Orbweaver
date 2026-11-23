@@ -2451,6 +2451,11 @@ namespace Orbweaver
 
                 // The apply runs on the UI thread, so a slow one is a frozen UI.
                 Timed("apply", found.Count, () => { ScanAndUpdateCore(found, probes, now); return 0; });
+
+                // CB-425: how long a published Paperclip change took to be drawn,
+                // written only when it is slow enough to see (the phase threshold).
+                if (PaperclipSessions.ReachedOrbs(now, DateTime.UtcNow) is { } latency)
+                    SlowPhase.Report("paperclip change reaching the orbs", -1, latency, SlowPhaseThreshold, SlowPhaseSink);
             }
             finally
             {

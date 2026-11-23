@@ -6,6 +6,7 @@ namespace Orbweaver.Tests;
 
 // CB-427: answering a waiting agent, and waking, pausing and resuming it.
 // Paths, bodies and verdicts are pure; the transport is FakePaperclip.
+[Collection("Settings")]
 public class PaperclipActionsTests
 {
     private static PaperclipNeed Approval(string id = "ap1") => new("approval", id, "Hire QA", "http://x/CB/approvals/" + id);
@@ -355,6 +356,35 @@ public class PaperclipActionsTests
         while (TakeNudge()) { }
         using var cts = new CancellationTokenSource(20);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => WaitAsync(TimeSpan.FromSeconds(30), cts.Token));
+    }
+
+    // ---- CB-425: how long a change takes to reach the orbs ----------------------------
+
+    [Fact]
+    public void A_pass_that_started_before_the_change_proves_nothing_and_the_first_one_after_it_reports_the_wait()
+    {
+        while (ReachedOrbs(DateTime.MaxValue, DateTime.MaxValue) != null) { }   // clear anything pending
+        var t = new DateTime(2026, 11, 23, 12, 0, 0, DateTimeKind.Utc);
+        Assert.Null(ReachedOrbs(t, t));                           // nothing pending
+        MarkChanged(t);
+        MarkChanged(t.AddSeconds(1));                              // the earliest is kept
+        Assert.Null(ReachedOrbs(t.AddMilliseconds(-1), t.AddSeconds(5)));   // read the old snapshot
+        Assert.Equal(TimeSpan.FromMilliseconds(3300), ReachedOrbs(t.AddMilliseconds(200), t.AddMilliseconds(3300)));
+        Assert.Null(ReachedOrbs(t.AddSeconds(9), t.AddSeconds(10)));        // reported once
+    }
+
+    [Fact]
+    public void Publishing_a_changed_picture_marks_the_change_and_an_unchanged_one_does_not()
+    {
+        while (ReachedOrbs(DateTime.MaxValue, DateTime.MaxValue) != null) { }
+        var agents = new List<PaperclipAgent>();
+        Publish(agents, PaperclipLink.Connected, "CB-425 first " + Guid.NewGuid());
+        Assert.NotNull(ReachedOrbs(DateTime.MaxValue, DateTime.MaxValue));
+        var status = "CB-425 same";
+        Publish(agents, PaperclipLink.Connected, status);
+        while (ReachedOrbs(DateTime.MaxValue, DateTime.MaxValue) != null) { }
+        Publish(agents, PaperclipLink.Connected, status);          // identical: nothing drawn differently
+        Assert.Null(ReachedOrbs(DateTime.MaxValue, DateTime.MaxValue));
     }
 
     // ---- the orb's rules -------------------------------------------------------

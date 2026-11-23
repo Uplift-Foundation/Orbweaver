@@ -114,6 +114,7 @@ namespace Orbweaver
             _statusText = status;
             if (signature == _lastDraw) return;
             _lastDraw = signature;
+            MarkChanged(DateTime.UtcNow);
             Changed?.Invoke();
         }
 
@@ -172,6 +173,30 @@ namespace Orbweaver
         {
             _link = link;
             _statusText = statusText;
+        }
+
+        // ---- how long a change takes to reach the orbs (CB-425) --------------------
+
+        // The earliest published change no pass has yet drawn. Paperclip's rows ride
+        // the shared scan pass, which on a slow machine takes seconds (measured on
+        // the Windows test PC: 74 passes of 1 s or more in 14 hours, median 1.6 s,
+        // the apply alone up to 4.4 s), so a change published mid-pass waits for it
+        // and then for a full pass of its own. This is the one line that says so.
+        private static long _changedTicks;
+
+        internal static void MarkChanged(DateTime nowUtc) =>
+            Interlocked.CompareExchange(ref _changedTicks, nowUtc.Ticks, 0);
+
+        // Called when a pass that STARTED at passStartedUtc has been applied. A pass
+        // that began before the change read the old snapshot, so it proves nothing
+        // and the change stays pending; the first pass that began at or after it
+        // is the one that drew it, and the time since the change is the answer.
+        internal static TimeSpan? ReachedOrbs(DateTime passStartedUtc, DateTime nowUtc)
+        {
+            var changed = Interlocked.Read(ref _changedTicks);
+            if (changed == 0 || changed > passStartedUtc.Ticks) return null;
+            Interlocked.CompareExchange(ref _changedTicks, 0, changed);
+            return nowUtc - new DateTime(changed, DateTimeKind.Utc);
         }
 
         // ---- answering in place (CB-427) -------------------------------------
