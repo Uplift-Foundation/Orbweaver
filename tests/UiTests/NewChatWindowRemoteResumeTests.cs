@@ -56,6 +56,10 @@ public class NewChatWindowRemoteResumeTests : IDisposable
         public RemoteListResult List = new(RemoteListOutcome.Ok, Array.Empty<PastSessionRow>(), null);
         public RemoteResumeResult Resume = new(RemoteResumeOutcome.Launched, null, false);
         public Exception? ThrowList, ThrowResume;
+        // When set, the list answers only when the test completes it: a test of
+        // the "still asking" state must not depend on how soon a posted result
+        // reaches the dispatcher (CB-434: it raced, and lost on CI).
+        public TaskCompletionSource<RemoteListResult>? ListGate;
         public List<(string machine, NewChatCli cli, string profile, bool older)> Listed = new();
         public List<(string machine, NewChatCli cli, string id, string profile)> Resumed = new();
         public List<string> Cwds = new();
@@ -64,7 +68,7 @@ public class NewChatWindowRemoteResumeTests : IDisposable
         {
             Listed.Add((machine, cli, profile, showOlder));
             if (ThrowList is { } e) throw e;
-            return Task.FromResult(List);
+            return ListGate?.Task ?? Task.FromResult(List);
         }
 
         public Task<RemoteResumeResult> ResumeAsync(string machine, NewChatCli cli, string sessionId, string cwd, string profile, CancellationToken ct)
@@ -204,11 +208,15 @@ public class NewChatWindowRemoteResumeTests : IDisposable
     public void ALoadingListSaysWhoIsBeingAsked()
     {
         NewChatWindow.ResumeLoadInlineForTests = false;
-        var remote = new FakeRemote();
+        var remote = new FakeRemote { ListGate = new(TaskCreationOptions.RunContinuationsAsynchronously) };
         var window = Window(remote);
 
-        Assert.True(window.ResumeEmpty.IsVisible);
-        Assert.Equal(PeerResumeCopy.Loading("mini"), window.ResumeEmpty.Text);
+        try
+        {
+            Assert.True(window.ResumeEmpty.IsVisible);
+            Assert.Equal(PeerResumeCopy.Loading("mini"), window.ResumeEmpty.Text);
+        }
+        finally { remote.ListGate.TrySetResult(remote.List); }
     }
 
     [AvaloniaFact]
