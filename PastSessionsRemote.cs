@@ -50,7 +50,11 @@ namespace Orbweaver
         // In order: the CLI, the account, then the read. The peer link's
         // switch is checked by the caller before this is reached, so a desk
         // that has not opted in reads nothing at all.
-        internal PeerPastSessionsResult Page(PastSessionQuery q)
+        // keep: the phone's browse scope (amendment 2), null on the peer link.
+        // Applied to the sessions before anything is counted, so total, from
+        // and folders describe the kept rows only and nothing says a row was
+        // dropped. Asked once per distinct folder.
+        internal PeerPastSessionsResult Page(PastSessionQuery q, Func<string?, bool>? keep = null)
         {
             if (Array.IndexOf(LaunchGate.Clis, q.Cli) < 0) return PeerPastSessionsResult.Fail(RelayReplies.UnknownCli);
 
@@ -63,6 +67,18 @@ namespace Orbweaver
             IReadOnlyList<PastSession> sessions;
             try { sessions = _seams.Load(cli, profileDir, q.Older, now); }
             catch (Exception) { return PeerPastSessionsResult.Fail(RelayReplies.Unreadable); }
+
+            if (keep is not null)
+            {
+                var seen = new Dictionary<string, bool>(StringComparer.Ordinal);
+                bool Kept(string? cwd)
+                {
+                    if (cwd is null) return keep(null);
+                    if (!seen.TryGetValue(cwd, out var yes)) seen[cwd] = yes = keep(cwd);
+                    return yes;
+                }
+                sessions = sessions.Where(s => Kept(s.Cwd)).ToList();
+            }
 
             // A row whose id could never be resumed from here is not offered:
             // it would only be refused when chosen.
@@ -95,7 +111,7 @@ namespace Orbweaver
         internal static PeerPastSession ToWire(PastSessionRow row, int? count)
         {
             var s = row.Session;
-            var cwdOk = s.Cwd is { } c && c.Length <= MaxPath && !c.Any(char.IsControl);
+            var cwdOk = s.Cwd is { } c && System.Text.Encoding.UTF8.GetByteCount(c) <= MaxPath && !c.Any(char.IsControl);
             return new PeerPastSession(
                 s.Id,
                 cwdOk ? s.Cwd : null,
@@ -107,10 +123,12 @@ namespace Orbweaver
         }
 
         // The real desk. Excluded: each seam is one line into the account
-        // list, the shared index, the session snapshot or the clock.
+        // list, the shared index, the session snapshot or the clock. Accounts
+        // are the caller's: the phone's carry its designated account, a peer's
+        // none, exactly as each one's launch resolves them.
         [ExcludeFromCodeCoverage]
-        internal static PastSessionsRemote ForThisDesk() => new(new Seams(
-            new RelayRemote.AccountSeams(RelayAccounts.Choices, _ => null),
+        internal static PastSessionsRemote ForThisDesk(RelayRemote.AccountSeams accounts) => new(new Seams(
+            accounts,
             PastSessionIndex.Load,
             () => RemoteControlSessions.LocalSessions()
                 .Where(s => s.Status.IsLocalCli)
@@ -139,8 +157,8 @@ namespace Orbweaver
         [ExcludeFromCodeCoverage]
         internal static PeerPastSessionsServer ForThisDesk(Func<bool> enabled)
         {
-            var remote = PastSessionsRemote.ForThisDesk();
-            return new(enabled, remote.Page);
+            var remote = PastSessionsRemote.ForThisDesk(new RelayRemote.AccountSeams(RelayAccounts.Choices, _ => null));
+            return new(enabled, q => remote.Page(q));
         }
     }
 

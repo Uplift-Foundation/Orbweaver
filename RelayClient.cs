@@ -239,6 +239,9 @@ namespace Orbweaver
             Browse = DefaultBrowseSeams(),
             // CB-404: the same host the panel and the mirror use.
             RunControls = RunControlsLive.Shared,
+            // CB-434: list and resume past sessions, under the phone's own account rule.
+            Past = PastSessionsRemote.ForThisDesk(new RelayRemote.AccountSeams(RelayAccounts.Choices, OrbweaverSettings.PhoneLaunchProfileFor)),
+            Resume = LaunchRunner.DefaultResumeSeams(),
         };
 
         // CB-339: the real folder picker seam: the real disk, the settings as they are on each

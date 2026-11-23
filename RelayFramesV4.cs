@@ -141,7 +141,7 @@ namespace Orbweaver
 
     internal static class RelayRequests
     {
-        internal static readonly string[] Types = ["watch", "unwatch", "input", "launch", "persona_image", "list_dir", "set_run"];
+        internal static readonly string[] Types = ["watch", "unwatch", "input", "launch", "persona_image", "list_dir", "set_run", "list_sessions"];
 
         // Null when the plaintext is not a v4 request at all (an answer, or a
         // type this desktop does not know) — those keep their existing paths.
@@ -194,6 +194,9 @@ namespace Orbweaver
                     return RunFrames.FieldOk(field) && RunFrames.IdOk(value)
                         ? new SetRunRequest(reference, sid, field!, value!)
                         : new BadFrameRequest(reference, sid);
+                // CB-434 (frames-v17): a phone listing this desk's past sessions.
+                case "list_sessions":
+                    return SessionFrames.Parse(f, reference);
                 default:
                     return ParseLaunch(f, reference);
             }

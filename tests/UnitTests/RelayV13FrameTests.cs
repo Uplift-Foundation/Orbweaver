@@ -68,7 +68,8 @@ public class RelayV13FrameTests
     public void Caps_advertise_run_options_beside_list_dir_and_the_run_ck_is_per_session()
     {
         var caps = JsonDocument.Parse(BrowseFrames.Caps).RootElement.GetProperty("caps");
-        Assert.Equal(["list_dir", "run_options"], caps.EnumerateArray().Select(c => c.GetString()).ToArray());
+        // CB-434 (frames-v17) puts resume between them, byte-sorted.
+        Assert.Equal(["list_dir", "resume", "run_options"], caps.EnumerateArray().Select(c => c.GetString()).ToArray());
         Assert.Equal("run:abc", RunFrames.CkFor("abc"));
     }
 }

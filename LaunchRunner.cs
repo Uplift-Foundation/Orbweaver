@@ -32,7 +32,13 @@ namespace Orbweaver
         // the CLI's --help and --version: blocking).
         internal sealed record ResumeSeams(
             Func<NewChatCli, string?, string, PastSession?> Find,
-            Func<NewChatCli, string, ResumeCheck> Support);
+            Func<NewChatCli, string, ResumeCheck> Support)
+        {
+            // CB-434 (amendment 2): the phone's browse scope, null for a peer. A
+            // folder outside it is unknown_resume, the same answer as an id this
+            // desk does not have, before the index is consulted.
+            internal Func<string, bool>? InScope { get; init; }
+        }
 
         // Code is RelayReplies.Launched with the new session's id, or the
         // refusal's code with an optional sentence a person can act on.
@@ -142,6 +148,9 @@ namespace Orbweaver
             var cli = LaunchGate.CliFor(f.Cli);
             if (_seams.Resume is not { } resume)
                 return new(RelayReplies.ResumeUnsupported, "This machine can't resume sessions.", null);
+
+            if (resume.InScope is { } inScope && !inScope(f.Cwd))
+                return new(RelayReplies.UnknownResume, null, null);
 
             if (resume.Find(cli, profileDir, f.ResumeSessionId) is not { } past
                 || !SameFolder(past.Cwd, f.Cwd, _seams.Launch.IsWindows))
