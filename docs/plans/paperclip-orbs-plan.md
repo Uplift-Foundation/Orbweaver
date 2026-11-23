@@ -130,7 +130,8 @@ internal sealed record PaperclipAgent(
     int? BudgetPercent,                 // null = draw no ring
     DateTime LastActivity, string Url,
     bool Sleeping,                      // idle, no mark, no need
-    int? RunPid = null, string? RunSessionId = null);
+    int? RunPid = null, string? RunSessionId = null,
+    long BudgetCapCents = 0, long SpentCents = 0);   // as built in B1: the hover prints the amounts, the ring only the percent
 
 internal static class PaperclipSessions {
     public static IReadOnlyList<PaperclipAgent> Snapshot();     // every agent, unfolded; empty unless enabled
@@ -219,7 +220,7 @@ Needs, one per item, attached to an agent:
 | 4 | newest finished run `failed` or `timed_out` | Broke | "Last run failed" + `: <errorCode>` when the row has one / "Last run timed out" |
 | 5 | otherwise | None | |
 
-**`Activity` for the hover** is `currentToolName` when set; else `currentStatusMessage`, unless it looks internal, in which case it is dropped and the task line stands alone. Internal means it starts with `runner span:` or is a dotted identifier with no space before the first dot (`runner.process.launch`). The measured legacy sentence "Receiving agent output" passes; the measured native span text does not.
+**`Activity` for the hover** is `currentToolName` when set; else `currentStatusMessage`, unless it looks internal, in which case it is dropped and the task line stands alone. Internal means it starts with `runner span:` or matches `^[\w-]+\.[\w-]` (as built: `PaperclipApi.LooksInternal`), i.e. it opens with a dotted identifier such as `runner.process.launch`. A sentence whose first word ends in a full stop followed by a space does not match. The measured legacy sentence "Receiving agent output" passes; the measured native span text does not.
 
 An agent can be amber and broke at once (measured: a failed run blocked its task). Amber decides the state and the click; the mark's reason still shows in the hover.
 
@@ -242,6 +243,14 @@ Broke clears on the next `succeeded` run, because rule 4 reads the newest finish
 No chat panel. No kind badge.
 
 **Dimming, as built (`PaperclipOrb.Dims`, B2 at `b6a81bf78`).** A Paperclip orb dims to 0.45 only when it is asleep (`Parked` with no Broke or OverBudget mark) or manually paused (mark Paused, unless it also needs you). Needs-you, broke, over-budget and working draw at full strength, and broke or over-budget win even when the row is `Parked`. The dim is applied to the orb's body, not the whole window, so the presence-corner mark ("?", "!", pause) stays at full strength on a dimmed orb. It is re-applied whenever the verdict changes, even if presence did not. Every other source keeps today's rule.
+
+**The hover's "last run … ago", as built, and where it can be wrong.** `PaperclipScan` prints `last run <result> <ago>` from `PaperclipAgent.LastActivity`, which is the newest of the agent's `lastHeartbeatAt`, the newest finished run's start and finish, and any live run's start. It is a stand-in for the run's own finish time. The line is already left out while the agent is working, and when the mark's reason already says "Last run …".
+
+- **Usually right.** In the one case where both were read, `lastHeartbeatAt` was 28 ms after the run's `finishedAt`.
+- **Wrong, certain from the code:** an agent that is amber while a run is in flight (a need beats a live run for the state). The live run's start is in the maximum, so the line gives the *current* run's start as the time the *previous* run ended.
+- **Wrong, possible:** whenever `lastHeartbeatAt` moves without the listed run being the one that just finished. The run listing is the newest 20 rows across the whole company, so on a busy company an agent's newest run can fall outside it and an older result gets a fresh time. Whether `lastHeartbeatAt` ever moves without a run finishing has not been established.
+
+The stand-in is not needed: all three measured run-row shapes (full, redacted, summary) carry `finishedAt`. **Recommended fix:** print the time from the newest finished run's `finishedAt`, and print the result with no time when that is missing. One nullable field on the record and one line in `PaperclipScan`; `LastActivity` keeps its job as the scan entry's stamp.
 
 A report under a lead draws at the existing team-member scale. **Open in Paperclip** and **Review in Paperclip** both open `status.Url`, which §3's merge block sets to the first need's page when the agent is waiting.
 
@@ -288,7 +297,7 @@ New: `PaperclipApi.cs`, `PaperclipDiscovery.cs`, `PaperclipConnect.cs`, `Papercl
 | `OrbAutoGroups.cs:46` | key `paperclip`, name `Paperclip`. |
 | `AutoGroupAccounts.cs:75`, `LocalPersona.cs:193` | No account; no local persona. |
 | `OrbweaverSettings.cs:90` | Keys `paperclipEnabled` (false), `paperclipUrl` (""), `paperclipCompanyId` (""), `paperclipSleeping` ("fold"), `paperclipHintShown` (false), in the `OpenClawEnabled` pattern (`:334`, `:1340`). |
-| `SettingsWindow.cs:736` | `Group("paperclip", "Paperclip", …)` after OpenClaw: found-instance row with **Connect**; address box for a remote one; approving state with Cancel; company picker (hidden with one company); "When agents are asleep" (fold / show / hide); **Disconnect**; **Reconnect** when needed; status line refreshed where `_claudeCloudStatus` is (`:2245`). No key is ever shown or typed. |
+| `SettingsWindow.cs:736`, `SettingsWindow.Paperclip.cs` | As built: `SettingsWindow` is `partial` and the group's rows live in `SettingsWindow.Paperclip.cs`. `Group("paperclip", "Paperclip", …)` after OpenClaw: found-instance row with **Connect**; address box for a remote one; approving state with Cancel; company picker (hidden with one company); "When agents are asleep" (fold / show / hide); **Disconnect**; **Reconnect** when needed; status line refreshed where `_claudeCloudStatus` is (`:2245`). No key is ever shown or typed. |
 | `TrayController.cs` | The one-time "Paperclip found" row. |
 | `Program.cs:166`, `ScreenLockWait.cs:73` | `PaperclipSessions.Restart()`; the comment's list. |
 | `README.md` | A Paperclip section: what it shows; connect is one approval; the key lasts 30 days and Orbweaver asks to reconnect; nothing is installed in the org; release 1 is view-only. Two troubleshooting lines, measured on the mini and not Orbweaver's to fix: on a Homebrew Mac the Paperclip launchd service's `PATH` excludes Homebrew; Paperclip's Claude sign-in could not parse Claude Code 2.1.330's output (2.1.286 worked). |
