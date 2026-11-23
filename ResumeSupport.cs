@@ -16,11 +16,11 @@ namespace Orbweaver
     internal static class ResumeSupport
     {
         // `-r, --resume [value]` (Claude) and `--resume <ID>` (Grok) are flags.
-        private static readonly Regex ResumeFlag = new(@"(^|[\s,])--resume\b", RegexOptions.Multiline | RegexOptions.CultureInvariant);
+        private static readonly Regex ResumeFlag = new(@"(^|[\s,])--resume(?![\w-])", RegexOptions.Multiline | RegexOptions.CultureInvariant);
 
         // Codex lists it under Commands: as an indented `resume` word at the
         // start of a line, e.g. "  resume      Resume a previous interactive session".
-        private static readonly Regex ResumeCommand = new(@"^\s+resume\b", RegexOptions.Multiline | RegexOptions.CultureInvariant);
+        private static readonly Regex ResumeCommand = new(@"^\s+resume(?![\w-])", RegexOptions.Multiline | RegexOptions.CultureInvariant);
 
         // Pure: does this help text offer resume-by-id for this CLI?
         // version is only for the message; null leaves it out.
