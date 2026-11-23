@@ -110,14 +110,19 @@ namespace Orbweaver
             }).ToList();
         }
 
-        // One line for a state change that reached an orb: the agent's id prefix,
-        // the states, the milliseconds from the poll that saw it. No title, no
-        // token, no text from Paperclip. Null for a change that moved no state.
-        internal static string? Line(string key, string oldState, string newState, TimeSpan elapsed)
+        // One line for a state change that was drawn on an orb: the agent's id prefix,
+        // the states, and the milliseconds from the poll that published it. No title,
+        // no token, no text from Paperclip. Null for a change that moved no state.
+        // When the publish time was not recorded the line says so instead of being
+        // left out: silence cannot be told from an instrument that is not running.
+        internal static string? Line(string key, string oldState, string newState, TimeSpan? elapsed)
         {
             if (oldState == newState) return null;
             var id = key.StartsWith(PaperclipScan.KeyPrefix, StringComparison.Ordinal) ? key[PaperclipScan.KeyPrefix.Length..] : key;
-            return $"paperclip: {(id.Length > 8 ? id[..8] : id)} {oldState} -> {newState} reached the orb in {(long)Math.Max(0, elapsed.TotalMilliseconds)} ms";
+            var who = $"paperclip: {(id.Length > 8 ? id[..8] : id)} {oldState} -> {newState}";
+            return elapsed is { } e
+                ? $"{who} reached the orb in {(long)Math.Max(0, e.TotalMilliseconds)} ms"
+                : $"{who} drawn by the scan (publish time not recorded)";
         }
     }
 }

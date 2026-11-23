@@ -508,4 +508,17 @@ public class PaperclipActionsTests
         Assert.False(PaperclipOrb.ShowsNeeds(other, PaperclipLink.Connected));
         Assert.False(PaperclipOrb.ShowsNeeds(null, PaperclipLink.Connected));
     }
+
+    [Fact]
+    public void The_snapshot_and_its_publish_mark_are_taken_together_and_a_publish_brings_both()
+    {
+        TakeChangeSeen();
+        var agents = new List<PaperclipAgent>();
+        Publish(agents, PaperclipLink.Connected, "pair " + Guid.NewGuid());
+        var (snap, seen) = TakeSnapshotAndSeen();
+        Assert.Same(agents, snap);
+        Assert.NotNull(seen);
+        Assert.Null(TakeSnapshotAndSeen().Seen);          // taken once
+        Assert.Same(agents, TakeSnapshotAndSeen().Agents); // the snapshot stays
+    }
 }

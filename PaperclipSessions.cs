@@ -112,13 +112,22 @@ namespace Orbweaver
         {
             var signature = DrawSignature(agents, link, status) + (remembered ? "\nremembered" : "");
             _remembered = remembered;
-            _snapshot = agents;
+            bool changed;
+            // The snapshot and the mark that says when it was published go in together,
+            // so a scan that reads one reads the other (CB-425).
+            lock (PubGate)
+            {
+                _snapshot = agents;
+                changed = signature != _lastDraw;
+                if (changed)
+                {
+                    _lastDraw = signature;
+                    MarkChanged(DateTime.UtcNow);
+                }
+            }
             _link = link;
             _statusText = status;
-            if (signature == _lastDraw) return;
-            _lastDraw = signature;
-            MarkChanged(DateTime.UtcNow);
-            Changed?.Invoke();
+            if (changed) Changed?.Invoke();
         }
 
         // What the loop publishes after a step. A live snapshot is published (and the
@@ -170,7 +179,10 @@ namespace Orbweaver
         }
 
         // The seam every downstream test uses, as ClaudeCloudSessions has.
-        internal static void SetSnapshotForTests(IReadOnlyList<PaperclipAgent> agents) => _snapshot = agents;
+        internal static void SetSnapshotForTests(IReadOnlyList<PaperclipAgent> agents)
+        {
+            lock (PubGate) _snapshot = agents;
+        }
 
         internal static void SetLinkForTests(PaperclipLink link, string statusText)
         {
@@ -181,7 +193,11 @@ namespace Orbweaver
         // ---- how long a change takes to reach the orbs (CB-425) --------------------
 
         // When the poll published the earliest change no orb update has drawn yet.
-        // The apply that draws it takes the mark and says how long it took.
+        // Published together with the snapshot it belongs to (under PubGate), and
+        // taken together with it: a scan that took the mark at the start of its pass
+        // and read the snapshot later lost the line whenever a poll published in
+        // between (the new state was drawn with no mark to report).
+        private static readonly object PubGate = new();
         private static long _changedTicks;
 
         internal static void MarkChanged(DateTime nowUtc) =>
@@ -189,8 +205,22 @@ namespace Orbweaver
 
         internal static DateTime? TakeChangeSeen()
         {
-            var t = Interlocked.Exchange(ref _changedTicks, 0);
-            return t == 0 ? null : new DateTime(t, DateTimeKind.Utc);
+            lock (PubGate)
+            {
+                var t = Interlocked.Exchange(ref _changedTicks, 0);
+                return t == 0 ? null : new DateTime(t, DateTimeKind.Utc);
+            }
+        }
+
+        // The snapshot to draw and the earliest change published since the last
+        // draw, read as one: the mark is never older or newer than its snapshot.
+        internal static (IReadOnlyList<PaperclipAgent> Agents, DateTime? Seen) TakeSnapshotAndSeen()
+        {
+            lock (PubGate)
+            {
+                var t = Interlocked.Exchange(ref _changedTicks, 0);
+                return (_snapshot, t == 0 ? null : new DateTime(t, DateTimeKind.Utc));
+            }
         }
 
         // ---- answering in place (CB-427) -------------------------------------

@@ -89,7 +89,7 @@ public class PaperclipFastPathUiTests : IDisposable
     }
 
     [AvaloniaFact]
-    public async Task A_fast_change_writes_its_line_too_and_a_change_with_no_published_mark_writes_none()
+    public async Task A_change_writes_its_line_and_one_with_no_recorded_publish_time_says_so_instead_of_staying_silent()
     {
         var m = await WithAmberOrb(Hire);
         var seen = new DateTime(2026, 11, 23, 12, 0, 0, DateTimeKind.Utc);
@@ -104,7 +104,8 @@ public class PaperclipFastPathUiTests : IDisposable
 
         PaperclipSessions.SetSnapshotForTests([Agent("a1", "waiting", Hire)]);   // moved, but nothing was published
         await m.ScheduleScan();
-        Assert.Single(lines);
+        Assert.Equal(2, lines.Count);
+        Assert.Equal("paperclip: a1 idle -> waiting drawn by the scan (publish time not recorded)", lines[1]);
     }
 
     // ---- no flash of amber after an answer, and the relay's object is never written to ----------
@@ -279,5 +280,49 @@ public class PaperclipFastPathUiTests : IDisposable
 
         Assert.True(m.ApplyPaperclipNow());              // and the memory is gone
         Assert.Equal(OrbPresence.NeedsInput, S(m, "a1").Presence);
+    }
+
+    // ---- the production wiring, end to end ------------------------------------------------------
+
+    // No injected clock or sink: a real PaperclipSessions.Publish (which marks the change),
+    // a real scan and apply, and the real DiagnosticsLog writing into a temp directory.
+    [AvaloniaFact]
+    public async Task A_published_state_change_writes_its_line_to_the_real_diagnostics_log()
+    {
+        var logDir = Path.Combine(_scratch, "logs");
+        using var scope = CrashLog.ScopeForTests(logDir);
+        var m = await WithAmberOrb(Hire);                 // the first publish and scan: amber
+
+        PaperclipSessions.Publish([Agent("a1", "idle")], PaperclipLink.Connected, "t2");   // the poll's own path
+        await m.ScheduleScan();                           // what the requested scan does
+
+        var log = Path.Combine(logDir, "diagnostics.log");
+        Assert.True(File.Exists(log), "nothing was written to the diagnostics log");
+        var text = File.ReadAllText(log);
+        Assert.Matches(@"paperclip: a1 waiting -> idle reached the orb in \d+ ms", text);
+    }
+
+    // The race the zero-lines reading may have hit: a poll publishes on its own thread
+    // while a scan pass is mid-apply, after the pass has begun and before it reads the
+    // snapshot. The pass then draws the new state, and the line must still be written.
+    [AvaloniaFact]
+    public async Task A_change_published_in_the_middle_of_a_pass_still_writes_its_line()
+    {
+        var logDir = Path.Combine(_scratch, "logs-race");
+        using var scope = CrashLog.ScopeForTests(logDir);
+        var m = await WithAmberOrb(Hire);
+
+        var published = false;
+        m.BeforePaperclipRead = () =>
+        {
+            if (published) return;
+            published = true;
+            PaperclipSessions.Publish([Agent("a1", "idle")], PaperclipLink.Connected, "mid-pass");
+        };
+        await m.ScheduleScan();
+
+        Assert.Equal(OrbPresence.Present, S(m, "a1").Presence);       // the pass did draw the new state
+        var log = Path.Combine(logDir, "diagnostics.log");
+        Assert.True(File.Exists(log) && File.ReadAllText(log).Contains("a1 waiting -> idle"), "the drawn change wrote no line");
     }
 }

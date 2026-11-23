@@ -176,4 +176,12 @@ public class PaperclipFastPathTests
         var drawn = PaperclipFastPath.WithoutAnswered(snap, new HashSet<string> { "a" });
         Assert.Equal(("generating", 0), (drawn[0].State, drawn[0].Needs.Count));
     }
+
+    [Fact]
+    public void A_line_for_a_change_with_no_recorded_publish_time_says_so()
+    {
+        Assert.Equal("paperclip: 01234567 idle -> waiting drawn by the scan (publish time not recorded)",
+            PaperclipFastPath.Line("paperclip:0123456789", "idle", "waiting", null));
+        Assert.Null(PaperclipFastPath.Line("paperclip:x", "idle", "idle", null));
+    }
 }
