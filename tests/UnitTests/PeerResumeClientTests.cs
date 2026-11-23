@@ -100,7 +100,11 @@ public class PeerResumeClientTests
     [Theory]
     [InlineData(PeerLaunchCodes.NoAnswer, null)]
     [InlineData(PeerLaunchCodes.LinkLost, "the link dropped")]
-    [InlineData(RelayReplies.Unreadable, RelayReplies.Unreadable)]
+    [InlineData(PeerLaunchCodes.PeerLaunchOff, "it doesn't allow other desktops to start sessions")]
+    [InlineData(RelayReplies.UnknownAccount, "it has no account by that name")]
+    [InlineData(RelayReplies.UnknownCli, "it doesn't have that CLI")]
+    [InlineData(RelayReplies.Unreadable, "it couldn't read its session history")]
+    [InlineData(RelayReplies.BadFrame, RelayReplies.BadFrame)]
     public void List_reasons_are_short_enough_for_the_windows_sentence(string code, string? why) =>
         Assert.Equal(why, PeerLaunchClient.ListWhy(code));
 

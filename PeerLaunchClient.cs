@@ -213,6 +213,9 @@ namespace Orbweaver
             PeerLaunchCodes.NoAnswer => null,
             PeerLaunchCodes.LinkLost => "the link dropped",
             PeerLaunchCodes.PeerLaunchOff => "it doesn't allow other desktops to start sessions",
+            RelayReplies.UnknownAccount => "it has no account by that name",
+            RelayReplies.UnknownCli => "it doesn't have that CLI",
+            RelayReplies.Unreadable => "it couldn't read its session history",
             _ => code,
         };
 
