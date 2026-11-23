@@ -157,11 +157,22 @@ namespace Orbweaver
             }
             buttons.Children.Add(review);
 
+            var body = new StackPanel { Spacing = 6 };
+            body.Children.Add(title);
+            // What tells two of one kind apart, when Paperclip gave one: dim, short, wrapped.
+            if (!string.IsNullOrWhiteSpace(need.Summary))
+                body.Children.Add(new TextBlock
+                {
+                    Text = need.Summary.Length > 240 ? need.Summary[..240].TrimEnd() + "…" : need.Summary,
+                    FontSize = 10.5, TextWrapping = TextWrapping.Wrap, Foreground = new SolidColorBrush(Color.Parse("#B3FFFFFF")),
+                });
+            body.Children.Add(buttons);
+            body.Children.Add(status);
             var card = new Border
             {
                 Padding = new Thickness(10), CornerRadius = new CornerRadius(8),
                 Background = new SolidColorBrush(Color.Parse("#26FFFFFF")),
-                Child = new StackPanel { Spacing = 6, Children = { title, buttons, status } },
+                Child = body,
             };
             var row = new NeedRow(need, card)
             {
@@ -230,7 +241,7 @@ namespace Orbweaver
             }
             else Rows.Children.Remove(row.Card);
             UpdateHeading();
-            Footer.Text = result.IsDone ? (approve ? "Approved." : "Declined.") : null;
+            Footer.Text = result.IsDone ? (result.Why ?? (approve ? "Approved." : "Declined.")) : null;
             Footer.IsVisible = result.IsDone;
             if (_rows.Count == 0) CloseSoon();
         }

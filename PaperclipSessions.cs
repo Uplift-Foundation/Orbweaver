@@ -20,7 +20,12 @@ namespace Orbweaver
         string Kind,
         string Id,
         string Title,
-        string Url);
+        string Url,
+        // What a person needs to tell two of one kind apart, and when it was raised
+        // (and, for a tool action, when Paperclip lets it lapse). All optional.
+        string? Summary = null,
+        DateTime? CreatedAt = null,
+        DateTime? ExpiresAt = null);
 
     internal sealed record PaperclipAgent(
         string Id, string Name, string Role, string Title,
@@ -193,13 +198,18 @@ namespace Orbweaver
             st with { LastFast = null, LastSlow = null, NextAttempt = null };
 
         // The delay between ticks, cut short by PollNow. Returns true when it was
-        // cut short.
+        // cut short. A wake with no nudge behind it (the signal can outlive the
+        // nudge that raised it) is ignored and the rest of the wait is served.
         internal static async Task<bool> WaitAsync(TimeSpan wait, CancellationToken ct)
         {
-            if (TakeNudge()) { DrainSignal(); return true; }
-            var woke = await NudgeSignal.WaitAsync(wait, ct).ConfigureAwait(false);
-            if (woke) TakeNudge();
-            return woke;
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (true)
+            {
+                if (TakeNudge()) { DrainSignal(); return true; }
+                var left = wait - clock.Elapsed;
+                if (left <= TimeSpan.Zero) return false;
+                if (!await NudgeSignal.WaitAsync(left, ct).ConfigureAwait(false)) return false;
+            }
         }
 
         private static void DrainSignal() { NudgeSignal.Wait(0); }
@@ -237,6 +247,22 @@ namespace Orbweaver
                 }
                 return _actions;
             }
+        }
+
+        // The last Wake pressed on this desktop, per agent. A Wake that fails at
+        // once is an event the person caused, so it must not also raise a "broke"
+        // alarm on a phone (plan 13.2); BrokeTransitions reads these times.
+        private static readonly object WakeGate = new();
+        private static readonly Dictionary<string, DateTime> _wakes = new();
+
+        internal static void NoteWake(string agentId, DateTime now)
+        {
+            lock (WakeGate) _wakes[agentId] = now;
+        }
+
+        internal static IReadOnlyDictionary<string, DateTime> Wakes()
+        {
+            lock (WakeGate) return new Dictionary<string, DateTime>(_wakes);
         }
 
         // ---- cadences and wording -------------------------------------------

@@ -180,6 +180,30 @@ public class PaperclipActTests : IDisposable
         Assert.Empty(((StackPanel)((Border)rig.Panel.Content!).Child!).Children.OfType<StackPanel>().First().Children);
     }
 
+    [AvaloniaFact]
+    public async Task An_approval_whose_tool_then_failed_says_so_in_the_footer()
+    {
+        var rig = new Rig();
+        rig.Actions.Answer = _ => new(PaperclipActionResult.Done, "Approved, but the tool failed");
+        rig.Panel.Present(Amber(Tool));
+        await Click(rig.Panel.RowFor("ac1")!, true, rig);
+        Assert.Equal("Approved, but the tool failed", rig.Panel.FooterText);
+    }
+
+    [AvaloniaFact]
+    public void A_need_with_a_summary_shows_it_between_the_title_and_the_buttons_cut_when_long()
+    {
+        var rig = new Rig();
+        var withSummary = Hire with { Summary = "Needs QA before the release." };
+        var longOne = Tool with { Summary = new string('s', 300) };
+        rig.Panel.Present(Amber(withSummary, longOne));
+        var texts = Texts(rig.Panel.RowFor("ap1")!).ToList();
+        Assert.Equal(["Hire: QA engineer", "Needs QA before the release.", ""], texts);
+        var cut = Texts(rig.Panel.RowFor("ac1")!).ElementAt(1);
+        Assert.Equal(241, cut.Length);
+        Assert.EndsWith("…", cut);
+    }
+
     [AvaloniaTheory]
     [InlineData("Refused")]
     [InlineData("Unreachable")]

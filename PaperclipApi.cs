@@ -46,10 +46,14 @@ namespace Orbweaver
 
         internal sealed record RawApproval(
             string Id, string Type, string Status, string? Title,
-            string? PayloadAgentId, string? RequestedByAgentId);
+            string? PayloadAgentId, string? RequestedByAgentId,
+            string? Summary = null, DateTime? CreatedAt = null);
 
+        // Summary is the one line a person reads to tell requests apart (the tool's
+        // title); Preview is the longer text Paperclip rendered for the request.
         internal sealed record RawActionRequest(
-            string Id, string? AgentId, string? Summary);
+            string Id, string? AgentId, string? Summary,
+            string? Preview = null, DateTime? CreatedAt = null, DateTime? ExpiresAt = null);
 
         internal sealed record RawIssue(
             string Id, string Identifier, string Title, string Status,
@@ -173,20 +177,32 @@ namespace Orbweaver
             {
                 var id = Str(r, "id");
                 if (string.IsNullOrEmpty(id)) return null;
-                string? title = null, payloadAgent = null;
+                string? title = null, payloadAgent = null, summary = null;
                 if (r.TryGetProperty("payload", out var p) && p.ValueKind == JsonValueKind.Object)
                 {
                     title = NonEmpty(Str(p, "title"));
                     payloadAgent = NonEmpty(Str(p, "agentId"));
+                    summary = Limit(NonEmpty(Str(p, "summary")), PreviewLimit);
                 }
                 return new RawApproval(id, Str(r, "type") ?? "", Str(r, "status") ?? "", title,
-                    payloadAgent, NonEmpty(Str(r, "requestedByAgentId")));
+                    payloadAgent, NonEmpty(Str(r, "requestedByAgentId")), summary, Time(Str(r, "createdAt")));
             }).Where(a => a != null).Select(a => a!).ToList();
 
-        // The shape of a non-empty row has never been captured (plan 1.7), so
-        // this tries the likely keys: an agent under agentId / requestedByAgentId
-        // / agent.id, and something to show under summary / toolName / title.
-        // The list itself comes wrapped as {"actionRequests":[...]}.
+        internal const int PreviewLimit = 4000;
+
+        private static string? Limit(string? s, int limit) => s != null && s.Length > limit ? s[..limit] : s;
+
+        // A real row is nested (measured 2026-11-23, plan 13.1 row 12): the request
+        // itself under `request`, with the tool's name and title beside it, so the
+        // id is `request.id`. Release 1 guessed a flat row and so saw no real
+        // request at all; the flat shape stays accepted because the old fixtures
+        // and a different Paperclip version may still send it. The list comes
+        // wrapped as {"actionRequests":[...]}.
+        //
+        // Title: toolTitle, else the part of toolName after its last colon, else
+        // the flat summary / toolName / tool / title. Preview: previewMarkdown with
+        // its ** removed, cut. An agent: the request's requestedByAgentId, then the
+        // row's, then the flat keys; a row naming none is the company's lead's.
         internal static IReadOnlyList<RawActionRequest> ParseActionRequests(string? json)
         {
             var root = Root(json);
@@ -194,21 +210,34 @@ namespace Orbweaver
                 || arr.ValueKind != JsonValueKind.Array)
                 return Array.Empty<RawActionRequest>();
             var list = new List<RawActionRequest>();
-            foreach (var r in arr.EnumerateArray())
+            foreach (var row in arr.EnumerateArray())
             {
-                if (r.ValueKind != JsonValueKind.Object) continue;
-                var id = Str(r, "id");
+                if (row.ValueKind != JsonValueKind.Object) continue;
+                var req = row.TryGetProperty("request", out var q) && q.ValueKind == JsonValueKind.Object ? q : row;
+                var id = Str(req, "id");
                 if (string.IsNullOrEmpty(id)) continue;
-                var status = Str(r, "status");
+                var status = Str(req, "status");
                 if (status != null && status != "pending") continue;
-                string? agent = NonEmpty(Str(r, "agentId")) ?? NonEmpty(Str(r, "requestedByAgentId"));
-                if (agent == null && r.TryGetProperty("agent", out var a) && a.ValueKind == JsonValueKind.Object)
+                string? agent = NonEmpty(Str(req, "requestedByAgentId")) ?? NonEmpty(Str(row, "requestedByAgentId"))
+                    ?? NonEmpty(Str(row, "agentId"));
+                if (agent == null && row.TryGetProperty("agent", out var a) && a.ValueKind == JsonValueKind.Object)
                     agent = NonEmpty(Str(a, "id"));
-                var summary = NonEmpty(Str(r, "summary")) ?? NonEmpty(Str(r, "toolName"))
-                    ?? NonEmpty(Str(r, "tool")) ?? NonEmpty(Str(r, "title"));
-                list.Add(new RawActionRequest(id, agent, summary));
+                var title = NonEmpty(Str(row, "toolTitle")) ?? AfterColon(NonEmpty(Str(row, "toolName")))
+                    ?? NonEmpty(Str(row, "summary")) ?? NonEmpty(Str(row, "tool")) ?? NonEmpty(Str(row, "title"));
+                var preview = NonEmpty(Str(req, "previewMarkdown"))?.Replace("**", "");
+                list.Add(new RawActionRequest(id, agent, title, Limit(preview, PreviewLimit),
+                    Time(Str(req, "createdAt")), Time(Str(req, "expiresAt"))));
             }
             return list;
+        }
+
+        // "mcp.paperclip-examples-...:create-item" is the gateway's namespaced name;
+        // what a person recognises is the last part. A name with no colon is kept whole.
+        private static string? AfterColon(string? name)
+        {
+            if (name == null) return null;
+            var i = name.LastIndexOf(':');
+            return i < 0 ? name : NonEmpty(name[(i + 1)..]);
         }
 
         internal static IReadOnlyList<RawIssue> ParseIssues(string? json) =>
@@ -325,11 +354,11 @@ namespace Orbweaver
             foreach (var a in c.Approvals)
                 Add(Resolve(a.PayloadAgentId, a.RequestedByAgentId),
                     new PaperclipNeed("approval", a.Id, a.Title ?? ApprovalWording(a.Type),
-                        ApprovalUrl(c.BaseUrl, c.IssuePrefix, a.Id)));
+                        ApprovalUrl(c.BaseUrl, c.IssuePrefix, a.Id), a.Summary, a.CreatedAt));
             foreach (var a in c.Actions)
                 Add(Resolve(a.AgentId),
                     new PaperclipNeed("action", a.Id, a.Summary ?? "Tool action",
-                        RequestsUrl(c.BaseUrl, c.IssuePrefix)));
+                        RequestsUrl(c.BaseUrl, c.IssuePrefix), a.Preview, a.CreatedAt, a.ExpiresAt));
             foreach (var i in c.BlockedIssues)
             {
                 // An unassigned blocked issue is nobody's orb to light. Paperclip's

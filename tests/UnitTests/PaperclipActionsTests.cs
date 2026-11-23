@@ -154,10 +154,12 @@ public class PaperclipActionsTests
         Assert.Equal(PaperclipActionResult.NeedsReconnect, (await b.DecideAsync(Approval(), true, default)).Result);
         Assert.DoesNotContain(api2.Calls, c => c.StartsWith("GET"));
 
-        // a tool action is never re-read: its 4xx is simply a refusal
+        // a tool action is never re-read: a 409 is already decided, any other 4xx a refusal
         var (api3, c3, _) = Rig();
-        api3.Posts["/api/tool-gateway/action-requests/ac1/approve"] = new(PaperclipHttpKind.Other, 409, "{\"error\":\"x\"}");
+        api3.Posts["/api/tool-gateway/action-requests/ac1/approve"] = new(PaperclipHttpKind.Other, 400, "{\"error\":\"x\"}");
         Assert.Equal(PaperclipActionResult.Refused, (await c3.DecideAsync(Action(), true, default)).Result);
+        api3.Posts["/api/tool-gateway/action-requests/ac1/approve"] = new(PaperclipHttpKind.Other, 409, "{}");
+        Assert.Equal(PaperclipActionResult.AlreadyDecided, (await c3.DecideAsync(Action(), true, default)).Result);
         Assert.DoesNotContain(api3.Calls, c => c.StartsWith("GET"));
     }
 
@@ -215,6 +217,98 @@ public class PaperclipActionsTests
         public Task<PaperclipOutcome> ResumeAsync(string agentId, CancellationToken ct) => Task.FromResult(default(PaperclipOutcome));
     }
 
+    // ---- tool actions, from the captured fixtures (plan 13.1 row 12) ------------------
+
+    [Fact]
+    public void The_captured_pending_list_parses_to_its_real_rows()
+    {
+        var rows = PaperclipApi.ParseActionRequests(PaperclipFx.Read("native/tool-actions/action-requests-pending.json"));
+        Assert.NotEmpty(rows);
+        var r = rows[0];
+        Assert.Equal("00000000-0000-4000-8000-000000000001", r.Id);
+        Assert.Null(r.AgentId);                       // a test-call request names no agent
+        Assert.Equal("create-item", r.Summary);       // toolTitle is null: the part after the last colon
+        Assert.Equal("create_item \u00b7 Title: Orbweaver measurement 3", r.Preview);   // ** removed
+        Assert.Equal(new DateTime(2026, 11, 23, 18, 58, 43, 830, DateTimeKind.Utc), r.CreatedAt);
+        Assert.Equal(r.CreatedAt!.Value.AddHours(1).AddMilliseconds(211), r.ExpiresAt);
+    }
+
+    [Fact]
+    public void A_tool_title_beats_the_tool_name_and_a_decided_row_is_skipped_and_the_agent_order_holds()
+    {
+        var json = "{\"actionRequests\":[" +
+            "{\"request\":{\"id\":\"1\",\"status\":\"pending\",\"requestedByAgentId\":\"A\"},\"toolTitle\":\"Create item\",\"toolName\":\"x:y\",\"requestedByAgentId\":\"B\"}," +
+            "{\"request\":{\"id\":\"2\",\"status\":\"failed\"},\"toolName\":\"x:y\"}," +
+            "{\"request\":{\"id\":\"3\"},\"toolName\":\"x:\",\"requestedByAgentId\":\"B\"}," +
+            "{\"request\":{\"status\":\"pending\"}}," +
+            "{\"request\":5,\"id\":\"4\",\"tool\":\"flat\"}]}";
+        var r = PaperclipApi.ParseActionRequests(json);
+        Assert.Equal(new[] { "1", "3", "4" }, r.Select(x => x.Id).ToArray());
+        Assert.Equal(new string?[] { "A", "B", null }, r.Select(x => x.AgentId).ToArray());
+        Assert.Equal(new string?[] { "Create item", null, "flat" }, r.Select(x => x.Summary).ToArray());
+    }
+
+    [Fact]
+    public void A_long_preview_is_cut_and_a_need_carries_what_the_row_had()
+    {
+        var long_ = new string('a', 5000);
+        var json = $"{{\"actionRequests\":[{{\"request\":{{\"id\":\"1\",\"previewMarkdown\":\"{long_}\"}},\"toolTitle\":\"T\"}}]}}";
+        Assert.Equal(PaperclipApi.PreviewLimit, PaperclipApi.ParseActionRequests(json)[0].Preview!.Length);
+
+        var raw = new PaperclipApi.RawActionRequest("a1", null, "Tool", "preview", DateTime.UnixEpoch, DateTime.UnixEpoch.AddHours(1));
+        var agent = new PaperclipApi.RawAgent("lead", "Lead", "ceo", "", "idle", null, "x", 0, 0, null, null, null);
+        var agents = PaperclipApi.Compose(new PaperclipApi.ComposeInput([agent], [], [], [], [raw], [], new Dictionary<string, string>(),
+            "http://p", "CB", DateTime.UnixEpoch));
+        var need = Assert.Single(agents[0].Needs);     // no agent named: the company's lead
+        Assert.Equal(("action", "Tool", "preview", DateTime.UnixEpoch, DateTime.UnixEpoch.AddHours(1)),
+            (need.Kind, need.Title, need.Summary, need.CreatedAt, need.ExpiresAt));
+
+        var ap = PaperclipApi.ParseApprovals("[{\"id\":\"x\",\"type\":\"hire_agent\",\"payload\":{\"title\":\"Hire\",\"summary\":\"Why\"},\"createdAt\":\"2026-11-23T10:00:00Z\"}]")[0];
+        Assert.Equal(("Why", new DateTime(2026, 11, 23, 10, 0, 0, DateTimeKind.Utc)), (ap.Summary, ap.CreatedAt));
+    }
+
+    [Theory]
+    [InlineData("action-approve-200-failed", 200, true, "Done", "Approved, but the tool failed")]
+    [InlineData("action-approve-again-200", 200, true, "Done", "Approved, but the tool failed")]   // the same row, which reads failed
+    [InlineData("action-decline-200", 200, false, "Done", null)]
+    [InlineData("action-decline-again-200", 200, false, "Done", null)]
+    [InlineData("action-approve-after-decline-409", 409, true, "AlreadyDecided", "Already answered in Paperclip")]
+    [InlineData("action-decline-after-approve-409", 409, false, "AlreadyDecided", "Already answered in Paperclip")]
+    [InlineData("action-approve-unknown-404", 404, true, "AlreadyDecided", "Already answered in Paperclip")]
+    [InlineData("action-approve-no-company-400", 400, true, "Refused", "companyId is required")]
+    public async Task Each_captured_tool_action_answer_maps_to_its_outcome(string fixture, int code, bool approve, string result, string? why)
+    {
+        var (api, a, _) = Rig();
+        api.Posts["/api/tool-gateway/action-requests/ac1/" + (approve ? "approve" : "decline")] =
+            new(PaperclipHttp.Classify(code), code, PaperclipFx.Read("native/tool-actions/" + fixture + ".json"));
+        var o = await a.DecideAsync(Action(), approve, default);
+        Assert.Equal((Enum.Parse<PaperclipActionResult>(result), why), (o.Result, o.Why));
+        Assert.DoesNotContain(api.Calls, c => c.StartsWith("GET"));   // a tool action is never re-read
+    }
+
+    [Fact]
+    public async Task A_declined_request_that_reads_failed_is_not_reported_as_a_tool_failure()
+    {
+        var (api, a, _) = Rig();
+        api.Posts["/api/tool-gateway/action-requests/ac1/decline"] = FakePaperclip.Ok("{\"status\":\"failed\"}");
+        Assert.Null((await a.DecideAsync(Action(), false, default)).Why);
+    }
+
+    [Fact]
+    public async Task A_wake_is_noted_before_the_call_and_the_other_verbs_are_not()
+    {
+        var (api, a, _) = Rig();
+        var before = DateTime.UtcNow;
+        await a.WakeAsync("wake-me", default);
+        await a.PauseAsync("not-woken", default);
+        var wakes = PaperclipSessions.Wakes();
+        Assert.True(wakes["wake-me"] >= before);
+        Assert.False(wakes.ContainsKey("not-woken"));
+        // the returned map is a copy: changing it changes nothing
+        ((Dictionary<string, DateTime>)wakes).Clear();
+        Assert.True(PaperclipSessions.Wakes().ContainsKey("wake-me"));
+    }
+
     // ---- the nudge ------------------------------------------------------------
 
     [Fact]
@@ -244,6 +338,15 @@ public class PaperclipActionsTests
         var wait = WaitAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
         PollNow();
         Assert.True(await wait.WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
+    public async Task A_stale_signal_with_no_nudge_does_not_cut_a_wait_short()
+    {
+        while (TakeNudge()) { }
+        PollNow();
+        Assert.True(TakeNudge());              // the nudge is consumed elsewhere; the signal count stays
+        Assert.False(await WaitAsync(TimeSpan.FromMilliseconds(60), CancellationToken.None));
     }
 
     [Fact]

@@ -39,6 +39,7 @@ namespace Orbweaver
     {
         internal const string DecisionNote = "From Orbweaver";
         internal const string AlreadyDecidedWhy = "Already answered in Paperclip";
+        internal const string ToolFailedWhy = "Approved, but the tool failed";
         internal const string ReconnectWhy = "Reconnect to Paperclip to answer";
         internal const string UnreachableWhy = "Can't reach Paperclip";
         internal const string RefusedWhy = "Paperclip refused that";
@@ -88,6 +89,16 @@ namespace Orbweaver
             var res = await _api.PostAsync(path, BodyFor(need, _companyId), ct).ConfigureAwait(false);
             var outcome = Classify(res);
 
+            // A tool action's approve runs the tool inside the same call, and the
+            // status in the answer is the run's (measured: 200 with "failed"). The
+            // decision was made and the item is gone, so it is Done; the person is
+            // told the tool failed, and the tool's own error text is never shown.
+            if (outcome.IsDone && need.Kind == "action" && approve && StatusOf(res.Body) == "failed")
+                outcome = new(PaperclipActionResult.Done, ToolFailedWhy);
+            // 409 on a tool action is "no longer pending" / "already resolved".
+            else if (need.Kind == "action" && res.StatusCode == 409)
+                outcome = new(PaperclipActionResult.AlreadyDecided, AlreadyDecidedWhy);
+
             // A 4xx other than 401 to an approval is how Paperclip says "not
             // pending" (the measured 422), but the wording is its own, so the item
             // itself is asked: anything but pending means someone decided it.
@@ -100,8 +111,12 @@ namespace Orbweaver
             return Settle(outcome);
         }
 
-        public Task<PaperclipOutcome> WakeAsync(string agentId, CancellationToken ct) =>
-            Agent(agentId, "wakeup", "{\"source\":\"on_demand\"}", ct);
+        public Task<PaperclipOutcome> WakeAsync(string agentId, CancellationToken ct)
+        {
+            // Before the call: a Wake that fails at once must already be known as ours.
+            PaperclipSessions.NoteWake(agentId, DateTime.UtcNow);
+            return Agent(agentId, "wakeup", "{\"source\":\"on_demand\"}", ct);
+        }
 
         public Task<PaperclipOutcome> PauseAsync(string agentId, CancellationToken ct) =>
             Agent(agentId, "pause", "{}", ct);
