@@ -147,6 +147,41 @@ public sealed class PaperclipHttpTests : IDisposable
         Assert.Empty(PaperclipApi.ParseAgents(res.Body));
     }
 
+    // The poll makes about 1.75 calls a second for as long as the app runs, and
+    // under launchd stderr is an unrotated file, so the app logs failures only.
+    [Fact]
+    public async Task WithSuccessLoggingOff_OnlyFailuresAreLogged_AndNeverTheQuery()
+    {
+        var lines = new List<string>();
+        var api = new PaperclipHttp(_root, "KEY-SECRET", log: lines.Add, logSuccess: false);
+
+        _handler = (_, r) => Reply(r, 200, "[]");
+        for (var i = 0; i < 20; i++) await api.GetAsync("/api/companies/c/agents", default);
+        Assert.Empty(lines);
+
+        _handler = (_, r) => Reply(r, 500, "boom");
+        await api.GetAsync("/api/cli-auth/challenges/c1?token=CHALLENGE-TOKEN", default);
+        var line = Assert.Single(lines);
+        Assert.Contains("500", line);
+        Assert.DoesNotContain("CHALLENGE-TOKEN", line);
+        Assert.DoesNotContain("KEY-SECRET", line);
+    }
+
+    [Fact]
+    public async Task ATimeoutAndARefusedPort_AreLoggedWithoutABody()
+    {
+        var lines = new List<string>();
+        _handler = async (_, r) => { await Task.Delay(3000); r.StatusCode = 200; };
+        await new PaperclipHttp(_root, "k", timeout: TimeSpan.FromMilliseconds(200), log: lines.Add, logSuccess: false)
+            .GetAsync("/slow?token=T", default);
+        using var refusing = LoopbackHttp.RefusingPort();
+        await new PaperclipHttp($"http://127.0.0.1:{refusing.Port}", "k", log: lines.Add, logSuccess: false).GetAsync("/x", default);
+        Assert.Equal(2, lines.Count);
+        Assert.Contains("timed out", lines[0]);
+        Assert.Contains("unreachable", lines[1]);
+        Assert.All(lines, l => { Assert.DoesNotContain("token", l); Assert.DoesNotContain("?", l); });
+    }
+
     [Fact]
     public async Task ADisposedClient_CanNoLongerSend()
     {

@@ -328,7 +328,7 @@ namespace Orbweaver
                 if (NeedsNewClient(api != null, lastKey, lastUrl, cfg))
                 {
                     (api as IDisposable)?.Dispose();
-                    api = new PaperclipHttp(cfg.BaseUrl, cfg.Key, log: PaperclipHttp.DefaultLog);
+                    api = new PaperclipHttp(cfg.BaseUrl, cfg.Key, log: PaperclipHttp.DefaultLog, logSuccess: false);
                     lastKey = cfg.Key; lastUrl = cfg.BaseUrl;
                 }
                 TimeSpan wait;

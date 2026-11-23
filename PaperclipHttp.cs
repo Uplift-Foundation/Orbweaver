@@ -41,15 +41,17 @@ namespace Orbweaver
         private readonly string _baseUrl;
         private readonly string? _key;
         private readonly Action<string>? _log;
+        private readonly bool _logSuccess;
 
         // handler is the seam for tests that want to count connections; null
         // builds the default one.
         internal PaperclipHttp(string baseUrl, string? key, HttpMessageHandler? handler = null,
-            TimeSpan? timeout = null, Action<string>? log = null)
+            TimeSpan? timeout = null, Action<string>? log = null, bool logSuccess = true)
         {
             _baseUrl = baseUrl.TrimEnd('/');
             _key = string.IsNullOrEmpty(key) ? null : key;
             _log = log;
+            _logSuccess = logSuccess;
             _http = handler == null ? NewClient() : new HttpClient(handler);
             _http.Timeout = timeout ?? RequestTimeout;
         }
@@ -81,7 +83,8 @@ namespace Orbweaver
                 var text = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
                 var code = (int)res.StatusCode;
                 // Status, size and time only: never the body, never the key.
-                _log?.Invoke($"{method} {PathOnly(path)} -> {code}, {text.Length} bytes, {(int)(DateTime.UtcNow - started).TotalMilliseconds} ms");
+                if (_logSuccess || Classify(code) != PaperclipHttpKind.Ok)
+                    _log?.Invoke($"{method} {PathOnly(path)} -> {code}, {text.Length} bytes, {(int)(DateTime.UtcNow - started).TotalMilliseconds} ms");
                 return new PaperclipResponse(Classify(code), code, text);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -90,10 +93,12 @@ namespace Orbweaver
             }
             catch (OperationCanceledException)
             {
+                _log?.Invoke($"{method} {PathOnly(path)} -> timed out, {(int)(DateTime.UtcNow - started).TotalMilliseconds} ms");
                 return new PaperclipResponse(PaperclipHttpKind.Timeout, 0, "", "Timed out");
             }
             catch (Exception ex)
             {
+                _log?.Invoke($"{method} {PathOnly(path)} -> unreachable ({ex.GetType().Name}), {(int)(DateTime.UtcNow - started).TotalMilliseconds} ms");
                 return new PaperclipResponse(PaperclipHttpKind.Unreachable, 0, "",
                     OpenClawGateway.ExplainConnectFailure(ex, OperatingSystem.IsMacOS()));
             }
