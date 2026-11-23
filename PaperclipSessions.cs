@@ -169,6 +169,76 @@ namespace Orbweaver
             _statusText = statusText;
         }
 
+        // ---- answering in place (CB-427) -------------------------------------
+
+        // Wakes the loop now and makes its next step re-read everything, so an
+        // answer given in the flyout is seen at once rather than at the next
+        // tick. Safe from any thread; a nudge with no loop running is dropped.
+        private static readonly SemaphoreSlim NudgeSignal = new(0, 1);
+        private static int _nudgePending;
+
+        internal static void PollNow()
+        {
+            Interlocked.Exchange(ref _nudgePending, 1);
+            try { NudgeSignal.Release(); } catch (SemaphoreFullException) { }
+        }
+
+        // True once per PollNow, however many were asked for.
+        internal static bool TakeNudge() => Interlocked.Exchange(ref _nudgePending, 0) == 1;
+
+        // What a nudge does to the loop's memory: both cadences come due, and a
+        // backoff is not waited out. The last answers are kept so a failed read
+        // still has something to publish.
+        internal static PollState Nudged(PollState st) =>
+            st with { LastFast = null, LastSlow = null, NextAttempt = null };
+
+        // The delay between ticks, cut short by PollNow. Returns true when it was
+        // cut short.
+        internal static async Task<bool> WaitAsync(TimeSpan wait, CancellationToken ct)
+        {
+            if (TakeNudge()) { DrainSignal(); return true; }
+            var woke = await NudgeSignal.WaitAsync(wait, ct).ConfigureAwait(false);
+            if (woke) TakeNudge();
+            return woke;
+        }
+
+        private static void DrainSignal() { NudgeSignal.Wait(0); }
+
+        // The actions the flyout and the menu make, bound to the live key and
+        // company. Rebuilt only when either moves, as the poll's own client is;
+        // null while Paperclip is switched off or has no company.
+        private static readonly object ActionsGate = new();
+        private static PaperclipActions? _actions;
+        private static PaperclipHttp? _actionsHttp;
+        private static string _actionsKey = "", _actionsUrl = "", _actionsCompany = "";
+
+        private static volatile IPaperclipActions? _actionsOverride;
+
+        // The seam the flyout, the menu and the phone's answers call. Settable, like
+        // RosterStore, so a suite can hand it a fake; otherwise the live one.
+        internal static IPaperclipActions? Actions
+        {
+            get => _actionsOverride ?? LiveActions();
+            set => _actionsOverride = value;
+        }
+
+        internal static IPaperclipActions? LiveActions()
+        {
+            var cfg = ConfigSource();
+            if (!cfg.Enabled || string.IsNullOrEmpty(cfg.CompanyId)) return null;
+            lock (ActionsGate)
+            {
+                if (_actions == null || cfg.Key != _actionsKey || cfg.BaseUrl != _actionsUrl || cfg.CompanyId != _actionsCompany)
+                {
+                    _actionsHttp?.Dispose();
+                    _actionsHttp = new PaperclipHttp(cfg.BaseUrl, cfg.Key, log: PaperclipHttp.DefaultLog, logSuccess: true);
+                    _actions = new PaperclipActions(_actionsHttp, cfg.CompanyId);
+                    _actionsKey = cfg.Key; _actionsUrl = cfg.BaseUrl; _actionsCompany = cfg.CompanyId;
+                }
+                return _actions;
+            }
+        }
+
         // ---- cadences and wording -------------------------------------------
 
         internal static readonly TimeSpan FastEvery = TimeSpan.FromSeconds(2);
@@ -445,7 +515,11 @@ namespace Orbweaver
                 }
                 PublishStep(state, cfg, remembered, RosterStore, DateTime.UtcNow);
                 if (state.Published != null) remembered = Array.Empty<PaperclipAgent>();   // never used once live
-                try { await Task.Delay(wait, ct).ConfigureAwait(false); } catch { break; }
+                try
+                {
+                    if (await WaitAsync(wait, ct).ConfigureAwait(false)) state = Nudged(state);
+                }
+                catch { break; }
             }
         }
 

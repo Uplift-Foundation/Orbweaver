@@ -186,7 +186,7 @@
                      Review both go to Paperclip's own page (the orb's Url: the
                      page that decides what is waiting when something is, else
                      the agent's); Reconnect shows only while the key is gone.
-                     Wake, Pause and Resume are release 2. -->
+                     Wake, Pause and Resume (CB-427) show only where they apply. -->
                 <MenuItem x:Name="OpenPaperclipItem"
                           Header="Open in Paperclip"
                           IsVisible="False"
@@ -195,6 +195,20 @@
                           Header="Review in Paperclip"
                           IsVisible="False"
                           Click="OpenPaperclip_Click"/>
+                <MenuItem x:Name="WakePaperclipItem"
+                          Header="Wake now"
+                          IsVisible="False"
+                          Click="WakePaperclip_Click"/>
+                <MenuItem x:Name="PausePaperclipItem"
+                          Header="Pause"
+                          IsVisible="False"
+                          StaysOpenOnClick="True"
+                          Click="PausePaperclip_Click"/>
+                <MenuItem x:Name="ResumePaperclipItem"
+                          Header="Resume"
+                          IsVisible="False"
+                          StaysOpenOnClick="True"
+                          Click="ResumePaperclip_Click"/>
                 <MenuItem x:Name="ReconnectPaperclipItem"
                           Header="Reconnect to Paperclip"
                           IsVisible="False"

@@ -65,6 +65,20 @@ namespace Orbweaver
         [JsonIgnore]
         public int? BudgetPercent { get; set; }
 
+        // Release 2 (CB-427): what the amber flyout answers and the menu acts on.
+        // The agent's own id and Paperclip's status word for it (so the menu can
+        // tell a paused agent from a running one), and the needs behind the amber,
+        // each with the id an answer is made against. Paperclip-only, set beside
+        // the mark by PaperclipScan.
+        [JsonIgnore]
+        public string PaperclipAgentId { get; set; } = "";
+
+        [JsonIgnore]
+        public string PaperclipAgentStatus { get; set; } = "";
+
+        [JsonIgnore]
+        internal IReadOnlyList<PaperclipNeed> Needs { get; set; } = Array.Empty<PaperclipNeed>();
+
         // The Paperclip orb's hover, one line each, already in the order plan 2.7
         // gives and with the empty ones left out (PaperclipApi owns that). The
         // orb draws what is here and decides nothing about it.

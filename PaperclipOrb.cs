@@ -1,3 +1,5 @@
+using System.Linq;
+
 namespace Orbweaver
 {
     // What a Paperclip orb draws and offers, decided with no window behind it
@@ -77,22 +79,49 @@ namespace Orbweaver
             return parts.Count == 0 ? null : string.Join("\n", parts);
         }
 
-        // Which of the three Paperclip rows a menu offers. Open goes wherever the
-        // orb's Url points (the page that decides what is waiting when something
-        // is, else the agent's page), so it needs an address a browser may be
-        // handed; Review is the amber orb's own name for the same destination;
-        // Reconnect is offered only while the key is gone. Wake, Pause and Resume
-        // are release 2 and are not rows yet.
-        internal readonly record struct MenuOffer(bool Open, bool Review, bool Reconnect);
+        // Which Paperclip rows a menu offers. Open goes wherever the orb's Url
+        // points (the page that decides what is waiting when something is, else
+        // the agent's page), so it needs an address a browser may be handed;
+        // Review is the amber orb's own name for the same destination; Reconnect
+        // is offered only while the key is gone. Wake, Pause and Resume (CB-427)
+        // are offered only where they apply, and only while the link is live: a
+        // parked company is a picture, and an answer to it would go nowhere.
+        //   Wake    an agent that is neither paused, over budget nor running
+        //   Pause   an agent that is not paused or over budget
+        //   Resume  an agent paused by hand (never one paused for budget)
+        internal readonly record struct MenuOffer(
+            bool Open, bool Review, bool Reconnect,
+            bool Wake = false, bool Pause = false, bool Resume = false);
 
         internal static MenuOffer Offer(SessionStatus? status, PaperclipLink link)
         {
             if (status?.Source != SessionSource.Paperclip) return default;
             var openable = CloudSessionLink.IsOpenable(status.Url);
+            var live = link == PaperclipLink.Connected && status.PaperclipAgentId.Length > 0
+                && status.PaperclipAgentStatus.Length > 0 && status.PaperclipAgentStatus != "terminated";
+            // Plan 13.2. A budget pause is Paperclip's to lift (and that resume is
+            // unmeasured), so an over-budget agent is offered neither Pause (it is
+            // already paused) nor Resume nor Wake.
+            var paused = status.Mark == PaperclipMark.Paused || status.PaperclipAgentStatus == "paused";
+            var overBudget = status.Mark == PaperclipMark.OverBudget;
+            var running = status.State == "generating" || status.PaperclipAgentStatus == "running";
             return new MenuOffer(
                 Open: openable,
                 Review: openable && status.Presence == OrbPresence.NeedsInput,
-                Reconnect: link == PaperclipLink.NeedsReconnect);
+                Reconnect: link == PaperclipLink.NeedsReconnect,
+                Wake: live && !paused && !overBudget && !running,
+                Pause: live && !paused && !overBudget,
+                Resume: live && paused && !overBudget);
         }
+
+        // Whether a click on this orb opens the answer panel rather than the
+        // browser: an amber Paperclip orb holding at least one need this app can
+        // answer. An amber orb holding only a blocked task keeps its old click
+        // (the link), and so does any orb while the link is not live.
+        internal static bool ShowsNeeds(SessionStatus? status, PaperclipLink link) =>
+            status?.Source == SessionSource.Paperclip
+            && link == PaperclipLink.Connected
+            && status.Presence == OrbPresence.NeedsInput
+            && status.Needs.Any(PaperclipActions.Answerable);
     }
 }
