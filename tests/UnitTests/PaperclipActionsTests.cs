@@ -275,7 +275,7 @@ public class PaperclipActionsTests
     [InlineData("action-decline-again-200", 200, false, "Done", null)]
     [InlineData("action-approve-after-decline-409", 409, true, "AlreadyDecided", "Already answered in Paperclip")]
     [InlineData("action-decline-after-approve-409", 409, false, "AlreadyDecided", "Already answered in Paperclip")]
-    [InlineData("action-approve-unknown-404", 404, true, "AlreadyDecided", "Already answered in Paperclip")]
+    [InlineData("action-approve-unknown-404", 404, true, "Refused", "This request no longer exists in Paperclip")]
     [InlineData("action-approve-no-company-400", 400, true, "Refused", "companyId is required")]
     public async Task Each_captured_tool_action_answer_maps_to_its_outcome(string fixture, int code, bool approve, string result, string? why)
     {
@@ -285,6 +285,21 @@ public class PaperclipActionsTests
         var o = await a.DecideAsync(Action(), approve, default);
         Assert.Equal((Enum.Parse<PaperclipActionResult>(result), why), (o.Result, o.Why));
         Assert.DoesNotContain(api.Calls, c => c.StartsWith("GET"));   // a tool action is never re-read
+    }
+
+    [Fact]
+    public async Task A_404_is_answered_elsewhere_for_an_approval_but_not_for_a_tool_action()
+    {
+        // An approval's 404 means the item is gone. A tool action's 404 is also what a
+        // Paperclip without that route, or a wrong company id, says, so claiming that
+        // someone else decided would be false.
+        var (api, a, polls) = Rig();
+        api.Posts["/api/approvals/ap1/approve"] = new(PaperclipHttpKind.NotFound, 404, "");
+        Assert.Equal(PaperclipActionResult.AlreadyDecided, (await a.DecideAsync(Approval(), true, default)).Result);
+        api.Posts["/api/tool-gateway/action-requests/ac1/approve"] = new(PaperclipHttpKind.NotFound, 404, "{\"reasonCode\":\"action_request_not_found\"}");
+        var o = await a.DecideAsync(Action(), true, default);
+        Assert.Equal((PaperclipActionResult.Refused, "This request no longer exists in Paperclip"), (o.Result, o.Why));
+        Assert.Equal(1, polls());      // only the approval's answer nudged the poll
     }
 
     [Fact]
@@ -448,6 +463,15 @@ public class PaperclipActionsTests
     {
         var o = PaperclipOrb.Offer(Agent(status, state), PaperclipLink.Connected);
         Assert.Equal((wake, pause, resume), (o.Wake, o.Pause, o.Resume));
+    }
+
+    [Fact]
+    public void Pause_is_not_offered_to_an_agent_in_error()
+    {
+        // Paperclip clears an error when a pause is lifted: Orbweaver must not edit
+        // an agent's state as a side effect. Wake stays (it is a run, not an edit).
+        var o = PaperclipOrb.Offer(Agent("error"), PaperclipLink.Connected);
+        Assert.Equal((true, false, false), (o.Wake, o.Pause, o.Resume));
     }
 
     [Theory]

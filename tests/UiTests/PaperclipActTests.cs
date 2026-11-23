@@ -63,9 +63,10 @@ public class PaperclipActTests : IDisposable
         internal readonly PaperclipNeedsPanel Panel;
         internal DateTime Now = new(2026, 11, 23, 12, 0, 0, DateTimeKind.Utc);
         internal readonly List<(TimeSpan Delay, Action Run)> Scheduled = [];
+        internal readonly List<(string Agent, string Need)> Settled = [];
         internal Rig(bool connected = true)
         {
-            Panel = new PaperclipNeedsPanel(() => connected ? Actions : null, Opened.Add)
+            Panel = new PaperclipNeedsPanel(() => connected ? Actions : null, Opened.Add, (a, n) => Settled.Add((a, n)))
             {
                 Clock = () => Now,
                 Schedule = (d, a) => Scheduled.Add((d, a)),
@@ -122,6 +123,23 @@ public class PaperclipActTests : IDisposable
         Assert.Null(rig.Panel.RowFor("ap1"));
         Assert.NotNull(rig.Panel.RowFor("ac1"));
         Assert.Equal("Approved.", rig.Panel.FooterText);
+    }
+
+    [AvaloniaFact]
+    public async Task The_orb_is_told_when_paperclip_took_an_answer_and_not_when_it_did_not()
+    {
+        var rig = new Rig();
+        rig.Panel.Present(Amber(Hire, Tool, Stuck));
+        await Click(rig.Panel.RowFor("ap1")!, true, rig);                     // Done
+        rig.Actions.Answer = _ => new(PaperclipActionResult.AlreadyDecided, "Already answered in Paperclip");
+        await Click(rig.Panel.RowFor("ac1")!, false, rig);                    // answered elsewhere
+        Assert.Equal([("a1", "ap1"), ("a1", "ac1")], rig.Settled);
+
+        var failing = new Rig();
+        failing.Actions.Answer = _ => new(PaperclipActionResult.Refused, "no");
+        failing.Panel.Present(Amber(Hire));
+        await Click(failing.Panel.RowFor("ap1")!, true, failing);
+        Assert.Empty(failing.Settled);                                         // still amber, still answerable
     }
 
     [AvaloniaFact]

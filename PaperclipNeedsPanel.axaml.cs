@@ -44,6 +44,9 @@ namespace Orbweaver
 
         private readonly Func<IPaperclipActions?> _actions;
         private readonly Action<string> _open;
+        // Told (agent id, need id) when Paperclip took an answer, so the orb can leave
+        // amber at once; the next poll stays the source of truth.
+        private readonly Action<string, string>? _settled;
         private readonly Dictionary<string, NeedRow> _rows = new();
         private readonly Dictionary<string, string> _messages = new();
         private readonly HashSet<string> _answered = new();
@@ -61,12 +64,15 @@ namespace Orbweaver
         private string _agentId = "";
 
         public PaperclipNeedsPanel() : this(
-            () => PaperclipSessions.Actions, url => CloudSessionLink.Open(url)) { }
+            () => PaperclipSessions.Actions, url => CloudSessionLink.Open(url),
+            (agent, need) => SessionManager.Instance?.ClearPaperclipNeed(agent, need)) { }
 
-        internal PaperclipNeedsPanel(Func<IPaperclipActions?> actions, Action<string> open)
+        internal PaperclipNeedsPanel(Func<IPaperclipActions?> actions, Action<string> open,
+            Action<string, string>? settled = null)
         {
             _actions = actions;
             _open = open;
+            _settled = settled;
             InitializeComponent();
             KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Escape) Close(); };
             // A closed Avalonia window cannot be shown again, so the singleton must not
@@ -233,6 +239,7 @@ namespace Orbweaver
 
             _answered.Add(row.Need.Id);
             _rows.Remove(row.Need.Id);
+            _settled?.Invoke(_agentId, row.Need.Id);
             if (result.Result == PaperclipActionResult.AlreadyDecided)
             {
                 row.Card.Child = new TextBlock

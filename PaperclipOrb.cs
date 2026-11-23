@@ -87,7 +87,9 @@ namespace Orbweaver
         // are offered only where they apply, and only while the link is live: a
         // parked company is a picture, and an answer to it would go nowhere.
         //   Wake    an agent that is neither paused, over budget, running nor awaiting its own approval
-        //   Pause   an agent that is not paused or over budget
+        //   Pause   an agent that is not paused, over budget or in error (Paperclip clears an
+        //           error when a pause is lifted, and Orbweaver must not edit an agent's
+        //           state as a side effect)
         //   Resume  an agent paused by hand (never one paused for budget)
         internal readonly record struct MenuOffer(
             bool Open, bool Review, bool Reconnect,
@@ -110,7 +112,7 @@ namespace Orbweaver
                 Review: openable && status.Presence == OrbPresence.NeedsInput,
                 Reconnect: link == PaperclipLink.NeedsReconnect,
                 Wake: live && !paused && !overBudget && !running && status.PaperclipAgentStatus != "pending_approval",
-                Pause: live && !paused && !overBudget,
+                Pause: live && !paused && !overBudget && status.PaperclipAgentStatus != "error",
                 Resume: live && paused && !overBudget);
         }
 

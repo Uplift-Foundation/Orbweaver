@@ -72,6 +72,7 @@ namespace Orbweaver
                     MarkReason = parked ? null : a.MarkReason,
                     BudgetPercent = parked ? null : a.BudgetPercent,
                     PaperclipAgentId = a.Id,
+                    PaperclipAgentUrl = a.Url,
                     PaperclipAgentStatus = parked ? "" : a.Status,
                     Needs = waiting ? a.Needs : Array.Empty<PaperclipNeed>(),
                     FoldedCount = count,

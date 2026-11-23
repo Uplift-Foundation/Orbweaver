@@ -2,56 +2,63 @@ using Xunit;
 
 namespace Orbweaver.Tests;
 
-// CB-425: a Paperclip change reaching its orbs without waiting behind the local
-// scan. The decisions are pure; the wiring through SessionManager is in
-// tests/UiTests/PaperclipFastPathUiTests.
+// CB-427 / CB-425: what an orb shows the moment its need is answered, and the one
+// diagnostics line a state change writes. Both are pure; the wiring through
+// SessionManager is tests/UiTests/PaperclipFastPathUiTests.
 public class PaperclipFastPathTests
 {
-    private static SessionManager.ScanEntry E(string id, string state = "idle", string lead = "", string title = "Atlas",
-        OrbPresence p = OrbPresence.Present) =>
-        new(PaperclipScan.KeyFor(id), new SessionStatus
-        {
-            Source = SessionSource.Paperclip, State = state, Lead = lead, Title = title, Presence = p, PaperclipAgentId = id,
-        }, DateTime.UtcNow);
+    private static readonly PaperclipNeed A = new("approval", "a", "Hire QA", "http://p/CB/approvals/a");
+    private static readonly PaperclipNeed B = new("action", "b", "Run deploy", "http://p/CB/inbox/requests");
 
-    private static Dictionary<string, SessionStatus> Current(params SessionManager.ScanEntry[] e) =>
-        e.ToDictionary(x => x.SessionId, x => x.Status);
+    private static SessionStatus Amber(params PaperclipNeed[] needs) => new()
+    {
+        Source = SessionSource.Paperclip, State = "waiting", Presence = OrbPresence.NeedsInput, Needs = needs,
+        HoverLines = needs.Select(n => n.Title).Append("last run succeeded").ToList(),
+        StatusDetail = needs[0].Title, Url = needs[0].Url, PaperclipAgentUrl = "http://p/CB/agents/x",
+    };
 
     [Fact]
-    public void The_same_set_of_orbs_is_planned_and_anything_else_falls_back()
+    public void Answering_one_of_two_leaves_the_orb_amber_and_points_at_the_other()
     {
-        var cur = Current(E("a", "waiting"), E("b"));
-        cur["claude-code-1"] = new SessionStatus { Source = SessionSource.ClaudeCode };   // other sources are not looked at
-        var plan = PaperclipFastPath.Plan([E("a"), E("b")], cur)!;
-        Assert.Equal(["paperclip:a", "paperclip:b"], plan.Select(c => c.Key));
-        Assert.Equal("waiting", plan[0].Existing.State);
-        Assert.Equal("idle", plan[0].Fresh.State);
-
-        Assert.Null(PaperclipFastPath.Plan([E("a"), E("b"), E("c")], cur));    // an orb appeared
-        Assert.Null(PaperclipFastPath.Plan([E("a")], cur));                    // an orb went
-        Assert.Null(PaperclipFastPath.Plan([E("a"), E("z")], cur));            // a different orb
-        Assert.Null(PaperclipFastPath.Plan([E("a", lead: "paperclip:b"), E("b")], cur));   // a lead moved
-        Assert.Null(PaperclipFastPath.Plan([E("a", title: "Renamed"), E("b")], cur));      // a rename
-        Assert.Empty(PaperclipFastPath.Plan([], new Dictionary<string, SessionStatus>())!);
+        var s = Amber(A, B);
+        Assert.True(PaperclipFastPath.WithoutNeed(s, "a"));
+        Assert.Equal([B], s.Needs);
+        Assert.Equal(("waiting", OrbPresence.NeedsInput, B.Url), (s.State, s.Presence, s.Url));
+        Assert.Equal(["Run deploy", "last run succeeded"], s.HoverLines);
+        Assert.Equal("Run deploy", s.StatusDetail);
     }
 
     [Fact]
-    public void Copying_takes_what_paperclip_owns_and_keeps_what_the_pass_added()
+    public void Answering_the_last_need_stops_the_asking_and_points_at_the_agent()
     {
-        var need = new PaperclipNeed("approval", "p1", "Hire", "u");
-        var to = new SessionStatus { State = "waiting", Presence = OrbPresence.NeedsInput, Needs = [need], Agent = "persona-owned", Cwd = "keep" };
-        var from = new SessionStatus
-        {
-            State = "idle", Presence = OrbPresence.Present, Mark = PaperclipMark.Broke, MarkReason = "r", BudgetPercent = 40,
-            FoldedCount = 2, FoldedNames = "x, y", HoverLines = ["h"], StatusDetail = "d", Url = "http://u",
-            PaperclipAgentId = "a", PaperclipAgentStatus = "idle",
-        };
-        PaperclipFastPath.CopyOwned(to, from);
-        Assert.Equal(("idle", OrbPresence.Present, PaperclipMark.Broke, "r", 40, 2, "x, y", "d", "http://u", "a", "idle"),
-            (to.State, to.Presence, to.Mark, to.MarkReason, to.BudgetPercent, to.FoldedCount, to.FoldedNames, to.StatusDetail, to.Url, to.PaperclipAgentId, to.PaperclipAgentStatus));
-        Assert.Equal(["h"], to.HoverLines);
-        Assert.Empty(to.Needs);
-        Assert.Equal(("persona-owned", "keep"), (to.Agent, to.Cwd));
+        var s = Amber(A);
+        Assert.True(PaperclipFastPath.WithoutNeed(s, "a"));
+        Assert.Empty(s.Needs);
+        Assert.Equal(("idle", OrbPresence.Present, "http://p/CB/agents/x"), (s.State, s.Presence, s.Url));
+        Assert.Equal(["last run succeeded"], s.HoverLines);
+
+        var noPage = Amber(A); noPage.PaperclipAgentUrl = "";
+        PaperclipFastPath.WithoutNeed(noPage, "a");
+        Assert.Equal(A.Url, noPage.Url);          // nothing better to point at: unchanged
+    }
+
+    [Fact]
+    public void A_need_the_orb_does_not_hold_or_a_row_that_is_not_paperclip_changes_nothing()
+    {
+        var s = Amber(A);
+        Assert.False(PaperclipFastPath.WithoutNeed(s, "zzz"));
+        Assert.Equal(("waiting", OrbPresence.NeedsInput), (s.State, s.Presence));
+        var local = Amber(A); local.Source = SessionSource.ClaudeCode;
+        Assert.False(PaperclipFastPath.WithoutNeed(local, "a"));
+        Assert.Single(local.Needs);
+    }
+
+    [Fact]
+    public void An_answered_orb_with_no_hover_lines_has_no_detail()
+    {
+        var s = new SessionStatus { Source = SessionSource.Paperclip, Needs = [A], HoverLines = [] };
+        Assert.True(PaperclipFastPath.WithoutNeed(s, "a"));
+        Assert.Null(s.StatusDetail);
     }
 
     [Theory]

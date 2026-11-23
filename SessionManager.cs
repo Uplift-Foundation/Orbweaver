@@ -76,6 +76,10 @@ namespace Orbweaver
         [JsonIgnore]
         public string PaperclipAgentStatus { get; set; } = "";
 
+        // The agent's own page, so an orb that stops asking points there again.
+        [JsonIgnore]
+        public string PaperclipAgentUrl { get; set; } = "";
+
         [JsonIgnore]
         internal IReadOnlyList<PaperclipNeed> Needs { get; set; } = Array.Empty<PaperclipNeed>();
 
@@ -942,47 +946,31 @@ namespace Orbweaver
             // CB-421: a Paperclip snapshot that changes what the orbs draw asks
             // for a scan now rather than at the next 2 s tick. Marshalled to the
             // UI thread, where the scan state lives; Paperclip-only.
-            PaperclipSessions.Changed += () => Dispatcher.UIThread.Post(OnPaperclipChanged);
+            PaperclipSessions.Changed += () => Dispatcher.UIThread.Post(RequestScan);
 
             _ = ScheduleScan();
         }
 
-        // The clock and sink for the one line a Paperclip state change writes, so a
-        // test can read the milliseconds off a fake clock.
-        internal Func<DateTime> PaperclipClock { get; set; } = () => DateTime.UtcNow;
-        internal Action<string> PaperclipLatencySink { get; set; } = line => DiagnosticsLog.Write(line);
-
-        // A published Paperclip change: draw it now on the orbs that exist (CB-425,
-        // PaperclipFastPath), then ask for the ordinary scan, which converges
-        // whatever the fast path left alone.
-        internal void OnPaperclipChanged()
+        // CB-427: the user answered a need in the panel and Paperclip took it. Clear
+        // that need from the orb's own status and update that one orb now, so the
+        // orb the user just acted on leaves amber at once instead of after the poll
+        // and a scan (the scan pass is slow on some machines, CB-425 / CB-424). The
+        // next poll stays the source of truth: if Paperclip still lists it, the next
+        // scan puts the amber back. UI thread. False when there is no such orb.
+        internal bool ClearPaperclipNeed(string agentId, string needId)
         {
-            ApplyPaperclipNow();
-            RequestScan();
-        }
-
-        private IReadOnlyList<ScanEntry> PaperclipRows() => _paperclipScan.Entries(
-            PaperclipSessions.Snapshot(), PaperclipSessions.Link, PaperclipSessions.StatusText,
-            OrbweaverSettings.PaperclipSleeping, DateTime.UtcNow, PaperclipSessions.Remembered);
-
-        // UI thread. False when the set of Paperclip orbs differs from what is on
-        // screen, which the full pass handles.
-        internal bool ApplyPaperclipNow()
-        {
-            var fresh = PaperclipRows();
-            var plan = PaperclipFastPath.Plan(fresh, _statuses);
-            if (plan == null || plan.Count == 0) return false;
-            var seen = PaperclipSessions.TakeChangeSeen();
-            foreach (var c in plan)
-            {
-                var before = c.Existing.State;
-                PaperclipFastPath.CopyOwned(c.Existing, c.Fresh);
-                if (_windows.TryGetValue(c.Key, out var window)) window.UpdateFrom(c.Existing);
-                if (seen is { } at && PaperclipFastPath.Line(c.Key, before, c.Existing.State, PaperclipClock() - at) is { } line)
-                    PaperclipLatencySink(line);
-            }
+            var key = PaperclipScan.KeyFor(agentId);
+            if (!_statuses.TryGetValue(key, out var status) || !_windows.TryGetValue(key, out var window)) return false;
+            if (!PaperclipFastPath.WithoutNeed(status, needId)) return false;
+            window.UpdateFrom(status);
             return true;
         }
+
+        // CB-425: one line per Paperclip state change drawn by the scan, with the
+        // milliseconds from the poll that published it. The clock and sink are
+        // injectable so a test reads the number off a fake clock.
+        internal Func<DateTime> PaperclipClock { get; set; } = () => DateTime.UtcNow;
+        internal Action<string> PaperclipLatencySink { get; set; } = line => DiagnosticsLog.Write(line);
 
         // Excluded from coverage: creates a FileSystemWatcher on the status
         // directory. The poll timer covers the same job — the comment in the catch
@@ -2651,6 +2639,8 @@ namespace Orbweaver
         // hopping back onto the UI thread its await resumed on.
         private void ScanAndUpdateCore(List<ScanEntry> found, ScanProbes probes, DateTime now)
         {
+            // When the poll published the change this pass is about to draw (CB-425).
+            var paperclipChangeSeen = PaperclipSessions.TakeChangeSeen();
             var seen = new HashSet<string>();
             bool setChanged = false;
 
@@ -3409,6 +3399,8 @@ namespace Orbweaver
                         turnSignal, SoundKeyFor(status, sessionId), sessionId));
                 }
 
+                var paperclipBefore = status.Source == SessionSource.Paperclip && _statuses.TryGetValue(sessionId, out var prior)
+                    ? prior.State : null;
                 _statuses[sessionId] = status;
 
                 var isNew = !_windows.TryGetValue(sessionId, out var window);
@@ -3425,6 +3417,10 @@ namespace Orbweaver
                 }
 
                 window!.UpdateFrom(status);
+
+                if (paperclipBefore != null && paperclipChangeSeen is { } seenAt
+                    && PaperclipFastPath.Line(sessionId, paperclipBefore, status.State, PaperclipClock() - seenAt) is { } latencyLine)
+                    PaperclipLatencySink(latencyLine);
 
                 // The chat panel's view of "waiting for a permission prompt"
                 // comes from here rather than from the transcript, because the

@@ -33,6 +33,7 @@ public class PaperclipScanTests
         var live = Rows(new PaperclipScan(), [waiting])[0].Status;
         Assert.Equal("w", live.PaperclipAgentId);
         Assert.Equal("idle", live.PaperclipAgentStatus);
+        Assert.Equal("http://127.0.0.1:3100/EX/agents/w", live.PaperclipAgentUrl);
         Assert.Equal([Need], live.Needs);
 
         var parked = Rows(new PaperclipScan(), [waiting], PaperclipLink.Unreachable)[0].Status;

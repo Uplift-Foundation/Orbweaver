@@ -41,6 +41,7 @@ namespace Orbweaver
     {
         internal const string DecisionNote = "From Orbweaver";
         internal const string AlreadyDecidedWhy = "Already answered in Paperclip";
+        internal const string RequestGoneWhy = "This request no longer exists in Paperclip";
         internal const string AgentGoneWhy = "That agent is no longer in Paperclip";
         internal const string ToolFailedWhy = "Approved, but the tool failed";
         internal const string ReconnectWhy = "Reconnect to Paperclip to answer";
@@ -98,6 +99,12 @@ namespace Orbweaver
             // told the tool failed, and the tool's own error text is never shown.
             if (outcome.IsDone && need.Kind == "action" && approve && StatusOf(res.Body) == "failed")
                 outcome = new(PaperclipActionResult.Done, ToolFailedWhy);
+            // A 404 on a tool action is NOT "answered elsewhere" (the plan's table said
+            // so for approvals): it is also what a Paperclip without that route, or a
+            // wrong company id, answers, and telling the person someone else decided
+            // would be false. Only the measured 409 and the same-decision 200 mean that.
+            else if (need.Kind == "action" && res.StatusCode == 404)
+                outcome = new(PaperclipActionResult.Refused, RequestGoneWhy);
             // 409 on a tool action is "no longer pending" / "already resolved".
             else if (need.Kind == "action" && res.StatusCode == 409)
                 outcome = new(PaperclipActionResult.AlreadyDecided, AlreadyDecidedWhy);
