@@ -45,8 +45,13 @@ What the app made of that company: four agents, three reporting to one; the two
 in `error` carry `Broke` marks with their one-sentence `errorReason`; one of
 them is also the assignee of the blocked issue (`blockerAttention.state:
 needs_attention`) and so is **waiting** and **broke** at once, as the plan says
-it can be; the other two show their last run `succeeded`, so a native run has
-now completed here, which the plan's earlier revision said had not happened.
+it can be; the other two show their last run `succeeded`, but **no run has succeeded under
+the native runner on this instance**: every `succeeded` row has a `processPid`
+and predates the agents' move to the default runner at 03:39:16Z (the rows are
+legacy `claude_local` runs), and the only runs after the move are the two
+`failed` ones. The `succeeded` row sitting in `native/heartbeat-runs.json` is
+one of those legacy runs, not a native success. An earlier revision of this
+file said otherwise; that was wrong.
 The `agents` body is 9.7 KB for four agents and carries `adapterConfig`; the app
 never reads it and never logs a body.
 
@@ -58,8 +63,8 @@ never reads it and never logs a body.
 | the `boardApiToken` is 401 before approval, 200 after, 401 after `POST cli-auth/revoke-current` | measured by the lead |
 | the key shows in Paperclip as "Orbweaver (board)" and expires in 30 days | measured by the lead; **neither `me` nor the challenge reports the expiry**, so the app stores approval time plus 30 days and believes the 401 over its own date |
 | `local_trusted` instances accept requests with no credential | read from source; **not measured** (this instance is `authenticated`) |
-| the poll URL is `pollPath` with `?token=<challenge token>` | **assumed**: the connect code appends the token only when `pollPath` has no query already, and the loopback test pins both shapes. The probe does not POST, so no real `pollPath` was read for this file |
-| `approvalUrl` uses the host the request came in on | **assumed**; settled by logging the host of one real challenge |
+| `pollPath` is `/cli-auth/challenges/<id>` with **no `/api` prefix and no query**; `approvalPath` is `/cli-auth/<id>?token=<token>` (a UI route); `approvalUrl` is the absolute form of it. The poll that works is `GET <base>/api/cli-auth/challenges/<id>?token=<token>` | **measured by the lead** on the live instance (unauthenticated `POST`). The connect code resolves `pollPath` against the API root (prefixing `/api` when absent) and appends the token when there is no query; a poll that fails three times in a row ends the attempt with a reason instead of waiting out the 10-minute challenge |
+| `approvalUrl` is built from the address the server was called on, so a LAN-reached Paperclip may return a host the browser cannot use | **assumed, not measured**; when the host differs from the address the user connected to and the server gave an `approvalPath`, the connected address plus that path is opened instead. A non-http(s) URL is never rewritten; it is refused |
 | the instance folder `~/.paperclip/instances/<name>/` holds `runtime-info.json` (`port`) and `config.json` (`server.port`) | measured on macOS; the Windows folder (`%USERPROFILE%\.paperclip`) is **assumed** |
 
 Discovery reads exactly those two files and nothing else in the folder (it also
@@ -73,6 +78,15 @@ holds a secrets directory and a database), and writes nothing.
   the pid and session. The parser accepts all three and reads only `status`,
   times, `errorCode`, `issueId`, `processPid`, `sessionIdAfter` and `redacted`.
   A run's `error` text is never read: measured ones carry commands.
+- **Optional lists.** Approvals, tool action requests and blocked tasks are
+  optional: a company is "connected" when the company and agents reads succeed.
+  A 404 on one of them means "none"; any other failure keeps the last answer and
+  is named in the status line ("Couldn't read tool actions."), never a link
+  failure. Only a refused key (401/403) asks for a reconnect. Not measured
+  against a Paperclip that lacks one of the routes; decided from the product rule.
+- **Nothing secret is logged.** The transport logs method, path (query
+  stripped, since the poll URL carries the challenge token), status, size and
+  time. Never a body or a key.
 - **Two shapes were never seen:** a non-empty tool action request, and a blocked
   issue waiting on another task. The first is parsed by trying the likely keys
   (`agentId` / `requestedByAgentId` / `agent.id`; `summary` / `toolName` /

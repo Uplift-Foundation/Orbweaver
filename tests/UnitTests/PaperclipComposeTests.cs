@@ -247,6 +247,7 @@ public class PaperclipStateTests
         Assert.Equal("Hire QA", n.Title);
     }
 
+    // Invented rows: the tool action request shape has never been captured.
     [Fact]
     public void ToolAction_GoesToItsAgent_OrTheLead_WithRequestsUrl()
     {

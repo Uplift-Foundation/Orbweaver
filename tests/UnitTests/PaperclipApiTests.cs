@@ -177,6 +177,9 @@ public class PaperclipApiParseTests
         Assert.Equal("approved", PaperclipApi.ParseChallengeStatus("{\"status\":\"approved\"}"));
     }
 
+    // The shape of a non-empty tool action request has never been seen (the
+    // `actionRequests` root key is measured only on an empty list), so every key
+    // below is a guess and this payload is invented, not captured.
     [Fact]
     public void ActionRequests_TryTheLikelyKeys_AndSkipNonPending()
     {

@@ -98,6 +98,35 @@ public class PaperclipScanTests
     }
 
     [Fact]
+    public void Reconnect_BringsBackTheBrokeMarkTheRingAndAmber_FromFreshData()
+    {
+        var scan = new PaperclipScan();
+        var data = new[]
+        {
+            A("lead"),
+            A("b", "lead", mark: PaperclipMark.Broke, markReason: "boom", sleeping: false),
+            A("o", "lead", mark: PaperclipMark.OverBudget, markReason: "Paused: over budget", sleeping: false, budget: 100),
+            A("w", "lead", state: "waiting", needs: [Need], sleeping: false),
+        };
+        var gone = Rows(scan, data, PaperclipLink.NeedsReconnect, "Reconnect to Paperclip");
+        Assert.All(gone, r => { Assert.Equal(PaperclipMark.None, r.Status.Mark); Assert.Equal(OrbPresence.Parked, r.Status.Presence); });
+
+        var back = Rows(scan, data, PaperclipLink.Connected);
+        Assert.Equal(PaperclipMark.Broke, back.Single(r => r.SessionId == "paperclip:b").Status.Mark);
+        Assert.Equal(PaperclipMark.OverBudget, back.Single(r => r.SessionId == "paperclip:o").Status.Mark);
+        Assert.Equal(100, back.Single(r => r.SessionId == "paperclip:o").Status.BudgetPercent);
+        Assert.Equal(OrbPresence.NeedsInput, back.Single(r => r.SessionId == "paperclip:w").Status.Presence);
+    }
+
+    [Fact]
+    public void StatusDetail_IsTheFirstHoverLine_Short_OrNull()
+    {
+        var rows = Rows(new PaperclipScan(), [A("w", state: "waiting", needs: [Need], sleeping: false, task: "Fix it"), A("q")]);
+        Assert.Equal("Hire QA", rows[0].Status.StatusDetail);
+        Assert.Null(rows[1].Status.StatusDetail);
+    }
+
+    [Fact]
     public void ConnectingAndConnected_AreNotParked()
     {
         foreach (var l in new[] { PaperclipLink.Connecting, PaperclipLink.Connected })

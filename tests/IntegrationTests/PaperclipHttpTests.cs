@@ -169,6 +169,20 @@ public sealed class PaperclipHttpTests : IDisposable
     }
 
     [Fact]
+    public async Task TheLog_NeverCarriesAQuery_NotTheChallengeToken()
+    {
+        _handler = (_, r) => Reply(r, 200, "{}");
+        var lines = new List<string>();
+        await new PaperclipHttp(_root, null, log: lines.Add).GetAsync("/api/cli-auth/challenges/c1?token=CHALLENGE-TOKEN-XYZ", default);
+        var line = Assert.Single(lines);
+        Assert.Contains("/api/cli-auth/challenges/c1", line);
+        Assert.DoesNotContain("CHALLENGE-TOKEN-XYZ", line);
+        Assert.DoesNotContain("?", line);
+        Assert.Equal("/x", PaperclipHttp.PathOnly("/x"));
+        Assert.Equal("/x", PaperclipHttp.PathOnly("/x?a=b"));
+    }
+
+    [Fact]
     public async Task TheFullConnectFlow_OverTheRealTransport_ReachesConnected()
     {
         var polls = 0;
@@ -178,7 +192,7 @@ public sealed class PaperclipHttpTests : IDisposable
             if (path == "/api/health") return Reply(r, 200, "{\"status\":\"ok\",\"deploymentMode\":\"authenticated\"}");
             if (path == "/api/cli-auth/challenges" && req.HttpMethod == "POST")
                 return Reply(r, 200, "{\"id\":\"c1\",\"token\":\"tok\",\"boardApiToken\":\"BOARD\"," +
-                    "\"approvalUrl\":\"" + _root + "/cli-auth/c1\",\"pollPath\":\"/api/cli-auth/challenges/c1\"," +
+                    "\"approvalUrl\":\"" + _root + "/cli-auth/c1\",\"pollPath\":\"/cli-auth/challenges/c1\"," +
                     "\"suggestedPollIntervalMs\":250}");
             if (path == "/api/cli-auth/challenges/c1")
                 return Reply(r, 200, "{\"status\":\"" + (++polls < 2 ? "pending" : "approved") + "\"}");
@@ -187,7 +201,7 @@ public sealed class PaperclipHttpTests : IDisposable
             return Reply(r, 404, "");
         };
         var opened = new List<string>();
-        var result = await PaperclipConnect.RunAsync(k => new PaperclipHttp(_root, k), u => { opened.Add(u); return true; },
+        var result = await PaperclipConnect.RunAsync(_root, k => new PaperclipHttp(_root, k), u => { opened.Add(u); return true; },
             () => DateTime.UtcNow, (d, c) => Task.Delay(d, c), default);
         Assert.Equal(PaperclipConnectOutcome.Connected, result.Outcome);
         Assert.Equal("BOARD", result.Key);

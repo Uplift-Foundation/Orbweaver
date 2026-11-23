@@ -61,7 +61,7 @@ namespace Orbweaver
         // HttpClient, the real browser launch and the real home directory.
         [ExcludeFromCodeCoverage]
         internal static PaperclipConnector Real() => new(
-            (url, key) => new PaperclipHttp(url, key),
+            (url, key) => new PaperclipHttp(url, key, log: PaperclipHttp.DefaultLog),
             url => CloudSessionLink.Open(url),
             PaperclipCredentials.Default(), () => DateTime.UtcNow, Task.Delay,
             PaperclipSessions.Restart,
@@ -111,7 +111,7 @@ namespace Orbweaver
             PaperclipConnectResult result;
             try
             {
-                result = await PaperclipConnect.RunAsync(k => _apiFor(baseUrl, k), _openBrowser, _now, _delay, cts.Token,
+                result = await PaperclipConnect.RunAsync(baseUrl, k => _apiFor(baseUrl, k), _openBrowser, _now, _delay, cts.Token,
                     m => Message = m).ConfigureAwait(false);
             }
             finally

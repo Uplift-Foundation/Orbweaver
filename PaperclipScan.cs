@@ -77,6 +77,7 @@ namespace Orbweaver
 
                 // The agent's own last activity, never `now`: a scan entry's
                 // stamp is a claim about when something last happened.
+                status.StatusDetail = status.HoverLines.Count > 0 ? status.HoverLines[0] : null;
                 rows.Add(new SessionManager.ScanEntry(KeyFor(a.Id), status, a.LastActivity));
             }
             return rows;

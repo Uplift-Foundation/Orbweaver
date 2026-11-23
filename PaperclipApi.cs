@@ -59,7 +59,7 @@ namespace Orbweaver
 
         internal sealed record Challenge(
             string Id, string Token, string BoardApiToken, string ApprovalUrl,
-            string PollPath, DateTime? ExpiresAt, int PollIntervalMs);
+            string PollPath, DateTime? ExpiresAt, int PollIntervalMs, string? ApprovalPath = null);
 
         internal sealed record RuntimeInfo(int Port);
 
@@ -241,7 +241,7 @@ namespace Orbweaver
             var poll = Str(o, "pollPath");
             if (id == null || token == null || board == null || url == null || poll == null) return null;
             var ms = IntOrNull(o, "suggestedPollIntervalMs") ?? 1000;
-            return new Challenge(id, token, board, url, poll, Time(Str(o, "expiresAt")), Math.Clamp(ms, 250, 10_000));
+            return new Challenge(id, token, board, url, poll, Time(Str(o, "expiresAt")), Math.Clamp(ms, 250, 10_000), NonEmpty(Str(o, "approvalPath")));
         }
 
         internal static string? ParseChallengeStatus(string? json)

@@ -142,6 +142,109 @@ public class PaperclipSessionsStepTests
         Assert.Equal(new[] { "Hire QA" }, a.Needs.Select(n => n.Title).ToArray());
     }
 
+    // ---- optional lists never dim the company ----
+
+    public static IEnumerable<object[]> OptionalLists() => new[]
+    {
+        new object[] { "approvals?status=pending", "approvals" },
+        new object[] { "tools/action-requests", "tool actions" },
+        new object[] { "issues?status=blocked", "blocked tasks" },
+    };
+
+    [Theory]
+    [MemberData(nameof(OptionalLists))]
+    public async Task AnOptionalList_ThatIs404_IsNone_AndTheCompanyStaysConnected(string tail, string _)
+    {
+        var f = Company();
+        f.Gets[P(tail)] = FakePaperclip.Status(PaperclipHttpKind.NotFound, 404);
+        var s = await Step(f, PollState.Initial, T0);
+        Assert.Equal(PaperclipLink.Connected, s.Next.Link);
+        Assert.Equal("Connected to 127.0.0.1:3100. 4 agents.", s.Next.Status);
+        Assert.Equal(4, s.Next.Published!.Count);
+        Assert.Null(s.Next.NextAttempt);
+    }
+
+    [Theory]
+    [MemberData(nameof(OptionalLists))]
+    public async Task AnOptionalList_ThatErrors_KeepsItsLastAnswer_NamesItInTheStatus_AndNeverDims(string tail, string name)
+    {
+        var f = Company();
+        var s = (await Step(f, PollState.Initial, T0)).Next;
+        f.Gets[P(tail)] = FakePaperclip.Status(PaperclipHttpKind.ServerError, 500);
+        // several ticks past the 15 s grace: still connected, never unreachable
+        for (var i = 1; i <= 6; i++)
+        {
+            var r = await Step(f, s, T0.AddSeconds(4 * i));
+            s = r.Next;
+            Assert.Equal(PaperclipLink.Connected, s.Link);
+            Assert.Null(s.NextAttempt);
+            Assert.Equal(4, s.Published!.Count);
+            Assert.Equal($"Connected to 127.0.0.1:3100. 4 agents. Couldn't read {name}.", s.Status);
+        }
+        // and it recovers
+        f.Gets[P(tail)] = FakePaperclip.Ok(tail.StartsWith("tools") ? "{\"actionRequests\":[]}" : "[]");
+        Assert.Equal("Connected to 127.0.0.1:3100. 4 agents.", (await Step(f, s, T0.AddSeconds(40))).Next.Status);
+    }
+
+    [Fact]
+    public async Task AnErroringApprovalsList_KeepsTheLastKnownNeed()
+    {
+        var f = Company();
+        f.Gets[P("approvals?status=pending")] = FakePaperclip.Ok(
+            "[{\"id\":\"p1\",\"type\":\"hire_agent\",\"status\":\"pending\",\"payload\":{\"title\":\"Hire QA\",\"agentId\":\"00000000-0000-4000-8000-000000000004\"}}]");
+        var s = (await Step(f, PollState.Initial, T0)).Next;
+        f.Gets[P("approvals?status=pending")] = FakePaperclip.Status(PaperclipHttpKind.Timeout);
+        s = (await Step(f, s, T0.AddSeconds(4))).Next;
+        Assert.Equal("waiting", s.Published!.Single(a => a.Id.EndsWith("4")).State);
+    }
+
+    [Fact]
+    public async Task TheDegradedNoteSurvivesTicksThatDoNotRetryTheList()
+    {
+        var f = Company();
+        f.Gets[P("tools/action-requests")] = FakePaperclip.Status(PaperclipHttpKind.ServerError, 500);
+        var s = (await Step(f, PollState.Initial, T0)).Next;
+        var r = await Step(f, s, T0.AddSeconds(2));   // fast tick only
+        Assert.Contains("Couldn't read tool actions.", r.Next.Status);
+    }
+
+    [Fact]
+    public async Task RecentRuns_Failing_IsOptionalToo()
+    {
+        var f = Company();
+        f.Gets[P("heartbeat-runs?limit=20")] = FakePaperclip.Status(PaperclipHttpKind.ServerError, 500);
+        var s = await Step(f, PollState.Initial, T0);
+        Assert.Equal(PaperclipLink.Connected, s.Next.Link);
+        Assert.Contains("Couldn't read recent runs.", s.Next.Status);
+    }
+
+    [Theory]
+    [InlineData("approvals?status=pending")]
+    [InlineData("tools/action-requests")]
+    [InlineData("issues?status=blocked")]
+    public async Task ARefusedKeyOnAnOptionalList_StillMeansReconnect(string tail)
+    {
+        var f = Company();
+        f.Gets[P(tail)] = FakePaperclip.Status(PaperclipHttpKind.Unauthorized, 401);
+        Assert.Equal(PaperclipLink.NeedsReconnect, (await Step(f, PollState.Initial, T0)).Next.Link);
+    }
+
+    [Fact]
+    public async Task TheControl_AnAgentsReadThatFails_StillDimsAfter15Seconds()
+    {
+        var f = Company();
+        var s = (await Step(f, PollState.Initial, T0)).Next;
+        f.Gets[P("agents")] = FakePaperclip.Status(PaperclipHttpKind.ServerError, 500);
+        var now = T0.AddSeconds(2);
+        PaperclipLink last = PaperclipLink.Connected;
+        for (var i = 0; i < 6; i++)
+        {
+            var r = await Step(f, s, now);
+            s = r.Next; last = s.Link; now = s.NextAttempt!.Value;
+        }
+        Assert.Equal(PaperclipLink.Unreachable, last);
+    }
+
     // ---- failure ----
 
     [Theory]

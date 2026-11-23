@@ -43,8 +43,8 @@ public class PaperclipConnectorTests : IDisposable
             Creds = new PaperclipCredentials(dir);
             Anon.Gets["/api/health"] = FakePaperclip.Ok("{\"status\":\"ok\",\"deploymentMode\":\"" + mode + "\"}");
             Anon.Posts["/api/cli-auth/challenges"] = FakePaperclip.Ok(
-                "{\"id\":\"c\",\"token\":\"t\",\"boardApiToken\":\"KEY\",\"approvalUrl\":\"http://127.0.0.1:3100/a\",\"pollPath\":\"/api/p\"}");
-            Anon.Gets["/api/p?token=t"] = FakePaperclip.Ok("{\"status\":\"approved\"}");
+                "{\"id\":\"c\",\"token\":\"t\",\"boardApiToken\":\"KEY\",\"approvalUrl\":\"http://127.0.0.1:3100/a\",\"pollPath\":\"/cli-auth/challenges/c\"}");
+            Anon.Gets["/api/cli-auth/challenges/c?token=t"] = FakePaperclip.Ok("{\"status\":\"approved\"}");
             Anon.Gets["/api/companies"] = FakePaperclip.Ok(companies);
             Keyed.Gets["/api/cli-auth/me"] = FakePaperclip.Ok("{}");
             Keyed.Gets["/api/companies"] = FakePaperclip.Ok(companies);
@@ -108,12 +108,12 @@ public class PaperclipConnectorTests : IDisposable
     {
         OrbweaverSettings.PaperclipEnabled = false;
         var cancelled = new World(_dir, TwoCompanies);
-        cancelled.Anon.Gets["/api/p?token=t"] = FakePaperclip.Ok("{\"status\":\"cancelled\"}");
+        cancelled.Anon.Gets["/api/cli-auth/challenges/c?token=t"] = FakePaperclip.Ok("{\"status\":\"cancelled\"}");
         await cancelled.Connector.ConnectAsync(Base, default);
         Assert.Equal((PaperclipPhase.Idle, ""), (cancelled.Connector.Phase, cancelled.Connector.Message));
 
         var expired = new World(_dir, TwoCompanies);
-        expired.Anon.Gets["/api/p?token=t"] = FakePaperclip.Ok("{\"status\":\"expired\"}");
+        expired.Anon.Gets["/api/cli-auth/challenges/c?token=t"] = FakePaperclip.Ok("{\"status\":\"expired\"}");
         await expired.Connector.ConnectAsync(Base, default);
         Assert.Equal((PaperclipPhase.Failed, "The approval timed out. Try again."), (expired.Connector.Phase, expired.Connector.Message));
 
@@ -125,7 +125,7 @@ public class PaperclipConnectorTests : IDisposable
 
         var refused = new World(_dir, TwoCompanies);
         refused.Anon.Posts["/api/cli-auth/challenges"] = FakePaperclip.Ok(
-            "{\"id\":\"c\",\"token\":\"t\",\"boardApiToken\":\"K\",\"approvalUrl\":\"file:///x\",\"pollPath\":\"/api/p\"}");
+            "{\"id\":\"c\",\"token\":\"t\",\"boardApiToken\":\"K\",\"approvalUrl\":\"file:///x\",\"pollPath\":\"/cli-auth/challenges/c\"}");
         await refused.Connector.ConnectAsync(Base, default);
         Assert.Equal(PaperclipPhase.Failed, refused.Connector.Phase);
 
@@ -150,7 +150,7 @@ public class PaperclipConnectorTests : IDisposable
     public async Task CancelConnect_StopsTheApprovalWait()
     {
         var w = new World(_dir, TwoCompanies);
-        w.Anon.Gets["/api/p?token=t"] = FakePaperclip.Ok("{\"status\":\"pending\"}");
+        w.Anon.Gets["/api/cli-auth/challenges/c?token=t"] = FakePaperclip.Ok("{\"status\":\"pending\"}");
         var connector = new PaperclipConnector((u, k) => k == null ? w.Anon : w.Keyed, u => true, w.Creds, () => w.Now,
             (d, c) => { w.Now += d; return Task.CompletedTask; }, () => { }, () => []);
         PaperclipConnector? self = null;

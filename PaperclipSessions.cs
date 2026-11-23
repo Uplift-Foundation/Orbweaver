@@ -107,7 +107,8 @@ namespace Orbweaver
             DateTime? NextAttempt = null,
             PaperclipLink Link = PaperclipLink.Connecting,
             string Status = "Connecting to Paperclip…",
-            bool NeedRuns = true)
+            bool NeedRuns = true,
+            IReadOnlyList<string>? Degraded = null)
         {
             internal static readonly PollState Initial = new();
         }
@@ -188,26 +189,40 @@ namespace Orbweaver
                 else Note(l);
             }
 
+            // Approvals, tool action requests and blocked issues are optional: the
+            // link is "connected" when the company and agents reads succeed. A 404
+            // means this Paperclip has no such route, so the list is empty; any
+            // other failure keeps the last answer and is named in the status line,
+            // never a link failure. Only a refused key (401/403) means reconnect.
+            var degraded = new List<string>();
             if (slow)
             {
                 var ap = await api.GetAsync(CompanyPath(st, "approvals?status=pending"), ct).ConfigureAwait(false);
                 if (ap.IsOk) approvals = PaperclipApi.ParseApprovals(ap.Body).Where(x => x.Status is "pending" or "").ToList();
-                else Note(ap);
+                else if (ap.Kind == PaperclipHttpKind.NotFound) approvals = Array.Empty<PaperclipApi.RawApproval>();
+                else if (ap.Kind == PaperclipHttpKind.Unauthorized) Note(ap);
+                else degraded.Add("approvals");
 
                 var ac = await api.GetAsync(CompanyPath(st, "tools/action-requests"), ct).ConfigureAwait(false);
                 if (ac.IsOk) actions = PaperclipApi.ParseActionRequests(ac.Body);
-                else Note(ac);
+                else if (ac.Kind == PaperclipHttpKind.NotFound) actions = Array.Empty<PaperclipApi.RawActionRequest>();
+                else if (ac.Kind == PaperclipHttpKind.Unauthorized) Note(ac);
+                else degraded.Add("tool actions");
 
                 var bl = await api.GetAsync(CompanyPath(st, "issues?status=blocked"), ct).ConfigureAwait(false);
                 if (bl.IsOk) blocked = PaperclipApi.ParseIssues(bl.Body);
-                else Note(bl);
+                else if (bl.Kind == PaperclipHttpKind.NotFound) blocked = Array.Empty<PaperclipApi.RawIssue>();
+                else if (bl.Kind == PaperclipHttpKind.Unauthorized) Note(bl);
+                else degraded.Add("blocked tasks");
             }
+            else if (st.Degraded is { Count: > 0 }) degraded.AddRange(st.Degraded);
 
             if (needRuns && (fast || slow) && firstFailure == null)
             {
                 var r = await api.GetAsync(CompanyPath(st, "heartbeat-runs?limit=20"), ct).ConfigureAwait(false);
                 if (r.IsOk) { runs = PaperclipApi.ParseRuns(r.Body); needRuns = false; }
-                else Note(r);
+                else if (r.Kind == PaperclipHttpKind.Unauthorized) Note(r);
+                else degraded.Add("recent runs");
             }
 
             // The hover's task line, only for an issue a live run names that is
@@ -232,7 +247,7 @@ namespace Orbweaver
                 LastSlow = slow ? now : st.LastSlow,
                 Agents = agents, LiveRuns = live, Runs = runs, Approvals = approvals,
                 Actions = actions, Blocked = blocked, Heartbeats = heartbeats,
-                TaskTitles = tasks, NeedRuns = needRuns,
+                TaskTitles = tasks, NeedRuns = needRuns, Degraded = degraded,
             };
 
             if (firstFailure is { } kind)
@@ -248,7 +263,8 @@ namespace Orbweaver
             return new StepResult(stamped with
             {
                 Published = composed, AwakeStamps = stamps, Failures = 0, FailingSince = null, NextAttempt = null,
-                Link = PaperclipLink.Connected, Status = ConnectedText(cfg, composed.Count, now),
+                Link = PaperclipLink.Connected,
+                Status = ConnectedText(cfg, composed.Count, now) + (degraded.Count > 0 ? " Couldn't read " + string.Join(", ", degraded) + "." : ""),
             }, FastEvery);
         }
 
@@ -305,7 +321,7 @@ namespace Orbweaver
                 var cfg = ConfigSource();
                 if (api == null || cfg.Key != lastKey || cfg.BaseUrl != lastUrl)
                 {
-                    api = new PaperclipHttp(cfg.BaseUrl, cfg.Key);
+                    api = new PaperclipHttp(cfg.BaseUrl, cfg.Key, log: PaperclipHttp.DefaultLog);
                     lastKey = cfg.Key; lastUrl = cfg.BaseUrl;
                 }
                 TimeSpan wait;

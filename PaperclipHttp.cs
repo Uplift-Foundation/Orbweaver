@@ -32,6 +32,9 @@ namespace Orbweaver
     // health and challenge calls carry nothing.
     internal sealed class PaperclipHttp : IPaperclipApi
     {
+        // What the app logs through: status, size and time, never a body, a key or a query.
+        internal static readonly Action<string> DefaultLog = line => Console.Error.WriteLine("paperclip: " + line);
+
         internal static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(5);
 
         private readonly HttpClient _http;
@@ -74,7 +77,7 @@ namespace Orbweaver
                 var text = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
                 var code = (int)res.StatusCode;
                 // Status, size and time only: never the body, never the key.
-                _log?.Invoke($"{method} {path} -> {code}, {text.Length} bytes, {(int)(DateTime.UtcNow - started).TotalMilliseconds} ms");
+                _log?.Invoke($"{method} {PathOnly(path)} -> {code}, {text.Length} bytes, {(int)(DateTime.UtcNow - started).TotalMilliseconds} ms");
                 return new PaperclipResponse(Classify(code), code, text);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -90,6 +93,14 @@ namespace Orbweaver
                 return new PaperclipResponse(PaperclipHttpKind.Unreachable, 0, "",
                     OpenClawGateway.ExplainConnectFailure(ex, OperatingSystem.IsMacOS()));
             }
+        }
+
+        // The query is never logged: the poll URL carries the challenge token, and
+        // a path is all anyone reading a log needs.
+        internal static string PathOnly(string path)
+        {
+            var q = path.IndexOf('?');
+            return q < 0 ? path : path[..q];
         }
 
         internal static PaperclipHttpKind Classify(int code) => code switch

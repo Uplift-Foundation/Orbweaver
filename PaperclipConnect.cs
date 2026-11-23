@@ -34,12 +34,43 @@ namespace Orbweaver
         // on a poll is what is actually believed.
         internal static readonly TimeSpan KeyLifetime = TimeSpan.FromDays(30);
 
+        internal const int MaxFailedPolls = 3;
+
+        // pollPath comes back as "/cli-auth/challenges/<id>" with no /api prefix
+        // and no query (measured); the poll that works is under /api with the
+        // challenge token. Accept either shape: prefix /api when it is absent and
+        // append the token only when the path has no query already.
+        internal static string PollPathFor(PaperclipApi.Challenge ch)
+        {
+            var path = ch.PollPath.StartsWith("/api/", StringComparison.Ordinal) ? ch.PollPath : "/api" + ch.PollPath;
+            return path.Contains('?') ? path : path + "?token=" + Uri.EscapeDataString(ch.Token);
+        }
+
+        // The server builds approvalUrl from the address it was called on, so for
+        // a Paperclip reached at a different address than it believes it has, the
+        // absolute URL points somewhere the browser may not reach. When the hosts
+        // differ and the server gave a path, the address the user connected to
+        // plus that path is what opens. Unmeasured for a LAN instance.
+        internal static string ApprovalUrlFor(string baseUrl, PaperclipApi.Challenge ch)
+        {
+            if (ch.ApprovalPath != null && ch.ApprovalPath.StartsWith('/')
+                && Uri.TryCreate(baseUrl, UriKind.Absolute, out var b)
+                && Uri.TryCreate(ch.ApprovalUrl, UriKind.Absolute, out var a)
+                // A non-web scheme is never rewritten into a safe-looking one: it is
+                // refused by the caller, which is the point of checking it.
+                && (a.Scheme == Uri.UriSchemeHttp || a.Scheme == Uri.UriSchemeHttps)
+                && !string.Equals(a.Authority, b.Authority, StringComparison.OrdinalIgnoreCase))
+                return baseUrl.TrimEnd('/') + ch.ApprovalPath;
+            return ch.ApprovalUrl;
+        }
+
         internal const string ChallengeBody =
             "{\"command\":\"Orbweaver\",\"clientName\":\"Orbweaver\",\"requestedAccess\":\"board\"}";
 
         // apiFor(null) is the unauthenticated transport; apiFor(key) one that
         // sends the key. openBrowser returns false when it could not.
         internal static async Task<PaperclipConnectResult> RunAsync(
+            string baseUrl,
             Func<string?, IPaperclipApi> apiFor,
             Func<string, bool> openBrowser,
             Func<DateTime> now,
@@ -66,15 +97,17 @@ namespace Orbweaver
                 var ch = PaperclipApi.ParseChallenge(post.Body);
                 if (ch == null) return Fail("Paperclip's approval answer was not understood.");
 
-                if (!Uri.TryCreate(ch.ApprovalUrl, UriKind.Absolute, out var uri)
+                var approval = ApprovalUrlFor(baseUrl, ch);
+                if (!Uri.TryCreate(approval, UriKind.Absolute, out var uri)
                     || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
                     return new PaperclipConnectResult(PaperclipConnectOutcome.Refused, Message: "Paperclip's approval link was not a web address.");
 
-                if (!openBrowser(ch.ApprovalUrl))
+                if (!openBrowser(approval))
                     return Fail("Couldn't open the browser.");
                 progress?.Invoke("Approve Orbweaver in your browser…");
 
-                var pollPath = ch.PollPath.Contains('?') ? ch.PollPath : ch.PollPath + "?token=" + Uri.EscapeDataString(ch.Token);
+                var pollPath = PollPathFor(ch);
+                var failedPolls = 0;
                 var interval = TimeSpan.FromMilliseconds(ch.PollIntervalMs);
                 var deadline = ch.ExpiresAt ?? now() + TimeSpan.FromMinutes(10);
 
@@ -85,7 +118,17 @@ namespace Orbweaver
                     ct.ThrowIfCancellationRequested();
 
                     var poll = await anon.GetAsync(pollPath, ct).ConfigureAwait(false);
-                    if (!poll.IsOk) continue; // a hiccup; the deadline bounds it
+                    if (!poll.IsOk)
+                    {
+                        // A hiccup is ridden out, but a poll that keeps failing (a
+                        // wrong path answers 404 for ever) ends the attempt with a
+                        // reason instead of spinning to the challenge's expiry.
+                        if (++failedPolls >= MaxFailedPolls)
+                            return Fail("Paperclip stopped answering the approval check ("
+                                + (poll.StatusCode > 0 ? "HTTP " + poll.StatusCode : poll.Kind.ToString()) + ").");
+                        continue;
+                    }
+                    failedPolls = 0;
                     switch (PaperclipApi.ParseChallengeStatus(poll.Body))
                     {
                         case "approved":

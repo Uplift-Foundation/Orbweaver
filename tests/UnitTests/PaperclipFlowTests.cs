@@ -104,9 +104,12 @@ public class PaperclipConnectTests
 {
     private const string Health = "{\"status\":\"ok\",\"deploymentMode\":\"authenticated\"}";
 
-    private static string ChallengeJson(string url = "http://127.0.0.1:3100/cli-auth/c1?x=1", string? expires = null) =>
+    // The real shape, measured on the live instance: pollPath has no /api prefix
+    // and no query; approvalPath is a UI route carrying the token.
+    private static string ChallengeJson(string url = "http://127.0.0.1:3100/cli-auth/c1?token=tok", string? expires = null,
+        string pollPath = "/cli-auth/challenges/c1", string approvalPath = "/cli-auth/c1?token=tok") =>
         "{\"id\":\"c1\",\"token\":\"tok\",\"boardApiToken\":\"KEY\",\"approvalUrl\":\"" + url + "\"," +
-        "\"pollPath\":\"/api/cli-auth/challenges/c1\",\"suggestedPollIntervalMs\":1000" +
+        "\"approvalPath\":\"" + approvalPath + "\",\"pollPath\":\"" + pollPath + "\",\"suggestedPollIntervalMs\":1000" +
         (expires == null ? "" : ",\"expiresAt\":\"" + expires + "\"") + "}";
 
     private sealed class World
@@ -131,7 +134,7 @@ public class PaperclipConnectTests
                 s.Select(x => FakePaperclip.Ok("{\"status\":\"" + x + "\"}")));
 
         internal Task<PaperclipConnectResult> Run(CancellationToken ct = default) =>
-            PaperclipConnect.RunAsync(k => { KeyUsed = k; return k == null ? Anon : Keyed; },
+            PaperclipConnect.RunAsync("http://127.0.0.1:3100", k => { KeyUsed = k; return k == null ? Anon : Keyed; },
                 u => { Opened.Add(u); return BrowserWorks; }, () => Now,
                 (d, c) => { Now += d; return Task.CompletedTask; }, ct, Progress.Add);
     }
@@ -144,7 +147,7 @@ public class PaperclipConnectTests
         Assert.Equal(PaperclipConnectOutcome.Connected, r.Outcome);
         Assert.Equal("KEY", r.Key);
         Assert.Equal(w.Now + PaperclipConnect.KeyLifetime, r.KeyExpires);
-        Assert.Equal(new[] { "http://127.0.0.1:3100/cli-auth/c1?x=1" }, w.Opened.ToArray());
+        Assert.Equal(new[] { "http://127.0.0.1:3100/cli-auth/c1?token=tok" }, w.Opened.ToArray());
         Assert.Contains("Approve Orbweaver in your browser…", w.Progress);
         Assert.Equal("{\"command\":\"Orbweaver\",\"clientName\":\"Orbweaver\",\"requestedAccess\":\"board\"}", w.Anon.LastPostBody);
         Assert.Contains("GET /api/cli-auth/me", w.Keyed.Calls);
@@ -203,7 +206,7 @@ public class PaperclipConnectTests
     public async Task PollPathAlreadyCarryingAQuery_IsNotGivenASecondToken()
     {
         var w = new World();
-        w.Anon.Posts["/api/cli-auth/challenges"] = FakePaperclip.Ok(ChallengeJson().Replace("/challenges/c1\"", "/challenges/c1?token=tok\""));
+        w.Anon.Posts["/api/cli-auth/challenges"] = FakePaperclip.Ok(ChallengeJson(pollPath: "/api/cli-auth/challenges/c1?token=tok"));
         w.Anon.Gets["/api/cli-auth/challenges/c1?token=tok"] = FakePaperclip.Ok("{\"status\":\"approved\"}");
         Assert.Equal(PaperclipConnectOutcome.Connected, (await w.Run()).Outcome);
     }
@@ -213,11 +216,88 @@ public class PaperclipConnectTests
     {
         var w = new World(); w.Statuses("pending", "pending");
         using var cts = new CancellationTokenSource();
-        var r = await PaperclipConnect.RunAsync(k => k == null ? w.Anon : w.Keyed, u => true, () => w.Now,
+        var r = await PaperclipConnect.RunAsync("http://127.0.0.1:3100", k => k == null ? w.Anon : w.Keyed, u => true, () => w.Now,
             (d, c) => { cts.Cancel(); return Task.CompletedTask; }, cts.Token);
         Assert.Equal(PaperclipConnectOutcome.Cancelled, r.Outcome);
         Assert.Null(r.Key);
         Assert.DoesNotContain(w.Anon.Calls, c => c.Contains("challenges/c1?token"));
+    }
+
+    [Theory]
+    [InlineData("/cli-auth/challenges/c1")]        // the real shape
+    [InlineData("/api/cli-auth/challenges/c1")]    // already under /api
+    public async Task PollPath_IsResolvedAgainstTheApiRoot(string pollPath)
+    {
+        var w = new World();
+        w.Anon.Posts["/api/cli-auth/challenges"] = FakePaperclip.Ok(ChallengeJson(pollPath: pollPath));
+        w.Statuses("approved");
+        Assert.Equal(PaperclipConnectOutcome.Connected, (await w.Run()).Outcome);
+        Assert.Contains("GET /api/cli-auth/challenges/c1?token=tok", w.Anon.Calls);
+        Assert.DoesNotContain(w.Anon.Calls, c => c.StartsWith("GET /cli-auth"));
+    }
+
+    [Fact]
+    public async Task APollThatNeverAnswersOk_FailsFastWithAReason_NotAfterTenMinutes()
+    {
+        var w = new World();   // every poll 404s: nothing is scripted for the poll path
+        var r = await w.Run();
+        Assert.Equal(PaperclipConnectOutcome.Failed, r.Outcome);
+        Assert.Contains("stopped answering the approval check", r.Message);
+        Assert.Contains("404", r.Message);
+        Assert.Equal(PaperclipConnect.MaxFailedPolls, w.Anon.Calls.Count(c => c.Contains("challenges/c1?token")));
+        Assert.True(w.Now - PaperclipFx.Now < TimeSpan.FromMinutes(1));
+    }
+
+    [Fact]
+    public async Task FailedPollsThatAreNotConsecutive_AreRiddenOut()
+    {
+        var w = new World();
+        w.Anon.Sequences["/api/cli-auth/challenges/c1?token=tok"] = new Queue<PaperclipResponse>(
+        [
+            FakePaperclip.Status(PaperclipHttpKind.Timeout), FakePaperclip.Status(PaperclipHttpKind.Timeout),
+            FakePaperclip.Ok("{\"status\":\"pending\"}"),
+            FakePaperclip.Status(PaperclipHttpKind.Timeout), FakePaperclip.Status(PaperclipHttpKind.Timeout),
+            FakePaperclip.Ok("{\"status\":\"approved\"}"),
+        ]);
+        Assert.Equal(PaperclipConnectOutcome.Connected, (await w.Run()).Outcome);
+    }
+
+    [Fact]
+    public async Task APollThatTimesOutThreeTimes_NamesTheKindWhenThereIsNoStatus()
+    {
+        var w = new World();
+        w.Anon.Gets["/api/cli-auth/challenges/c1?token=tok"] = FakePaperclip.Status(PaperclipHttpKind.Timeout);
+        Assert.Contains("Timeout", (await w.Run()).Message);
+    }
+
+    [Fact]
+    public void ApprovalUrl_PrefersTheAddressTheUserConnectedTo_WhenTheHostsDiffer()
+    {
+        PaperclipApi.Challenge Ch(string url, string? path) =>
+            new("c", "t", "k", url, "/cli-auth/challenges/c", null, 1000, path);
+        // same host: the returned absolute URL as it is
+        Assert.Equal("http://127.0.0.1:3100/cli-auth/c?token=t",
+            PaperclipConnect.ApprovalUrlFor("http://127.0.0.1:3100", Ch("http://127.0.0.1:3100/cli-auth/c?token=t", "/cli-auth/c?token=t")));
+        // the server believes it is at another address: the connected one plus the path
+        Assert.Equal("http://192.0.2.10:3100/cli-auth/c?token=t",
+            PaperclipConnect.ApprovalUrlFor("http://192.0.2.10:3100/", Ch("http://0.0.0.0:3100/cli-auth/c?token=t", "/cli-auth/c?token=t")));
+        // no path to build from, or a path that is not a path: the returned URL stands
+        Assert.Equal("http://0.0.0.0:3100/x",
+            PaperclipConnect.ApprovalUrlFor("http://192.0.2.10:3100", Ch("http://0.0.0.0:3100/x", null)));
+        Assert.Equal("http://0.0.0.0:3100/x",
+            PaperclipConnect.ApprovalUrlFor("http://192.0.2.10:3100", Ch("http://0.0.0.0:3100/x", "evil.example/y")));
+        Assert.Equal("http://0.0.0.0:3100/x",
+            PaperclipConnect.ApprovalUrlFor("not a url", Ch("http://0.0.0.0:3100/x", "/y")));
+    }
+
+    [Fact]
+    public async Task ADifferentHostApprovalUrl_IsReplacedBeforeTheBrowserIsOpened()
+    {
+        var w = new World();
+        w.Anon.Posts["/api/cli-auth/challenges"] = FakePaperclip.Ok(ChallengeJson(url: "http://0.0.0.0:3100/cli-auth/c1?token=tok"));
+        w.Statuses("approved");
+        await w.Run();
+        Assert.Equal(new[] { "http://127.0.0.1:3100/cli-auth/c1?token=tok" }, w.Opened.ToArray());
     }
 
     [Theory]
@@ -372,6 +452,47 @@ public class PaperclipCredentialsTests : IDisposable
         c.Set("http://h", "k", DateTime.UtcNow);
         Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite,
             File.GetUnixFileMode(Path.Combine(_dir, "paperclip-credentials.json")));
+    }
+
+    [Fact]
+    public void TheKeyFileIsNeverWiderThan0600_NotEvenWhileItIsBeingWritten()
+    {
+        if (OperatingSystem.IsWindows()) return;   // no mode to read; see PaperclipCredentials.Save
+        Directory.CreateDirectory(_dir);
+        var c = new PaperclipCredentials(_dir);
+        var wide = new List<string>();
+        using var stop = new CancellationTokenSource();
+        var watcher = Task.Run(() =>
+        {
+            while (!stop.IsCancellationRequested)
+                foreach (var f in Directory.EnumerateFiles(_dir))
+                {
+                    try
+                    {
+                        var m = File.GetUnixFileMode(f);
+                        if (m != (UnixFileMode.UserRead | UnixFileMode.UserWrite)) lock (wide) wide.Add($"{Path.GetFileName(f)} {m}");
+                    }
+                    catch (IOException) { }   // renamed away between listing and stat
+                }
+        });
+        for (var i = 0; i < 300; i++) c.Set("http://h", "SECRET" + i, DateTime.UtcNow);
+        stop.Cancel();
+        watcher.Wait();
+        Assert.Empty(wide);
+        Assert.Equal("SECRET299", c.Get("http://h")!.Key);
+        Assert.Equal(new[] { "paperclip-credentials.json" }, Directory.GetFiles(_dir).Select(Path.GetFileName).ToArray());
+    }
+
+    [Fact]
+    public void AnExistingWiderFile_DoesNotLeakItsModeToTheReplacement()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        Directory.CreateDirectory(_dir);
+        var path = Path.Combine(_dir, "paperclip-credentials.json");
+        File.WriteAllText(path, "{}");
+        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
+        new PaperclipCredentials(_dir).Set("http://h", "k", DateTime.UtcNow);
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(path));
     }
 
     [Fact]

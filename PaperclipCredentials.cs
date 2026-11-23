@@ -64,12 +64,27 @@ namespace Orbweaver
             }
         }
 
+        // Created owner-only from the first byte: a temp file opened with mode
+        // 0600, then renamed over the real one. Writing first and chmod-ing after
+        // leaves the key readable under the default umask for the window between.
+        // Windows has no mode to set; the file lives under the user profile, whose
+        // ACL is the protection, and that is not verified by any test here.
         private void Save(Dictionary<string, Entry> map)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-            File.WriteAllText(_path, JsonSerializer.Serialize(map));
-            if (!OperatingSystem.IsWindows())
-                File.SetUnixFileMode(_path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            var tmp = _path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write };
+            if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+            try
+            {
+                using (var fs = new FileStream(tmp, options))
+                using (var w = new StreamWriter(fs)) w.Write(JsonSerializer.Serialize(map));
+                File.Move(tmp, _path, overwrite: true);
+            }
+            finally
+            {
+                if (File.Exists(tmp)) File.Delete(tmp);
+            }
         }
     }
 }
