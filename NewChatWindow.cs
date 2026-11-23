@@ -2315,7 +2315,7 @@ namespace Orbweaver
             var keep = _resumeFolderWanted ?? (_resumeFolderFilter.SelectedItem as ResumeFolder)?.Path;
             _resumeFolderWanted = null;
             var items = new List<ResumeFolder> { new((string?)null) };
-            items.AddRange(PastSessions.Folders(_resumeSessions ?? Array.Empty<PastSession>()).Select(f => new ResumeFolder(f)));
+            items.AddRange(PastSessions.Folders(_resumeSessions!).Select(f => new ResumeFolder(f)));
             _resumeFolderFilter.ItemsSource = items;
             var at = keep is null ? 0 : items.FindIndex(i => i.Path == keep);
             _resumeFolderFilter.SelectedIndex = at >= 0 ? at : 0;
@@ -2362,6 +2362,10 @@ namespace Orbweaver
             _resumeAvatars.Clear();
         }
 
+        // The headless platform decodes any bytes without complaint, so the
+        // failure path is only reachable through this seam.
+        internal static Func<Stream, int, Avalonia.Media.Imaging.Bitmap>? DecodeAvatarForTests;
+
         internal int ResumeAvatarCount => _resumeAvatars.Count;
 
         private Control ResumeAvatar(PastSession s)
@@ -2378,7 +2382,7 @@ namespace Orbweaver
                     if (!_resumeAvatars.TryGetValue(path, out var bitmap))
                     {
                         using var stream = File.OpenRead(path);
-                        bitmap = Avalonia.Media.Imaging.Bitmap.DecodeToWidth(stream, 48);
+                        bitmap = DecodeAvatarForTests?.Invoke(stream, 48) ?? Avalonia.Media.Imaging.Bitmap.DecodeToWidth(stream, 48);
                         _resumeAvatars[path] = bitmap;
                     }
 

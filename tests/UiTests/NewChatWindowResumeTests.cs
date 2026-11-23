@@ -2,6 +2,7 @@ using System.Reflection;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.LogicalTree;
 using Avalonia.Threading;
@@ -52,6 +53,9 @@ public class NewChatWindowResumeTests : IDisposable
         NewChatAvailability.CurrentForTests = null;
         NewChatLauncher.ResumeForTests = null;
         PastSessionIndex.LoadForTests = null;
+        PastSessions.CountForTests = null;
+        NewChatWindow.DecodeAvatarForTests = null;
+        NewChatWindow.ResumeLoadInlineForTests = false;
     }
 
     private static NewChatOption Enabled(NewChatCli cli) => new(cli, Enabled: true, Reason: null, Warning: null);
@@ -672,5 +676,215 @@ public class NewChatWindowResumeTests : IDisposable
 
         Assert.True(window.LocalResumeRadio.IsChecked);
         Assert.Equal(folder, (window.ResumeFolderFilter.SelectedItem as NewChatWindow.ResumeFolder)?.Path);
+    }
+
+    // ---- QA coverage batch ----
+
+    private static void WaitFor(Func<bool> done)
+    {
+        for (var i = 0; i < 300 && !done(); i++)
+        {
+            Thread.Sleep(10);
+            Flush();
+        }
+
+        Assert.True(done(), "timed out waiting for the UI thread to be handed the result");
+    }
+
+    private static void PressKey(Control target, Key key) =>
+        target.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = key });
+
+    [AvaloniaFact]
+    public void PrefillSelectsTheAccountItsProfileDirNames()
+    {
+        FreshSettings();
+        OrbweaverSettings.AddClaudeCodeProfileDir(".claude-board");
+        PastSessionIndex.LoadForTests = (_, _, _, _) => Array.Empty<PastSession>();
+        var window = NewWindow();
+        var choices = ((IEnumerable<NewChatAccounts.Choice>)window.AccountCombo.ItemsSource!).ToList();
+        var named = choices.Last(c => c.ProfileDir is not null);
+        Assert.NotEqual(choices.IndexOf(named), window.AccountCombo.SelectedIndex);
+
+        window.PrefillResume(NewChatCli.ClaudeCode, null, named.ProfileDir);
+
+        Assert.Equal(choices.IndexOf(named), window.AccountCombo.SelectedIndex);
+    }
+
+    [AvaloniaTheory]
+    [InlineData("/no/such/account")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void PrefillLeavesTheAccountAloneWhenTheProfileDirMatchesNone(string? profileDir)
+    {
+        FreshSettings();
+        OrbweaverSettings.AddClaudeCodeProfileDir(".claude-board");
+        PastSessionIndex.LoadForTests = (_, _, _, _) => Array.Empty<PastSession>();
+        var window = NewWindow();
+        var before = window.AccountCombo.SelectedIndex;
+
+        window.PrefillResume(NewChatCli.ClaudeCode, null, profileDir);
+
+        Assert.Equal(before, window.AccountCombo.SelectedIndex);
+    }
+
+    [AvaloniaFact]
+    public void EnterInTheListResumesTheChosenRowAndOtherKeysDoNot()
+    {
+        var launches = 0;
+        NewChatLauncher.ResumeForTests = (_, _) => { launches++; return new LaunchResult(LaunchOutcome.Launched, "ok"); };
+        var window = ResumeWindow(Session("a", "One"));
+        window.ResumeList.SelectedIndex = 0;
+
+        PressKey(window.ResumeList, Key.A);
+        Assert.Equal(0, launches);
+
+        PressKey(window.ResumeList, Key.Enter);
+        Assert.Equal(1, launches);
+    }
+
+    [AvaloniaFact]
+    public void EnterDoesNothingOnceTheDialogIsBackOnNewChat()
+    {
+        var launches = 0;
+        NewChatLauncher.ResumeForTests = (_, _) => { launches++; return new LaunchResult(LaunchOutcome.Launched, "ok"); };
+        var window = ResumeWindow(Session("a", "One"));
+        window.ResumeList.SelectedIndex = 0;
+        window.LocalNewRadio.IsChecked = true;
+        Flush();
+
+        PressKey(window.ResumeList, Key.Enter);
+
+        Assert.Equal(0, launches);
+    }
+
+    // The real hand-off: a worker reads, the dispatcher delivers.
+    [AvaloniaFact]
+    public void TheListAndCountsArriveThroughTheRealWorkerHandOff()
+    {
+        FreshSettings();
+        var reads = 0;
+        PastSessionIndex.LoadForTests = (_, _, _, _) => new[] { Session("a", "One") with { MessageCount = null } };
+        PastSessions.CountForTests = (_, _) => { Interlocked.Increment(ref reads); return 9; };
+        try
+        {
+            NewChatWindow.ResumeLoadInlineForTests = false;
+            var window = NewWindow();
+            window.LocalResumeRadio.IsChecked = true;
+            Flush();
+            Assert.Equal("Loading…", window.ResumeEmpty.Text);
+            WaitFor(() => window.ResumeList.ItemsSource is IEnumerable<PastSessionRow> r && r.Any());
+
+            var row = Shown(window)[0];
+            var first = RowTexts(window, row);
+            RowTexts(window, row); // realised again before the count lands: one read, not two
+            Assert.Contains("…", string.Join(" ", first));
+
+            var texts = new List<string>();
+            WaitFor(() =>
+            {
+                texts = RowTexts(window, row).ToList();
+                return texts.Any(t => t.EndsWith("· 9 messages"));
+            });
+            Assert.Equal(1, reads);
+        }
+        finally { PastSessions.CountForTests = null; }
+    }
+
+    [AvaloniaFact]
+    public void AStaleWorkerResultIsDroppedWhenTheQuestionChanged()
+    {
+        FreshSettings();
+        using var release = new ManualResetEventSlim();
+        PastSessionIndex.LoadForTests = (_, _, older, _) =>
+        {
+            if (!older) release.Wait(TimeSpan.FromSeconds(30));
+            return new[] { Session(older ? "new" : "stale", "T") };
+        };
+        NewChatWindow.ResumeLoadInlineForTests = false;
+        var window = NewWindow();
+        window.LocalResumeRadio.IsChecked = true; // slow read starts
+        window.ResumeOlder.IsChecked = true;      // a newer question
+        WaitFor(() => window.ResumeList.ItemsSource is IEnumerable<PastSessionRow> r && r.Any());
+        release.Set();
+        Thread.Sleep(100);
+        Flush();
+
+        Assert.Equal(new[] { "new" }, Shown(window).Select(r => r.Session.Id));
+    }
+
+    [AvaloniaTheory]
+    [InlineData("Codex")]
+    [InlineData("Grok")]
+    [InlineData("ClaudeCode")]
+    public void EveryClisRowBuildsItsAvatar(string cliName)
+    {
+        var cli = Enum.Parse<NewChatCli>(cliName);
+        var window = ResumeWindow();
+        var row = new PastSessionRow(Session("a", "Fix it", cli: cli), false);
+
+        Assert.Contains(RowTexts(window, row), t => t == "Fix it");
+    }
+
+    [AvaloniaFact]
+    public void APictureThatCannotBeDecodedFallsBackToInitials()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "cb-resume-badpic-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "cto.png"), "this is not a png");
+        NewChatWindow.DecodeAvatarForTests = (_, _) => throw new InvalidDataException("not an image");
+        File.WriteAllLines(Path.Combine(dir, "CLAUDE.md"), new[] { "## Attributes", "Name Jennifer", "Profile Photo cto.png" });
+        var window = ResumeWindow(Session("a", "Fix it", cwd: dir));
+
+        var control = (Control)window.ResumeList.ItemTemplate!.Build(Shown(window)[0])!;
+
+        Assert.Empty(control.GetLogicalDescendants().OfType<Image>());
+        Assert.Equal(0, window.ResumeAvatarCount);
+    }
+
+    [AvaloniaTheory]
+    [InlineData("/", "/")]
+    [InlineData("/repo/app/", "app")]
+    [InlineData("/repo/app", "app")]
+    public void AFolderEntryReadsAsItsLastSegmentOrTheWholeRoot(string path, string label)
+    {
+        Assert.Equal(label, new NewChatWindow.ResumeFolder(path).ToString());
+    }
+
+    [AvaloniaFact]
+    public void ADetailLineHandlesAFolderlessSessionAndARootFolder()
+    {
+        var folderless = new PastSessionRow(Session("a", "T") with { Cwd = null }, false);
+        Assert.StartsWith("unknown folder", NewChatWindow.ResumeDetail(folderless, 2));
+
+        var root = new PastSessionRow(Session("a", "T", cwd: "/"), false);
+        Assert.StartsWith("/ ", NewChatWindow.ResumeDetail(root, 2));
+    }
+
+    [AvaloniaFact]
+    public void ToggleResumeOpensTheDialogOnceAndRaisesItAfterwards()
+    {
+        var presented = new List<NewChatWindow>();
+        var raised = 0;
+        NewChatWindow.PresentForTests = presented.Add;
+        NewChatWindow.BringForwardForTests = _ => raised++;
+        NewChatWindow.OpenForTests = null;
+        FreshSettings();
+        PastSessionIndex.LoadForTests = (_, _, _, _) => Array.Empty<PastSession>();
+        try
+        {
+            NewChatWindow.ToggleResume(NewChatCli.ClaudeCode, Existing, null);
+            var window = Assert.Single(presented);
+            Assert.True(window.LocalResumeRadio.IsChecked);
+
+            NewChatWindow.ToggleResume(NewChatCli.ClaudeCode, Existing, null);
+            Assert.Single(presented);
+            Assert.Equal(1, raised);
+        }
+        finally
+        {
+            NewChatWindow.PresentForTests = null;
+            NewChatWindow.BringForwardForTests = null;
+            NewChatWindow.OpenForTests = null;
+        }
     }
 }
