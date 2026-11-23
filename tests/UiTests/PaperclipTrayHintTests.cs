@@ -17,6 +17,7 @@ public class PaperclipTrayHintTests : IDisposable
 
     public void Dispose()
     {
+        PaperclipSessions.SetLinkForTests(PaperclipLink.Off, "Paperclip is switched off.");
         PaperclipHint.SetFoundForTests([]);
         OrbweaverSettings.PaperclipEnabled = _enabled;
         OrbweaverSettings.PaperclipHintShown = _shown;
@@ -72,5 +73,32 @@ public class PaperclipTrayHintTests : IDisposable
         OrbweaverSettings.PaperclipEnabled = true;
         tray.Update([]);
         Assert.DoesNotContain(PaperclipHint.Label, Headers(tray));          // already connected
+    }
+
+    [AvaloniaFact]
+    public void ReconnectIsInTheMenu_OnlyWhileTheKeyIsRefused_AndGoneOnceConnected()
+    {
+        var tray = NewController();
+        if (tray is null) return;
+        OrbweaverSettings.PaperclipEnabled = true;
+
+        PaperclipSessions.SetLinkForTests(PaperclipLink.Connected, "Connected");
+        tray.Update([]);
+        Assert.DoesNotContain(PaperclipHint.ReconnectLabel, Headers(tray));
+
+        PaperclipSessions.SetLinkForTests(PaperclipLink.NeedsReconnect, "Reconnect to Paperclip");
+        tray.Update([]);
+        Assert.Contains(PaperclipHint.ReconnectLabel, Headers(tray));
+
+        PaperclipSessions.SetLinkForTests(PaperclipLink.Unreachable, "Can't reach");   // a different problem: not a reconnect
+        tray.Update([]);
+        Assert.DoesNotContain(PaperclipHint.ReconnectLabel, Headers(tray));
+
+        PaperclipSessions.SetLinkForTests(PaperclipLink.NeedsReconnect, "Reconnect to Paperclip");
+        OrbweaverSettings.PaperclipEnabled = false;   // switched off: nothing to reconnect
+        tray.Update([]);
+        Assert.DoesNotContain(PaperclipHint.ReconnectLabel, Headers(tray));
+
+        PaperclipSessions.SetLinkForTests(PaperclipLink.Connected, "Connected");
     }
 }

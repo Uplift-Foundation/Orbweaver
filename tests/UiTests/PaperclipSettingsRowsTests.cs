@@ -227,6 +227,9 @@ public class PaperclipSettingsRowsTests : IDisposable
         Connected(link: PaperclipLink.NeedsReconnect, status: "Reconnect to Paperclip");
         var rows = NewWindow().PaperclipRows();
         Assert.Equal(new[] { "Reconnect", "Disconnect" }, Buttons(rows).Select(b => (string?)b.Content).ToArray());
+        // Reconnect is the primary action and Disconnect stays plain.
+        Assert.Contains("accent", Button(rows, "Reconnect").Classes);
+        Assert.DoesNotContain("accent", Button(rows, "Disconnect").Classes);
         Click(Button(rows, "Reconnect"));
         Assert.Contains("connect http://127.0.0.1:3100", _fake.Calls);
     }

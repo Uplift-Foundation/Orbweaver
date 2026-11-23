@@ -148,6 +148,7 @@ namespace Orbweaver
                             + $"|muted={AudioMute.IsMuted}"
                             + $"|update={UpdateMenu.PendingVersion() ?? "-"}"
                             + $"|paperclip={PaperclipHint.ShouldShow}"
+                            + $"|paperclipReconnect={PaperclipHint.ShouldShowReconnect}"
                             + $"|{ClaudeDesktopManager.Digest()}";
             if (signature == _lastSignature) return;
 
@@ -343,6 +344,15 @@ namespace Orbweaver
                 var paperclipItem = new NativeMenuItem(PaperclipHint.Label);
                 paperclipItem.Click += (_, _) => { PaperclipHint.MarkUsed(); OpenSettings(); };
                 menu.Add(paperclipItem);
+            }
+
+            // CB-421: the key was refused. Runs the same approval as Settings'
+            // Reconnect button and the orb menu's row.
+            if (PaperclipHint.ShouldShowReconnect)
+            {
+                var reconnectItem = new NativeMenuItem(PaperclipHint.ReconnectLabel);
+                reconnectItem.Click += (_, _) => OrbWindow.PaperclipReconnect?.Invoke();
+                menu.Add(reconnectItem);
             }
 
             var settingsItem = new NativeMenuItem("Settings…");

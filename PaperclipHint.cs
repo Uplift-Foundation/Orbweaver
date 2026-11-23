@@ -23,6 +23,14 @@ namespace Orbweaver
         internal static bool ShouldShow =>
             !OrbweaverSettings.PaperclipEnabled && !OrbweaverSettings.PaperclipHintShown && _found.Count > 0;
 
+        internal const string ReconnectLabel = "Reconnect to Paperclip\u2026";
+
+        // The product promise for a refused key is "orbs dim and one line says
+        // Reconnect to Paperclip, one click": this is the tray's half of it, so
+        // the cue does not live only in Settings and an orb's hover.
+        internal static bool ShouldShowReconnect =>
+            OrbweaverSettings.PaperclipEnabled && PaperclipSessions.Link == PaperclipLink.NeedsReconnect;
+
         // Used: the user acted on it, so it does not come back.
         internal static void MarkUsed() => OrbweaverSettings.PaperclipHintShown = true;
 

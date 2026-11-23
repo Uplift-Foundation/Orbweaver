@@ -87,7 +87,10 @@ namespace Orbweaver
 
             if (PaperclipSessions.Link == PaperclipLink.NeedsReconnect)
             {
+                // The primary action: it recovers the connection, where Disconnect
+                // throws the key away, so only this one wears the accent.
                 var reconnect = new Button { Content = "Reconnect", HorizontalAlignment = HorizontalAlignment.Left };
+                reconnect.Classes.Add("accent");
                 reconnect.Click += (_, _) => _ = OnPaperclipConnectAsync(OrbweaverSettings.PaperclipUrl);
                 rows.Add(Row("", reconnect));
             }
