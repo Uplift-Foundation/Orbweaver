@@ -443,6 +443,19 @@ public class PaperclipPromptsTests
         Assert.True(_p.HasPending(Sid));
     }
 
+    // An outage must not resolve and re-alert: PaperclipSessions keeps the last needs through a failed poll, so the
+    // same needs reach the loop again afterwards and nothing is minted twice.
+    [Fact]
+    public async Task Needs_then_the_same_needs_through_an_outage_then_again_is_one_prompt_and_one_amber()
+    {
+        await Poll(Agent(needs: Approval()));
+        await Poll(Agent(needs: Approval()));
+        await Poll(Agent(needs: Approval()));
+        Assert.Single(_sent.Prompts);
+        Assert.Empty(_sent.Resolved);
+        Assert.NotNull(_sent.Prompts[0].Push);
+    }
+
     [Fact]
     public async Task With_no_actions_available_an_answer_is_stale_prompt_and_nothing_is_lost()
     {

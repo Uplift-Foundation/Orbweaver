@@ -38,7 +38,8 @@ namespace Orbweaver
         string State,
         string? ParentSessionId,
         RelayPersona? Persona,
-        string? Broke = null)
+        string? Broke = null,
+        bool Unseen = false)
     {
         // When this session entered State, as this desktop saw it. Not part of
         // what Project produces — the book stamps it — and not compared when
@@ -128,7 +129,10 @@ namespace Orbweaver
                     MapState(s.Status.State),
                     paperclipIds.Contains(s.Status.Lead) ? s.Status.Lead : null,
                     null,
-                    s.Status.Mark == PaperclipMark.Broke ? WhyOf(s.Status.MarkReason) : null)
+                    s.Status.Mark == PaperclipMark.Broke ? WhyOf(s.Status.MarkReason) : null,
+                    // PaperclipScan parks every row while the link is down and blanks its status: the mark is then
+                    // unknown, not "none", and must not read as a recovery (CB-428 review).
+                    s.Status.PaperclipAgentStatus == "")
                 : new RelaySession(
                     s.SessionId,
                     MirrorProtocol.CliFor(s.Status.Source),
@@ -249,9 +253,11 @@ namespace Orbweaver
             var deltas = new List<RelayDelta>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
 
-            foreach (var row in current)
+            foreach (var raw in current)
             {
+                var row = raw;
                 seen.Add(row.SessionId);
+                if (row.Unseen && _rows.TryGetValue(row.SessionId, out var prior)) row = row with { Broke = prior.Broke };
                 if (!_rows.TryGetValue(row.SessionId, out var old))
                 {
                     _rows[row.SessionId] = row with { Since = now };

@@ -252,4 +252,36 @@ public partial class RelayLinkTests
             Assert.Equal(t["fires"]!.AsArray().Select(n => n!.GetValue<int>()).ToArray(), fired.ToArray());
         }
     }
+
+    // Review of ec1f7f932: PaperclipScan parks every row while the Paperclip link is down, so the mark reads None.
+    // That is "unknown", never a recovery, or the link coming back would push every agent that was already broke.
+    private static RelaySession Unseen(string? broke = null) => Agent(broke: broke) with { Unseen = true };
+
+    [Fact]
+    public void An_outage_between_two_Broke_readings_sends_nothing_and_one_between_None_and_Broke_sends_once()
+    {
+        var book = new RelaySessionBook();
+        book.Update([Agent(broke: "error")], _now);
+        book.Update([Agent(broke: "error")], _now.AddSeconds(1));
+        Assert.True(book.Update([Unseen()], _now.AddSeconds(2)).IsEmpty);                       // parked: nothing changes
+        Assert.Equal("error", book.Find(PaperclipA)!.Broke);                                     // and the old reading is kept
+        Assert.DoesNotContain(book.Update([Agent(broke: "error")], _now.AddSeconds(3)).Deltas, d => d.Broke);
+
+        var b2 = new RelaySessionBook();
+        b2.Update([Agent()], _now);
+        b2.Update([Unseen()], _now.AddSeconds(1));
+        Assert.Single(b2.Update([Agent(broke: "error")], _now.AddSeconds(2)).Deltas, d => d.Broke);   // it broke while we could not see
+        var b3 = new RelaySessionBook();
+        b3.Update([Unseen(broke: "error")], _now);                                                // a row first seen parked stays a baseline
+        Assert.Empty(b3.Update([Agent(broke: "error")], _now.AddSeconds(1)).Deltas);
+    }
+
+    [Fact]
+    public void A_row_PaperclipScan_parked_is_projected_as_unseen_and_a_live_one_is_not()
+    {
+        var parked = new SessionStatus { Source = SessionSource.Paperclip, State = "idle", Title = "A", PaperclipAgentStatus = "" };
+        var live = new SessionStatus { Source = SessionSource.Paperclip, State = "idle", Title = "B", PaperclipAgentStatus = "idle", Mark = PaperclipMark.Broke, MarkReason = "Error" };
+        var rows = RelayRoster.Project([(PaperclipA, parked), (PaperclipB, live)]);
+        Assert.Equal([true, false], rows.OrderBy(r => r.SessionId == PaperclipA ? 0 : 1).Select(r => r.Unseen).ToArray());
+    }
 }
