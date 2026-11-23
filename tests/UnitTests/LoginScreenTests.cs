@@ -244,4 +244,57 @@ public class LoginScreenTests
         Assert.Equal(LoginStep.Error, s.Step);
         Assert.Equal("OAuth error: first wrapped to the end", s.Title);
     }
+
+    // CB-418: Claude Code refuses a code with no '#' locally and redraws the URL step
+    // with a ✘ notice under the box. Real iTerm2 read at 60 columns: trailing spaces,
+    // the URL wrapped with no indent.
+    [Fact]
+    public void A_refused_code_notice_leads_the_url_steps_preview_and_changes_the_hash()
+    {
+        var refused = Read("login-code-shape-iterm2-w60")!;
+        Assert.Equal(LoginStep.Url, refused.Step);
+        Assert.True(refused.FieldEmpty);
+        Assert.StartsWith("https://claude.ai/oauth/authorize?", refused.Url);
+        Assert.DoesNotContain(" ", refused.Url);
+        Assert.Equal(new[]
+        {
+            "That doesn't look like the full code. Copy all of it, including the # in the middle.",
+            LoginScreen.DeskSentence,
+        }, refused.Preview);
+
+        // The same screen without the notice rows is the plain URL step, a different prompt.
+        var rows = Cb412Captures.Screen("login-code-shape-iterm2-w60").Split('\n');
+        var plain = LoginScreen.Read(string.Join("\n", rows.Where(r => !r.Contains("✘") && !r.Contains("Copy all of it"))))!;
+        Assert.Equal(new[] { LoginScreen.DeskSentence }, plain.Preview);
+        Assert.Equal(refused.Url, plain.Url);
+        Assert.NotEqual(plain.Hash, refused.Hash);
+
+        var prompt = LoginScreen.ToPrompt(refused, canPress: true);
+        Assert.Contains(prompt.Body!, l => l.Contains("doesn't look like the full code"));
+        Assert.DoesNotContain(prompt.Body!, l => l.Contains("https://"));
+        Assert.Equal(refused.Url, prompt.Link);
+    }
+
+    // CB-418 (QA 2, 3): the desk sentence stays last (the relay's preview swaps it by position),
+    // and a code typed into the box never reaches the preview, the hash input or the body.
+    [Fact]
+    public void The_desk_sentence_is_last_and_a_typed_canary_never_leaves_the_field()
+    {
+        const string Canary = "QA-CANARY-9f3k2xlstate";
+        var raw = Cb412Captures.Screen("login-code-shape-iterm2-w60");
+        var plain = LoginScreen.Read(string.Join("\n", raw.Split('\n').Where(r => !r.Contains("✘") && !r.Contains("Copy all of it"))))!;
+        var refused = LoginScreen.Read(raw)!;
+        Assert.Equal(LoginScreen.DeskSentence, plain.Preview.Last());
+        Assert.Equal(LoginScreen.DeskSentence, refused.Preview.Last());
+
+        var typed = string.Join("\n", raw.Split('\n').Select(l =>
+            l.Trim().StartsWith('│') && l.Trim().Trim('│').Trim().Length == 0 ? "  │ ********************lstate" + new string(' ', 20) + "│" : l));
+        var withCode = LoginScreen.Read(typed)!;
+        Assert.False(withCode.FieldEmpty);
+        Assert.Equal("lstate", withCode.FieldTail);
+        Assert.Equal(refused.Hash, withCode.Hash);
+        Assert.Equal(refused.Preview, withCode.Preview);
+        var prompt = LoginScreen.ToPrompt(withCode, true);
+        Assert.DoesNotContain(Canary, string.Join("\n", withCode.Preview) + string.Join("\n", prompt.Body!) + withCode.Url);
+    }
 }

@@ -90,6 +90,16 @@ public class RelayLoginPromptTests
         return new PhoneAnswer(rid, "s1", action, scope, note, nonce, exp, p.GetProperty("screen_hash").GetString()!, sig);
     }
 
+    private PhoneAnswer AnswerTo2(int i, string action, string note)
+    {
+        var p = Sent(i);
+        var rid = p.GetProperty("request_id").GetString()!;
+        var exp = p.GetProperty("expires_at").GetInt64();
+        var nonce = Base64Url(RandomNumberGenerator.GetBytes(16));
+        var sig = Base64Url(Sign(Phone, AnswerSigning.Message(AnswerSigning.Body(rid, "s1", action, AnswerSigning.TellScope(note), nonce, exp))));
+        return new PhoneAnswer(rid, "s1", action, AnswerSigning.TellScope(note), note, nonce, exp, p.GetProperty("screen_hash").GetString()!, sig);
+    }
+
     // ---- the frame ---------------------------------------------------------------
 
     [Fact]
@@ -398,5 +408,53 @@ public class RelayLoginPromptTests
         Assert.Empty(_pane.Keys);
         Assert.Empty(_pane.Typed);
         Assert.Equal([AnswerGate.ForbiddenOption, AnswerGate.ForbiddenOption], _sent.Refusals);
+    }
+
+    [Fact]
+    public async Task A_refused_code_shows_the_notice_on_the_phone_and_mints_a_new_prompt()
+    {
+        _pane.Screen = Capture("login-url-w100");
+        _pane.OnType = Capture("login-code-typed-w100");
+        _pane.OnEnter = Capture("login-code-shape-iterm2-w60");   // Claude Code refuses it locally
+        await _p.OnScannedAsync(Snap());
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo("code", Canary));
+        // The old prompt is settled, not stuck, and the refusal is a fresh prompt.
+        Assert.Empty(_sent.Refusals);
+        Assert.Single(_sent.Resolved);
+        await _p.OnScannedAsync(Snap());
+        Assert.Equal(2, _sent.Prompts.Count);
+        var j = Sent(1);
+        var preview = j.GetProperty("preview").GetString()!;
+        Assert.StartsWith("That doesn't look like the full code.", preview);
+        Assert.EndsWith(PromptPipeline.LoginUrlPreview, preview);
+        Assert.DoesNotContain("https://", preview);
+        Assert.DoesNotContain("oauth", preview);
+        Assert.NotEqual(Sent(0).GetProperty("screen_hash").GetString(), j.GetProperty("screen_hash").GetString());
+        Assert.True(j.GetProperty("login").GetProperty("code").GetBoolean());
+        Assert.DoesNotContain(Canary, string.Join("\n", _log) + string.Join("\n", _sent.Prompts.Select(p => p.Prompt)));
+    }
+
+    // CB-418 (QA 1): a second bad code redraws the identical refused screen, so the same hash.
+    [Fact]
+    public async Task A_second_refused_code_mints_a_third_prompt_even_though_the_screen_is_identical()
+    {
+        var refused = Capture("login-code-shape-iterm2-w60");
+        _pane.Screen = Capture("login-url-w100");
+        _pane.OnType = Capture("login-code-typed-w100");
+        _pane.OnEnter = refused;
+        await _p.OnScannedAsync(Snap());
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo("code", Canary));
+        await _p.OnScannedAsync(Snap());
+        Assert.Equal(2, _sent.Prompts.Count);
+
+        // Same screen again after the second attempt, the code typed into its box first.
+        _pane.Screen = refused;
+        _pane.OnType = string.Join("\n", refused.Split('\n').Select(l =>
+            l.Trim().StartsWith('│') && l.Trim().Trim('│').Trim().Length == 0 ? "  │ ********************lstate" + new string(' ', 20) + "│" : l));
+        await _p.OnAnswerAsync(PhoneId, Phone.Public, AnswerTo2(1, "code", Canary));
+        await _p.OnScannedAsync(Snap());
+        Assert.Equal(3, _sent.Prompts.Count);
+        Assert.Empty(_sent.Refusals);
+        Assert.StartsWith("That doesn't look like the full code.", Sent(2).GetProperty("preview").GetString());
     }
 }

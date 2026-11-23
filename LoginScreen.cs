@@ -64,12 +64,19 @@ namespace Orbweaver
 
             // The error's own text: its first row and the indented rows that wrap
             // from it, up to the first blank one.
-            var parts = new List<string> { body[start].Trim().TrimStart('✘').Trim() };
-            for (var i = start + 1; i < body.Length && body[i].Trim().Length > 0; i++) parts.Add(body[i].Trim());
-            var text = string.Join(" ", parts);
+            var text = MarkedText(body, start);
 
             return Make(LoginStep.Error, text, new[] { text },
                 new[] { new ChatPromptOption(RetryKey, "Try again") }, null, false, null);
+        }
+
+        // A ✘ row's text: its first row and the indented rows that wrap from it, up
+        // to the first blank one. Shared by the error step and the URL step's notice.
+        private static string MarkedText(string[] body, int start)
+        {
+            var parts = new List<string> { body[start].Trim().TrimStart('✘').Trim() };
+            for (var i = start + 1; i < body.Length && body[i].Trim().Length > 0; i++) parts.Add(body[i].Trim());
+            return string.Join(" ", parts);
         }
 
         private static LoginScreen? ReadUrl(string[] body)
@@ -108,7 +115,14 @@ namespace Orbweaver
             }
             else return null;
 
-            return Make(LoginStep.Url, "Sign in", new[] { DeskSentence }, Array.Empty<ChatPromptOption>(), url, empty, tail);
+            // CB-418: Claude Code refuses a malformed code locally and redraws this
+            // step with a ✘ message under the box. It goes first in the preview, which
+            // also changes the hash, so the refusal is a new prompt rather than the old
+            // screen looking untouched.
+            var notice = Array.FindIndex(body, boxStart, l => l.TrimStart().StartsWith('✘'));
+            var preview = notice < 0 ? new[] { DeskSentence } : new[] { MarkedText(body, notice), DeskSentence };
+
+            return Make(LoginStep.Url, "Sign in", preview, Array.Empty<ChatPromptOption>(), url, empty, tail);
         }
 
         // The hash covers what a press would act on: step, text, URL and the keys

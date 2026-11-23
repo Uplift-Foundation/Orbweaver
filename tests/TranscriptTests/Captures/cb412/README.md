@@ -48,3 +48,12 @@ a first run, which draws no `Login` header and words its footers differently.
 - A successful login.
 - The same screens read through iTerm2's `contents` or a Windows console.
   These are tmux reads; another reader pads rows with trailing spaces.
+
+## Added by CB-418: a real iTerm2 read
+
+`login-code-shape-iterm2-w60.txt` was read through the shipped `ITerm2ScreenReader` path (`LocalCliChatSession.PickCapture`) on 2026-11-22. It is from Claude Code 2.1.330 in a 60-column iTerm2 session on macOS, against a throwaway `CLAUDE_CONFIG_DIR`. It shows what Claude Code draws when the code typed has no `#`: it refuses the code locally, before any request, and redraws the URL step with the field cleared and a `✘` message under the box.
+
+- **Trimmed:** the file keeps only the rows from the last `❯ /login` down, so no shell banner or prompt from scrollback is in it.
+- **Masked:** the URL's query is masked to `x`s of the same length, wrap included.
+
+It is also the first fixture taken through iTerm2 rather than tmux. iTerm2 pads every row with one trailing space, draws a blank row as a single space, and hard-wraps the URL at the column edge with no indent.

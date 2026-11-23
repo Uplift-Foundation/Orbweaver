@@ -161,6 +161,36 @@ public class ChatPanelLoginTests : IDisposable
         finally { ChatPanel.PromptClock = previous; }
     }
 
+    // CB-418: a code Claude Code refuses locally comes back as the URL step with a notice.
+    // Built from the real iTerm2 capture, so the notice the panel shows is the screen's own.
+    [AvaloniaFact]
+    public void ARefusedCodeNoticeIsVisibleOnTheUrlStepAlongsideTheLinkAndField()
+    {
+        var screen = LoginScreen.Read(Cb412Captures.Screen("login-code-shape-iterm2-w60"))!;
+        var (panel, _) = Open(LoginScreen.ToPrompt(screen, canPress: true));
+
+        var body = panel.FindControl<TextBlock>("PromptBody")!;
+        Assert.True(panel.FindControl<Border>("PromptBodyCard")!.IsVisible);
+        Assert.Contains("That doesn't look like the full code.", body.Text);
+        Assert.DoesNotContain("https://", body.Text);
+        Assert.True(Link(panel).IsVisible);
+        Assert.True(CodeRow(panel).IsVisible);
+    }
+
+    [AvaloniaFact]
+    public void ACodeTypedUnderTheRefusalNoticeIsNotInThePromptBody()
+    {
+        const string Canary = "QA-CANARY-9f3k2xlstate";
+        var raw = Cb412Captures.Screen("login-code-shape-iterm2-w60").Split('\n').Select(l =>
+            l.Trim().StartsWith('│') && l.Trim().Trim('│').Trim().Length == 0 ? "  │ ********************lstate" + new string(' ', 20) + "│" : l);
+        var (panel, _) = Open(LoginScreen.ToPrompt(LoginScreen.Read(string.Join("\n", raw))!, canPress: true));
+
+        var body = panel.FindControl<TextBlock>("PromptBody")!;
+        Assert.Contains("That doesn't look like the full code.", body.Text);
+        Assert.DoesNotContain(Canary, body.Text);
+        Assert.DoesNotContain("lstate", body.Text);
+    }
+
     [AvaloniaFact]
     public void TheUrlStepShowsTheLinkAndTheCodeFieldWithSendDisabled()
     {
