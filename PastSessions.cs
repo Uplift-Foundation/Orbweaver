@@ -114,9 +114,25 @@ namespace Orbweaver
         // whose head holds no user turn
         // is not a conversation anyone could want back — a hook-only stub, or
         // a session that was opened and closed — and is skipped.
+        //
+        // Only sessions a person started are listed (CB-361 ruling A): the
+        // rows' `entrypoint` is "cli" for an interactive session. On the mini
+        // 4484 of 4971 transcripts were "sdk-cli" (headless, queue-driven);
+        // claude-desktop and sdk-ts were also seen. A transcript with no
+        // entrypoint at all predates the field and is kept — the filter
+        // excludes what it can name, it does not guess.
+        //
+        // The title is the custom-title.json sidecar Claude writes beside a
+        // renamed session (projects/<slug>/<id>/custom-title.json,
+        // {"customTitle":…}, 46 of them on the mini), else the newest
+        // custom-title or ai-title row in the tail, else the first prompt.
+        // Map already drops <command-name>/<command-message> rows as noise and
+        // turns a <teammate-message> into a relayed row, so "the first prompt"
+        // is the first thing a person actually typed.
         internal static PastSession? FromClaude(
             IReadOnlyList<string> head,
             IReadOnlyList<string> tail,
+            string? sidecarJson,
             string path,
             DateTimeOffset lastActivity,
             Func<string, bool> folderExists)
@@ -124,7 +140,10 @@ namespace Orbweaver
             var turns = ChatTranscript.Map(head);
             if (!HasUserTurn(turns)) return null;
 
-            string? cwd = null, id = null;
+            // The opening rows (mode, permission-mode, session-owner, …) carry
+            // sessionId and no cwd; cwd and entrypoint arrive on the first user
+            // or attachment row, at index 26 at worst across 4967 files.
+            string? cwd = null, id = null, entrypoint = null;
             foreach (var line in head)
             {
                 if (!TryObject(line, out var doc)) continue;
@@ -134,14 +153,17 @@ namespace Orbweaver
                     if (Bool(row, "isSidechain")) continue;
                     cwd ??= NonEmpty(Str(row, "cwd"));
                     id ??= NonEmpty(Str(row, "sessionId"));
-                    if (cwd is not null && id is not null) break;
+                    entrypoint ??= NonEmpty(Str(row, "entrypoint"));
+                    if (cwd is not null && id is not null && entrypoint is not null) break;
                 }
             }
+
+            if (entrypoint is not null && entrypoint != "cli") return null;
 
             id ??= Path.GetFileNameWithoutExtension(path);
             if (!IsSafeId(id)) return null;
 
-            var title = TranscriptIdentity.From(tail).Title ?? FirstUserText(turns);
+            var title = Field(sidecarJson, "customTitle") ?? TranscriptIdentity.From(tail).Title ?? FirstUserText(turns);
             return Make(NewChatCli.ClaudeCode, id, cwd, title, lastActivity, path, folderExists);
         }
 
@@ -152,6 +174,15 @@ namespace Orbweaver
         // file name is the fallback for the id. state_N.sqlite is deliberately
         // not read — see docs/codex-findings.md on its WAL refusing a read-only
         // open while Codex is idle.
+        //
+        // Only payload.originator "codex-tui" is listed (ruling A): on the mini
+        // 1642 of 1678 rollouts were "openclaw", which OpenClaw's own "Open
+        // existing" reaches, and 22 "codex_exec". A rollout with no originator
+        // is kept, as for Claude's entrypoint.
+        //
+        // Unlike Claude, a rollout with no prompt in its head is still listed —
+        // a real codex-tui rollout can be session_meta alone, and resuming it
+        // is legitimate. Its title is then the folder's name.
         internal static PastSession? FromCodex(
             IReadOnlyList<string> head,
             string path,
@@ -159,9 +190,8 @@ namespace Orbweaver
             Func<string, bool> folderExists)
         {
             var turns = CodexTranscript.Map(head);
-            if (!HasUserTurn(turns)) return null;
 
-            string? cwd = null, id = null;
+            string? cwd = null, id = null, originator = null;
             foreach (var line in head)
             {
                 if (!TryObject(line, out var doc)) continue;
@@ -172,14 +202,18 @@ namespace Orbweaver
                     if (!row.TryGetProperty("payload", out var p) || p.ValueKind != JsonValueKind.Object) continue;
                     cwd = NonEmpty(Str(p, "cwd"));
                     id = NonEmpty(Str(p, "id"));
+                    originator = NonEmpty(Str(p, "originator"));
                     break;
                 }
             }
 
+            if (originator is not null && originator != "codex-tui") return null;
+
             id ??= CodexIdFromFileName(path);
             if (!IsSafeId(id)) return null;
 
-            return Make(NewChatCli.Codex, id!, cwd, FirstUserText(turns), lastActivity, path, folderExists);
+            var title = FirstUserText(turns) ?? (cwd is null ? null : Path.GetFileName(Trim(cwd)));
+            return Make(NewChatCli.Codex, id!, cwd, title, lastActivity, path, folderExists);
         }
 
         // rollout-2026-11-20T10-11-12-<8-4-4-4-12 uuid>.jsonl: the last 36
@@ -195,7 +229,13 @@ namespace Orbweaver
         // $GROK_HOME/sessions/<url-encoded cwd>/<id>/updates.jsonl, with a
         // summary.json beside it. The folder is the encoded directory name and
         // the id is the directory the transcript sits in; the title is
-        // summary.json's generated_title, else the first user turn.
+        // summary.json's generated_title, else the first user turn
+        // (generated_title is absent on a session seconds old). summary.json's
+        // info.cwd is preferred to decoding the directory name when present.
+        //
+        // A session_kind of "headless" (`grok -p`) is not listed (ruling A).
+        // Only that value is matched: what an interactive session's kind is
+        // called was not observed, so nothing positive is required.
         internal static PastSession? FromGrok(
             string? summaryJson,
             IReadOnlyList<string> head,
@@ -205,22 +245,35 @@ namespace Orbweaver
         {
             var turns = GrokTranscript.Map(head);
             if (!HasUserTurn(turns)) return null;
+            if (Field(summaryJson, "session_kind") == "headless") return null;
 
             var sessionDir = Path.GetDirectoryName(path);
             var id = sessionDir is null ? null : Path.GetFileName(sessionDir);
             if (!IsSafeId(id)) return null;
 
             var encoded = Path.GetFileName(Path.GetDirectoryName(sessionDir!) ?? "");
-            var cwd = encoded.Length > 0 ? Uri.UnescapeDataString(encoded) : null;
+            var cwd = Field(summaryJson, "info", "cwd") ?? (encoded.Length > 0 ? Uri.UnescapeDataString(encoded) : null);
 
-            var title = GrokTitle(summaryJson) ?? FirstUserText(turns);
+            var title = Field(summaryJson, "generated_title") ?? FirstUserText(turns);
             return Make(NewChatCli.Grok, id!, cwd, title, lastActivity, path, folderExists);
         }
 
-        internal static string? GrokTitle(string? summaryJson)
+        // One string field of a small JSON object (summary.json, the Claude
+        // title sidecar), trimmed; null for anything unusable. A second name
+        // reads one level down: Field(json, "info", "cwd").
+        internal static string? Field(string? json, string name, string? inner = null)
         {
-            if (string.IsNullOrWhiteSpace(summaryJson) || !TryObject(summaryJson, out var doc)) return null;
-            using (doc) return NonEmpty(Str(doc.RootElement, "generated_title")?.Trim());
+            if (string.IsNullOrWhiteSpace(json) || !TryObject(json.Trim(), out var doc)) return null;
+            using (doc)
+            {
+                var e = doc.RootElement;
+                if (inner is not null)
+                {
+                    if (!e.TryGetProperty(name, out e) || e.ValueKind != JsonValueKind.Object) return null;
+                    name = inner;
+                }
+                return NonEmpty(Str(e, name)?.Trim());
+            }
         }
 
         // ---- counting -------------------------------------------------------------
@@ -274,22 +327,6 @@ namespace Orbweaver
             : line.Contains("agent_message_chunk", StringComparison.Ordinal) ? "assistant"
             : line.Contains("agent_thought_chunk", StringComparison.Ordinal) ? "thought"
             : "tool_call";
-
-        // The first row whatever its size, then rows while fewer than `budget`
-        // characters have followed it. Lazy, so the file is read only that far.
-        internal static IReadOnlyList<string> HeadRows(IEnumerable<string> lines, int budget)
-        {
-            var rows = new List<string>();
-            var spent = 0;
-            foreach (var raw in lines)
-            {
-                if (rows.Count > 0 && spent >= budget) break;
-                var line = raw.TrimEnd('\r');
-                if (rows.Count > 0) spent += line.Length + 1;
-                rows.Add(line);
-            }
-            return rows;
-        }
 
         // ---- shared ---------------------------------------------------------------
 
@@ -360,10 +397,12 @@ namespace Orbweaver
             Func<string, string, IEnumerable<string>> Files,
             Func<string, (long Length, DateTime WriteUtc)?> Stamp,
             Func<string, int, IReadOnlyList<string>> Head,
+            Func<string, IReadOnlyList<string>?> CodexHead,
             Func<string, IReadOnlyList<string>> Tail,
             Func<string, IEnumerable<string>> Lines,
             Func<string, string?> ReadText,
-            Func<string, bool> DirectoryExists);
+            Func<string, bool> DirectoryExists,
+            Func<string, string> RealPath);
 
         [ExcludeFromCodeCoverage]
         internal static Seams Real { get; } = new(
@@ -371,10 +410,12 @@ namespace Orbweaver
             TranscriptReader.SafeFiles,
             StampOf,
             TranscriptReader.HeadLines,
+            path => TranscriptReader.HeadRows(path, CodexFirstRowCap, TranscriptReader.HeadBytes),
             path => TranscriptReader.TailLines(path),
             LinesOf,
             TextOf,
-            Directory.Exists);
+            Directory.Exists,
+            RealPathOf);
 
         internal static PastSessionIndex Shared { get; } = new(Real);
 
@@ -408,7 +449,7 @@ namespace Orbweaver
             // (4626 Claude transcripts in one window on the mini), and the tail
             // read dominates — measured 8.2 s serial against 1.5 s without it.
             // Order does not matter; PastSessions.List sorts.
-            return Transcripts(cli, home, notBefore)
+            return Transcripts(cli, home)
                 .AsParallel()
                 .Select(path =>
                 {
@@ -430,26 +471,31 @@ namespace Orbweaver
 
         // Codex's row 0 is session_meta carrying the model's base instructions:
         // measured on the mini over 1678 rollouts, median 78 KB, p99 260 KB,
-        // largest 337 KB. No fixed byte window holds it reliably, and a window
-        // that cuts it drops the id, the cwd and every prompt after it, so the
-        // session vanishes from the list. Codex's head is therefore streamed:
-        // row 0 whole, then rows up to the usual 64 KB.
-        private IReadOnlyList<string> HeadOf(NewChatCli cli, string path) =>
-            cli == NewChatCli.Codex
-                ? PastSessions.HeadRows(_seams.Lines(path), TranscriptReader.HeadBytes)
-                : _seams.Head(path, TranscriptReader.HeadBytes);
+        // largest 337 KB. No fixed byte window holds it, and a window that cuts
+        // it drops the id, the cwd and every prompt after it. So Codex's head
+        // is row 0 read whole up to this cap, then the usual 64 KB of rows; a
+        // row 0 over the cap means the file is skipped rather than read on.
+        internal const int CodexFirstRowCap = 8 * 1024 * 1024;
 
         private PastSession? Parse(NewChatCli cli, string path, DateTime writeUtc)
         {
-            var head = HeadOf(cli, path);
             var at = new DateTimeOffset(DateTime.SpecifyKind(writeUtc, DateTimeKind.Utc));
-            return cli switch
+            switch (cli)
             {
-                NewChatCli.ClaudeCode => PastSessions.FromClaude(head, _seams.Tail(path), path, at, _seams.DirectoryExists),
-                NewChatCli.Codex => PastSessions.FromCodex(head, path, at, _seams.DirectoryExists),
-                _ => PastSessions.FromGrok(
-                    RunSources.GrokSummaryOf(path) is { } s ? _seams.ReadText(s) : null, head, path, at, _seams.DirectoryExists),
-            };
+                case NewChatCli.ClaudeCode:
+                    var sidecar = Path.Combine(Path.GetDirectoryName(path) ?? "", Path.GetFileNameWithoutExtension(path), "custom-title.json");
+                    return PastSessions.FromClaude(
+                        _seams.Head(path, TranscriptReader.HeadBytes), _seams.Tail(path), _seams.ReadText(sidecar),
+                        path, at, _seams.DirectoryExists);
+                case NewChatCli.Codex:
+                    return _seams.CodexHead(path) is { } head
+                        ? PastSessions.FromCodex(head, path, at, _seams.DirectoryExists)
+                        : null;
+                default:
+                    return PastSessions.FromGrok(
+                        RunSources.GrokSummaryOf(path) is { } s ? _seams.ReadText(s) : null,
+                        _seams.Head(path, TranscriptReader.HeadBytes), path, at, _seams.DirectoryExists);
+            }
         }
 
         // One transcript's message count, streamed a line at a time and cached
@@ -465,40 +511,34 @@ namespace Orbweaver
 
         // ---- the walk -----------------------------------------------------------
 
-        internal IEnumerable<string> Transcripts(NewChatCli cli, string home, DateTime notBeforeUtc) => cli switch
+        internal IEnumerable<string> Transcripts(NewChatCli cli, string home) => cli switch
         {
             NewChatCli.ClaudeCode => ClaudeTranscripts(home),
-            NewChatCli.Codex => CodexTranscripts(home, notBeforeUtc),
+            NewChatCli.Codex => CodexTranscripts(home),
             _ => GrokTranscripts(home),
         };
 
         // Only files directly under projects/<slug>/ — a sub-agent's transcript
         // lives a level deeper (<id>/subagents/…) and is not a session of its own.
+        //
+        // The projects directory is resolved to its real path first (ruling B):
+        // on the mini two account roots symlink `projects` to the default
+        // root's, so without this the same transcript was cached and listed
+        // under three paths. Every account there shows one list, accepted.
         private IEnumerable<string> ClaudeTranscripts(string home) =>
-            _seams.Directories(Path.Combine(home, "projects"))
+            _seams.Directories(_seams.RealPath(Path.Combine(home, "projects")))
                 .SelectMany(dir => _seams.Files(dir, "*.jsonl"));
 
-        // sessions/yyyy/mm/dd: a day directory older than the window is skipped
-        // without listing it, so the 30-day view does not walk a year of days.
-        private IEnumerable<string> CodexTranscripts(string home, DateTime notBeforeUtc)
-        {
-            var floor = notBeforeUtc == DateTime.MinValue ? DateOnly.MinValue : DateOnly.FromDateTime(notBeforeUtc).AddDays(-1);
-            foreach (var year in _seams.Directories(Path.Combine(home, "sessions")))
-            foreach (var month in _seams.Directories(year))
-            foreach (var day in _seams.Directories(month))
-            {
-                if (DayOf(year, month, day) is { } date && date < floor) continue;
-                foreach (var file in _seams.Files(day, "rollout-*.jsonl")) yield return file;
-            }
-        }
-
-        internal static DateOnly? DayOf(string year, string month, string day) =>
-            int.TryParse(Path.GetFileName(year), out var y)
-            && int.TryParse(Path.GetFileName(month), out var m)
-            && int.TryParse(Path.GetFileName(day), out var d)
-            && y is >= 1 and <= 9999 && m is >= 1 and <= 12 && d >= 1 && d <= DateTime.DaysInMonth(y, m)
-                ? new DateOnly(y, m, d)
-                : null;
+        // sessions/yyyy/mm/dd. Every day directory is walked and the window is
+        // applied to each file's mtime, never to the directory's date: a resume
+        // appends to the ORIGINAL rollout (measured, 9 rows to 18 in the same
+        // file), so a session started 40 days ago and resumed yesterday lives
+        // in a 40-day-old directory — exactly the session this feature makes.
+        private IEnumerable<string> CodexTranscripts(string home) =>
+            _seams.Directories(Path.Combine(home, "sessions"))
+                .SelectMany(_seams.Directories)
+                .SelectMany(_seams.Directories)
+                .SelectMany(day => _seams.Files(day, "rollout-*.jsonl"));
 
         private IEnumerable<string> GrokTranscripts(string home) =>
             _seams.Directories(Path.Combine(home, "sessions"))
@@ -542,6 +582,14 @@ namespace Orbweaver
                     yield return line;
                 }
             }
+        }
+
+        // A symlinked directory's final target; the path itself otherwise.
+        [ExcludeFromCodeCoverage]
+        private static string RealPathOf(string path)
+        {
+            try { return new DirectoryInfo(path).ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? path; }
+            catch { return path; }
         }
 
         [ExcludeFromCodeCoverage]

@@ -31,7 +31,7 @@ public class PastSessionsTests
         + text + "\"}]}}";
 
     private static PastSession? Claude(string path, Func<string, bool>? exists = null, params string[] lines) =>
-        PastSessions.FromClaude(lines, lines, path, At, exists ?? Exists);
+        PastSessions.FromClaude(lines, lines, null, path, At, exists ?? Exists);
 
     [Fact]
     public void ClaudeReadsCwdIdFirstPromptAndCount()
@@ -131,11 +131,88 @@ public class PastSessionsTests
         Assert.Equal(Id, s.Id);
     }
 
+    // A real codex-tui rollout can be session_meta alone; it is listed, and
+    // its title is the folder's name.
     [Fact]
-    public void CodexWithNoUserTurnOrNoUsableIdIsSkipped()
+    public void CodexWithNoPromptIsListedUnderItsFolderName()
     {
-        Assert.Null(Codex(CodexFile, CodexMeta()));
+        Assert.Equal("api", Codex(CodexFile, CodexMeta(cwd: "/work/api/"))!.Title);
+        Assert.Equal("(untitled)", Codex(CodexFile, CodexMeta(cwd: null))!.Title);
+    }
+
+    [Fact]
+    public void CodexWithNoUsableIdIsSkipped() =>
         Assert.Null(Codex("/h/rollout.jsonl", CodexMeta(id: null), CodexUser("x")));
+
+    // ---- ruling A: only sessions a person started ----
+
+    [Theory]
+    [InlineData("cli", true)]
+    [InlineData(null, true)]
+    [InlineData("sdk-cli", false)]
+    [InlineData("claude-desktop", false)]
+    [InlineData("sdk-ts", false)]
+    public void ClaudeListsOnlyTheCliEntrypoint(string? entrypoint, bool listed)
+    {
+        var opening = "{\"type\":\"mode\",\"sessionId\":\"" + Id + "\"}";
+        var user = ClaudeUser("hi");
+        if (entrypoint is not null) user = user.Replace("\"type\":\"user\",", "\"type\":\"user\",\"entrypoint\":\"" + entrypoint + "\",");
+        Assert.Equal(listed, Claude("/x/" + Id + ".jsonl", null, opening, user) is not null);
+    }
+
+    [Theory]
+    [InlineData("codex-tui", true)]
+    [InlineData(null, true)]
+    [InlineData("openclaw", false)]
+    [InlineData("codex_exec", false)]
+    public void CodexListsOnlyTheTuiOriginator(string? originator, bool listed)
+    {
+        var meta = CodexMeta();
+        if (originator is not null) meta = meta.Replace("\"cli_version\"", "\"originator\":\"" + originator + "\",\"cli_version\"");
+        Assert.Equal(listed, Codex(CodexFile, meta, CodexUser("go")) is not null);
+    }
+
+    [Theory]
+    [InlineData("{\"session_kind\":\"headless\"}", false)]
+    [InlineData("{\"session_kind\":\"interactive\"}", true)]
+    [InlineData("{}", true)]
+    [InlineData(null, true)]
+    public void GrokSkipsHeadlessSessions(string? summary, bool listed) =>
+        Assert.Equal(listed, PastSessions.FromGrok(summary, new[] { GrokUser("hi") }, GrokFile, At, Exists) is not null);
+
+    [Fact]
+    public void GrokPrefersTheSummarysCwd() =>
+        Assert.Equal("/real/cwd", PastSessions.FromGrok("{\"info\":{\"cwd\":\"/real/cwd\"}}", new[] { GrokUser("hi") }, GrokFile, At, Exists)!.Cwd);
+
+    [Theory]
+    [InlineData("{\"info\":\"flat\"}")]
+    [InlineData("{\"info\":{}}")]
+    [InlineData("{\"info\":{\"cwd\":\"\"}}")]
+    public void AnUnusableSummaryCwdFallsBackToTheDirectoryName(string summary) =>
+        Assert.Equal("/work/my site", PastSessions.FromGrok(summary, new[] { GrokUser("hi") }, GrokFile, At, Exists)!.Cwd);
+
+    // ---- Claude titles ----
+
+    [Fact]
+    public void TheCustomTitleSidecarWinsOverEveryRow()
+    {
+        var lines = new[] { ClaudeUser("first"), "{\"type\":\"custom-title\",\"customTitle\":\"Row title\"}" };
+        Assert.Equal("Sidecar title", PastSessions.FromClaude(lines, lines, "{\"customTitle\":\" Sidecar title \"}", "/x/" + Id + ".jsonl", At, Exists)!.Title);
+        Assert.Equal("Row title", PastSessions.FromClaude(lines, lines, "{\"customTitle\":\"\"}", "/x/" + Id + ".jsonl", At, Exists)!.Title);
+        Assert.Equal("Row title", PastSessions.FromClaude(lines, lines, "nonsense", "/x/" + Id + ".jsonl", At, Exists)!.Title);
+    }
+
+    // Slash commands and teammate relays are not what a person typed; the
+    // title falls through them to the first real prompt.
+    [Fact]
+    public void TheFirstPromptSkipsCommandAndTeammateRows()
+    {
+        var s = Claude("/x/" + Id + ".jsonl", null,
+            ClaudeUser("<command-name>/clear</command-name>"),
+            ClaudeUser("<command-message>clear</command-message>"),
+            ClaudeUser("<teammate-message teammate_id=\\\"lead\\\">do it</teammate-message>"),
+            ClaudeUser("the real prompt"))!;
+        Assert.Equal("the real prompt", s.Title);
     }
 
     [Theory]
@@ -223,7 +300,7 @@ public class PastSessionsTests
     {
         // The reader is handed the head window; a cwd beyond it is never seen.
         var head = new[] { ClaudeUser("hi", cwd: null) };
-        var s = PastSessions.FromClaude(head, head, "/x/" + Id + ".jsonl", At, Exists)!;
+        var s = PastSessions.FromClaude(head, head, null, "/x/" + Id + ".jsonl", At, Exists)!;
         Assert.Null(s.Cwd);
         Assert.True(s.FolderMissing);
     }
@@ -253,15 +330,6 @@ public class PastSessionsTests
         var image = "{\"type\":\"user\",\"uuid\":\"u1\",\"timestamp\":\"2026-11-20T10:00:00Z\",\"cwd\":\"/w\",\"sessionId\":\"" + Id
             + "\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"iVBORw0KGgo=\"}}]}}";
         Assert.Equal("(untitled)", Claude("/x/" + Id + ".jsonl", null, image)!.Title);
-    }
-
-    [Fact]
-    public void HeadRowsKeepsTheFirstRowWholeThenSpendsTheBudget()
-    {
-        var big = new string('m', 1000);
-        Assert.Equal(new[] { big, "a", "b" }, PastSessions.HeadRows(new[] { big, "a", "b", "c" }, 3));
-        Assert.Equal(new[] { "x" }, PastSessions.HeadRows(new[] { "x\r" }, 0));
-        Assert.Empty(PastSessions.HeadRows(new string[0], 10));
     }
 
     // ---- counting ----

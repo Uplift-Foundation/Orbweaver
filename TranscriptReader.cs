@@ -344,6 +344,51 @@ namespace Orbweaver
                 .ToArray();
         }
 
+        // CB-361, for Codex: the first row read whole however long it is, up
+        // to firstRowCap bytes, then up to `budget` more bytes of rows with the
+        // usual torn-line rule. Null when the first row runs past the cap (the
+        // caller skips the file rather than reading on). A file that is one
+        // row with no newline is that row.
+        [ExcludeFromCodeCoverage]
+        internal static string[]? HeadRows(string path, int firstRowCap, int budget)
+        {
+            try { return ReadHeadRows(path, firstRowCap, budget); }
+            catch { return null; }
+        }
+
+        internal static string[]? ReadHeadRows(string path, int firstRowCap, int budget)
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            var acc = new MemoryStream();
+            var buffer = new byte[65536];
+            long firstEnd = -1;
+            while (firstEnd < 0 || acc.Length - firstEnd - 1 < budget)
+            {
+                var n = fs.Read(buffer, 0, buffer.Length);
+                if (n == 0) break;
+                var offset = acc.Length;
+                acc.Write(buffer, 0, n);
+                if (firstEnd < 0)
+                {
+                    var nl = Array.IndexOf(buffer, (byte)'\n', 0, n);
+                    if (nl >= 0) firstEnd = offset + nl;
+                    else if (acc.Length > firstRowCap) return null;
+                }
+            }
+            if (firstEnd < 0 && acc.Length > firstRowCap) return null;
+
+            var end = firstEnd < 0 ? acc.Length : Math.Min(acc.Length, firstEnd + 1 + budget);
+            var chunk = System.Text.Encoding.UTF8.GetString(acc.GetBuffer(), 0, (int)end);
+            // Stopped short of the end: drop the torn last row. The first row
+            // ends at a newline, so it always survives the cut.
+            if (end < fs.Length) chunk = chunk[..chunk.LastIndexOf('\n')];
+
+            return chunk.Split('\n')
+                .Select(line => line.TrimEnd('\r'))
+                .Where(line => line.Length > 0)
+                .ToArray();
+        }
+
         private static string[] ReadTail(string path, int tailBytes)
         {
             {

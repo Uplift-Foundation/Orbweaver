@@ -104,22 +104,66 @@ public class PastSessionIndexTests : IDisposable
         Assert.True(Assert.Single(Read(index, NewChatCli.ClaudeCode, home)).FolderMissing);
     }
 
+    // A resume appends to the ORIGINAL rollout, so a session started long ago
+    // and resumed yesterday sits in an old day directory with a fresh mtime.
+    // The window is the file's mtime, never the directory's date.
     [Fact]
-    public void CodexWalksDayDirectoriesAndSkipsOnesOlderThanTheWindow()
+    public void CodexFiltersOnFileMtimeNotTheDayDirectory()
     {
         var home = Path.Combine(_root, ".codex");
-        string Meta(string id) => "{\"type\":\"session_meta\",\"payload\":{\"id\":\"" + id + "\",\"cwd\":\"" + Esc(_work) + "\"}}";
+        string Meta(string id) => "{\"type\":\"session_meta\",\"payload\":{\"id\":\"" + id + "\",\"cwd\":\"" + Esc(_work) + "\",\"originator\":\"codex-tui\"}}";
         const string User = "{\"ordinal\":1,\"type\":\"event_msg\",\"payload\":{\"type\":\"item_completed\",\"item\":{\"type\":\"UserMessage\",\"content\":[{\"type\":\"text\",\"text\":\"go\"}]}}}";
-        Write(Path.Combine(home, "sessions", "2026", "11", "19", "rollout-2026-11-19T10-00-00-" + A + ".jsonl"), Now.AddDays(-1), Meta(A), User);
-        // Recently written, but in a day directory far outside the window: skipped without being read.
-        Write(Path.Combine(home, "sessions", "2026", "01", "02", "rollout-2026-01-02T10-00-00-" + B + ".jsonl"), Now, Meta(B), User);
-        // Not a date: walked anyway rather than guessed at.
-        Write(Path.Combine(home, "sessions", "misc", "x", "y", "rollout-2026-11-19T10-00-00-33333333-0000-4000-8000-000000000000.jsonl"), Now, Meta("33333333-0000-4000-8000-000000000000"), User);
+        // Started in January, resumed yesterday.
+        Write(Path.Combine(home, "sessions", "2026", "01", "02", "rollout-2026-01-02T10-00-00-" + A + ".jsonl"), Now.AddDays(-1), Meta(A), User);
+        // Recent directory, but untouched for 45 days.
+        Write(Path.Combine(home, "sessions", "2026", "11", "19", "rollout-2026-11-19T10-00-00-" + B + ".jsonl"), Now.AddDays(-45), Meta(B), User);
 
         var index = new PastSessionIndex(PastSessionIndex.Real);
 
-        Assert.Equal(new[] { A, "33333333-0000-4000-8000-000000000000" }, Read(index, NewChatCli.Codex, home).Select(s => s.Id).OrderBy(x => x));
-        Assert.Equal(3, Read(index, NewChatCli.Codex, home, older: true).Count);
+        Assert.Equal(new[] { A }, Read(index, NewChatCli.Codex, home).Select(s => s.Id));
+        Assert.Equal(2, Read(index, NewChatCli.Codex, home, older: true).Count);
+    }
+
+    [Fact]
+    public void ACodexRolloutWhoseFirstRowRunsPastTheCapIsSkipped()
+    {
+        var home = Path.Combine(_root, ".codex");
+        var file = Write(Path.Combine(home, "sessions", "2026", "11", "19", "rollout-2026-11-19T10-00-00-" + A + ".jsonl"), Now.AddDays(-1),
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"" + A + "\",\"x\":\"" + new string('x', 200_000) + "\"}}");
+        var seams = PastSessionIndex.Real with { CodexHead = p => TranscriptReader.HeadRows(p, 100_000, TranscriptReader.HeadBytes) };
+        Assert.Empty(new PastSessionIndex(seams).Read(NewChatCli.Codex, home, false, Now));
+        Assert.Single(new PastSessionIndex(PastSessionIndex.Real).Read(NewChatCli.Codex, home, false, Now));
+        Assert.True(File.Exists(file));
+    }
+
+    // Ruling B: an account whose projects directory is a symlink to another's
+    // lists the same transcripts under the same, real paths.
+    [UnixFact]
+    public void ASymlinkedProjectsDirectoryListsUnderItsRealPath()
+    {
+        var real = Path.Combine(_root, ".claude");
+        var file = Write(Path.Combine(real, "projects", "-work", A + ".jsonl"), Now.AddDays(-1), ClaudeUser(A, "hi"));
+        var other = Path.Combine(_root, ".claude-board");
+        Directory.CreateDirectory(other);
+        Directory.CreateSymbolicLink(Path.Combine(other, "projects"), Path.Combine(real, "projects"));
+
+        var index = new PastSessionIndex(PastSessionIndex.Real);
+        var viaLink = Assert.Single(Read(index, NewChatCli.ClaudeCode, other));
+        var direct = Assert.Single(Read(index, NewChatCli.ClaudeCode, real));
+
+        Assert.Equal(direct.TranscriptPath, viaLink.TranscriptPath);
+        Assert.Equal(new FileInfo(file).FullName, new FileInfo(viaLink.TranscriptPath).FullName);
+    }
+
+    [Fact]
+    public void AClaudeSidecarTitleIsReadFromBesideTheTranscript()
+    {
+        var home = Path.Combine(_root, ".claude");
+        Write(Path.Combine(home, "projects", "-work", A + ".jsonl"), Now.AddDays(-1), ClaudeUser(A, "prompt"));
+        Directory.CreateDirectory(Path.Combine(home, "projects", "-work", A));
+        File.WriteAllText(Path.Combine(home, "projects", "-work", A, "custom-title.json"), "{\"customTitle\":\"disk cleanup\"}");
+
+        Assert.Equal("disk cleanup", Assert.Single(new PastSessionIndex(PastSessionIndex.Real).Read(NewChatCli.ClaudeCode, home, false, Now)).Title);
     }
 
     [Fact]
@@ -174,18 +218,18 @@ public class PastSessionIndexTests : IDisposable
     private static PastSession One(NewChatCli cli, string home, string id) =>
         Assert.Single(new PastSessionIndex(PastSessionIndex.Real).Read(cli, home, true, Now), s => s.Id == id);
 
+    // a6b87b1e is an sdk-cli (headless) session, so only the cli one lists —
+    // and the sub-agent below it never does.
     [Fact]
-    public void RealClaudeCapturesListTopLevelSessionsOnly()
+    public void RealClaudeCapturesListTheCliSessionOnly()
     {
         var home = Captures("claude");
         var all = new PastSessionIndex(PastSessionIndex.Real).Read(NewChatCli.ClaudeCode, home, true, Now);
 
-        Assert.Equal(new[] { "0d249aed-bfd5-40ae-8097-cb0ad9299fe5", "a6b87b1e-d33d-4e43-8859-072f2f85c2c3" },
-            all.Select(s => s.Id).OrderBy(x => x, StringComparer.Ordinal));
-        Assert.All(all, s => Assert.Equal("/Users/user/Source/project", s.Cwd));
-
         // A team member's session: its only user row is a <teammate-message>.
-        var titled = One(NewChatCli.ClaudeCode, home, "0d249aed-bfd5-40ae-8097-cb0ad9299fe5");
+        var titled = Assert.Single(all);
+        Assert.Equal("0d249aed-bfd5-40ae-8097-cb0ad9299fe5", titled.Id);
+        Assert.Equal("/Users/user/Source/project", titled.Cwd);
         Assert.Equal("Scrubbed session title", titled.Title);
         Assert.True(new PastSessionIndex(PastSessionIndex.Real).Count(NewChatCli.ClaudeCode, titled.TranscriptPath) > 1);
     }
@@ -201,10 +245,24 @@ public class PastSessionIndexTests : IDisposable
         Assert.Equal("scrubbed", s.Title);
     }
 
+    // The captured Grok session is headless (grok -p), so it is not listed.
+    // A copy with session_kind removed shows what the reader takes from it.
     [Fact]
-    public void RealGrokCaptureReadsItsFolderAndSummaryTitle()
+    public void RealGrokCaptureIsHeadlessAndOtherwiseReadsItsFolderAndTitle()
     {
-        var s = One(NewChatCli.Grok, Captures("grok"), "0570de7d-7092-4259-8d44-d356a921907c");
+        const string id = "0570de7d-7092-4259-8d44-d356a921907c";
+        Assert.Empty(new PastSessionIndex(PastSessionIndex.Real).Read(NewChatCli.Grok, Captures("grok"), true, Now));
+
+        var source = Directory.GetDirectories(Path.Combine(Captures("grok"), "sessions")).Single();
+        var copy = Path.Combine(_root, ".grok", "sessions", Path.GetFileName(source), id);
+        Directory.CreateDirectory(copy);
+        File.Copy(Path.Combine(source, id, "updates.jsonl"), Path.Combine(copy, "updates.jsonl"));
+        File.WriteAllText(Path.Combine(copy, "summary.json"),
+            File.ReadAllText(Path.Combine(source, id, "summary.json")).Replace("\"headless\"", "\"x-interactive\""));
+        File.SetLastWriteTimeUtc(Path.Combine(copy, "updates.jsonl"), Now.AddDays(-1).UtcDateTime);
+
+        var s = Assert.Single(new PastSessionIndex(PastSessionIndex.Real).Read(NewChatCli.Grok, Path.Combine(_root, ".grok"), false, Now));
+        Assert.Equal(id, s.Id);
         Assert.Equal("/Users/user/Source/project", s.Cwd);
         Assert.Equal("Scrubbed session title", s.Title);
         Assert.True(new PastSessionIndex(PastSessionIndex.Real).Count(NewChatCli.Grok, s.TranscriptPath) > 1);
@@ -267,6 +325,30 @@ public class PastSessionIndexTests : IDisposable
     }
 
     [Fact]
+    public void ReadHeadRowsKeepsALongFirstRowWholeThenTheBudget()
+    {
+        var path = Path.Combine(_root, "c.jsonl");
+        var first = new string('f', 150_000);
+        File.WriteAllText(path, first + "\r\nab\ncd\nefgh\n");
+
+        Assert.Equal(new[] { first, "ab", "cd" }, TranscriptReader.ReadHeadRows(path, 1_000_000, 7));
+        Assert.Equal(new[] { first, "ab", "cd", "efgh" }, TranscriptReader.ReadHeadRows(path, 1_000_000, 1000));
+        Assert.Equal(new[] { first }, TranscriptReader.ReadHeadRows(path, 1_000_000, 0));
+        Assert.Null(TranscriptReader.ReadHeadRows(path, 100_000, 1000));
+        Assert.Null(TranscriptReader.HeadRows(Path.Combine(_root, "missing.jsonl"), 10, 10));
+    }
+
+    [Fact]
+    public void ReadHeadRowsTakesASingleUnterminatedRowUnderTheCap()
+    {
+        var path = Path.Combine(_root, "one.jsonl");
+        File.WriteAllText(path, "only");
+        Assert.Equal(new[] { "only" }, TranscriptReader.ReadHeadRows(path, 10, 10));
+        File.WriteAllText(path, new string('z', 100));
+        Assert.Null(TranscriptReader.ReadHeadRows(path, 10, 10));
+    }
+
+    [Fact]
     public void ReadHeadKeepsAFinalLineWithNoNewlineWhenTheWholeFileFits()
     {
         var path = Path.Combine(_root, "n.jsonl");
@@ -275,17 +357,6 @@ public class PastSessionIndexTests : IDisposable
         Assert.Equal(new[] { "one", "two", "three" }, TranscriptReader.HeadLines(path));
         Assert.Empty(TranscriptReader.HeadLines(Path.Combine(_root, "missing.jsonl")));
     }
-
-    [Theory]
-    [InlineData("2026", "11", "20", true)]
-    [InlineData("2026", "02", "30", false)]
-    [InlineData("2026", "13", "01", false)]
-    [InlineData("0", "01", "01", false)]
-    [InlineData("x", "01", "01", false)]
-    [InlineData("2026", "x", "01", false)]
-    [InlineData("2026", "01", "x", false)]
-    public void DayOfParsesOnlyRealDates(string y, string m, string d, bool real) =>
-        Assert.Equal(real, PastSessionIndex.DayOf("/s/" + y, "/s/" + y + "/" + m, "/s/" + y + "/" + m + "/" + d) is not null);
 
     [Theory]
     [InlineData("ClaudeCode", null, ".claude")]
