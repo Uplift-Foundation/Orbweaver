@@ -20,7 +20,12 @@ namespace Orbweaver
         [property: JsonPropertyName("terminal")] bool? Terminal = null,
         [property: JsonPropertyName("clis")] IReadOnlyList<PeerLaunchCli>? Clis = null,
         [property: JsonPropertyName("accounts")] IReadOnlyList<PeerLaunchAccount>? Accounts = null,
-        [property: JsonPropertyName("recents")] IReadOnlyList<string>? Recents = null);
+        [property: JsonPropertyName("recents")] IReadOnlyList<string>? Recents = null,
+        // CB-434: this desk can list and resume past sessions. An int so a
+        // future incompatible change can bump it; 0 (absent) is a desk that
+        // predates it, and the window says to update that machine rather than
+        // timing a request out.
+        [property: JsonPropertyName("resume"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int Resume = 0);
 
     internal sealed record PeerLaunchCli(
         [property: JsonPropertyName("cli")] string Cli,
@@ -34,7 +39,14 @@ namespace Orbweaver
     // What the window hands the client. `Account` is always explicit
     // ("default" or a profile id) so the phone's designated-account fallback
     // never applies to a peer.
-    internal sealed record PeerLaunchSpec(string Cli, string Cwd, string Account);
+    //
+    // CB-434: ResumeSessionId non-empty resumes that past session instead of
+    // starting a new chat. Cwd is then the session's folder as its row gave it;
+    // the far desk checks it against its own index.
+    internal sealed record PeerLaunchSpec(string Cli, string Cwd, string Account)
+    {
+        internal string ResumeSessionId { get; init; } = "";
+    }
 
     // What came back. `Code` is "launched" on success; otherwise one of the
     // phone's refusal codes, or one of PeerLaunchCodes below.
@@ -80,6 +92,33 @@ namespace Orbweaver
         internal static PeerDirResult Fail(string code) => new(false, code, null);
     }
 
+    // CB-434: one page of a far machine's past sessions. The far desk does all
+    // the work — its index, its clock for the 30-day cut, its live set, its
+    // search and folder filter — so the rows equal what that machine's own
+    // New Chat would show. Text and Folder are "" for none; From is a row offset.
+    internal sealed record PastSessionQuery(string Cli, string Account, bool Older, string Text, string Folder, int From);
+
+    // One row. Never the transcript path. Count is null when the far desk had
+    // no count ready within its budget; At is last activity, unix seconds.
+    internal sealed record PeerPastSession(
+        [property: JsonPropertyName("id")] string Id,
+        [property: JsonPropertyName("cwd"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Cwd,
+        [property: JsonPropertyName("title")] string Title,
+        [property: JsonPropertyName("at")] long At,
+        [property: JsonPropertyName("n"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Count = null,
+        [property: JsonPropertyName("missing"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Missing = false,
+        [property: JsonPropertyName("live"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Live = false);
+
+    // A page, or the code that refused it: peer_launch_off, bad_frame,
+    // unknown_cli, unknown_account, unreadable from the far desk; no_answer,
+    // link_lost from this one. Total is the rows matching the query; Folders
+    // is set on a From = 0 page only.
+    internal sealed record PeerPastSessionsResult(bool Ok, string Code, int Total, int From,
+        IReadOnlyList<PeerPastSession> Rows, IReadOnlyList<string> Folders)
+    {
+        internal static PeerPastSessionsResult Fail(string code) => new(false, code, 0, 0, [], []);
+    }
+
     internal sealed record PeerMachine(string Name, bool Online);
 
     // The seam the window uses. The real one is PeerSessions.Launcher.
@@ -103,6 +142,11 @@ namespace Orbweaver
         // answers "no answer" instead of every implementer changing at once.
         Task<PeerLaunchResult> TrustAsync(string machine, PeerLaunchTrust trust, bool trusted, CancellationToken ct) =>
             Task.FromResult(new PeerLaunchResult(false, PeerLaunchCodes.NoAnswer, null, null));
+
+        // CB-434: one page of the far desk's past sessions. Never throws. A
+        // default for the same reason as TrustAsync.
+        Task<PeerPastSessionsResult> PastSessionsAsync(string machine, PastSessionQuery query, CancellationToken ct) =>
+            Task.FromResult(PeerPastSessionsResult.Fail(PeerLaunchCodes.NoAnswer));
     }
 
     internal static class PeerLaunchCodes

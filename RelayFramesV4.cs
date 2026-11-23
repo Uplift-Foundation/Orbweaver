@@ -64,12 +64,21 @@ namespace Orbweaver
         // The launch's optional account names one this desktop does not list.
         internal const string UnknownAccount = "unknown_account";
 
+        // CB-434 (frames-v17): resume. already_running and resume_started are
+        // ok codes carrying the session id; resume_started is Codex's, whose
+        // orb appears only after the first prompt. unknown_resume: no such
+        // session in this desk's index for that CLI and account, or not in that
+        // folder. resume_unsupported: the installed CLI cannot resume by id,
+        // with this desk's own sentence as `why`.
+        internal const string AlreadyRunning = "already_running", ResumeStarted = "resume_started",
+            UnknownResume = "unknown_resume", ResumeUnsupported = "resume_unsupported";
+
         // CB-339 (frames-v11 errors_added.sealed_err_codes): the folder picker's four. forbidden_path is
         // the one answer for everything outside the roots, whether or not the folder exists.
         internal const string ForbiddenPath = "forbidden_path", UnknownPath = "unknown_path",
             Unreadable = "unreadable", RateLimited = "rate_limited";
 
-        internal static readonly string[] OkCodes = [Watching, Unwatched, Typed, Launched, RunFrames.SetOk];
+        internal static readonly string[] OkCodes = [Watching, Unwatched, Typed, Launched, RunFrames.SetOk, AlreadyRunning, ResumeStarted];
 
         internal static readonly string[] ErrCodes =
         [
@@ -78,13 +87,15 @@ namespace Orbweaver
             LaunchFailed, NoSession, UnknownImage, UnknownAccount, ForbiddenPath, UnknownPath, Unreadable, RateLimited,
             // CB-404 (frames-v13 set_run).
             RunFrames.BadValue, RunFrames.Unavailable, RunFrames.SetFailed,
+            // CB-434 (frames-v17 resume).
+            UnknownResume, ResumeUnsupported,
         ];
 
         // Only these carry the desktop's own sentence; every other code's
         // copy is the phone's (frames-v4 err.rules).
         // frames-v13 adds two: a set the desk cannot make here, and one the CLI refused.
         internal static readonly string[] CodesWithWhy =
-            [NotAtPrompt, TypingFailed, NoTerminal, LaunchFailed, RunFrames.Unavailable, RunFrames.SetFailed];
+            [NotAtPrompt, TypingFailed, NoTerminal, LaunchFailed, RunFrames.Unavailable, RunFrames.SetFailed, ResumeUnsupported];
 
         internal static string Ok(string reference, string code, string sessionId, long? total = null)
         {

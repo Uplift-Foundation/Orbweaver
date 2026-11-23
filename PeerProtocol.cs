@@ -70,6 +70,12 @@ namespace Orbweaver
         public const string ListDirGet = "list-dir-get";
         public const string ListDir = "list-dir";
         public const string LaunchResult = "launch-result";
+        // CB-434: one page of the far desk's past sessions. Unsigned and
+        // read-only, gated like list-dir; resume itself is a `launch` carrying
+        // resume_session_id. An older peer ignores both types, and launch-info's
+        // `resume` capability tells the asker so before it waits.
+        public const string PastSessionsGet = "past-sessions-get";
+        public const string PastSessions = "past-sessions";
 
         // Error codes, carried in `err`. The same set MirrorProtocol used, since
         // they describe the far machine's state rather than the transport: the
