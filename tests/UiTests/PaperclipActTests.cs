@@ -633,4 +633,45 @@ public class PaperclipActTests : IDisposable
         await orb.PaperclipActAsync("wake");
         Assert.DoesNotContain("nope", Bubble(orb));
     }
+
+    // ---- closing when the panel loses focus (CloseIfIdle) ---------------------------------------
+
+    private static void RunCloseIfIdle(PaperclipNeedsPanel p) =>
+        typeof(PaperclipNeedsPanel).GetMethod("CloseIfIdle", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .Invoke(p, null);
+
+    [AvaloniaFact]
+    public void A_panel_that_has_lost_focus_closes_but_one_that_still_has_it_does_not()
+    {
+        var rig = new Rig();
+        rig.Panel.Present(Amber(Hire));
+        rig.Panel.Show();
+        if (rig.Panel.IsActive)
+        {
+            // Still focused: nothing to close.
+            RunCloseIfIdle(rig.Panel);
+            Assert.True(rig.Panel.IsVisible);
+            rig.Panel.Close();
+        }
+        else
+        {
+            RunCloseIfIdle(rig.Panel);
+            Assert.False(rig.Panel.IsVisible);
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task A_panel_with_an_answer_in_flight_is_not_closed_by_losing_focus()
+    {
+        var rig = new Rig();
+        rig.Actions.Gate = new TaskCompletionSource();
+        rig.Panel.Present(Amber(Hire));
+        rig.Panel.Show();
+        var answering = Click(rig.Panel.RowFor("ap1")!, true, rig);   // held at the gate: the row is busy
+        RunCloseIfIdle(rig.Panel);
+        Assert.True(rig.Panel.IsVisible);
+        rig.Actions.Gate.SetResult();
+        await answering;
+        rig.Panel.Close();
+    }
 }
