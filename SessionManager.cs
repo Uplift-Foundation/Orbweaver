@@ -45,6 +45,26 @@ namespace Orbweaver
         [JsonIgnore]
         public string Lead { get; set; } = "";
 
+        // Paperclip-only, and [JsonIgnore] for the reason Source is: the app's
+        // conclusion, never the hook's. Mark is the broke / paused / over
+        // budget corner glyph and MarkReason its hover words; BudgetPercent is
+        // null when no ring is drawn; FoldedCount and FoldedNames describe the
+        // sleeping agents folded into this lead (CB-421).
+        [JsonIgnore]
+        public PaperclipMark Mark { get; set; } = PaperclipMark.None;
+
+        [JsonIgnore]
+        public string? MarkReason { get; set; }
+
+        [JsonIgnore]
+        public int FoldedCount { get; set; }
+
+        [JsonIgnore]
+        public string? FoldedNames { get; set; }
+
+        [JsonIgnore]
+        public int? BudgetPercent { get; set; }
+
         // What this agent is called inside its team — MenuUX, HitReactSpec.
         // Empty for everything that isn't a team member, and filled in beside
         // Lead from the same read of the process. Everything user-facing
@@ -362,7 +382,13 @@ namespace Orbweaver
         // machine *of yours* reached through a relay that can type into it.
         // There is no machine of yours behind this one and nothing here can
         // type into it, so a click opens the session in a browser instead.
-        ClaudeCloud
+        ClaudeCloud,
+
+        // An agent in a Paperclip company, listed by Paperclip's own API
+        // rather than by a hook (see PaperclipSessions). No process, terminal
+        // or transcript here, so like ClaudeCloud a click opens a browser, and
+        // like it the orb outlives the agent's runs. Not in IsLocalCli.
+        Paperclip
     }
 
     // Watches %TEMP%\orbweaver\<session_id>.txt (one per running Claude
