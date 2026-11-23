@@ -452,6 +452,9 @@ namespace Orbweaver
         internal bool SetStyle(string id, GroupStyle? style) =>
             Update(id, group => group with { Style = OrbGroups.CleanStyle(style) });
 
+        internal bool SetColourSalt(string id, int salt) =>
+            Update(id, group => group with { ColourSalt = salt });
+
         private bool Update(string id, Func<OrbGroup, OrbGroup> change)
         {
             if (!_groups.TryGetValue(id, out var before)) return false;
@@ -502,7 +505,9 @@ namespace Orbweaver
                     var anchor = id == OrbGroups.Main ? existing!.Anchor : Anchor(fields["anchor"]);
                     var style = Style(fields["style"]);
 
-                    _groups[id] = new OrbGroup(id, name, shape, anchor, style);
+                    var salt = Number(fields["colourSalt"]) is { } n && n >= 0 && n <= int.MaxValue ? (int)n : 0;
+
+                    _groups[id] = new OrbGroup(id, name, shape, anchor, style, salt);
                 }
             }
 
@@ -533,6 +538,8 @@ namespace Orbweaver
                     if (style.FillOpacity is { } fillOpacity) styled["fillOpacity"] = fillOpacity;
                     entry["style"] = styled;
                 }
+
+                if (group.ColourSalt != 0) entry["colourSalt"] = group.ColourSalt;
 
                 groups[group.Id] = entry;
             }
