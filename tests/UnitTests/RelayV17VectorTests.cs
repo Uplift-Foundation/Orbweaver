@@ -213,14 +213,6 @@ public class RelayV17VectorTests
                 Assert.Equal(s.GetProperty("folders").EnumerateArray().Select(f => f.GetString()!), SessionFrames.FoldersThatFit(page.Folders));
 
             var frames = SessionFrames.Sessions(Str(first, "ref"), cli, page);
-            // Pending a ruling: on an empty from = 0 reply the vectors write
-            // "folders":[] and the desk leaves folders out, as it does whenever
-            // there are none. Everything before it is the same bytes.
-            if (name == "empty")
-            {
-                Assert.Equal(expected[0], frames.Single()[..^1] + ",\"folders\":[]}");
-                continue;
-            }
             Assert.True(expected.SequenceEqual(frames), name + ": " + string.Join("\n", frames.Select(f => f.Length > 300 ? f[..150] + "…" + f[^150..] : f)));
             Assert.Equal(p.GetProperty("frame_bytes").EnumerateArray().Select(b => b.GetInt32()), frames.Select(f => Encoding.UTF8.GetByteCount(f)));
         }
@@ -330,13 +322,6 @@ public class RelayV17VectorTests
         return sent.Replies.Select(r => JsonDocument.Parse(r).RootElement.GetProperty("code").GetString()!).ToList();
     }
 
-    // CB-434: cases where the desk and the vectors at Mobile 8e660ab disagree,
-    // raised with the contract's owner and held out until it is ruled on. Named,
-    // so a ruling either way has to edit this line rather than slip past it.
-    // id-empty: the vectors make a present-but-empty resume_session_id bad_frame;
-    // the desk reads "" as a new chat, as it reads an empty parent_session_id.
-    private static readonly HashSet<string> PendingRuling = ["id-empty"];
-
     [Fact]
     public void Every_resume_case_is_the_first_answer_the_desk_gives()
     {
@@ -348,7 +333,7 @@ public class RelayV17VectorTests
             var name = Str(c, "name");
             var codes = Resume(c.GetProperty("fields"));
             var first = codes.FirstOrDefault() ?? "(none)";
-            if ((first == Str(c, "expect")) == PendingRuling.Contains(name)) wrong.Add($"{name}: expected {Str(c, "expect")}, desk {string.Join(",", codes)}");
+            if (first != Str(c, "expect")) wrong.Add($"{name}: expected {Str(c, "expect")}, desk {string.Join(",", codes)}");
             // already_running is one reply: nothing is typed into a running session.
             if (first == RelayReplies.AlreadyRunning) Assert.Single(codes);
         }
@@ -375,15 +360,7 @@ public class RelayV17VectorTests
     {
         Assert.Equal(Str(In, "ck_caps"), Ck(CkKey, BrowseFrames.CapsCk));
         var box = Sealed.GetProperty("caps");
-        // The names, as a set: the contract says their order is not meaningful.
-        Assert.Equal(
-            JsonDocument.Parse(BrowseFrames.Caps).RootElement.GetProperty("caps").EnumerateArray().Select(c => c.GetString()).Order(),
-            JsonDocument.Parse(Str(box, "plaintext")).RootElement.GetProperty("caps").EnumerateArray().Select(c => c.GetString()).Order());
-        // Pending a ruling: the vectors write list_dir, run_options, resume; the
-        // desk keeps frames-v13's byte order, list_dir, resume, run_options. The
-        // box itself is the vectors' bytes, opened and sealed again.
-        Assert.Equal("{\"t\":\"caps\",\"caps\":[\"list_dir\",\"resume\",\"run_options\"]}", BrowseFrames.Caps);
-        AssertBox(box, DesktopToPhone, Str(box, "plaintext"), Str(In, "ck_caps"));
+        AssertBox(box, DesktopToPhone, BrowseFrames.Caps, Str(In, "ck_caps"));
     }
 
     [Fact]

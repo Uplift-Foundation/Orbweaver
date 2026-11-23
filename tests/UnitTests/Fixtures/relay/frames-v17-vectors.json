@@ -2,7 +2,7 @@
  "_source": {
   "generated_by": "Orbweaver-Mobile contracts/make_v17_vectors.py (mobile engineer, CB-434); to be reproduced by Uplift-Foundation/Orbweaver tools/relay-vectors",
   "orbweaver_sha": "hand-authored",
-  "spec": "CB-434 Jira comment 11539 as amended by the lead; contracts/frames-v17.json",
+  "spec": "CB-434 Jira comment 11539 as amended by 11541, 11543 and 11545; contracts/frames-v17.json",
   "encoding": "hex is lowercase; ct is standard base64 of nonce(12) || ciphertext || tag(16) as in session-vectors.json; every plaintext is canonical (frames-v17.json `canonical`)."
  },
  "_rules": "Sealed with session-vectors.json's epoch-0 key and ck key, direction 0 = desktop to phone, 1 = phone to desktop, counters from 700. Signatures are by answer-vectors.json's phone identity key under orbweaver-launch-v1, deterministic (RFC 6979); a verifier must verify, not byte-compare, since another signer's ECDSA may be randomized. Replies carry ref = the request envelope's id.",
@@ -346,8 +346,8 @@
      "first_message": "",
      "resume_session_id": ""
     },
-    "expect": "bad_frame",
-    "_note": "present but empty is not the shape; omitted is a plain launch"
+    "expect": "launched",
+    "_note": "\"\" is read as absent: a plain launch, a new chat (11539 section 2), as account \"\" is"
    },
    {
     "name": "model-set",
@@ -1787,10 +1787,10 @@
     "query_from": 0,
     "total": 0,
     "frames": [
-     "{\"t\":\"sessions\",\"ref\":\"01JCB0LISTSESS000000000005\",\"cli\":\"codex\",\"total\":0,\"from\":0,\"entries_total\":0,\"from_entry\":0,\"entries\":[],\"folders\":[]}"
+     "{\"t\":\"sessions\",\"ref\":\"01JCB0LISTSESS000000000005\",\"cli\":\"codex\",\"total\":0,\"from\":0,\"entries_total\":0,\"from_entry\":0,\"entries\":[]}"
     ],
     "frame_bytes": [
-     143
+     130
     ]
    }
   ],
@@ -1803,11 +1803,11 @@
    "class": "state",
    "push": "none",
    "ck": "ZLlV0_-3SYMctwpoRcSPDA",
-   "plaintext": "{\"t\":\"caps\",\"caps\":[\"list_dir\",\"run_options\",\"resume\"]}",
+   "plaintext": "{\"t\":\"caps\",\"caps\":[\"list_dir\",\"resume\",\"run_options\"]}",
    "plaintext_bytes": 55,
    "aad": "64736b5f356633633961306531623764323436387c70685f613162326333643465356636303731387c7374617465",
    "nonce": "0000000000000000000002bc",
-   "ct": "AAAAAAAAAAAAAAK8FV+1p64z8wLVVrbftrDhkDKVYAW9ty1dmE+DlvK41mhlOA/ThvPPkXoW9ODhdLTr5AWCjfAkK6hDKW81Kfn5kXbAMnMgV08="
+   "ct": "AAAAAAAAAAAAAAK8FV+1p64z8wLVVrbftrDhkDKVYAW9ty1dmE+DlvK41mhlKBL5hOaZ1DcK8qySObb6/h+Bm/AkK0w1ab3bM6sle/HeMpDFvDU="
   },
   "list_sessions": {
    "from": "ph_a1b2c3d4e5f60718",
