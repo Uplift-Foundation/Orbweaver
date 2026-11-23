@@ -551,4 +551,23 @@ public class GroupSettingsRoundTripTests
         OrbweaverSettings.GroupColourRandom = true;
         Assert.Null(OrbweaverSettings.RandomColourFor(null));
     }
+
+    [Fact]
+    public void ARerollAtTheTopOfTheRangeWrapsToOneNotNegative()
+    {
+        Stage("""
+            { "orbGroups": { "groups": { "g-0000abcd": { "name": "Top", "shape": "circle", "colourSalt": 2147483647 } }, "members": {} } }
+            """);
+        Assert.Equal(int.MaxValue, OrbweaverSettings.OrbGroupFor("g-0000abcd")!.ColourSalt);
+
+        OrbweaverSettings.RerollOrbGroupColour("g-0000abcd");
+
+        Assert.Equal(1, OrbweaverSettings.OrbGroupFor("g-0000abcd")!.ColourSalt);
+
+        // A negative or out-of-range salt in the file loads as 0.
+        Stage("""
+            { "orbGroups": { "groups": { "g-0000abcd": { "name": "Top", "shape": "circle", "colourSalt": -3 } }, "members": {} } }
+            """);
+        Assert.Equal(0, OrbweaverSettings.OrbGroupFor("g-0000abcd")!.ColourSalt);
+    }
 }

@@ -301,7 +301,16 @@ public class OrbGroupSubmenuTests : IDisposable
         orb.RebuildGroupSubmenu();
         Assert.True(Child(Submenu(orb), "New random colour").IsVisible);
 
+        // Opacity-only and one-colour overrides still leave a random hue to re-roll.
+        OrbweaverSettings.SetOrbGroupStyle(group.Id, new GroupStyle(null, 0.5, null, null));
+        orb.RebuildGroupSubmenu();
+        Assert.True(Child(Submenu(orb), "New random colour").IsVisible);
+
         OrbweaverSettings.SetOrbGroupStyle(group.Id, new GroupStyle("#112233", null, null, null));
+        orb.RebuildGroupSubmenu();
+        Assert.True(Child(Submenu(orb), "New random colour").IsVisible);
+
+        OrbweaverSettings.SetOrbGroupStyle(group.Id, new GroupStyle("#112233", null, "#445566", null));
         orb.RebuildGroupSubmenu();
         Assert.False(Child(Submenu(orb), "New random colour").IsVisible);
     }

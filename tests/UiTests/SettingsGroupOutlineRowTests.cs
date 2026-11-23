@@ -261,4 +261,21 @@ public class SettingsGroupOutlineRowTests : IDisposable
         Assert.False(rows[4].IsEnabled);
         Assert.True(In<Button>(rows[3]).IsEnabled);
     }
+
+    [AvaloniaFact]
+    public void ReselectingTheSameModeOrClearingTheSelectionWritesNothing()
+    {
+        OrbweaverSettings.GroupColourRandom = false;
+        var picker = In<ComboBox>(NewWindow().GroupOutlineRows()[2]);
+
+        picker.SelectedIndex = -1;                 // cleared: ignored
+        Assert.False(OrbweaverSettings.GroupColourRandom);
+
+        picker.SelectedIndex = 0;                  // same mode as stored: no write, no resync
+        Assert.False(OrbweaverSettings.GroupColourRandom);
+
+        picker.SelectedIndex = 1;
+        picker.SelectedIndex = -1;
+        Assert.True(OrbweaverSettings.GroupColourRandom);
+    }
 }

@@ -3848,11 +3848,12 @@ namespace Orbweaver
 
             // CB-409: the per-group re-roll, for two groups that landed on the
             // same hue. Hidden where it would do nothing: outside random mode, or
-            // when the group's own style already overrides the colour.
+            // when the group's own style sets both colours (an opacity-only or
+            // one-colour override still leaves a random hue to re-roll).
             var reroll = new MenuItem
             {
                 Header = "New random colour",
-                IsVisible = OrbweaverSettings.GroupColourRandom && group.Style is null
+                IsVisible = OrbweaverSettings.GroupColourRandom && !(group.Style is { Stroke: not null, Fill: not null })
             };
             reroll.Click += (_, _) =>
             {
