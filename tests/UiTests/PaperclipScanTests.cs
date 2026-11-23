@@ -150,9 +150,9 @@ public class PaperclipScanTests : IDisposable
         {
             Assert.Equal(OrbPresence.Parked, o.LastStatus!.Presence);
             Assert.Equal("idle", o.LastStatus.State);
-            Assert.NotNull(o.LastStatus.StatusDetail);
+            Assert.NotEmpty(o.LastStatus.HoverLines);
         });
-        Assert.Equal(link == "NeedsReconnect" ? "Reconnect to Paperclip" : "Connected", Orbs(m)["paperclip:x"].LastStatus!.StatusDetail);
+        Assert.Equal(link == "NeedsReconnect" ? "Reconnect to Paperclip" : "Connected", Assert.Single(Orbs(m)["paperclip:x"].LastStatus!.HoverLines));
     }
 
     [AvaloniaFact]
@@ -184,7 +184,7 @@ public class PaperclipScanTests : IDisposable
         Assert.Equal(OrbPresence.NeedsInput, s.Presence);
         Assert.Equal("http://127.0.0.1:3100/EX/approvals/p1", s.Url);
         Assert.True(ClickRouting.OpensInABrowser(s));
-        Assert.Equal("Hire QA", s.StatusDetail);
+        Assert.Equal(new[] { "Hire QA" }, s.HoverLines.ToArray());
     }
 
     [AvaloniaFact]

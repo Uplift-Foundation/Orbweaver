@@ -92,7 +92,7 @@ public class PaperclipScanTests
             Assert.Equal(PaperclipMark.None, r.Status.Mark);
             Assert.Null(r.Status.MarkReason);
             Assert.Null(r.Status.BudgetPercent);
-            Assert.Equal("Reconnect to Paperclip", r.Status.StatusDetail);
+            Assert.Equal(new[] { "Reconnect to Paperclip" }, r.Status.HoverLines.ToArray());
         });
         Assert.Equal("paperclip:lead", rows[1].Status.Lead);   // the picture is kept
     }
@@ -183,10 +183,9 @@ public class PaperclipScanTests
     [Fact]
     public void Hover_NothingToSay_IsNull_AndLastRunIsNotRepeatedByItsOwnMark()
     {
-        Assert.Null(PaperclipHover.Text(A("a"), Now));
+        Assert.Empty(PaperclipHover.Lines(A("a"), Now));
         var failed = A("a", mark: PaperclipMark.Broke, markReason: "Last run failed: x", last: "failed", sleeping: false);
         Assert.Equal(new[] { "Last run failed: x" }, PaperclipHover.Lines(failed, Now).ToArray());
-        Assert.Equal("Last run failed: x", PaperclipHover.Text(failed, Now));
     }
 
     [Fact]

@@ -119,7 +119,7 @@ public class PaperclipSettingsScreenshots : IDisposable
             Cwd = "",
             Url = "http://127.0.0.1:3100/EX/agents/00000000-0000-4000-8000-000000000004",
             Presence = OrbPresence.Parked,
-            StatusDetail = "Reconnect to Paperclip",
+            HoverLines = new[] { "Reconnect to Paperclip" },
         });
 
         ScreenshotHelper.Capture(orb, "orb-window-paperclip-reconnect.png");

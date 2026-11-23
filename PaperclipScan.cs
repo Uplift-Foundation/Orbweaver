@@ -70,7 +70,9 @@ namespace Orbweaver
                     BudgetPercent = parked ? null : a.BudgetPercent,
                     FoldedCount = count,
                     FoldedNames = names,
-                    StatusDetail = parked ? linkText : PaperclipHover.Text(a, now),
+                    // The orb's own tooltip composes the folded-count line, so this
+                    // is just the agent's lines; parked says only why.
+                    HoverLines = parked ? new[] { linkText } : PaperclipHover.Lines(a, now),
                 };
 
                 // The agent's own last activity, never `now`: a scan entry's
@@ -88,12 +90,6 @@ namespace Orbweaver
     // computed at scan time (every two seconds) and the order is one test.
     internal static class PaperclipHover
     {
-        internal static string? Text(PaperclipAgent a, DateTime now)
-        {
-            var lines = Lines(a, now);
-            return lines.Count == 0 ? null : string.Join("\n", lines);
-        }
-
         internal static IReadOnlyList<string> Lines(PaperclipAgent a, DateTime now)
         {
             var lines = new List<string>();
