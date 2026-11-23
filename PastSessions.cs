@@ -275,6 +275,22 @@ namespace Orbweaver
             : line.Contains("agent_thought_chunk", StringComparison.Ordinal) ? "thought"
             : "tool_call";
 
+        // The first row whatever its size, then rows while fewer than `budget`
+        // characters have followed it. Lazy, so the file is read only that far.
+        internal static IReadOnlyList<string> HeadRows(IEnumerable<string> lines, int budget)
+        {
+            var rows = new List<string>();
+            var spent = 0;
+            foreach (var raw in lines)
+            {
+                if (rows.Count > 0 && spent >= budget) break;
+                var line = raw.TrimEnd('\r');
+                if (rows.Count > 0) spent += line.Length + 1;
+                rows.Add(line);
+            }
+            return rows;
+        }
+
         // ---- shared ---------------------------------------------------------------
 
         private static PastSession Make(
@@ -283,8 +299,12 @@ namespace Orbweaver
             new(cli, id, cwd, Clip(title) ?? "(untitled)", lastActivity, MessageCount: null, path,
                 FolderMissing: cwd is null || !folderExists(cwd));
 
+        // A user turn, or a message relayed in from a teammate or another
+        // session (CB-330) — an agent team member's whole conversation opens
+        // with a <teammate-message>, which Map turns into a relayed System row,
+        // and that session is as resumable as one a person typed into.
         private static bool HasUserTurn(IReadOnlyList<ChatTranscript.Row> turns) =>
-            turns.Any(r => r.Turn.Role == ChatRole.User);
+            turns.Any(r => r.Turn.Role == ChatRole.User || r.Turn.Relay is not null);
 
         private static string? FirstUserText(IReadOnlyList<ChatTranscript.Row> turns) =>
             turns.Where(r => r.Turn.Role == ChatRole.User)
@@ -408,16 +428,20 @@ namespace Orbweaver
                 .ToList();
         }
 
-        // Codex opens with a session_meta row that carries the model's base
-        // instructions, and its developer and environment rows come before the
-        // first prompt, so its head window is the size of Claude's tail window
-        // rather than 64 KB.
-        internal static int HeadBytesFor(NewChatCli cli) =>
-            cli == NewChatCli.Codex ? 262144 : TranscriptReader.HeadBytes;
+        // Codex's row 0 is session_meta carrying the model's base instructions:
+        // measured on the mini over 1678 rollouts, median 78 KB, p99 260 KB,
+        // largest 337 KB. No fixed byte window holds it reliably, and a window
+        // that cuts it drops the id, the cwd and every prompt after it, so the
+        // session vanishes from the list. Codex's head is therefore streamed:
+        // row 0 whole, then rows up to the usual 64 KB.
+        private IReadOnlyList<string> HeadOf(NewChatCli cli, string path) =>
+            cli == NewChatCli.Codex
+                ? PastSessions.HeadRows(_seams.Lines(path), TranscriptReader.HeadBytes)
+                : _seams.Head(path, TranscriptReader.HeadBytes);
 
         private PastSession? Parse(NewChatCli cli, string path, DateTime writeUtc)
         {
-            var head = _seams.Head(path, HeadBytesFor(cli));
+            var head = HeadOf(cli, path);
             var at = new DateTimeOffset(DateTime.SpecifyKind(writeUtc, DateTimeKind.Utc));
             return cli switch
             {

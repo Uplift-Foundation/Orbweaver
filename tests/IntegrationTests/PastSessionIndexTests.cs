@@ -143,11 +143,71 @@ public class PastSessionIndexTests : IDisposable
     public void AMissingHomeListsNothing() =>
         Assert.Empty(new PastSessionIndex(PastSessionIndex.Real).Read(NewChatCli.Codex, Path.Combine(_root, "nope"), true, Now));
 
+    // Row 0 of a real OpenClaw rollout reached 337 KB on the mini. A byte
+    // window would cut it and lose the session; the streamed head keeps it.
     [Fact]
-    public void CodexGetsTheLargerHeadWindow()
+    public void ACodexSessionMetaLargerThanAnyWindowStillLists()
     {
-        Assert.Equal(262144, PastSessionIndex.HeadBytesFor(NewChatCli.Codex));
-        Assert.Equal(TranscriptReader.HeadBytes, PastSessionIndex.HeadBytesFor(NewChatCli.Grok));
+        var home = Path.Combine(_root, ".codex");
+        var meta = "{\"type\":\"session_meta\",\"payload\":{\"id\":\"" + A + "\",\"cwd\":\"" + Esc(_work)
+            + "\",\"base_instructions\":{\"text\":\"" + new string('i', 400_000) + "\"}}}";
+        const string User = "{\"ordinal\":1,\"type\":\"event_msg\",\"payload\":{\"type\":\"item_completed\",\"item\":{\"type\":\"UserMessage\",\"content\":[{\"type\":\"text\",\"text\":\"after the big row\"}]}}}";
+        Write(Path.Combine(home, "sessions", "2026", "11", "19", "rollout-2026-11-19T10-00-00-" + A + ".jsonl"), Now.AddDays(-1), meta, User);
+
+        var s = Assert.Single(new PastSessionIndex(PastSessionIndex.Real).Read(NewChatCli.Codex, home, false, Now));
+        Assert.Equal(_work, s.Cwd);
+        Assert.Equal("after the big row", s.Title);
+    }
+
+    // ---- the architect's real captures (tests/TranscriptTests/Captures/cb361) ----
+
+    private static string Captures(string cli)
+    {
+        var dir = AppContext.BaseDirectory;
+        while (dir is not null && !Directory.Exists(Path.Combine(dir, "tests", "TranscriptTests", "Captures", "cb361")))
+            dir = Path.GetDirectoryName(dir);
+        return Path.Combine(dir!, "tests", "TranscriptTests", "Captures", "cb361", cli);
+    }
+
+    // The fixtures' folder does not exist here, so every row reads missing;
+    // what is asserted is what the reader took from the real rows.
+    private static PastSession One(NewChatCli cli, string home, string id) =>
+        Assert.Single(new PastSessionIndex(PastSessionIndex.Real).Read(cli, home, true, Now), s => s.Id == id);
+
+    [Fact]
+    public void RealClaudeCapturesListTopLevelSessionsOnly()
+    {
+        var home = Captures("claude");
+        var all = new PastSessionIndex(PastSessionIndex.Real).Read(NewChatCli.ClaudeCode, home, true, Now);
+
+        Assert.Equal(new[] { "0d249aed-bfd5-40ae-8097-cb0ad9299fe5", "a6b87b1e-d33d-4e43-8859-072f2f85c2c3" },
+            all.Select(s => s.Id).OrderBy(x => x, StringComparer.Ordinal));
+        Assert.All(all, s => Assert.Equal("/Users/user/Source/project", s.Cwd));
+
+        // A team member's session: its only user row is a <teammate-message>.
+        var titled = One(NewChatCli.ClaudeCode, home, "0d249aed-bfd5-40ae-8097-cb0ad9299fe5");
+        Assert.Equal("Scrubbed session title", titled.Title);
+        Assert.True(new PastSessionIndex(PastSessionIndex.Real).Count(NewChatCli.ClaudeCode, titled.TranscriptPath) > 1);
+    }
+
+    [Fact]
+    public void RealCodexCaptureSkipsTheContextBlocksForItsTitle()
+    {
+        var s = One(NewChatCli.Codex, Captures("codex"), "1c405cb1-d2d2-4fb8-8ef7-012d363500ee");
+        Assert.Equal("/Users/user/Source/project", s.Cwd);
+        // The UserMessage item, which is what the chat panel shows, not the
+        // response_item copy or the <environment_context> block before it. The
+        // scrubber wrote the two copies differently; this is the item's.
+        Assert.Equal("scrubbed", s.Title);
+    }
+
+    [Fact]
+    public void RealGrokCaptureReadsItsFolderAndSummaryTitle()
+    {
+        var s = One(NewChatCli.Grok, Captures("grok"), "0570de7d-7092-4259-8d44-d356a921907c");
+        Assert.Equal("/Users/user/Source/project", s.Cwd);
+        Assert.Equal("Scrubbed session title", s.Title);
+        Assert.True(new PastSessionIndex(PastSessionIndex.Real).Count(NewChatCli.Grok, s.TranscriptPath) > 1);
     }
 
     [Fact]

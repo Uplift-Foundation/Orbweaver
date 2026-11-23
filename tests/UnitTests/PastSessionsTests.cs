@@ -255,6 +255,15 @@ public class PastSessionsTests
         Assert.Equal("(untitled)", Claude("/x/" + Id + ".jsonl", null, image)!.Title);
     }
 
+    [Fact]
+    public void HeadRowsKeepsTheFirstRowWholeThenSpendsTheBudget()
+    {
+        var big = new string('m', 1000);
+        Assert.Equal(new[] { big, "a", "b" }, PastSessions.HeadRows(new[] { big, "a", "b", "c" }, 3));
+        Assert.Equal(new[] { "x" }, PastSessions.HeadRows(new[] { "x\r" }, 0));
+        Assert.Empty(PastSessions.HeadRows(new string[0], 10));
+    }
+
     // ---- counting ----
 
     [Fact]
