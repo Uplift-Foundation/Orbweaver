@@ -59,17 +59,21 @@ public class PaperclipOrbScreenshots
             Orb(Agent("Cinder", "idle", mark: PaperclipMark.Broke, lead: "paperclip:atlas")),
             Orb(Agent("Dune", "idle", OrbPresence.Parked, PaperclipMark.Paused, lead: "paperclip:atlas")),
             Orb(Agent("Ember", "idle", OrbPresence.Parked, PaperclipMark.OverBudget, budget: 96, lead: "paperclip:atlas")),
+            // A plain sleeper: no mark, no ring, so "asleep" can be judged on its own.
+            Orb(Agent("Fern", "idle", OrbPresence.Parked, lead: "paperclip:atlas")),
         };
 
         // Asserted before the capture so a picture of the wrong state fails
         // rather than being reviewed as the right one.
         Assert.All(orbs, o => Assert.Equal("paperclip", o.CliMarkName));
         Assert.Equal(
-            [null, null, "broke", "paused", "over budget"],
+            [null, null, "broke", "paused", "over budget", null],
             orbs.Select(o => o.PresenceMarkName));
         Assert.Equal("?", orbs[1].FindControl<TextBlock>("PresenceGlyph")!.Text);
+        // Only the asleep and the paused are dimmed; amber, broke and over budget are not.
+        Assert.Equal([1.0, 1.0, 1.0, 0.45, 1.0, 0.45], orbs.Select(o => Math.Round(o.BodyOpacity, 2)));
         Assert.Equal(
-            [AccountOrbWindow.CalmHex, AccountOrbWindow.CalmHex, null, null, AccountOrbWindow.DangerHex],
+            [AccountOrbWindow.CalmHex, AccountOrbWindow.CalmHex, null, null, AccountOrbWindow.DangerHex, null],
             orbs.Select(o => o.ContextRingColour));
 
         ScreenshotHelper.Flush();

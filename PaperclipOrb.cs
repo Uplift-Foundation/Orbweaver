@@ -22,6 +22,30 @@ namespace Orbweaver
             _ => null
         };
 
+        // Whether a Paperclip orb is drawn dimmed. Only an agent that is asleep or
+        // manually paused is: an orb that asks for you (amber), has failed, or is
+        // stopped at its budget cap must never be among the faintest on the
+        // screen (product principle 3, "amber means you can act"). That is
+        // narrower than the rule for a held background job, which dims on every
+        // presence but Present, and is why this is asked per row rather than of
+        // the presence alone. Null for a row that is not a Paperclip agent, which
+        // keeps the existing rule exactly as it was.
+        internal static bool? Dims(SessionStatus status)
+        {
+            if (status.Source != SessionSource.Paperclip) return null;
+            if (status.Presence == OrbPresence.NeedsInput) return false;
+            if (status.Mark is PaperclipMark.Broke or PaperclipMark.OverBudget) return false;
+            if (status.Mark == PaperclipMark.Paused) return true;
+            return status.Presence != OrbPresence.Present;
+        }
+
+        // The budget a ring draws. A Paperclip row draws its budget and never a
+        // context percent; every other row draws its context percent and never a
+        // budget, so a stale BudgetPercent on a reused status object cannot put a
+        // ring on a session that has no budget. Null draws no ring.
+        internal static int? RingPercent(SessionStatus status) =>
+            status.Source == SessionSource.Paperclip ? status.BudgetPercent : status.ContextPercent;
+
         // The "+N" on a lead that has sleeping reports folded into it. Null when
         // nothing is folded, and for anything that is not a Paperclip orb (the
         // members are only ever set by the Paperclip merge, but a stale value on

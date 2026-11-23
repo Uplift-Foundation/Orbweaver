@@ -47,6 +47,43 @@ public class PaperclipOrbDecisionTests
         Assert.Null(PaperclipOrb.MarkFor(PaperclipMark.None));
     }
 
+    // ---- dimming and the ring ---------------------------------------------------------
+
+    private static SessionStatus Row(OrbPresence presence, PaperclipMark mark, SessionSource source = SessionSource.Paperclip) =>
+        new() { Source = source, Presence = presence, Mark = mark };
+
+    [Theory]
+    [InlineData(OrbPresence.Present, PaperclipMark.None, false)]
+    [InlineData(OrbPresence.Parked, PaperclipMark.None, true)]        // asleep
+    [InlineData(OrbPresence.Present, PaperclipMark.Paused, true)]     // paused
+    [InlineData(OrbPresence.Parked, PaperclipMark.Paused, true)]
+    [InlineData(OrbPresence.NeedsInput, PaperclipMark.None, false)]   // needs you
+    [InlineData(OrbPresence.NeedsInput, PaperclipMark.Paused, false)]
+    [InlineData(OrbPresence.Present, PaperclipMark.Broke, false)]     // broke
+    [InlineData(OrbPresence.Parked, PaperclipMark.Broke, false)]
+    [InlineData(OrbPresence.Present, PaperclipMark.OverBudget, false)]
+    [InlineData(OrbPresence.Parked, PaperclipMark.OverBudget, false)]
+    public void Only_asleep_and_paused_paperclip_orbs_dim(OrbPresence presence, PaperclipMark mark, bool dims) =>
+        Assert.Equal(dims, PaperclipOrb.Dims(Row(presence, mark)));
+
+    [Theory]
+    [InlineData(SessionSource.ClaudeCode)]
+    [InlineData(SessionSource.OpenClaw)]
+    [InlineData(SessionSource.ClaudeCloud)]
+    public void A_row_that_is_not_a_paperclip_agent_has_no_verdict_so_the_presence_rule_stands(SessionSource source) =>
+        Assert.Null(PaperclipOrb.Dims(Row(OrbPresence.NeedsInput, PaperclipMark.Broke, source)));
+
+    [Fact]
+    public void The_ring_is_the_budget_for_paperclip_and_the_context_percent_for_everything_else()
+    {
+        var pc = new SessionStatus { Source = SessionSource.Paperclip, BudgetPercent = 40, ContextPercent = 90 };
+        Assert.Equal(40, PaperclipOrb.RingPercent(pc));
+        Assert.Null(PaperclipOrb.RingPercent(new SessionStatus { Source = SessionSource.Paperclip, ContextPercent = 90 }));
+        var cloud = new SessionStatus { Source = SessionSource.ClaudeCloud, BudgetPercent = 40, ContextPercent = 90 };
+        Assert.Equal(90, PaperclipOrb.RingPercent(cloud));
+        Assert.Null(PaperclipOrb.RingPercent(new SessionStatus { Source = SessionSource.ClaudeCode, BudgetPercent = 40 }));
+    }
+
     // ---- the folded count ----------------------------------------------------
 
     [Theory]

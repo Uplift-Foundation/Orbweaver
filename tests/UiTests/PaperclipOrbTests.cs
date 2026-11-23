@@ -168,11 +168,10 @@ public class PaperclipOrbTests : IDisposable
         Assert.Null(orb.ContextRingColour);
     }
 
-    // The budget ring is the context ring's layer, so the two can never both be drawn: one layer,
-    // one arc. A status carrying both draws the budget's (a Paperclip agent never has a context
-    // percent; this pins what happens if one ever does), and a non-Paperclip orb is untouched.
+    // The budget ring is the context ring's layer, gated by source so the two are never both
+    // drawn: a Paperclip row draws only its budget, every other row only its context percent.
     [AvaloniaFact]
-    public void The_budget_and_the_context_percent_share_one_ring_and_budget_wins()
+    public void A_paperclip_row_draws_its_budget_and_never_a_context_percent()
     {
         var both = Agent(budget: 100);
         both.ContextPercent = 10;
@@ -180,8 +179,82 @@ public class PaperclipOrbTests : IDisposable
 
         var contextOnly = Agent(budget: null);
         contextOnly.ContextPercent = 10;
-        Assert.Equal(AccountOrbWindow.CalmHex, Orb(contextOnly).ContextRingColour);
-        Assert.Single(Orb(both).FindControl<Canvas>("ContextRingLayer")!.Children.OfType<Avalonia.Controls.Shapes.Path>());
+        Assert.Null(Orb(contextOnly).ContextRingColour);
+    }
+
+    [AvaloniaFact]
+    public void A_non_paperclip_row_draws_its_context_percent_and_never_a_stale_budget()
+    {
+        var cloud = new SessionStatus { Source = SessionSource.ClaudeCloud, State = "idle", Cwd = "", Title = "c", ContextPercent = 10, BudgetPercent = 100 };
+        Assert.Equal(AccountOrbWindow.CalmHex, Orb(cloud).ContextRingColour);
+
+        var budgetOnly = new SessionStatus { Source = SessionSource.ClaudeCode, State = "idle", Cwd = "/w", BudgetPercent = 100 };
+        Assert.Null(Orb(budgetOnly).ContextRingColour);
+        Assert.Single(Orb(cloud).FindControl<Canvas>("ContextRingLayer")!.Children.OfType<Avalonia.Controls.Shapes.Path>());
+    }
+
+    [AvaloniaTheory]
+    [InlineData("waiting", OrbPresence.NeedsInput)]
+    [InlineData("idle", OrbPresence.Present)]
+    public void An_amber_or_broke_orb_with_a_budget_draws_both_its_ring_and_its_state(string state, OrbPresence presence)
+    {
+        var orb = Orb(Agent(state, presence, state == "idle" ? PaperclipMark.Broke : PaperclipMark.None, budget: 60));
+        Assert.Equal(AccountOrbWindow.WarnHex, orb.ContextRingColour);
+        Assert.Equal(1.0, orb.BodyOpacity);
+    }
+
+    // ---- dimming: only asleep and paused fade ----------------------------------------
+
+    [AvaloniaFact]
+    public void Asleep_and_paused_dim_and_amber_broke_and_over_budget_do_not()
+    {
+        Assert.Equal(0.45, Orb(Agent(presence: OrbPresence.Parked)).BodyOpacity, 6);                    // asleep
+        Assert.Equal(0.45, Orb(Agent(presence: OrbPresence.Parked, mark: PaperclipMark.Paused)).BodyOpacity, 6);
+        Assert.Equal(0.45, Orb(Agent(mark: PaperclipMark.Paused)).BodyOpacity, 6);                      // paused, not parked
+
+        Assert.Equal(1.0, Orb(Agent("waiting", OrbPresence.NeedsInput)).BodyOpacity);                   // needs you
+        Assert.Equal(1.0, Orb(Agent("waiting", OrbPresence.NeedsInput, PaperclipMark.Paused)).BodyOpacity);
+        Assert.Equal(1.0, Orb(Agent(mark: PaperclipMark.Broke)).BodyOpacity);                           // broke
+        Assert.Equal(1.0, Orb(Agent(presence: OrbPresence.Parked, mark: PaperclipMark.Broke)).BodyOpacity);
+        Assert.Equal(1.0, Orb(Agent(mark: PaperclipMark.OverBudget)).BodyOpacity);                      // over budget
+        Assert.Equal(1.0, Orb(Agent(presence: OrbPresence.Parked, mark: PaperclipMark.OverBudget)).BodyOpacity);
+        Assert.Equal(1.0, Orb(Agent("generating")).BodyOpacity);                                        // working
+    }
+
+    [AvaloniaFact]
+    public void The_pause_mark_stays_at_full_strength_on_a_dimmed_orb()
+    {
+        var orb = Orb(Agent(presence: OrbPresence.Parked, mark: PaperclipMark.Paused));
+        Assert.Equal(0.45, orb.BodyOpacity, 6);
+        var badge = orb.FindControl<Border>("PresenceBadge")!;
+        Assert.True(badge.IsVisible);
+        Assert.Equal(1.0, badge.Opacity);
+        Assert.Equal(1.0, orb.FindControl<Grid>("Root")!.Opacity);
+    }
+
+    [AvaloniaFact]
+    public void A_mark_arriving_or_clearing_on_a_parked_agent_moves_the_dimming_with_it()
+    {
+        var orb = new OrbWindow("paperclip:" + Guid.NewGuid());
+        orb.UpdateFrom(Agent(presence: OrbPresence.Parked));
+        Assert.Equal(0.45, orb.BodyOpacity, 6);
+        orb.UpdateFrom(Agent(presence: OrbPresence.Parked, mark: PaperclipMark.Broke));    // presence unchanged
+        Assert.Equal(1.0, orb.BodyOpacity);
+        Assert.Equal(1.0, orb.FindControl<Border>("PresenceBadge")!.Opacity);
+        orb.UpdateFrom(Agent(presence: OrbPresence.Parked));
+        Assert.Equal(0.45, orb.BodyOpacity, 6);
+    }
+
+    // The control: a parked or needs-input LOCAL orb dims exactly as it always did, whole window.
+    [AvaloniaTheory]
+    [InlineData(OrbPresence.Parked)]
+    [InlineData(OrbPresence.NeedsInput)]
+    public void A_local_orb_dims_the_whole_window_as_before(OrbPresence presence)
+    {
+        var orb = Orb(new SessionStatus { Source = SessionSource.ClaudeCode, State = "idle", Cwd = "/w", Presence = presence });
+        Assert.Equal(0.45, orb.FindControl<Grid>("Root")!.Opacity, 6);
+        Assert.Equal(0.45, orb.BodyOpacity, 6);
+        Assert.Equal(1.0, orb.FindControl<Border>("PresenceBadge")!.Opacity);   // untouched: the window carries the dim
     }
 
     // ---- the folded count ----------------------------------------------------

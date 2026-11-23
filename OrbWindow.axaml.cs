@@ -530,17 +530,24 @@ namespace Orbweaver
             // about stillness, and the state block is the thing that starts
             // motion. Applied in the other order, an orb that parked and
             // changed state in one update would be left breathing.
-            ApplyPresence(status.Presence);
+            // Paperclip decides its own dimming (see PaperclipOrb.Dims). Forced when
+            // that verdict moves with the presence unchanged: a mark arriving on a
+            // parked agent changes whether it is dimmed, and ApplyPresence returns
+            // early on an unchanged presence.
+            var dims = PaperclipOrb.Dims(status);
+            var dimChanged = dims != _dimOverride;
+            _dimOverride = dims;
+            ApplyPresence(status.Presence, force: dimChanged);
 
             // After the state block too, and for a milder version of the same
             // reason: the ring is drawn over the orb's own glow, and applying it
             // before a colour fade starts would leave it underneath a brush that
             // is still animating.
             // A Paperclip agent's budget is drawn on the same ring a cloud
-            // session's context is (the two never meet: only one of them is ever
-            // set), so a ring at 90% is the same red wherever it is drawn and
-            // there is one arc to keep clear of the corner badges, not two.
-            ApplyContextRing(status.BudgetPercent ?? status.ContextPercent);
+            // session's context is, gated by source so the two can never both be
+            // drawn: a ring at 90% is the same red wherever it is drawn and there
+            // is one arc to keep clear of the corner badges, not two.
+            ApplyContextRing(PaperclipOrb.RingPercent(status));
 
             ApplyPaperclip(status);
         }
@@ -669,6 +676,33 @@ namespace Orbweaver
 
         private OrbPresence _presence = OrbPresence.Present;
 
+        // A Paperclip orb's own dimming verdict, or null for every other orb, whose
+        // dimming is the presence's (PaperclipOrb.Dims).
+        private bool? _dimOverride;
+
+        // Dimmed or not. A Paperclip orb dims its body and leaves the presence
+        // corner at full strength: the pause mark always sits on a dimmed orb and
+        // a mark ghosted along with it (grey on grey) cannot be read, which is the
+        // one place the dimming must not reach. Everything else dims the whole
+        // window, as before.
+        private void SetDim(bool dim)
+        {
+            var opacity = dim ? ParkedOpacity : 1.0;
+            if (_dimOverride is null)
+            {
+                Root.Opacity = opacity;
+                return;
+            }
+
+            Root.Opacity = 1.0;
+            foreach (var child in Root.Children)
+                child.Opacity = ReferenceEquals(child, PresenceBadge) ? 1.0 : opacity;
+        }
+
+        // What a test reads: how strongly the orb's body is drawn, whichever way
+        // the dimming is done.
+        internal double BodyOpacity => Disc.Opacity * Root.Opacity;
+
         // The two things a dimmed orb can be saying, and nothing for the two that
         // have nothing to add.
         //
@@ -794,9 +828,9 @@ namespace Orbweaver
             // shows is decided in one place rather than here and there.
             ReconcilePresenceCorner();
 
-            if (presence != OrbPresence.Present)
+            if (_dimOverride ?? presence != OrbPresence.Present)
             {
-                Root.Opacity = ParkedOpacity;
+                SetDim(true);
 
                 // Off the shared roster as well as stopped. StopPulse alone
                 // leaves an orb on it when a heart is beating, which no local
@@ -808,7 +842,7 @@ namespace Orbweaver
                 return;
             }
 
-            Root.Opacity = 1.0;
+            SetDim(false);
 
             // Back to whatever it was doing. Guarded exactly as UpdateFrom's
             // state block is, and for the same two reasons: before Loaded there
@@ -1942,6 +1976,9 @@ namespace Orbweaver
             _ackStartedAt = 0;
             _glowScale.ScaleX = _glowScale.ScaleY = 1.0;
             Glow.Opacity = 1.0;
+            // A Paperclip orb dims its children one by one (SetDim), the glow among them,
+            // so the halo's "back to full" must not undo that on a dimmed one.
+            if (_dimOverride == true) Glow.Opacity = ParkedOpacity;
 
             // Off the roster again if this put it there, following StopPulse's own
             // rule about the heart: a beating badge keeps the orb on the ticker
