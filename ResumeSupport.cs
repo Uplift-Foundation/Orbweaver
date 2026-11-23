@@ -15,19 +15,37 @@ namespace Orbweaver
 
     internal static class ResumeSupport
     {
-        // `-r, --resume [value]` (Claude) and `--resume <ID>` (Grok) are flags.
-        private static readonly Regex ResumeFlag = new(@"(^|[\s,])--resume(?![\w-])", RegexOptions.Multiline | RegexOptions.CultureInvariant);
+        // `-r, --resume [value]` (Claude) and `--resume <ID>` (Grok) are flags:
+        // the whole token, so --resume-session-at or --no-resume never count.
+        private static readonly Regex ResumeFlag = new(@"(?<![\w-])--resume(?![\w-])", RegexOptions.CultureInvariant);
 
-        // Codex lists it under Commands: as an indented `resume` word at the
-        // start of a line, e.g. "  resume      Resume a previous interactive session".
-        private static readonly Regex ResumeCommand = new(@"^\s+resume(?![\w-])", RegexOptions.Multiline | RegexOptions.CultureInvariant);
+        // Codex lists it as a row of its Commands: table, the name then two or
+        // more spaces before its description:
+        // "  resume      Resume a previous interactive session". Only rows inside
+        // that block count, so a wrapped description line that happens to start
+        // with "resume" is not a subcommand.
+        private static readonly Regex ResumeCommandRow = new(@"^\s+resume\s{2,}\S", RegexOptions.CultureInvariant);
+
+        internal static bool HasCodexResumeCommand(string helpText)
+        {
+            var inCommands = false;
+            foreach (var raw in helpText.Split('\n'))
+            {
+                var line = raw.TrimEnd('\r');
+                if (line.Trim() == "Commands:") { inCommands = true; continue; }
+                // The block ends at the next unindented heading.
+                if (inCommands && line.Length > 0 && !char.IsWhiteSpace(line[0])) inCommands = false;
+                if (inCommands && ResumeCommandRow.IsMatch(line)) return true;
+            }
+            return false;
+        }
 
         // Pure: does this help text offer resume-by-id for this CLI?
         // version is only for the message; null leaves it out.
         internal static ResumeCheck Check(NewChatCli cli, string? helpText, string? version = null)
         {
             var text = helpText ?? "";
-            var supported = cli == NewChatCli.Codex ? ResumeCommand.IsMatch(text) : ResumeFlag.IsMatch(text);
+            var supported = cli == NewChatCli.Codex ? HasCodexResumeCommand(text) : ResumeFlag.IsMatch(text);
             var name = NewChatLauncher.DisplayName(cli);
             return supported
                 ? new ResumeCheck(true, name + " can resume sessions.")
@@ -47,7 +65,11 @@ namespace Orbweaver
 
         // The check for a real binary, cached by path and write time so the
         // dialog does not run `--help` on every click, and a reinstall (new
-        // mtime) is asked again.
+        // mtime) is asked again. A refusal is cached the same as a pass, so a
+        // CLI that hangs costs its 20 s once, not on every click.
+        //
+        // Blocking — up to 10 s each for --help and --version. Only ever called
+        // from NewChatLauncher.Resume, which the dialog runs off the UI thread.
         internal static ResumeCheck Probe(NewChatCli cli, string binary) =>
             ProbeForTests?.Invoke(cli, binary) ?? ProbeReal(cli, binary);
 

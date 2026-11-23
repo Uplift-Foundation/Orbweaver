@@ -175,7 +175,11 @@ namespace Orbweaver
         internal static Func<PastSession, string?, LaunchResult>? ResumeForTests;
 
         // Starts the session's own CLI with its resume arguments, in the
-        // session's own folder, under the chosen account. Never in a fallback
+        // session's own folder, under the chosen account.
+        //
+        // Blocking: the first resume of a given binary runs its --help and
+        // --version (ResumeSupport.Probe, up to 10 s each). The dialog calls
+        // this off the UI thread. Never in a fallback
         // folder: a conversation resumed in the wrong project would run its
         // tools against the wrong files.
         internal static LaunchResult Resume(PastSession session, string? profileDir = null) =>

@@ -67,17 +67,27 @@ public class PastSessionIndexTests : IDisposable
     {
         var home = Path.Combine(_root, ".claude");
         var file = Write(Path.Combine(home, "projects", "-work", A + ".jsonl"), Now.AddDays(-1), ClaudeUser(A, "one"));
-        var reads = 0;
-        var seams = PastSessionIndex.Real with { AllLines = p => { reads++; return PastSessionIndex.Real.AllLines(p); } };
+        int heads = 0, counts = 0;
+        var seams = PastSessionIndex.Real with
+        {
+            Head = (p, n) => { heads++; return PastSessionIndex.Real.Head(p, n); },
+            Lines = p => { counts++; return PastSessionIndex.Real.Lines(p); },
+        };
         var index = new PastSessionIndex(seams);
 
         Read(index, NewChatCli.ClaudeCode, home);
         Read(index, NewChatCli.ClaudeCode, home);
-        Assert.Equal(1, reads);
+        Assert.Equal(1, heads);
+        Assert.Equal(1, index.Count(NewChatCli.ClaudeCode, file));
+        Assert.Equal(1, index.Count(NewChatCli.ClaudeCode, file));
+        Assert.Equal(1, counts);
 
         Write(file, Now.AddDays(-1).AddMinutes(1), ClaudeUser(A, "one"), ClaudeUser(A, "two"));
-        Assert.Equal(2, Assert.Single(Read(index, NewChatCli.ClaudeCode, home)).MessageCount);
-        Assert.Equal(2, reads);
+        Assert.Null(Assert.Single(Read(index, NewChatCli.ClaudeCode, home)).MessageCount);
+        Assert.Equal(2, heads);
+        Assert.Equal(2, index.Count(NewChatCli.ClaudeCode, file));
+        Assert.Equal(2, counts);
+        Assert.Null(index.Count(NewChatCli.ClaudeCode, Path.Combine(_root, "gone.jsonl")));
     }
 
     [Fact]
@@ -134,6 +144,13 @@ public class PastSessionIndexTests : IDisposable
         Assert.Empty(new PastSessionIndex(PastSessionIndex.Real).Read(NewChatCli.Codex, Path.Combine(_root, "nope"), true, Now));
 
     [Fact]
+    public void CodexGetsTheLargerHeadWindow()
+    {
+        Assert.Equal(262144, PastSessionIndex.HeadBytesFor(NewChatCli.Codex));
+        Assert.Equal(TranscriptReader.HeadBytes, PastSessionIndex.HeadBytesFor(NewChatCli.Grok));
+    }
+
+    [Fact]
     public void AFileThatVanishesBetweenListingAndStampIsSkipped()
     {
         var seams = PastSessionIndex.Real with
@@ -143,6 +160,60 @@ public class PastSessionIndexTests : IDisposable
             Stamp = _ => null,
         };
         Assert.Empty(new PastSessionIndex(seams).Read(NewChatCli.ClaudeCode, "/h", false, Now));
+    }
+
+    // QA round 1: a transcript over 100 MB lists from its head and tail alone,
+    // and its count streams it rather than holding it. The listing must touch
+    // only the bounded reads; the count must see every turn row.
+    [Fact]
+    public void AHundredMegabyteTranscriptListsFromItsEndsAndCountsByStreaming()
+    {
+        var home = Path.Combine(_root, ".claude");
+        var file = Path.Combine(home, "projects", "-big", A + ".jsonl");
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        var filler = "{\"type\":\"progress\",\"data\":\"" + new string('x', 1000) + "\"}\n";
+        using (var w = new StreamWriter(file))
+        {
+            w.Write(ClaudeUser(A, "the big one") + "\n");
+            for (var i = 0; i < 105_000; i++) w.Write(filler);
+            w.Write("{\"type\":\"custom-title\",\"customTitle\":\"Big session\"}\n");
+            w.Write(ClaudeUser(A, "last") + "\n");
+        }
+        File.SetLastWriteTimeUtc(file, Now.AddHours(-1).UtcDateTime);
+        Assert.True(new FileInfo(file).Length > 100L * 1024 * 1024);
+
+        var lines = 0;
+        var index = new PastSessionIndex(PastSessionIndex.Real with { Lines = p => { lines++; return PastSessionIndex.Real.Lines(p); } });
+
+        var s = Assert.Single(index.Read(NewChatCli.ClaudeCode, home, false, Now));
+        Assert.Equal("Big session", s.Title);
+        Assert.Null(s.MessageCount);
+        Assert.Equal(0, lines);
+
+        Assert.Equal(2, index.Count(NewChatCli.ClaudeCode, file));
+    }
+
+    // ---- TranscriptReader.ReadHead ----
+
+    [Fact]
+    public void ReadHeadDropsTheTornLastLineOnlyWhenTheWindowStoppedShort()
+    {
+        var path = Write(Path.Combine(_root, "h.jsonl"), Now, "aaaa", "bbbb", "cccc");
+
+        // 15 bytes: "aaaa\nbbbb\ncccc\n"; a 12-byte window ends inside "cccc".
+        Assert.Equal(new[] { "aaaa", "bbbb" }, TranscriptReader.ReadHead(path, 12));
+        Assert.Equal(new[] { "aaaa", "bbbb", "cccc" }, TranscriptReader.ReadHead(path, 1000));
+        Assert.Empty(TranscriptReader.ReadHead(path, 3));
+    }
+
+    [Fact]
+    public void ReadHeadKeepsAFinalLineWithNoNewlineWhenTheWholeFileFits()
+    {
+        var path = Path.Combine(_root, "n.jsonl");
+        File.WriteAllText(path, "one\r\ntwo\r\n\r\nthree");
+        Assert.Equal(new[] { "one", "two", "three" }, TranscriptReader.ReadHead(path, 1000));
+        Assert.Equal(new[] { "one", "two", "three" }, TranscriptReader.HeadLines(path));
+        Assert.Empty(TranscriptReader.HeadLines(Path.Combine(_root, "missing.jsonl")));
     }
 
     [Theory]

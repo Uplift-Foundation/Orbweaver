@@ -308,6 +308,42 @@ namespace Orbweaver
             catch { return Array.Empty<string>(); }
         }
 
+        // CB-361: the other end of the file, for the rows a CLI writes first
+        // (Claude's cwd and sessionId, Codex's session_meta, everyone's first
+        // prompt). Same FileShare.ReadWrite, same torn-line rule mirrored: when
+        // the window stops short of the end of the file, its last line is cut
+        // and is dropped. A CRLF file reads the same as an LF one.
+        internal const int HeadBytes = 65536;
+
+        // Excluded for the catch only, as TailLines is; ReadHead is measured.
+        [ExcludeFromCodeCoverage]
+        internal static string[] HeadLines(string path, int headBytes = HeadBytes)
+        {
+            try { return ReadHead(path, headBytes); }
+            catch { return Array.Empty<string>(); }
+        }
+
+        internal static string[] ReadHead(string path, int headBytes)
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            var buffer = new byte[(int)Math.Min(headBytes, fs.Length)];
+            var read = fs.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
+            var chunk = System.Text.Encoding.UTF8.GetString(buffer, 0, read);
+
+            // Only a window that stopped short has a torn last line. Cutting
+            // there also discards any UTF-8 sequence the window split.
+            if (fs.Length > read)
+            {
+                var nl = chunk.LastIndexOf('\n');
+                chunk = nl >= 0 ? chunk[..nl] : "";
+            }
+
+            return chunk.Split('\n')
+                .Select(line => line.TrimEnd('\r'))
+                .Where(line => line.Length > 0)
+                .ToArray();
+        }
+
         private static string[] ReadTail(string path, int tailBytes)
         {
             {

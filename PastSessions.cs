@@ -10,6 +10,11 @@ namespace Orbweaver
     // the id the CLI resumes by, the folder it ran in, a title a person would
     // recognise, when it last moved and how long it is.
     //
+    // MessageCount is null in the listing: counting needs the whole file,
+    // and the list is built from a head and a tail read only (QA measured
+    // 4962 Claude transcripts, 3.5 GB, in one 30-day window on the mini). It
+    // is filled in per visible row by PastSessions.CountMessages.
+    //
     // FolderMissing is decided when the row is read rather than when it is
     // drawn, so the list and the launch agree about it: a session whose folder
     // is gone is shown greyed and is never resumed somewhere else instead,
@@ -20,7 +25,7 @@ namespace Orbweaver
         string? Cwd,
         string Title,
         DateTimeOffset LastActivity,
-        int MessageCount,
+        int? MessageCount,
         string TranscriptPath,
         bool FolderMissing);
 
@@ -103,17 +108,20 @@ namespace Orbweaver
         // `sessionId` field, falling back to the file name.
         //
         // Sidechain rows (a sub-agent's turns written into the parent's file)
-        // never supply the cwd or id. A file whose turns include no user turn
+        // never supply the cwd or id, even when one comes first. Only the head
+        // window is searched: a file whose cwd first appears past it lists as
+        // FolderMissing rather than being read to the end to find one. A file
+        // whose head holds no user turn
         // is not a conversation anyone could want back — a hook-only stub, or
         // a session that was opened and closed — and is skipped.
         internal static PastSession? FromClaude(
             IReadOnlyList<string> head,
             IReadOnlyList<string> tail,
-            IReadOnlyList<ChatTranscript.Row> turns,
             string path,
             DateTimeOffset lastActivity,
             Func<string, bool> folderExists)
         {
+            var turns = ChatTranscript.Map(head);
             if (!HasUserTurn(turns)) return null;
 
             string? cwd = null, id = null;
@@ -134,7 +142,7 @@ namespace Orbweaver
             if (!IsSafeId(id)) return null;
 
             var title = TranscriptIdentity.From(tail).Title ?? FirstUserText(turns);
-            return Make(NewChatCli.ClaudeCode, id, cwd, title, lastActivity, turns.Count, path, folderExists);
+            return Make(NewChatCli.ClaudeCode, id, cwd, title, lastActivity, path, folderExists);
         }
 
         // ---- Codex ----------------------------------------------------------------
@@ -146,11 +154,11 @@ namespace Orbweaver
         // open while Codex is idle.
         internal static PastSession? FromCodex(
             IReadOnlyList<string> head,
-            IReadOnlyList<ChatTranscript.Row> turns,
             string path,
             DateTimeOffset lastActivity,
             Func<string, bool> folderExists)
         {
+            var turns = CodexTranscript.Map(head);
             if (!HasUserTurn(turns)) return null;
 
             string? cwd = null, id = null;
@@ -171,7 +179,7 @@ namespace Orbweaver
             id ??= CodexIdFromFileName(path);
             if (!IsSafeId(id)) return null;
 
-            return Make(NewChatCli.Codex, id!, cwd, FirstUserText(turns), lastActivity, turns.Count, path, folderExists);
+            return Make(NewChatCli.Codex, id!, cwd, FirstUserText(turns), lastActivity, path, folderExists);
         }
 
         // rollout-2026-11-20T10-11-12-<8-4-4-4-12 uuid>.jsonl: the last 36
@@ -190,11 +198,12 @@ namespace Orbweaver
         // summary.json's generated_title, else the first user turn.
         internal static PastSession? FromGrok(
             string? summaryJson,
-            IReadOnlyList<ChatTranscript.Row> turns,
+            IReadOnlyList<string> head,
             string path,
             DateTimeOffset lastActivity,
             Func<string, bool> folderExists)
         {
+            var turns = GrokTranscript.Map(head);
             if (!HasUserTurn(turns)) return null;
 
             var sessionDir = Path.GetDirectoryName(path);
@@ -205,7 +214,7 @@ namespace Orbweaver
             var cwd = encoded.Length > 0 ? Uri.UnescapeDataString(encoded) : null;
 
             var title = GrokTitle(summaryJson) ?? FirstUserText(turns);
-            return Make(NewChatCli.Grok, id!, cwd, title, lastActivity, turns.Count, path, folderExists);
+            return Make(NewChatCli.Grok, id!, cwd, title, lastActivity, path, folderExists);
         }
 
         internal static string? GrokTitle(string? summaryJson)
@@ -214,12 +223,64 @@ namespace Orbweaver
             using (doc) return NonEmpty(Str(doc.RootElement, "generated_title")?.Trim());
         }
 
+        // ---- counting -------------------------------------------------------------
+
+        // The UI's entry point for one row's count: streams the file, cached on
+        // its stamp. Blocking — call it off the UI thread. Null when the file
+        // could not be read.
+        internal static Func<NewChatCli, string, int?>? CountForTests;
+
+        internal static int? CountMessages(NewChatCli cli, string path) =>
+            CountForTests is { } fake ? fake(cli, path) : PastSessionIndex.Shared.Count(cli, path);
+
+        // The count over a stream of lines, holding one line at a time. Only
+        // lines that pass the format's own IsInteresting prefilter are parsed.
+        //
+        // Claude and Codex rows each map on their own, so a row's turns are the
+        // single-row Map. Grok streams a message as many chunk rows that its
+        // Map joins into one turn, so a Grok turn is a run of one chunk kind,
+        // and each tool call is a turn of its own — what the chat panel shows
+        // without building it.
+        internal static int CountLines(NewChatCli cli, IEnumerable<string> lines)
+        {
+            var count = 0;
+            string? run = null;
+            var one = new string[1];
+            foreach (var raw in lines)
+            {
+                var line = raw.TrimEnd('\r');
+                switch (cli)
+                {
+                    case NewChatCli.ClaudeCode when ChatTranscript.IsInteresting(line):
+                        one[0] = line;
+                        count += ChatTranscript.Map(one).Count;
+                        break;
+                    case NewChatCli.Codex when CodexTranscript.IsInteresting(line):
+                        one[0] = line;
+                        count += CodexTranscript.Map(one).Count;
+                        break;
+                    case NewChatCli.Grok when GrokTranscript.IsInteresting(line):
+                        var kind = GrokKind(line);
+                        if (kind == "tool_call" || kind != run) count++;
+                        run = kind;
+                        break;
+                }
+            }
+            return count;
+        }
+
+        private static string GrokKind(string line) =>
+            line.Contains("user_message_chunk", StringComparison.Ordinal) ? "user"
+            : line.Contains("agent_message_chunk", StringComparison.Ordinal) ? "assistant"
+            : line.Contains("agent_thought_chunk", StringComparison.Ordinal) ? "thought"
+            : "tool_call";
+
         // ---- shared ---------------------------------------------------------------
 
         private static PastSession Make(
             NewChatCli cli, string id, string? cwd, string? title, DateTimeOffset lastActivity,
-            int count, string path, Func<string, bool> folderExists) =>
-            new(cli, id, cwd, Clip(title) ?? "(untitled)", lastActivity, count, path,
+            string path, Func<string, bool> folderExists) =>
+            new(cli, id, cwd, Clip(title) ?? "(untitled)", lastActivity, MessageCount: null, path,
                 FolderMissing: cwd is null || !folderExists(cwd));
 
         private static bool HasUserTurn(IReadOnlyList<ChatTranscript.Row> turns) =>
@@ -266,6 +327,10 @@ namespace Orbweaver
     // stamp cache, and hand each to its reader. One instance lives for the
     // app (Shared), so re-opening Resume re-reads only the transcripts whose
     // length or write time moved — the RunSources.Parsed pattern.
+    //
+    // A listing reads a bounded head of every transcript, and a bounded tail
+    // of Claude's for its /rename title — never a whole file. The whole-file
+    // count is a separate, per-row, streamed read (Count).
     internal sealed class PastSessionIndex
     {
         // Every touch of the disk, swappable so the walk and the cache can be
@@ -274,7 +339,9 @@ namespace Orbweaver
             Func<string, IEnumerable<string>> Directories,
             Func<string, string, IEnumerable<string>> Files,
             Func<string, (long Length, DateTime WriteUtc)?> Stamp,
-            Func<string, IReadOnlyList<string>> AllLines,
+            Func<string, int, IReadOnlyList<string>> Head,
+            Func<string, IReadOnlyList<string>> Tail,
+            Func<string, IEnumerable<string>> Lines,
             Func<string, string?> ReadText,
             Func<string, bool> DirectoryExists);
 
@@ -283,7 +350,9 @@ namespace Orbweaver
             TranscriptReader.SafeDirectories,
             TranscriptReader.SafeFiles,
             StampOf,
-            AllLinesOf,
+            TranscriptReader.HeadLines,
+            path => TranscriptReader.TailLines(path),
+            LinesOf,
             TextOf,
             Directory.Exists);
 
@@ -291,6 +360,7 @@ namespace Orbweaver
 
         private readonly Seams _seams;
         private readonly ConcurrentDictionary<string, ((long, DateTime) Stamp, PastSession? Value)> _cache = new();
+        private readonly ConcurrentDictionary<string, ((long, DateTime) Stamp, int Value)> _counts = new();
 
         internal PastSessionIndex(Seams seams) => _seams = seams;
 
@@ -313,42 +383,61 @@ namespace Orbweaver
         internal IReadOnlyList<PastSession> Read(NewChatCli cli, string home, bool showOlder, DateTimeOffset now)
         {
             var notBefore = showOlder ? DateTime.MinValue : (now - PastSessions.RecentWindow).UtcDateTime;
-            var list = new List<PastSession>();
-            foreach (var path in Transcripts(cli, home, notBefore))
-            {
-                if (_seams.Stamp(path) is not { } stamp) continue;
-                if (stamp.WriteUtc < notBefore) continue;
-                if (!_cache.TryGetValue(path, out var hit) || hit.Stamp != stamp)
+
+            // In parallel: a cold first open is thousands of small bounded reads
+            // (4626 Claude transcripts in one window on the mini), and the tail
+            // read dominates — measured 8.2 s serial against 1.5 s without it.
+            // Order does not matter; PastSessions.List sorts.
+            return Transcripts(cli, home, notBefore)
+                .AsParallel()
+                .Select(path =>
                 {
-                    hit = (stamp, Parse(cli, path, stamp.WriteUtc));
-                    _cache[path] = hit;
-                }
-                if (hit.Value is { } session)
-                    list.Add(session with { FolderMissing = session.Cwd is null || !_seams.DirectoryExists(session.Cwd) });
-            }
-            return list;
+                    // The mtime pre-filter: a file outside the window is never opened.
+                    if (_seams.Stamp(path) is not { } stamp || stamp.WriteUtc < notBefore) return null;
+                    if (!_cache.TryGetValue(path, out var hit) || hit.Stamp != stamp)
+                    {
+                        hit = (stamp, Parse(cli, path, stamp.WriteUtc));
+                        _cache[path] = hit;
+                    }
+                    return hit.Value is { } session
+                        ? session with { FolderMissing = session.Cwd is null || !_seams.DirectoryExists(session.Cwd) }
+                        : null;
+                })
+                .Where(session => session is not null)
+                .Select(session => session!)
+                .ToList();
         }
+
+        // Codex opens with a session_meta row that carries the model's base
+        // instructions, and its developer and environment rows come before the
+        // first prompt, so its head window is the size of Claude's tail window
+        // rather than 64 KB.
+        internal static int HeadBytesFor(NewChatCli cli) =>
+            cli == NewChatCli.Codex ? 262144 : TranscriptReader.HeadBytes;
 
         private PastSession? Parse(NewChatCli cli, string path, DateTime writeUtc)
         {
-            var lines = _seams.AllLines(path);
+            var head = _seams.Head(path, HeadBytesFor(cli));
             var at = new DateTimeOffset(DateTime.SpecifyKind(writeUtc, DateTimeKind.Utc));
-            var head = lines.Take(HeadRows).ToList();
-            switch (cli)
+            return cli switch
             {
-                case NewChatCli.ClaudeCode:
-                    return PastSessions.FromClaude(head, lines, ChatTranscript.Map(lines), path, at, _seams.DirectoryExists);
-                case NewChatCli.Codex:
-                    return PastSessions.FromCodex(head, CodexTranscript.Map(lines), path, at, _seams.DirectoryExists);
-                default:
-                    var summary = RunSources.GrokSummaryOf(path) is { } s ? _seams.ReadText(s) : null;
-                    return PastSessions.FromGrok(summary, GrokTranscript.Map(lines), path, at, _seams.DirectoryExists);
-            }
+                NewChatCli.ClaudeCode => PastSessions.FromClaude(head, _seams.Tail(path), path, at, _seams.DirectoryExists),
+                NewChatCli.Codex => PastSessions.FromCodex(head, path, at, _seams.DirectoryExists),
+                _ => PastSessions.FromGrok(
+                    RunSources.GrokSummaryOf(path) is { } s ? _seams.ReadText(s) : null, head, path, at, _seams.DirectoryExists),
+            };
         }
 
-        // The rows the cwd and id are looked for in. Claude can open with a
-        // few summary or snapshot rows before the first one carrying a cwd.
-        internal const int HeadRows = 50;
+        // One transcript's message count, streamed a line at a time and cached
+        // on its stamp. Null when the file is gone.
+        internal int? Count(NewChatCli cli, string path)
+        {
+            if (_seams.Stamp(path) is not { } stamp) return null;
+            if (_counts.TryGetValue(path, out var hit) && hit.Stamp == stamp) return hit.Value;
+            var count = PastSessions.CountLines(cli, _seams.Lines(path));
+            _counts[path] = (stamp, count);
+            return count;
+        }
 
         // ---- the walk -----------------------------------------------------------
 
@@ -406,16 +495,29 @@ namespace Orbweaver
             catch { return null; }
         }
 
+        // One line at a time, never the whole file. A file that disappears or
+        // errors part way simply ends the stream.
         [ExcludeFromCodeCoverage]
-        private static IReadOnlyList<string> AllLinesOf(string path)
+        private static IEnumerable<string> LinesOf(string path)
         {
+            StreamReader? reader = null;
             try
             {
-                using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                using var reader = new StreamReader(fs);
-                return reader.ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                reader = new StreamReader(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite));
             }
-            catch { return Array.Empty<string>(); }
+            catch { yield break; }
+
+            using (reader)
+            {
+                while (true)
+                {
+                    string? line;
+                    try { line = reader.ReadLine(); }
+                    catch { yield break; }
+                    if (line is null) yield break;
+                    yield return line;
+                }
+            }
         }
 
         [ExcludeFromCodeCoverage]

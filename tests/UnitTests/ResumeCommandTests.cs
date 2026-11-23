@@ -53,13 +53,21 @@ public class ResumeCommandTests
 
     [Theory]
     [InlineData("ClaudeCode", "  -r, --resume [value]   Resume a conversation", true)]
+    [InlineData("ClaudeCode", "--resume", true)]
     [InlineData("ClaudeCode", "  -c, --continue", false)]
-    [InlineData("ClaudeCode", "  --resume-foo", false)]
+    [InlineData("ClaudeCode", "  --resume-session-at <id>", false)]
+    [InlineData("ClaudeCode", "  --no-resume", false)]
+    [InlineData("ClaudeCode", "  x--resume", false)]
     [InlineData("Grok", "--resume <ID>\n", true)]
     [InlineData("Grok", "  --fork-session", false)]
     [InlineData("Codex", "Commands:\n  exec        Run\n  resume      Resume a previous interactive session\n", true)]
+    [InlineData("Codex", "Commands:\r\n  resume      Resume\r\n", true)]
     [InlineData("Codex", "Options:\n  --resume   (a flag is not the subcommand)\n", false)]
     [InlineData("Codex", "resume at column zero is prose", false)]
+    [InlineData("Codex", "Commands:\n  exec        Run a thing and then\n              resume it later when done\n", false)]
+    [InlineData("Codex", "Commands:\n  resume-foo  Not it\n  resumex     Nor this\n", false)]
+    [InlineData("Codex", "Commands:\n  exec  Run\nOptions:\n  resume      outside the Commands block\n", false)]
+    [InlineData("Codex", "  resume      before any Commands heading\n", false)]
     [InlineData("Codex", null, false)]
     public void CheckReadsTheHelpText(string cli, string? help, bool supported) =>
         Assert.Equal(supported, ResumeSupport.Check(System.Enum.Parse<NewChatCli>(cli), help).Supported);
