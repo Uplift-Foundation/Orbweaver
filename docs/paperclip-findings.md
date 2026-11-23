@@ -102,6 +102,21 @@ holds a secrets directory and a database), and writes nothing.
   passes. What `live-runs` says *during a healthy native run past startup* has
   not been measured.
 
+## Timing
+
+- A run shorter than the poll interval never shows as working: a woken agent whose
+  run failed in 0.18 s was measured (on Windows, against a LAN Paperclip) and the
+  orb correctly showed the result, not the run.
+- A connected app makes about 105 requests a minute: agents and live-runs every
+  2 s (60), approvals, tool actions and blocked tasks every 4 s (45), plus recent
+  runs when something moved. Server-side each read is 2 to 75 ms.
+- A change reaches the screen after the poll that sees it, plus the scan: the
+  poll's snapshot used to wait for the scan's next 2 s tick (measured: amber held
+  3.7 s after the poll that saw the approval gone). A publish that changes what
+  the orbs draw now asks for a scan through the status-file watcher's 150 ms
+  debounce, so it is about one poll plus 150 ms. The first publish at launch
+  counts as a change.
+
 ## Not measured, and who settles it
 
 | open | settled by |

@@ -913,8 +913,13 @@ namespace Orbweaver
             _debounce.Tick += (_, _) =>
             {
                 _debounce.Stop();
-                _ = ScheduleScan();
+                if (_nudge.OnDebounceTick(_scanInFlight)) _ = ScheduleScan();
             };
+
+            // CB-421: a Paperclip snapshot that changes what the orbs draw asks
+            // for a scan now rather than at the next 2 s tick. Marshalled to the
+            // UI thread, where the scan state lives; Paperclip-only.
+            PaperclipSessions.Changed += () => Dispatcher.UIThread.Post(RequestScan);
 
             _ = ScheduleScan();
         }
@@ -2339,6 +2344,16 @@ namespace Orbweaver
         // background read is still in flight.
         private bool _scanInFlight;
 
+        private readonly ScanNudge _nudge = new();
+
+        // Asks for a scan promptly, through the 150 ms debounce the status-file
+        // watcher uses, so a burst is one scan; if one is running, one more runs
+        // after it. UI thread only. See ScanNudge.
+        internal void RequestScan()
+        {
+            if (_nudge.Request(_scanInFlight)) RestartDebounce();
+        }
+
         // The production entry point: Start() wires the poll timer and the
         // file-watcher debounce to this instead of to ScanAndUpdate directly.
         //
@@ -2394,6 +2409,7 @@ namespace Orbweaver
             finally
             {
                 _scanInFlight = false;
+                if (_nudge.OnScanFinished()) RestartDebounce();
             }
         }
 

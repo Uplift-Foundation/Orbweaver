@@ -3,6 +3,7 @@ using static Orbweaver.PaperclipSessions;
 
 namespace Orbweaver.Tests;
 
+[Collection("Settings")]
 public class PaperclipSessionsStepTests
 {
     private const string Co = "co1";

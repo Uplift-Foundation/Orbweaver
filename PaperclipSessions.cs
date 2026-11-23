@@ -60,6 +60,45 @@ namespace Orbweaver
         // settings wiring replaces it, so this file never reads settings.
         internal static Func<PaperclipConfig> ConfigSource { get; set; } = () => PaperclipConfig.Off;
 
+        // Raised (from the poll loop's thread) when a publish changes anything
+        // the orbs draw, so the scan can run now instead of at its next tick.
+        // Never raised for an unchanged snapshot, so a healthy idle company adds
+        // no scans.
+        internal static event Action? Changed;
+
+        private static string _lastDraw = "";
+
+        // Everything the orbs draw, and nothing that merely moves with the clock
+        // (the hover's "running for 3 m" is recomputed on every scan anyway).
+        internal static string DrawSignature(IReadOnlyList<PaperclipAgent> agents, PaperclipLink link, string status)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append(link).Append('\u001f').Append(status);
+            foreach (var a in agents)
+            {
+                sb.Append('\n').Append(a.Id).Append('|').Append(a.Name).Append('|').Append(a.ReportsTo)
+                  .Append('|').Append(a.State).Append('|').Append(a.Mark).Append('|').Append(a.MarkReason)
+                  .Append('|').Append(a.BudgetPercent).Append('|').Append(a.SpentCents).Append('|').Append(a.Sleeping)
+                  .Append('|').Append(a.Task).Append('|').Append(a.Activity).Append('|').Append(a.LastResult)
+                  .Append('|').Append(a.Url);
+                foreach (var n in a.Needs) sb.Append('|').Append(n.Kind).Append(':').Append(n.Id).Append(':').Append(n.Title).Append(':').Append(n.Url);
+            }
+            return sb.ToString();
+        }
+
+        // The one way the loop publishes. Sets what Snapshot, Link and StatusText
+        // read, and raises Changed only when what is drawn is different.
+        internal static void Publish(IReadOnlyList<PaperclipAgent> agents, PaperclipLink link, string status)
+        {
+            var signature = DrawSignature(agents, link, status);
+            _snapshot = agents;
+            _link = link;
+            _statusText = status;
+            if (signature == _lastDraw) return;
+            _lastDraw = signature;
+            Changed?.Invoke();
+        }
+
         // The seam every downstream test uses, as ClaudeCloudSessions has.
         internal static void SetSnapshotForTests(IReadOnlyList<PaperclipAgent> agents) => _snapshot = agents;
 
@@ -343,8 +382,7 @@ namespace Orbweaver
                     state = state with { Status = ex.Message };
                     wait = Backoff[^1];
                 }
-                _snapshot = state.Published ?? Array.Empty<PaperclipAgent>();
-                _link = state.Link; _statusText = state.Status;
+                Publish(state.Published ?? Array.Empty<PaperclipAgent>(), state.Link, state.Status);
                 try { await Task.Delay(wait, ct).ConfigureAwait(false); } catch { break; }
             }
         }
@@ -356,15 +394,12 @@ namespace Orbweaver
             {
                 _cts?.Cancel();
                 _cts = null;
-                _snapshot = Array.Empty<PaperclipAgent>();
                 if (!ConfigSource().Enabled)
                 {
-                    _link = PaperclipLink.Off;
-                    _statusText = "Paperclip is switched off.";
+                    Publish(Array.Empty<PaperclipAgent>(), PaperclipLink.Off, "Paperclip is switched off.");
                     return;
                 }
-                _link = PaperclipLink.Connecting;
-                _statusText = "Connecting to Paperclip…";
+                Publish(Array.Empty<PaperclipAgent>(), PaperclipLink.Connecting, "Connecting to Paperclip…");
                 var cts = new CancellationTokenSource();
                 _cts = cts;
                 _ = Task.Run(() => RunAsync(cts.Token), cts.Token);
