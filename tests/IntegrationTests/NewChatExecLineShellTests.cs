@@ -149,4 +149,38 @@ public class NewChatExecLineShellTests
             }
         });
     }
+
+    // CB-361: a resume line carries the verb and id after the binary. The stub
+    // prints its argv after the variables, so this proves each shell hands the
+    // CLI exactly those words, under the named account's variable.
+    [UnixTheory]
+    [InlineData("ClaudeCode", "CLAUDE_CONFIG_DIR", "--resume")]
+    [InlineData("Codex", "CODEX_HOME", "resume")]
+    [InlineData("Grok", "GROK_HOME", "--resume")]
+    public void AResumeLineHandsTheCliItsVerbAndIdInEveryShell(string cliName, string variable, string verb)
+    {
+        var cli = Enum.Parse<NewChatCli>(cliName);
+        const string id = "11111111-2222-4333-8444-555555555555";
+        InScratch((root, stub, cwd) =>
+        {
+            var argvStub = stub + " argv";
+            File.WriteAllText(argvStub,
+                "#!/bin/sh\nprintf '%s|%s|%s|%s' \"${CLAUDE_CONFIG_DIR-<unset>}\" \"${CODEX_HOME-<unset>}\" "
+                + "\"${GROK_HOME-<unset>}\" \"$#\"; for a in \"$@\"; do printf '|%s' \"$a\"; done; printf '\\n'\n");
+            File.SetUnixFileMode(argvStub, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            var configDir = Path.Combine(root, "o'brien .work");
+            var args = NewChatCommand.ResumeArgs(cli, id)!;
+            var line = TerminalScripts.ShellCommandLine(cwd, NewChatCommand.ExecLine(cli, argvStub, configDir, args));
+            var expected = string.Join("|", Variables.Select(v => v == variable ? configDir : "<unset>")) + "|2|" + verb + "|" + id;
+
+            Assert.NotEmpty(PresentShells());
+            foreach (var shell in PresentShells())
+            {
+                var (exit, stdout, stderr) = Run(shell, line, root);
+
+                Assert.True(exit == 0, $"{shell}: exit {exit}: {stderr}");
+                Assert.Equal(expected, stdout.TrimEnd('\n'));
+            }
+        });
+    }
 }

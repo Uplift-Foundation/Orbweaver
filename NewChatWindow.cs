@@ -52,6 +52,23 @@ namespace Orbweaver
             (PresentForTests ?? Present)(_open);
         }
 
+        // CB-361: the orb menu's "Resume a session here…". Opens (or raises) the
+        // dialog on Resume mode for this CLI, account and folder.
+        public static void ToggleResume(NewChatCli cli, string? cwd, string? profileDir)
+        {
+            if (_open is null)
+            {
+                _open = new NewChatWindow(cli, cwd);
+                _open.Closed += OnClosed;
+                _open.PrefillResume(cli, cwd, profileDir);
+                (PresentForTests ?? Present)(_open);
+                return;
+            }
+
+            _open.PrefillResume(cli, cwd, profileDir);
+            BringForward(_open);
+        }
+
         // A hotkey pressed while the dialog is minimised has to un-minimise
         // it; Activate() alone raises a minimised window on neither platform.
         // Done here rather than in the excluded half because it is a decision
@@ -327,6 +344,41 @@ namespace Orbweaver
         internal const double ExistingRowHeight = 40;
         private const double ModeReasonHeight = 16;
 
+        // CB-361: Resume mode for the local CLIs. The mode row sits above the
+        // slot, not in it, and keeps its height when OpenClaw is selected (it
+        // is only made invisible), so switching CLI never moves the window.
+        // The pane is one more layer of the slot, with its own ghost.
+        internal const double ResumeModeRowHeight = 28;
+        private const double LocalModeOffset = ResumeModeRowHeight + 6;
+        private readonly RadioButton _localNewRadio = new() { GroupName = "local-mode", Content = "New chat" };
+        private readonly RadioButton _localResumeRadio = new() { GroupName = "local-mode", Content = "Resume" };
+        private readonly StackPanel _localModeRow = new()
+        {
+            Orientation = Orientation.Horizontal, Spacing = 16, Height = ResumeModeRowHeight, IsVisible = false
+        };
+        private readonly Control _resumeGhost;
+        private readonly StackPanel _resumePane = new() { Spacing = 6, IsVisible = false };
+        private readonly ComboBox _resumeFolderFilter = new() { Width = 130 };
+        private readonly TextBox _resumeSearch = new() { Watermark = "Search" };
+        private readonly CheckBox _resumeOlder = new() { Content = "Older", Margin = new Avalonia.Thickness(8, 0, 8, 0) };
+        private readonly ListBox _resumeList = new();
+        private readonly TextBlock _resumeEmpty = new()
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Opacity = 0.7
+        };
+        private bool _localModeAvailable;
+        private bool _resumeMode;
+        private bool _settingMode;
+        private bool _resumeLoading;
+        private int _resumeGeneration;
+        private string? _resumeLoadedKey;
+        private string? _resumeFolderWanted;
+        private IReadOnlyList<PastSession>? _resumeSessions;
+        private string? _watchResumeSessionId;
+        internal static bool ResumeLoadInlineForTests;
+
         private readonly RadioButton _newModeRadio = new()
         {
             GroupName = "openclaw-mode",
@@ -401,6 +453,9 @@ namespace Orbweaver
             _agentGhost = ModeGhost(Ghost("Agent", withBrowse: false));
             _existingGhost = ExistingPaneGhost();
             BuildExistingPane();
+            _resumeGhost = ResumePaneGhost();
+            BuildResumePane();
+            Closed += (_, _) => DisposeResumeAvatars();
             _newModeRadio.IsCheckedChanged += (_, _) =>
             {
                 if (_newModeRadio.IsChecked != true) return;
@@ -518,7 +573,19 @@ namespace Orbweaver
             // CB-397: the trust question is a layer of this slot, not a slot of its own. With a gateway
             // the slot is already as tall as the Open existing list, so the question costs no height;
             // a separate reserve added 130 dip and put a window with a Machine row over the 720 work area.
-            root.Children.Add(ReservedSlot(_folderGhost, _agentGhost, _existingGhost, _trustGhost, _folderSection, _agentSection, _trustPanel));
+            _localModeRow.Children.Add(_localNewRadio);
+            _localModeRow.Children.Add(_localResumeRadio);
+            _localNewRadio.IsCheckedChanged += (_, _) => OnLocalModeRadio(_localNewRadio, resume: false);
+            _localResumeRadio.IsCheckedChanged += (_, _) => OnLocalModeRadio(_localResumeRadio, resume: true);
+            // The mode row is a layer of the slot, not a row above it. Above it
+            // it stacked on top of the OpenClaw pane (which carries a mode row of
+            // its own and already sets the slot's height), and a window with a
+            // gateway and missing account homes measured 729 on Windows against
+            // the 700 bound. Inside, the folder and Resume layers start below
+            // it, and the slot is still as tall as its tallest layer.
+            foreach (var below in new Control[] { _folderGhost, _folderSection, _resumeGhost, _resumePane })
+                below.Margin = new Avalonia.Thickness(0, LocalModeOffset, 0, 0);
+            root.Children.Add(ReservedSlot(_folderGhost, _agentGhost, _existingGhost, _resumeGhost, _trustGhost, _folderSection, _agentSection, _resumePane, _trustPanel, _localModeRow));
 
             _startButton.Click += async (_, _) => await StartClicked();
             root.Children.Add(_startButton);
@@ -707,6 +774,7 @@ namespace Orbweaver
                     _selectedCli = capturedCli;
                     _openClawSelected = false;
                     BuildAccountCombo();
+                    ChooseLocalMode(capturedCli);
                     UpdateTargetSectionVisibility();
                 };
 
@@ -755,6 +823,13 @@ namespace Orbweaver
             }
             _agentGhost.IsVisible = openClawUsable;
             _existingGhost.IsVisible = openClawUsable;
+            // CB-361: Resume is offered whenever a local CLI is, and reserves
+            // its pane's height the same way (a remote machine can bring CLIs of
+            // its own after show, so the Machine row reserves it too).
+            var anyLocal = options.Any(o => o.Enabled) || _machineSection is not null;
+            _resumeGhost.IsVisible = anyLocal;
+            _localModeAvailable = anyLocal;
+            _localModeRow.IsVisible = anyLocal;
             var replyDisabled = openClawAvailability == OpenClawNewChatAvailability.ReplyDisabled;
             foreach (var g in _modeReasonGhosts) g.IsVisible = replyDisabled;
 
@@ -844,9 +919,10 @@ namespace Orbweaver
 
         private void UpdateTargetSectionVisibility()
         {
-            _folderSection.IsVisible = !_openClawSelected;
+            _folderSection.IsVisible = !_openClawSelected && !ResumeActive;
             _agentSection.IsVisible = _openClawSelected;
             UpdateModeVisibility();
+            UpdateLocalModeVisibility();
 
             // Any of the three local CLIs (CB-203 extended CB-201's Claude
             // Code-only picker to Codex and Grok), never alongside OpenClaw,
@@ -1439,6 +1515,12 @@ namespace Orbweaver
                 return;
             }
 
+            if (ResumeActive)
+            {
+                ResumeClicked(cli);
+                return;
+            }
+
             var folder = (_folderCombo.SelectedItem as string) is { Length: > 0 } chosen
                 ? chosen
                 : Environment.CurrentDirectory;
@@ -1888,6 +1970,7 @@ namespace Orbweaver
 
         private void StartWatch(HashSet<string> priorIds, NewChatCli cli, string folder)
         {
+            _watchResumeSessionId = null;
             _watchOpenClawSessionId = null;
             _watchOpenClawSession = null;
             _watchPriorIds = priorIds;
@@ -1900,6 +1983,7 @@ namespace Orbweaver
 
         private void StartOpenClawWatch(IRemoteChatSession session)
         {
+            _watchResumeSessionId = null;
             _watchCli = null;
             _watchFolder = null;
             _watchPriorIds = null;
@@ -1931,6 +2015,12 @@ namespace Orbweaver
             if (_watchOpenClawSessionId is { } sessionId)
             {
                 OnOpenClawWatchTick(sessionId);
+                return;
+            }
+
+            if (_watchResumeSessionId is { } resumeId)
+            {
+                OnResumeWatchTick(resumeId);
                 return;
             }
 
@@ -1978,6 +2068,7 @@ namespace Orbweaver
         // driven directly.
         internal void ArmWatchForTests(HashSet<string> priorIds, NewChatCli cli, string folder, DateTime deadlineUtc)
         {
+            _watchResumeSessionId = null;
             _watchOpenClawSessionId = null;
             _watchOpenClawSession = null;
             _watchPriorIds = priorIds;
@@ -1988,11 +2079,565 @@ namespace Orbweaver
 
         internal void ArmOpenClawWatchForTests(IRemoteChatSession session, DateTime deadlineUtc)
         {
+            _watchResumeSessionId = null;
             _watchCli = null;
             _watchFolder = null;
             _watchPriorIds = null;
             _watchOpenClawSessionId = session.SessionId;
             _watchOpenClawSession = session;
+            _watchDeadlineUtc = deadlineUtc;
+        }
+
+        // ---- CB-361: Resume mode ------------------------------------------
+
+        internal Control ResumeGhost => _resumeGhost;
+        internal RadioButton LocalNewRadio => _localNewRadio;
+        internal RadioButton LocalResumeRadio => _localResumeRadio;
+        internal StackPanel LocalModeRow => _localModeRow;
+        internal StackPanel ResumePane => _resumePane;
+        internal ListBox ResumeList => _resumeList;
+        internal TextBox ResumeSearch => _resumeSearch;
+        internal CheckBox ResumeOlder => _resumeOlder;
+        internal ComboBox ResumeFolderFilter => _resumeFolderFilter;
+        internal TextBlock ResumeEmpty => _resumeEmpty;
+
+        // Resume is what Start does only for a local CLI on this machine.
+        private bool ResumeActive =>
+            _resumeMode && !_openClawSelected && _machine is null && _selectedCli is not null;
+
+        private string? SelectedProfileDir() =>
+            _accountSection.IsVisible && _accountCombo.SelectedItem is NewChatAccounts.Choice choice
+                ? choice.ProfileDir
+                : null;
+
+        // Whatever the user last chose for this CLI, New the first time.
+        private void ChooseLocalMode(NewChatCli cli)
+        {
+            SetResumeMode(OrbweaverSettings.NewChatResumeModeFor(cli));
+        }
+
+        private void SetResumeMode(bool resume)
+        {
+            _resumeMode = resume;
+            _settingMode = true;
+            (resume ? _localResumeRadio : _localNewRadio).IsChecked = true;
+            _settingMode = false;
+        }
+
+        private void OnLocalModeRadio(RadioButton radio, bool resume)
+        {
+            if (radio.IsChecked != true || _settingMode) return;
+            _resumeMode = resume;
+            if (_selectedCli is { } cli) OrbweaverSettings.SetNewChatResumeMode(cli, resume);
+            UpdateTargetSectionVisibility();
+        }
+
+        // The mode row follows the CLI like the OpenClaw one does. It is a slot
+        // layer, so showing or hiding it never moves the window.
+        // Remote machines cannot resume (their session files are not ours to
+        // read), so the radio is off with the reason on it.
+        private void UpdateLocalModeVisibility()
+        {
+            var local = !_openClawSelected;
+            _localModeRow.IsVisible = local && _localModeAvailable;
+
+            var remote = _machine is not null;
+            _localResumeRadio.IsEnabled = !remote;
+            ToolTip.SetTip(_localResumeRadio, remote ? "Resume works on this machine only." : null);
+
+            _resumePane.IsVisible = ResumeActive;
+            if (local && !_openClawSelected && ResumeActive)
+            {
+                _startButton.Content = "Resume";
+                LoadResume();
+            }
+            else if (!_openClawSelected)
+            {
+                _startButton.Content = "Start";
+            }
+        }
+
+        // Opened from an orb: this CLI, this account, this folder.
+        internal void PrefillResume(NewChatCli cli, string? cwd, string? profileDir)
+        {
+            foreach (var rb in _cliList.Children.OfType<RadioButton>())
+                if (rb.Tag is NewChatCli c && c == cli && rb.IsEnabled) rb.IsChecked = true;
+
+            if (profileDir is { Length: > 0 } && _accountCombo.ItemsSource is IEnumerable<NewChatAccounts.Choice> choices)
+            {
+                var list = choices.ToList();
+                var at = list.FindIndex(c => string.Equals(c.ProfileDir, profileDir, StringComparison.Ordinal));
+                if (at >= 0) _accountCombo.SelectedIndex = at;
+            }
+
+            _resumeFolderWanted = cwd;
+            SetResumeMode(true);
+            UpdateTargetSectionVisibility();
+        }
+
+        private void BuildResumePane()
+        {
+            var filterRow = new DockPanel();
+            DockPanel.SetDock(_resumeFolderFilter, Dock.Left);
+            _resumeFolderFilter.Margin = new Avalonia.Thickness(0, 0, 0, 0);
+            DockPanel.SetDock(_resumeOlder, Dock.Right);
+            filterRow.Children.Add(_resumeFolderFilter);
+            filterRow.Children.Add(_resumeOlder);
+            _resumeSearch.Margin = new Avalonia.Thickness(8, 0, 0, 0);
+            filterRow.Children.Add(_resumeSearch);
+            _resumePane.Children.Add(filterRow);
+
+            _resumeList.Padding = new Avalonia.Thickness(0);
+            _resumeList.Styles.Add(new Style(x => x.OfType<ListBoxItem>())
+            {
+                Setters =
+                {
+                    new Setter(Layoutable.MinHeightProperty, ExistingRowHeight),
+                    new Setter(Layoutable.HeightProperty, ExistingRowHeight),
+                    new Setter(TemplatedControl.PaddingProperty, new Avalonia.Thickness(8, 0))
+                }
+            });
+            // Null arm: a recycled container builds the template with a null
+            // item (see BuildExistingPane).
+            _resumeList.ItemTemplate = new FuncDataTemplate<PastSessionRow?>(
+                (row, _) => row is null ? new Panel() : ResumeRowView(row));
+            // A row whose folder is gone cannot be chosen at all.
+            _resumeList.ContainerPrepared += (_, e) =>
+            {
+                if (e.Container is ListBoxItem item)
+                    item.IsEnabled = item.DataContext is not PastSessionRow { Session.FolderMissing: true };
+            };
+            var box = new Grid { Height = ExistingListHeight };
+            box.Children.Add(_resumeList);
+            box.Children.Add(_resumeEmpty);
+            _resumePane.Children.Add(box);
+
+            _resumeFolderFilter.SelectionChanged += (_, _) => RefreshResumeList();
+            _resumeSearch.PropertyChanged += (_, e) =>
+            {
+                if (e.Property == TextBox.TextProperty) RefreshResumeList();
+            };
+            // Older sessions are not read until asked for.
+            _resumeOlder.IsCheckedChanged += (_, _) => { if (ResumeActive) LoadResume(); };
+            _accountCombo.SelectionChanged += (_, _) => { if (ResumeActive) LoadResume(); };
+            _resumeList.DoubleTapped += (_, _) => { if (_selectedCli is { } c && ResumeActive) ResumeClicked(c); };
+            _resumeList.KeyDown += (_, e) =>
+            {
+                if (e.Key != Key.Enter || _selectedCli is not { } c || !ResumeActive) return;
+                e.Handled = true;
+                ResumeClicked(c);
+            };
+        }
+
+        private StackPanel ResumePaneGhost()
+        {
+            var filter = new DockPanel();
+            var combo = new ComboBox
+            {
+                Width = 130, ItemsSource = new[] { "All folders" }, SelectedIndex = 0,
+                IsEnabled = false, Focusable = false
+            };
+            DockPanel.SetDock(combo, Dock.Left);
+            filter.Children.Add(combo);
+            filter.Children.Add(new TextBox { Watermark = "Search", IsEnabled = false, Focusable = false, Margin = new Avalonia.Thickness(8, 0, 0, 0) });
+
+            var ghost = new StackPanel
+            {
+                Spacing = 6, Opacity = 0, IsHitTestVisible = false, IsEnabled = false, IsVisible = false
+            };
+            ghost.Children.Add(filter);
+            ghost.Children.Add(new Border { Height = ExistingListHeight });
+            AutomationProperties.SetAccessibilityView(ghost, AccessibilityView.Raw);
+            return ghost;
+        }
+
+        // A folder-filter entry: null path is "All folders".
+        internal sealed record ResumeFolder(string? Path)
+        {
+            public override string ToString() => Path is null ? "All folders" : System.IO.Path.GetFileName(Path.TrimEnd('/', '\\')) is { Length: > 0 } n ? n : Path;
+        }
+
+        // Reads off the UI thread; a result that arrives after the CLI, account
+        // or "Older" changed again is dropped (the generation moved on).
+        private void LoadResume()
+        {
+            if (_selectedCli is not { } cli) return;
+            var profileDir = SelectedProfileDir();
+            var older = _resumeOlder.IsChecked == true;
+
+            // Every visibility pass asks; only a different CLI, account or
+            // "Older" is a different question. The rows stay put otherwise, as
+            // the Open existing list does while the dialog sits open.
+            var key = cli + "|" + profileDir + "|" + older;
+            if (key == _resumeLoadedKey) return;
+            _resumeLoadedKey = key;
+            var generation = ++_resumeGeneration;
+            _resumeLoading = true;
+            _resumeSessions = null;
+            RefreshResumeList();
+
+            var now = ResumeNowOffset();
+            void Apply(IReadOnlyList<PastSession> rows)
+            {
+                if (generation != _resumeGeneration) return;
+                _resumeLoading = false;
+                _resumeSessions = rows;
+                BuildResumeFolderFilter();
+                RefreshResumeList();
+            }
+
+            if (ResumeLoadInlineForTests)
+            {
+                Apply(SafeLoad(cli, profileDir, older, now));
+                return;
+            }
+
+            _ = Task.Run(() => SafeLoad(cli, profileDir, older, now))
+                .ContinueWith(t => Dispatcher.UIThread.Post(() => Apply(t.Result)), TaskScheduler.Default);
+        }
+
+        private static IReadOnlyList<PastSession> SafeLoad(NewChatCli cli, string? profileDir, bool older, DateTimeOffset now)
+        {
+            try { return PastSessionIndex.Load(cli, profileDir, older, now); }
+            catch (Exception) { return Array.Empty<PastSession>(); }
+        }
+
+        // Always UTC: a Local-kind value from a seam would otherwise make
+        // `new DateTimeOffset(value, TimeSpan.Zero)` throw, and an Unspecified
+        // one is read as UTC, the way every other clock here is.
+        private static DateTime ResumeNow()
+        {
+            var now = (NowForTests ?? (() => DateTime.UtcNow))();
+            return now.Kind switch
+            {
+                DateTimeKind.Local => now.ToUniversalTime(),
+                DateTimeKind.Unspecified => DateTime.SpecifyKind(now, DateTimeKind.Utc),
+                _ => now
+            };
+        }
+
+        private static DateTimeOffset ResumeNowOffset() => new(ResumeNow(), TimeSpan.Zero);
+
+        private void BuildResumeFolderFilter()
+        {
+            var keep = _resumeFolderWanted ?? (_resumeFolderFilter.SelectedItem as ResumeFolder)?.Path;
+            _resumeFolderWanted = null;
+            var items = new List<ResumeFolder> { new((string?)null) };
+            items.AddRange(PastSessions.Folders(_resumeSessions!).Select(f => new ResumeFolder(f)));
+            _resumeFolderFilter.ItemsSource = items;
+            var at = keep is null ? 0 : items.FindIndex(i => i.Path == keep);
+            _resumeFolderFilter.SelectedIndex = at >= 0 ? at : 0;
+        }
+
+        private IReadOnlyList<PastSessionRow> ResumeRowsShown()
+        {
+            if (_resumeSessions is null) return Array.Empty<PastSessionRow>();
+            var live = new HashSet<string>(CurrentStatuses().Where(kv => kv.Value.IsLocalCli).Select(kv => kv.Key), StringComparer.Ordinal);
+            var folder = (_resumeFolderFilter.SelectedItem as ResumeFolder)?.Path;
+            return PastSessions.List(
+                _resumeSessions, live, _resumeSearch.Text, folder,
+                ResumeNowOffset(), _resumeOlder.IsChecked == true);
+        }
+
+        private void RefreshResumeList()
+        {
+            var shown = ResumeRowsShown();
+            string? text = null;
+            if (_resumeLoading) text = "Loading…";
+            else if (_resumeSessions is { Count: 0 }) text = _resumeOlder.IsChecked == true ? "No past sessions" : "No sessions in the last 30 days";
+            else if (shown.Count == 0) text = "No matches";
+
+            _resumeList.ItemsSource = shown;
+            _resumeList.IsVisible = text is null;
+            _resumeEmpty.Text = text;
+            _resumeEmpty.IsVisible = text is not null;
+        }
+
+        private static SessionSource SourceOf(NewChatCli cli) => cli switch
+        {
+            NewChatCli.Codex => SessionSource.Codex,
+            NewChatCli.Grok => SessionSource.Grok,
+            _ => SessionSource.ClaudeCode
+        };
+
+        // The persona's picture if the folder has one, else the initials; read
+        // when the row is realised, so only visible rows pay for it.
+        private readonly Dictionary<string, Avalonia.Media.Imaging.Bitmap> _resumeAvatars = new(StringComparer.Ordinal);
+
+        private void DisposeResumeAvatars()
+        {
+            foreach (var bitmap in _resumeAvatars.Values) bitmap.Dispose();
+            _resumeAvatars.Clear();
+        }
+
+        // The headless platform decodes any bytes without complaint, so the
+        // failure path is only reachable through this seam.
+        internal static Func<Stream, int, Avalonia.Media.Imaging.Bitmap>? DecodeAvatarForTests;
+
+        internal int ResumeAvatarCount => _resumeAvatars.Count;
+
+        private Control ResumeAvatar(PastSession s)
+        {
+            try
+            {
+                var persona = LocalPersona.Resolve(s.Cwd, SourceOf(s.Cli), LocalPersona.UserConfigDirs());
+                if (persona.AvatarPath is { Length: > 0 } path && File.Exists(path))
+                {
+                    // Decoded at twice the 24 dip it is drawn at, once per file,
+                    // and released with the window: a persona picture can be
+                    // far larger than a thumbnail, and every realised row would
+                    // otherwise decode and leak its own full-size copy.
+                    if (!_resumeAvatars.TryGetValue(path, out var bitmap))
+                    {
+                        using var stream = File.OpenRead(path);
+                        bitmap = DecodeAvatarForTests?.Invoke(stream, 48) ?? Avalonia.Media.Imaging.Bitmap.DecodeToWidth(stream, 48);
+                        _resumeAvatars[path] = bitmap;
+                    }
+
+                    return new Image { Source = bitmap, Width = 24, Height = 24 };
+                }
+            }
+            catch (Exception)
+            {
+                // Fall through to initials.
+            }
+
+            return new Border
+            {
+                Width = 24, Height = 24, CornerRadius = new Avalonia.CornerRadius(12), Background = Brushes.Gray,
+                Child = new TextBlock
+                {
+                    Text = OrbGlyph.For(s.Title, OrbweaverSettings.TwoLetterGlyphs),
+                    FontSize = 10, Foreground = Brushes.White,
+                    HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
+                }
+            };
+        }
+
+        // `counting` is true while a lazily-read message count is still on its
+        // way ("…"); a count that could not be read is left out rather than
+        // shown as zero.
+        internal static string ResumeDetail(PastSessionRow row, int? count = null, bool counting = false)
+        {
+            var s = row.Session;
+            var folder = s.Cwd is null ? "unknown folder" : (System.IO.Path.GetFileName(s.Cwd.TrimEnd('/', '\\')) is { Length: > 0 } n ? n : s.Cwd);
+            var detail = folder;
+            if (counting) detail += " · …";
+            else if ((count ?? s.MessageCount) is { } c) detail += " · " + c + (c == 1 ? " message" : " messages");
+            if (s.FolderMissing) detail += " · folder missing";
+            else if (row.IsLive) detail += " · running";
+            return detail;
+        }
+
+        private Control ResumeRowView(PastSessionRow row)
+        {
+            var s = row.Session;
+            var ago = OpenClawReopenList.Ago(s.LastActivity.UtcDateTime, ResumeNow());
+            var avatar = ResumeAvatar(s);
+
+            var titles = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            titles.Children.Add(new TextBlock
+            {
+                Text = s.Title, FontWeight = FontWeight.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis
+            });
+            var detailText = new TextBlock
+            {
+                FontSize = 11, Opacity = 0.7, TextTrimming = TextTrimming.CharacterEllipsis
+            };
+            titles.Children.Add(detailText);
+            BindResumeCount(row, detailText);
+            var when = new TextBlock
+            {
+                Text = ago, FontSize = 11, Opacity = 0.7, VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Avalonia.Thickness(8, 0, 0, 0)
+            };
+
+            var dock = new DockPanel { VerticalAlignment = VerticalAlignment.Center };
+            DockPanel.SetDock(avatar, Dock.Left);
+            avatar.Margin = new Avalonia.Thickness(0, 0, 8, 0);
+            avatar.VerticalAlignment = VerticalAlignment.Center;
+            DockPanel.SetDock(when, Dock.Right);
+            dock.Children.Add(avatar);
+            dock.Children.Add(when);
+            dock.Children.Add(titles);
+            if (s.FolderMissing)
+            {
+                dock.Opacity = 0.45;
+                ToolTip.SetTip(dock, "This session's folder no longer exists.");
+            }
+
+            AutomationProperties.SetName(dock, s.Title + ", " + detailText.Text + ", " + ago);
+            return dock;
+        }
+
+        // A row's message count is read when the row is realised (so only
+        // visible rows pay for a full-file read), off the UI thread, and cached
+        // per file for the life of the window. "…" until it lands.
+        private readonly Dictionary<string, int?> _resumeCounts = new(StringComparer.Ordinal);
+        private readonly HashSet<string> _resumeCountsPending = new(StringComparer.Ordinal);
+
+        private void BindResumeCount(PastSessionRow row, TextBlock detail)
+        {
+            var s = row.Session;
+            if (s.MessageCount is not null || _resumeCounts.TryGetValue(s.TranscriptPath, out _))
+            {
+                detail.Text = ResumeDetail(row, _resumeCounts.GetValueOrDefault(s.TranscriptPath));
+                return;
+            }
+
+            detail.Text = ResumeDetail(row, counting: true);
+            if (!_resumeCountsPending.Add(s.TranscriptPath)) return;
+
+            void Done(int? count)
+            {
+                _resumeCountsPending.Remove(s.TranscriptPath);
+                _resumeCounts[s.TranscriptPath] = count;
+                detail.Text = ResumeDetail(row, count);
+            }
+
+            int? Read()
+            {
+                try { return PastSessions.CountMessages(s.Cli, s.TranscriptPath); }
+                catch (Exception) { return null; }
+            }
+
+            if (ResumeLoadInlineForTests)
+            {
+                Done(Read());
+                return;
+            }
+
+            _ = Task.Run(Read).ContinueWith(t => Dispatcher.UIThread.Post(() => Done(t.Result)), TaskScheduler.Default);
+        }
+
+        internal static Action<OrbWindow>? FocusOrbForTests;
+        private bool _resumeLaunching;
+
+        internal void ResumeClicked(NewChatCli cli)
+        {
+            if (_resumeLaunching) return;
+
+            if (_resumeList.SelectedItem is not PastSessionRow row)
+            {
+                _statusLine.Text = "Choose a session first.";
+                return;
+            }
+
+            var session = row.Session;
+            if (session.FolderMissing)
+            {
+                _statusLine.Text = "That session's folder no longer exists.";
+                return;
+            }
+
+            // Already running: a second process on the same conversation would
+            // fight the first, so take the user to the one that exists. Asked
+            // again here rather than read off the row, which was marked when the
+            // list was built and may be minutes old: an orb that started since
+            // is exactly the case this guards.
+            if (row.IsLive || (CurrentStatuses().TryGetValue(session.Id, out var running) && running.IsLocalCli))
+            {
+                if (OrbForSession(session.Id) is { } orb)
+                {
+                    (FocusOrbForTests ?? (o => o.GoToSession()))(orb);
+                    _statusLine.Text = "Already running — focused its orb.";
+                }
+                else
+                {
+                    // Live but with no window to go to, a hidden orb for one.
+                    _statusLine.Text = "Already running — its orb is hidden.";
+                }
+
+                RefreshResumeList();
+                return;
+            }
+
+            var profileDir = SelectedProfileDir();
+            _resumeLaunching = true;
+            _startButton.IsEnabled = false;
+            _statusLine.Text = "Resuming…";
+
+            // Off the UI thread: the first resume per binary runs `<cli> --help`
+            // and `--version` to check the flag exists, each bounded at 10 s, and
+            // a blocked thread would not even paint "Resuming…".
+            void Finish(LaunchResult launch)
+            {
+                _resumeLaunching = false;
+                _startButton.IsEnabled = true;
+                OnResumeLaunched(cli, session, profileDir, launch);
+            }
+
+            LaunchResult Run()
+            {
+                try { return NewChatLauncher.Resume(session, profileDir); }
+                catch (Exception e)
+                {
+                    return new LaunchResult(LaunchOutcome.Unsupported, "Couldn't resume that session: " + e.Message);
+                }
+            }
+
+            if (ResumeLoadInlineForTests)
+            {
+                Finish(Run());
+                return;
+            }
+
+            _ = Task.Run(Run).ContinueWith(t => Dispatcher.UIThread.Post(() => Finish(t.Result)), TaskScheduler.Default);
+        }
+
+        private void OnResumeLaunched(NewChatCli cli, PastSession session, string? profileDir, LaunchResult launch)
+        {
+            _statusLine.Text = launch.Message;
+            if (launch.Outcome != LaunchOutcome.Launched) return;
+
+            OrbweaverSettings.SetNewChatLastCli(cli.ToString());
+            OrbweaverSettings.SetNewChatLastProfile(cli, profileDir);
+
+            // Codex fires no hook until the first prompt of a resumed session,
+            // so there is nothing for a watch to find (codex-findings.md).
+            if (cli == NewChatCli.Codex)
+            {
+                _statusLine.Text = "Resumed — the orb appears when you send your first message.";
+                return;
+            }
+
+            _watchCli = null;
+            _watchFolder = null;
+            _watchPriorIds = null;
+            _watchOpenClawSessionId = null;
+            _watchOpenClawSession = null;
+            _watchResumeSessionId = session.Id;
+            _watchDeadlineUtc = DateTime.UtcNow.AddSeconds(20);
+            ArmTimer();
+        }
+
+        // Matches the exact session id, not a CLI-and-folder guess: a resume keeps
+        // the id, so any other orb in the same folder is not the one waited for.
+        private void OnResumeWatchTick(string id)
+        {
+            if (CurrentStatuses().TryGetValue(id, out var status) && status.IsLocalCli)
+            {
+                _statusLine.Text = "Resumed — its orb should be on screen.";
+                _watchTimer?.Stop();
+                RefreshResumeList(); // the row now reads "running"
+                return;
+            }
+
+            if (DateTime.UtcNow >= _watchDeadlineUtc)
+            {
+                _statusLine.Text = "Terminal opened; no orb yet — the CLI's hook may not be installed / trusted.";
+                _watchTimer?.Stop();
+            }
+        }
+
+        internal void ArmResumeWatchForTests(string sessionId, DateTime deadlineUtc)
+        {
+            _watchCli = null;
+            _watchFolder = null;
+            _watchPriorIds = null;
+            _watchOpenClawSessionId = null;
+            _watchOpenClawSession = null;
+            _watchResumeSessionId = sessionId;
             _watchDeadlineUtc = deadlineUtc;
         }
     }

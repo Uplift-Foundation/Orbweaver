@@ -476,6 +476,7 @@ namespace Orbweaver
             // orb offers neither — there's no local CLI to relaunch and no
             // OpenClaw agent to point at.
             NewChatHereItem.IsVisible = status.IsLocalCli || status.Source == SessionSource.OpenClaw;
+            ResumeHereItem.IsVisible = status.IsLocalCli;
 
             // Back to the plain wording on every pass, so a refusal explained
             // once does not outlive the thing it was about. A husk whose job has
@@ -3563,6 +3564,27 @@ namespace Orbweaver
             if (NewChatPrefillFor(_lastStatus, SessionId) is not { } prefill) return;
             OpenNewChatWindow(prefill.Cli, prefill.Cwd, prefill.AgentId);
         }
+
+        // CB-361: what "Resume a session here…" would prefill — the orb's CLI
+        // and folder, and the account its transcript lives under (null for the
+        // default account or when it cannot be told). Pure, like
+        // NewChatPrefillFor. Null for anything that is not a local CLI.
+        internal static (NewChatCli Cli, string Cwd, string? ProfileDir)? ResumePrefillFor(SessionStatus? status)
+        {
+            if (status is null || !status.IsLocalCli) return null;
+            if (NewChatOrbWatch.CliOf(status.Source) is not { } cli) return null;
+            return (cli, status.Cwd, AutoGroupAccounts.HomeOf(status.Source, status.TranscriptPath));
+        }
+
+        internal void ResumeHere_Click(object? sender, RoutedEventArgs e)
+        {
+            if (ResumePrefillFor(_lastStatus) is not { } prefill) return;
+            OpenResumeWindow(prefill.Cli, prefill.Cwd, prefill.ProfileDir);
+        }
+
+        [ExcludeFromCodeCoverage]
+        private static void OpenResumeWindow(NewChatCli cli, string cwd, string? profileDir) =>
+            NewChatWindow.ToggleResume(cli, cwd, profileDir);
 
         [ExcludeFromCodeCoverage]
         private static void OpenNewChatWindow(NewChatCli? cli, string cwd, string? agentId) =>

@@ -309,6 +309,62 @@ public class NewChatWindowHeightTests : IDisposable
         Assert.Equal("Couldn't open a terminal for Claude Code.", ToolTip.GetTip(window.StatusLine));
     }
 
+    // CB-361: Resume is a mode of the local CLIs, so flipping it, filling its
+    // list, and moving between CLIs and OpenClaw must not move the window.
+    [AvaloniaFact]
+    public void TheHeightHoldsAcrossResumeModeAndItsList()
+    {
+        var window = EverythingAvailable();
+        PastSessionIndex.LoadForTests = (cli, _, _, _) => Enumerable.Range(0, 9).Select(i =>
+            new PastSession(cli, "id-" + i, "/tmp", "Session " + i, DateTimeOffset.UtcNow, 3, "/t", false)).ToList();
+        NewChatWindow.ResumeLoadInlineForTests = true;
+        try
+        {
+            var opened = ContentHeight(window);
+            Assert.True(opened > 200, $"content measured {opened}");
+
+            window.LocalResumeRadio.IsChecked = true;
+            Assert.Equal(opened, ContentHeight(window));
+
+            window.ResumeSearch.Text = "no such session";
+            Assert.Equal(opened, ContentHeight(window));
+            window.ResumeSearch.Text = null;
+
+            foreach (var tag in new object[] { NewChatCli.Codex, NewChatWindow.OpenClawTag, NewChatCli.Grok, NewChatWindow.OpenClawTag })
+            {
+                Select(window, tag);
+                Assert.Equal(opened, ContentHeight(window));
+            }
+
+            window.LocalNewRadio.IsChecked = true;
+            Assert.Equal(opened, ContentHeight(window));
+        }
+        finally
+        {
+            PastSessionIndex.LoadForTests = null;
+            NewChatWindow.ResumeLoadInlineForTests = false;
+        }
+    }
+
+    [AvaloniaFact]
+    public void TheResumeGhostMeasuresLikeThePaneItStandsIn()
+    {
+        var window = EverythingAvailable();
+        PastSessionIndex.LoadForTests = (_, _, _, _) => Array.Empty<PastSession>();
+        NewChatWindow.ResumeLoadInlineForTests = true;
+        try
+        {
+            window.LocalResumeRadio.IsChecked = true;
+            ContentHeight(window);
+            Assert.Equal(window.ResumePane.DesiredSize.Height, window.ResumeGhost.DesiredSize.Height);
+        }
+        finally
+        {
+            PastSessionIndex.LoadForTests = null;
+            NewChatWindow.ResumeLoadInlineForTests = false;
+        }
+    }
+
     [AvaloniaFact]
     public void EachGhostMeasuresExactlyLikeTheSectionItStandsIn()
     {
@@ -679,6 +735,13 @@ public class NewChatWindowHeightTests : IDisposable
         var actual = ContentHeight(window);
         // 6 is _cliList's Spacing, between the OpenClaw row and its reason.
         Assert.Equal(expected + 6 + reason.DesiredSize.Height, actual);
-        Assert.True(actual < ContentHeight(EverythingAvailable()));
+
+        // CB-361: the slot is no longer shorter without a gateway, because the
+        // Resume pane (a local CLI's own pane) is reserved whenever a local CLI
+        // is usable and is as tall as the Open existing list. What stays true
+        // is that nothing is held for OpenClaw: with Resume's ghost off as
+        // well, the slot falls back to the Folder section's own height.
+        window.ResumeGhost.IsVisible = false;
+        Assert.True(ContentHeight(window) < actual);
     }
 }
