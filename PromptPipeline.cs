@@ -622,7 +622,7 @@ namespace Orbweaver
             return await WaitGoneAsync(status, pending).ConfigureAwait(false);
         }
 
-        private async Task<PressOutcome> WaitGoneAsync(SessionStatus status, PendingPrompt pending)
+        private async Task<PressOutcome> WaitGoneAsync(SessionStatus status, PendingPrompt pending, bool refusedAgain = false)
         {
             // The same test as before (the approved dialog's hash is gone), asked
             // sooner and again: a dialog that is still up after SettleDelay of
@@ -635,7 +635,9 @@ namespace Orbweaver
             {
                 await _seams.Delay(SettlePoll).ConfigureAwait(false);
                 var recapture = await _seams.Capture(status).ConfigureAwait(false);
-                gone = AnswerGate.PressTookEffect(pending, recapture, AskFormTranscript.CallFor(recapture, status.TranscriptPath)) ? gone + 1 : 0;
+                var took = AnswerGate.PressTookEffect(pending, recapture, AskFormTranscript.CallFor(recapture, status.TranscriptPath))
+                    || (refusedAgain && LoginScreen.Read(recapture) is { Step: LoginStep.Url, FieldEmpty: true });
+                gone = took ? gone + 1 : 0;
                 if (gone >= 2) return PressOutcome.Took;
             }
             return PressOutcome.NoEffect;
@@ -720,7 +722,9 @@ namespace Orbweaver
             // Took only when the URL step is gone: a wrong code comes back as the
             // error screen, which hashes differently, and a screen that never moved
             // is NoEffect.
-            return await WaitGoneAsync(status, pending).ConfigureAwait(false);
+            // CB-418: a second refusal redraws the identical screen, so the hash never
+            // goes. The code was consumed all the same when the box is empty again.
+            return await WaitGoneAsync(status, pending, refusedAgain: true).ConfigureAwait(false);
         }
 
         // tell: press the option, wait for the dialog to clear (the CLI then

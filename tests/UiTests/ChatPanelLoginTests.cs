@@ -178,6 +178,20 @@ public class ChatPanelLoginTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void ACodeTypedUnderTheRefusalNoticeIsNotInThePromptBody()
+    {
+        const string Canary = "QA-CANARY-9f3k2xlstate";
+        var raw = Cb412Captures.Screen("login-code-shape-iterm2-w60").Split('\n').Select(l =>
+            l.Trim().StartsWith('│') && l.Trim().Trim('│').Trim().Length == 0 ? "  │ ********************lstate" + new string(' ', 20) + "│" : l);
+        var (panel, _) = Open(LoginScreen.ToPrompt(LoginScreen.Read(string.Join("\n", raw))!, canPress: true));
+
+        var body = panel.FindControl<TextBlock>("PromptBody")!;
+        Assert.Contains("That doesn't look like the full code.", body.Text);
+        Assert.DoesNotContain(Canary, body.Text);
+        Assert.DoesNotContain("lstate", body.Text);
+    }
+
+    [AvaloniaFact]
     public void TheUrlStepShowsTheLinkAndTheCodeFieldWithSendDisabled()
     {
         var (panel, _) = Open(UrlStep());
