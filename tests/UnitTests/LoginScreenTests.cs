@@ -244,4 +244,34 @@ public class LoginScreenTests
         Assert.Equal(LoginStep.Error, s.Step);
         Assert.Equal("OAuth error: first wrapped to the end", s.Title);
     }
+
+    // CB-418: Claude Code refuses a code with no '#' locally and redraws the URL step
+    // with a ✘ notice under the box. Real iTerm2 read at 60 columns: trailing spaces,
+    // the URL wrapped with no indent.
+    [Fact]
+    public void A_refused_code_notice_leads_the_url_steps_preview_and_changes_the_hash()
+    {
+        var refused = Read("login-code-shape-iterm2-w60")!;
+        Assert.Equal(LoginStep.Url, refused.Step);
+        Assert.True(refused.FieldEmpty);
+        Assert.StartsWith("https://claude.ai/oauth/authorize?", refused.Url);
+        Assert.DoesNotContain(" ", refused.Url);
+        Assert.Equal(new[]
+        {
+            "That doesn't look like the full code. Copy all of it, including the # in the middle.",
+            LoginScreen.DeskSentence,
+        }, refused.Preview);
+
+        // The same screen without the notice rows is the plain URL step, a different prompt.
+        var rows = Cb412Captures.Screen("login-code-shape-iterm2-w60").Split('\n');
+        var plain = LoginScreen.Read(string.Join("\n", rows.Where(r => !r.Contains("✘") && !r.Contains("Copy all of it"))))!;
+        Assert.Equal(new[] { LoginScreen.DeskSentence }, plain.Preview);
+        Assert.Equal(refused.Url, plain.Url);
+        Assert.NotEqual(plain.Hash, refused.Hash);
+
+        var prompt = LoginScreen.ToPrompt(refused, canPress: true);
+        Assert.Contains(prompt.Body!, l => l.Contains("doesn't look like the full code"));
+        Assert.DoesNotContain(prompt.Body!, l => l.Contains("https://"));
+        Assert.Equal(refused.Url, prompt.Link);
+    }
 }

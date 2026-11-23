@@ -326,7 +326,8 @@ namespace Orbweaver
         internal static string LoginPreview(LoginScreen login) =>
             login.Step switch
             {
-                LoginStep.Url => LoginUrlPreview,
+                // A refusal notice (CB-418) leads, so the phone sees why; the URL never does.
+                LoginStep.Url => string.Join("\n", login.Preview.Take(login.Preview.Count - 1).Append(LoginUrlPreview)),
                 // The picker's question ("Select login method:") is its title, the
                 // text above it the preview; the phone shows both, in screen order.
                 LoginStep.Picker => string.Join("\n", login.Preview.Append(login.Title)),
