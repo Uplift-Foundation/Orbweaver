@@ -50,25 +50,6 @@ public class PaperclipFastPathUiTests : IDisposable
     // ---- the orb the user just answered leaves amber at once ---------------------------
 
     [AvaloniaFact]
-    public async Task Answering_the_last_need_clears_the_orb_now_and_a_poll_that_still_lists_it_puts_it_back()
-    {
-        var m = await WithAmberOrb(Hire);
-        Assert.True(m.ClearPaperclipNeed("a1", "p1"));
-        Assert.Equal((OrbPresence.Present, "idle"), (S(m, "a1").Presence, S(m, "a1").State));
-        Assert.Equal("http://127.0.0.1:3100/CB/agents/a1", S(m, "a1").Url);
-
-        // the poll has not caught up and still says waiting: it stays the source of truth
-        await m.ScheduleScan();
-        Assert.Equal(OrbPresence.NeedsInput, S(m, "a1").Presence);
-
-        // the poll catches up: the orb stays clear
-        Assert.True(m.ClearPaperclipNeed("a1", "p1"));
-        PaperclipSessions.SetSnapshotForTests([Agent("a1", "idle")]);
-        await m.ScheduleScan();
-        Assert.Equal(OrbPresence.Present, S(m, "a1").Presence);
-    }
-
-    [AvaloniaFact]
     public async Task Answering_one_of_two_leaves_the_orb_amber_and_an_unknown_answer_does_nothing()
     {
         var m = await WithAmberOrb(Hire, Tool);
@@ -126,7 +107,73 @@ public class PaperclipFastPathUiTests : IDisposable
         Assert.Single(lines);
     }
 
-    // ---- the fast path, back on a copy (CB-425) ---------------------------------------------
+    // ---- no flash of amber after an answer, and the relay's object is never written to ----------
+
+    private static readonly PaperclipNeed Hire2 = new("approval", "p1", "Hire", "http://127.0.0.1:3100/CB/approvals/p1");
+
+    [AvaloniaFact]
+    public async Task An_answered_orb_stays_clear_through_a_scan_on_the_old_snapshot_and_a_newer_one_that_still_lists_it_brings_it_back()
+    {
+        var m = await WithAmberOrb(Hire);
+        Assert.True(m.ClearPaperclipNeed("a1", "p1"));
+        Assert.Equal(OrbPresence.Present, S(m, "a1").Presence);
+
+        // a pass applies before the nudged poll has come back: the snapshot is the old one
+        await m.ScheduleScan();
+        await m.ScheduleScan();
+        Assert.Equal(OrbPresence.Present, S(m, "a1").Presence);
+        Assert.Empty(S(m, "a1").Needs);
+
+        // a newer snapshot that still lists the need is the truth: amber returns
+        PaperclipSessions.SetSnapshotForTests([Agent("a1", "waiting", Hire)]);
+        await m.ScheduleScan();
+        Assert.Equal(OrbPresence.NeedsInput, S(m, "a1").Presence);
+        Assert.Equal([Hire], S(m, "a1").Needs);
+
+        // and the memory is gone: a later pass on that snapshot keeps it amber
+        await m.ScheduleScan();
+        Assert.Equal(OrbPresence.NeedsInput, S(m, "a1").Presence);
+    }
+
+    [AvaloniaFact]
+    public async Task A_newer_snapshot_that_no_longer_lists_the_need_leaves_the_orb_clear_and_one_of_two_answers_leaves_the_other_asking()
+    {
+        var m = await WithAmberOrb(Hire, Tool);
+        Assert.True(m.ClearPaperclipNeed("a1", "p1"));
+        await m.ScheduleScan();
+        Assert.Equal([Tool], S(m, "a1").Needs);
+        Assert.Equal(OrbPresence.NeedsInput, S(m, "a1").Presence);
+
+        PaperclipSessions.SetSnapshotForTests([Agent("a1", "idle")]);
+        await m.ScheduleScan();
+        Assert.Equal(OrbPresence.Present, S(m, "a1").Presence);
+    }
+
+    [AvaloniaFact]
+    public async Task An_answer_while_a_pass_is_in_flight_is_not_drawn_back_by_that_pass()
+    {
+        var m = await WithAmberOrb(Hire);
+        var worker = new FrozenWorker();
+        m.ScanClock = worker.Clock;
+        var running = m.ScheduleScan();                  // its worker has read the amber snapshot
+        await worker.ReadDone.Task;
+        Assert.True(m.ClearPaperclipNeed("a1", "p1"));
+        worker.Release.Set();                            // it now applies, on the same snapshot
+        await running;
+        Assert.Equal(OrbPresence.Present, S(m, "a1").Presence);
+    }
+
+    [AvaloniaFact]
+    public async Task Clearing_an_answered_need_publishes_a_copy_and_never_touches_the_object_the_relay_holds()
+    {
+        var m = await WithAmberOrb(Hire, Tool);
+        var held = S(m, "a1");                           // what the last scan handed the relay
+        var before = (held.State, held.Presence, held.Needs.Count, held.Url);
+
+        Assert.True(m.ClearPaperclipNeed("a1", "p1"));
+        Assert.NotSame(held, S(m, "a1"));
+        Assert.Equal(before, (held.State, held.Presence, held.Needs.Count, held.Url));
+    }
 
     // Freezes a scan's worker thread just after it has read the status files, by
     // blocking on the clock the read phase is timed with.
@@ -149,6 +196,8 @@ public class PaperclipFastPathUiTests : IDisposable
             return _sw.Elapsed;
         }
     }
+
+    // ---- the fast path (CB-425), on a copy ----------------------------------------------------
 
     [AvaloniaFact]
     public async Task A_change_reaches_its_orb_while_a_slow_pass_is_still_in_flight_and_the_pass_cannot_draw_the_amber_back()
@@ -211,5 +260,24 @@ public class PaperclipFastPathUiTests : IDisposable
         m.OnPaperclipChanged();
         Assert.True(debounce.IsEnabled);
         Assert.Equal(OrbPresence.Present, S(m, "a1").Presence);
+    }
+
+    [AvaloniaFact]
+    public async Task The_fast_path_also_leaves_an_answered_need_out_until_a_newer_snapshot_says_otherwise()
+    {
+        var m = await WithAmberOrb(Hire);
+        Assert.True(m.ClearPaperclipNeed("a1", "p1"));
+
+        Assert.True(m.ApplyPaperclipNow());              // a change published on the SAME snapshot object
+        Assert.Equal(OrbPresence.Present, S(m, "a1").Presence);
+        Assert.Empty(S(m, "a1").Needs);
+
+        PaperclipSessions.SetSnapshotForTests([Agent("a1", "waiting", Hire)]);   // a newer one that still lists it
+        Assert.True(m.ApplyPaperclipNow());
+        Assert.Equal(OrbPresence.NeedsInput, S(m, "a1").Presence);
+        Assert.Equal([Hire], S(m, "a1").Needs);
+
+        Assert.True(m.ApplyPaperclipNow());              // and the memory is gone
+        Assert.Equal(OrbPresence.NeedsInput, S(m, "a1").Presence);
     }
 }

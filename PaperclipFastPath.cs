@@ -95,6 +95,21 @@ namespace Orbweaver
             return true;
         }
 
+        // The snapshot with the answered needs left out, for the scan to draw while
+        // the poll has not yet said what Paperclip now holds. An agent whose last
+        // need was answered stops asking (idle); everything else about it stands.
+        internal static IReadOnlyList<PaperclipAgent> WithoutAnswered(
+            IReadOnlyList<PaperclipAgent> snapshot, IReadOnlySet<string> answered)
+        {
+            if (!snapshot.Any(a => a.Needs.Any(n => answered.Contains(n.Id)))) return snapshot;
+            return snapshot.Select(a =>
+            {
+                var kept = a.Needs.Where(n => !answered.Contains(n.Id)).ToList();
+                if (kept.Count == a.Needs.Count) return a;
+                return a with { Needs = kept, State = kept.Count == 0 && a.State == "waiting" ? "idle" : a.State };
+            }).ToList();
+        }
+
         // One line for a state change that reached an orb: the agent's id prefix,
         // the states, the milliseconds from the poll that saw it. No title, no
         // token, no text from Paperclip. Null for a change that moved no state.

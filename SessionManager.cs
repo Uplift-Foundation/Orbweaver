@@ -959,18 +959,48 @@ namespace Orbweaver
         // CB-427: the user answered a need in the panel and Paperclip took it. Clear
         // that need from the orb's own status and update that one orb now, so the
         // orb the user just acted on leaves amber at once instead of after the poll
-        // and a scan (the scan pass is slow on some machines, CB-425 / CB-424). The
-        // next poll stays the source of truth: if Paperclip still lists it, the next
-        // scan puts the amber back. UI thread. False when there is no such orb.
+        // and a scan (the scan pass is slow on some machines, CB-425 / CB-424).
+        //
+        // On a copy, never the object in the table: the last scan handed that one to
+        // the relay, which reads it on its own threads, and every other path
+        // publishes a fresh object and leaves it alone.
+        //
+        // The need is also remembered against the snapshot it was answered on, and
+        // the scan's rows leave it out while that same snapshot is current, so a
+        // pass that applies before the nudged poll cannot flash the orb amber again
+        // ("it did not take"). The next published snapshot is the truth: the memory
+        // is dropped there, and a need Paperclip still lists comes back.
+        // UI thread. False when there is no such orb.
         internal bool ClearPaperclipNeed(string agentId, string needId)
         {
             var key = PaperclipScan.KeyFor(agentId);
             if (!_statuses.TryGetValue(key, out var existing) || !_windows.TryGetValue(key, out var window)) return false;
-            var copy = existing.Copy();      // never the object the relay holds
+            var copy = existing.Copy();
             if (!PaperclipFastPath.WithoutNeed(copy, needId)) return false;
+            var snapshot = PaperclipSessions.Snapshot();
+            if (!ReferenceEquals(snapshot, _answeredOn)) { _answeredOn = snapshot; _answeredNeeds.Clear(); }
+            _answeredNeeds.Add(needId);
             _statuses[key] = copy;
             window.UpdateFrom(copy);
             return true;
+        }
+
+        private IReadOnlyList<PaperclipAgent>? _answeredOn;
+        private readonly HashSet<string> _answeredNeeds = new();
+
+        // The snapshot the scan draws Paperclip rows from: the published one, less
+        // the needs answered here while it was current. A newer snapshot clears the
+        // memory and is used as it is.
+        internal IReadOnlyList<PaperclipAgent> PaperclipSnapshotForScan()
+        {
+            var snapshot = PaperclipSessions.Snapshot();
+            if (!ReferenceEquals(snapshot, _answeredOn))
+            {
+                _answeredOn = null;
+                _answeredNeeds.Clear();
+                return snapshot;
+            }
+            return _answeredNeeds.Count == 0 ? snapshot : PaperclipFastPath.WithoutAnswered(snapshot, _answeredNeeds);
         }
 
         // A published Paperclip change: draw it now on the orbs that exist
@@ -983,13 +1013,13 @@ namespace Orbweaver
         }
 
         private IReadOnlyList<ScanEntry> PaperclipRows() => _paperclipScan.Entries(
-            PaperclipSessions.Snapshot(), PaperclipSessions.Link, PaperclipSessions.StatusText,
+            PaperclipSnapshotForScan(), PaperclipSessions.Link, PaperclipSessions.StatusText,
             OrbweaverSettings.PaperclipSleeping, DateTime.UtcNow, PaperclipSessions.Remembered);
 
         // UI thread. False when the set of Paperclip orbs differs from what is on
         // screen, which the full pass handles. Writes the same one line per state
         // change the full pass writes, so a change is logged once whichever path
-        // draws it.
+        // draws it. Works onto copies, never the objects the relay holds.
         internal bool ApplyPaperclipNow()
         {
             var plan = PaperclipFastPath.Plan(PaperclipRows(), _statuses);
@@ -3001,7 +3031,7 @@ namespace Orbweaver
             // paperclipEnabled is on - PaperclipSessions.Snapshot holds that gate.
             // What the orb says is PaperclipScan's, so this is one call.
             found.AddRange(_paperclipScan.Entries(
-                PaperclipSessions.Snapshot(), PaperclipSessions.Link, PaperclipSessions.StatusText,
+                PaperclipSnapshotForScan(), PaperclipSessions.Link, PaperclipSessions.StatusText,
                 OrbweaverSettings.PaperclipSleeping, DateTime.UtcNow, PaperclipSessions.Remembered));
 
             // Before InheritTerminalInfo, so this describes the files as the

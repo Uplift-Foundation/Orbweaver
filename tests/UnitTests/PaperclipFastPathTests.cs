@@ -136,4 +136,44 @@ public class PaperclipFastPathTests
         Assert.Equal("paperclip: ab idle -> waiting reached the orb in 3300 ms",
             PaperclipFastPath.Line("paperclip:ab", "idle", "waiting", TimeSpan.FromMilliseconds(3300)));
     }
+
+    // ---- what the scan draws until the next snapshot has had its say ------------------------
+
+    private static PaperclipAgent Agent(string id, string state, params PaperclipNeed[] needs) =>
+        new(id, id, "r", "t", "idle", null, "x", state, PaperclipMark.None, null, needs, null, null, null, null, null,
+            DateTime.UtcNow, "http://p/CB/agents/" + id, false);
+
+    [Fact]
+    public void Answered_needs_are_left_out_and_an_agent_with_none_left_stops_asking()
+    {
+        var snap = new[] { Agent("a", "waiting", A, B), Agent("b", "waiting", B), Agent("c", "idle") };
+        var drawn = PaperclipFastPath.WithoutAnswered(snap, new HashSet<string> { "a" });
+        Assert.Equal([B], drawn[0].Needs);
+        Assert.Equal("waiting", drawn[0].State);           // still has one
+        Assert.Same(snap[1], drawn[1]);                    // untouched rows are the same objects
+        Assert.Same(snap[2], drawn[2]);
+        Assert.NotSame(snap[0], drawn[0]);
+        Assert.Equal([A, B], snap[0].Needs);               // the snapshot itself is unchanged
+
+        var all = PaperclipFastPath.WithoutAnswered(snap, new HashSet<string> { "b" });
+        Assert.Empty(all[1].Needs);
+        Assert.Equal("idle", all[1].State);
+        Assert.Equal("waiting", all[0].State);
+    }
+
+    [Fact]
+    public void A_snapshot_that_holds_none_of_the_answered_needs_comes_back_as_it_is()
+    {
+        var snap = new[] { Agent("a", "waiting", A) };
+        Assert.Same(snap, PaperclipFastPath.WithoutAnswered(snap, new HashSet<string> { "zzz" }));
+        Assert.Same(snap, PaperclipFastPath.WithoutAnswered(snap, new HashSet<string>()));
+    }
+
+    [Fact]
+    public void An_agent_not_waiting_keeps_its_state_when_its_listed_need_is_removed()
+    {
+        var snap = new[] { Agent("a", "generating", A) };
+        var drawn = PaperclipFastPath.WithoutAnswered(snap, new HashSet<string> { "a" });
+        Assert.Equal(("generating", 0), (drawn[0].State, drawn[0].Needs.Count));
+    }
 }
