@@ -235,4 +235,13 @@ public class LoginScreenTests
         Assert.False(s.FieldEmpty);
         Assert.Equal(tail, s.FieldTail);
     }
+
+    [Fact]
+    public void An_error_whose_text_runs_to_the_last_row_is_still_read_when_the_footer_is_above()
+    {
+        var screen = $"{new string('─', 40)}\n  Login\n\n  Press Enter to retry\n\n  ✘ OAuth error: first\n    wrapped to the end";
+        var s = LoginScreen.Read(screen)!;
+        Assert.Equal(LoginStep.Error, s.Step);
+        Assert.Equal("OAuth error: first wrapped to the end", s.Title);
+    }
 }

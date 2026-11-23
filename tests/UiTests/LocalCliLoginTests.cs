@@ -410,4 +410,52 @@ public class LocalCliLoginTests
             Assert.Single(pane.Verified);
         });
     }
+
+    [AvaloniaFact]
+    public async Task A_code_typed_while_the_field_already_has_text_types_nothing_and_says_so()
+    {
+        await WithReplyOn(async () =>
+        {
+            // The url screen is read as empty first; then somebody types into the
+            // terminal's own field, and the screen on re-read has a tail.
+            var pane = new Pane(Screen("login-url-w100"));
+            var session = await On(pane);
+            pane.Screen = Screen("login-code-typed-w100");
+
+            await session.SubmitLoginCodeAsync("QA-CANARY-abcdef");
+
+            Assert.Empty(pane.Typed);
+            Assert.Empty(pane.Pressed);
+            var note = Assert.Single(session.History).Text;
+            Assert.Equal("The code field in the terminal isn't empty, so nothing was typed. Clear it there first.", note);
+            Assert.DoesNotContain("CANARY", note);
+        });
+    }
+
+    [AvaloniaFact]
+    public async Task A_code_that_does_not_read_back_says_so_exactly_and_presses_no_Enter()
+    {
+        await WithReplyOn(async () =>
+        {
+            var pane = new Pane(Screen("login-url-w100"));
+            var session = await On(pane);
+
+            await session.SubmitLoginCodeAsync("QA-CANARY-abcdef");
+
+            Assert.Empty(pane.Pressed);
+            var note = Assert.Single(session.History).Text;
+            Assert.Equal("Couldn't confirm the code was typed, so it was not sent. Finish in the terminal.", note);
+            Assert.DoesNotContain("CANARY", note);
+        });
+    }
+
+    [Theory]
+    [InlineData("prompt-changed", "That sign-in screen had changed, so nothing was pressed. Here is the current one.")]
+    [InlineData("no-prompt", "That sign-in screen has already closed.")]
+    [InlineData("not-empty", "The code field in the terminal isn't empty, so nothing was typed. Clear it there first.")]
+    [InlineData("unverified", "Couldn't confirm the code was typed, so it was not sent. Finish in the terminal.")]
+    [InlineData("press-failed", "Couldn't answer that in the terminal. Finish signing in there.")]
+    [InlineData("type-failed", "Couldn't answer that in the terminal. Finish signing in there.")]
+    public void Every_refusal_code_has_its_own_exact_note(string code, string note) =>
+        Assert.Equal(note, LocalCliChatSession.LoginRefusalNote(code));
 }
