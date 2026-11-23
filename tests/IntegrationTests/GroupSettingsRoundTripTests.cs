@@ -479,4 +479,76 @@ public class GroupSettingsRoundTripTests
         // A deferred change that changes nothing schedules nothing.
         OrbweaverSettings.SetOrbGroupStyle(group.Id, new GroupStyle("#112233", 0.9, null, null), defer: true);
     }
+
+    // ---- CB-409: random group colours ------------------------------------------
+
+    [Fact]
+    public void ColourModeAndSeedDefaultWhenTheKeysAreMissing()
+    {
+        Stage("{ }");
+
+        Assert.False(OrbweaverSettings.GroupColourRandom);
+        Assert.Null(OrbweaverSettings.RandomColourFor(OrbweaverSettings.OrbGroupFor("main")));
+    }
+
+    [Fact]
+    public void ColourModeAndSeedRoundTripThroughTheFile()
+    {
+        var dir = Stage();
+        OrbweaverSettings.GroupColourRandom = true;
+        OrbweaverSettings.ShuffleGroupColours();
+        var seed = OnDisk(dir)["groupColourSeed"]!.GetValue<int>();
+
+        Assert.Equal("random", OnDisk(dir)["groupColourMode"]!.GetValue<string>());
+        Assert.True(seed > 0);
+
+        Reload(dir);
+        var main = OrbweaverSettings.OrbGroupFor("main")!;
+
+        Assert.True(OrbweaverSettings.GroupColourRandom);
+        Assert.Equal(GroupColour.For("main", seed, 0), OrbweaverSettings.RandomColourFor(main));
+    }
+
+    [Fact]
+    public void ABadModeOrSeedLoadsAsTheDefaults()
+    {
+        Stage("""{ "groupColourMode": "sideways", "groupColourSeed": -4 }""");
+
+        Assert.False(OrbweaverSettings.GroupColourRandom);
+        OrbweaverSettings.GroupColourRandom = true;
+        Assert.Equal(GroupColour.For("main", 0, 0), OrbweaverSettings.RandomColourFor(OrbweaverSettings.OrbGroupFor("main")));
+    }
+
+    [Fact]
+    public void AGroupsColourSaltRoundTripsAndZeroIsNotWritten()
+    {
+        var dir = Stage();
+        var made = OrbweaverSettings.CreateOrbGroup();
+
+        Assert.False(((JsonObject)OnDisk(dir)["orbGroups"]!["groups"]![made.Id]!).ContainsKey("colourSalt"));
+
+        OrbweaverSettings.RerollOrbGroupColour(made.Id);
+        OrbweaverSettings.RerollOrbGroupColour(made.Id);
+
+        Assert.Equal(2, OnDisk(dir)["orbGroups"]!["groups"]![made.Id]!["colourSalt"]!.GetValue<int>());
+
+        Reload(dir);
+        Assert.Equal(2, OrbweaverSettings.OrbGroupFor(made.Id)!.ColourSalt);
+    }
+
+    [Fact]
+    public void RerollingAnUnknownGroupDoesNothing()
+    {
+        Stage();
+        OrbweaverSettings.RerollOrbGroupColour("g-nothere");
+        Assert.Null(OrbweaverSettings.OrbGroupFor("g-nothere"));
+    }
+
+    [Fact]
+    public void ARandomColourIsNullForNoGroup()
+    {
+        Stage();
+        OrbweaverSettings.GroupColourRandom = true;
+        Assert.Null(OrbweaverSettings.RandomColourFor(null));
+    }
 }

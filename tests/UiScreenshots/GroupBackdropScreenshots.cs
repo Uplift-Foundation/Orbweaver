@@ -55,7 +55,7 @@ public class GroupBackdropScreenshots : IDisposable
     }
 
     // Puts the page behind the transparent window and a circle where each orb is.
-    private static Window Dress(string groupId, IEnumerable<OrbWindow> orbs)
+    private static Window Dress(string groupId, IEnumerable<OrbWindow> orbs, string page = "#1E1E24")
     {
         var w = GroupBackdrops.WindowOf(groupId)!;
         var s = GroupBackdrops.StateOf(groupId)!.Value;
@@ -72,7 +72,7 @@ public class GroupBackdropScreenshots : IDisposable
         var caption = GroupBackdrops.CaptionOf(groupId);
         var lift = caption is { Visible: true } c ? Math.Max(0, s.Position.Y - c.Rect.Y) : 0;
 
-        var stage = new Panel { Background = new SolidColorBrush(Color.Parse("#1E1E24")) };
+        var stage = new Panel { Background = new SolidColorBrush(Color.Parse(page)) };
         shape.Margin = new Thickness(0, lift, 0, 0);
         stage.Children.Add(shape);
         if (caption is { Visible: true } cap)
@@ -181,6 +181,47 @@ public class GroupBackdropScreenshots : IDisposable
             GroupBackdrops.SetNamesVisible(false);
             foreach (var id in created) OrbweaverSettings.DeleteOrbGroup(id);
             OrbweaverSettings.GroupNamesVisible = namesBefore;
+        }
+    }
+
+    // CB-409: four groups in "Random per group" mode, none with an override, so
+    // each wears the hue its id hashes to. Captured on a dark and on a light page
+    // because the palette has to read on both.
+    [AvaloniaFact]
+    public void FourGroupsInRandomColourMode()
+    {
+        var created = new List<string>();
+        var wasRandom = OrbweaverSettings.GroupColourRandom;
+        try
+        {
+            OrbweaverSettings.GroupColourRandom = true;
+            var shapes = new[] { "heart", "circle", "diamond", "star" };
+            var small = new PixelRect(0, 0, 420, 420);
+            var sets = new List<(string Id, List<OrbWindow> Orbs)>();
+            foreach (var shape in shapes)
+            {
+                var g = OrbweaverSettings.CreateOrbGroup(shape);
+                created.Add(g.Id);
+                OrbweaverSettings.RenameOrbGroup(g.Id, shape);
+                sets.Add((g.Id, Arranged("r" + shape, shape, Enumerable.Repeat(-1, 6).ToArray(), small)));
+            }
+
+            GroupBackdrops.SetNamesVisible(true);
+            GroupBackdrops.Update(sets.Select(x =>
+                new BackdropSpec(x.Id, OrbweaverSettings.OrbGroupFor(x.Id)!.Shape, x.Orbs, null, CurveOf(x.Orbs))).ToArray());
+            ScreenshotHelper.SideBySide(sets.Select(x => Dress(x.Id, x.Orbs)).ToArray(),
+                "group-backdrops-random-dark.png");
+
+            GroupBackdrops.Update(sets.Select(x =>
+                new BackdropSpec(x.Id, OrbweaverSettings.OrbGroupFor(x.Id)!.Shape, x.Orbs, null, CurveOf(x.Orbs))).ToArray());
+            ScreenshotHelper.SideBySide(sets.Select(x => Dress(x.Id, x.Orbs, "#F2F2F5")).ToArray(),
+                "group-backdrops-random-light.png");
+        }
+        finally
+        {
+            GroupBackdrops.SetNamesVisible(false);
+            OrbweaverSettings.GroupColourRandom = wasRandom;
+            foreach (var id in created) OrbweaverSettings.DeleteOrbGroup(id);
         }
     }
 

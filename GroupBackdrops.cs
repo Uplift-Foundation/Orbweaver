@@ -462,7 +462,8 @@ namespace Orbweaver
             if (Parked.Count < MaxParked) Parked.Push(w);
         }
 
-        private static (Color Stroke, Color Fill) StyleFor(BackdropSpec spec) => GroupStyle.Resolve(spec.Style, Globals());
+        private static (Color Stroke, Color Fill) StyleFor(BackdropSpec spec) =>
+            GroupStyle.Resolve(spec.Style, Globals(), OrbweaverSettings.RandomColourFor(OrbweaverSettings.OrbGroupFor(spec.GroupId)));
 
         private static (Color Stroke, Color Fill) GlobalStyle() => GroupStyle.Resolve(null, Globals());
 

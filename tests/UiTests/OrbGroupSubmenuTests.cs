@@ -24,7 +24,10 @@ public class OrbGroupSubmenuTests : IDisposable
         GroupStyleWindow.OpenForTests = null;
         GroupStyleWindow.PresentForTests = null;
         GroupStyleWindow.BringForwardForTests = null;
+        OrbweaverSettings.GroupColourRandom = _random;
     }
+
+    private readonly bool _random = OrbweaverSettings.GroupColourRandom;
 
     private string Key() { var k = "group-menu-" + Guid.NewGuid(); _keys.Add(k); return k; }
 
@@ -71,7 +74,7 @@ public class OrbGroupSubmenuTests : IDisposable
         Assert.False(header.IsEnabled);
         Assert.IsType<Separator>(Submenu(orb).Items[1]);
         Assert.Equal(
-            new[] { "Shape", "Move to", "Rename…", "Style…", "Leave group" },
+            new[] { "Shape", "Move to", "Rename…", "Style…", "New random colour", "Leave group" },
             Items(Submenu(orb)).Skip(1).Select(i => (string)i.Header!));
     }
 
@@ -279,5 +282,42 @@ public class OrbGroupSubmenuTests : IDisposable
         orb.RebuildGroupSubmenu();
 
         Assert.StartsWith("In: ", (string)Items(Submenu(orb))[0].Header!);
+    }
+
+    // ---- CB-409: New random colour ------------------------------------------
+
+    [AvaloniaFact]
+    public void NewRandomColourShowsOnlyInRandomModeAndOnlyWithoutAnOverride()
+    {
+        var group = NewGroup();
+        var orb = NewOrb();
+        OrbweaverSettings.MoveOrbToGroup(orb.PositionKey, group.Id);
+
+        OrbweaverSettings.GroupColourRandom = false;
+        orb.RebuildGroupSubmenu();
+        Assert.False(Child(Submenu(orb), "New random colour").IsVisible);   // the control
+
+        OrbweaverSettings.GroupColourRandom = true;
+        orb.RebuildGroupSubmenu();
+        Assert.True(Child(Submenu(orb), "New random colour").IsVisible);
+
+        OrbweaverSettings.SetOrbGroupStyle(group.Id, new GroupStyle("#112233", null, null, null));
+        orb.RebuildGroupSubmenu();
+        Assert.False(Child(Submenu(orb), "New random colour").IsVisible);
+    }
+
+    [AvaloniaFact]
+    public void ClickingNewRandomColourBumpsTheGroupsSalt()
+    {
+        var group = NewGroup();
+        var orb = NewOrb();
+        OrbweaverSettings.MoveOrbToGroup(orb.PositionKey, group.Id);
+        OrbweaverSettings.GroupColourRandom = true;
+        orb.RebuildGroupSubmenu();
+        Assert.Equal(0, OrbweaverSettings.OrbGroupFor(group.Id)!.ColourSalt);
+
+        Click(Child(Submenu(orb), "New random colour"));
+
+        Assert.Equal(1, OrbweaverSettings.OrbGroupFor(group.Id)!.ColourSalt);
     }
 }

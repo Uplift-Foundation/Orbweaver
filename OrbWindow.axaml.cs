@@ -3846,6 +3846,21 @@ namespace Orbweaver
             style.Click += (_, _) => GroupStyleWindow.Toggle(group.Id, focusName: false);
             GroupMenuItem.Items.Add(style);
 
+            // CB-409: the per-group re-roll, for two groups that landed on the
+            // same hue. Hidden where it would do nothing: outside random mode, or
+            // when the group's own style already overrides the colour.
+            var reroll = new MenuItem
+            {
+                Header = "New random colour",
+                IsVisible = OrbweaverSettings.GroupColourRandom && group.Style is null
+            };
+            reroll.Click += (_, _) =>
+            {
+                OrbweaverSettings.RerollOrbGroupColour(group.Id);
+                CurrentManager()?.ReapplyGroupStyles();
+            };
+            GroupMenuItem.Items.Add(reroll);
+
             GroupMenuItem.Items.Add(new Separator());
 
             // Hidden, not greyed, in main: there is nowhere further to leave to,

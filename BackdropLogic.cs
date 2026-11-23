@@ -333,11 +333,17 @@ namespace Orbweaver
         // global's, and if that fails too to white (stroke) / black (fill). Opacity
         // is clamped to 0..1 and becomes the alpha byte, replacing whatever alpha
         // the colour string carried. A non-finite opacity is treated as missing.
-        internal static (Color Stroke, Color Fill) Resolve(GroupStyle? over, GroupStyle globals)
+        //
+        // CB-409: `randomHex`, when "Random per group" is on, is the group's own
+        // hue. It slots between the override and the global for the colour fields
+        // only — stroke and fill both take it, so the fill is a tint of the same
+        // hue — while opacities still come from the override or the global
+        // sliders. Null is today's behaviour exactly ("Same for all").
+        internal static (Color Stroke, Color Fill) Resolve(GroupStyle? over, GroupStyle globals, string? randomHex = null)
         {
-            var stroke = Build(over?.Stroke, over?.StrokeOpacity, globals.Stroke, globals.StrokeOpacity, FallbackStroke,
+            var stroke = Build(over?.Stroke, over?.StrokeOpacity, randomHex ?? globals.Stroke, globals.StrokeOpacity, FallbackStroke,
                 OrbweaverSettings.DefaultGroupOutlineStrokeOpacity);
-            var fill = Build(over?.Fill, over?.FillOpacity, globals.Fill, globals.FillOpacity, FallbackFill,
+            var fill = Build(over?.Fill, over?.FillOpacity, randomHex ?? globals.Fill, globals.FillOpacity, FallbackFill,
                 OrbweaverSettings.DefaultGroupOutlineFillOpacity);
             return (stroke, fill);
         }
