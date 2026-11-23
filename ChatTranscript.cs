@@ -31,6 +31,7 @@ namespace Orbweaver
         public static List<Row> Map(IEnumerable<string> lines)
         {
             var mapped = new List<Row>();
+            var afterLogin = false;
 
             foreach (var line in lines)
             {
@@ -45,9 +46,18 @@ namespace Orbweaver
                 // is about to be discarded.
                 if (!IsInteresting(line)) continue;
 
+                // CB-412: what `/login` printed when it ended ("Login
+                // interrupted") is the row right after the command's own row. It is
+                // shown verbatim as a system turn and nothing is removed: the
+                // "Login reached its time limit" turn above it stays as what
+                // happened. Only that adjacency is matched, never the wording.
+                var wasAfterLogin = afterLogin;
+                afterLogin = line.Contains("<command-name>/login</command-name>", StringComparison.Ordinal);
+
                 try
                 {
                     using var doc = JsonDocument.Parse(line);
+                    if (wasAfterLogin && LoginOutcome(doc.RootElement) is { } outcome) { mapped.Add(outcome); continue; }
                     MapRow(doc.RootElement, mapped);
                 }
                 catch
@@ -57,6 +67,23 @@ namespace Orbweaver
             }
 
             return mapped;
+        }
+
+        private const string StdoutOpen = "<local-command-stdout>", StdoutClose = "</local-command-stdout>";
+
+        private static Row? LoginOutcome(JsonElement root)
+        {
+            if (Str(root, "type") != "user" || Bool(root, "isSidechain")) return null;
+            if (!root.TryGetProperty("message", out var message) || !message.TryGetProperty("content", out var content)
+                || content.ValueKind != JsonValueKind.String) return null;
+
+            var text = (content.SafeString() ?? "").Trim();
+            if (!text.StartsWith(StdoutOpen, StringComparison.Ordinal) || !text.EndsWith(StdoutClose, StringComparison.Ordinal)) return null;
+
+            var inner = text[StdoutOpen.Length..^StdoutClose.Length].Trim();
+            if (inner.Length == 0) return null;
+
+            return new Row(Str(root, "uuid"), new ChatTurn { Role = ChatRole.System, Text = inner, IsComplete = true, At = Time(root) });
         }
 
         // A false positive costs nothing: a tool result whose text happens to

@@ -1,0 +1,40 @@
+Welcome to Claude Code v2.1.330
+
+ Browser didn't open? Use the URL below
+ to sign in (c to copy)
+
+https://claude.ai/oauth/authorize?EXAMPL
+EexampleEXAMPLEexampleEXAMPLEexampleEXA
+
+ Paste code here if prompted
+ ╭─────────────────────────────────────╮
+ │                                     │
+ ╰─────────────────────────────────────╯
+
+ Esc to go back
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

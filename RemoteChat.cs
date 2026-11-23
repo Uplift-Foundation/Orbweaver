@@ -858,7 +858,22 @@ namespace Orbweaver
         // screen) as drawn, so a panel can show them. Non-null means the prompt is
         // such an overlay: one `Close` option that presses Escape. Null for every
         // dialog.
-        IReadOnlyList<string>? Body = null);
+        IReadOnlyList<string>? Body = null,
+        // CB-412: the https sign-in URL of `/login`'s URL step, drawn as a link.
+        // Null on every other prompt. Goes nowhere else: not Body, not a log.
+        string? Link = null,
+        // CB-412: draw a one-line code field and Send (the URL step on a route
+        // that can be pressed silently). Answered through IRemoteChatLoginCode.
+        bool CodeEntry = false);
+
+    // CB-412: the code the browser shows after sign-in, typed into `/login`'s
+    // "Paste code here" field. Its own interface, like IRemoteChatFreeText, so a
+    // session that cannot do it does not offer the field. The code is passed
+    // straight through and never stored.
+    public interface IRemoteChatLoginCode
+    {
+        Task SubmitLoginCodeAsync(string code);
+    }
 
     // One slash command a CLI understands, offered the same way typing "/" in
     // its own terminal would. Name includes the leading "/" so the panel can

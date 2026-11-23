@@ -3186,6 +3186,42 @@ public partial class MirrorRoundTripTests : IDisposable
         Assert.Equal(MirrorProtocol.ErrUnsupported, await harness.Client.AnswerPromptAsync("qa", "1", prompt.Fingerprint));
     }
 
+    // CB-412: a dialog is read through DialogCapture when one is wired, so a session
+    // the typing gate's tmux read cannot see (iTerm2, a Windows console) still gets
+    // its prompt, and the gate's own pair is left alone.
+    [Fact]
+    public async Task ADialogIsReadThroughTheDialogSeamWhenOneIsWired()
+    {
+        var harness = new Harness(_dir) { Screen = "nothing readable by the gate", PaneReadable = false, DialogScreen = PaneFixtures.QaFormQ1 };
+        harness.AddSession("qa", WriteTranscript("dialogseam.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+
+        Assert.Equal(4, (await harness.Client.FetchPromptAsync("qa")).Prompt!.Options.Count);
+        Assert.True(harness.DialogReads > 0);
+    }
+
+    [Fact]
+    public async Task ADialogSeamThatCannotReadTheRouteIsNoPane()
+    {
+        var harness = new Harness(_dir) { Screen = PaneFixtures.QaFormQ1, DialogScreen = PaneFixtures.QaFormQ1, DialogReadable = false };
+        harness.AddSession("qa", WriteTranscript("dialogseam-off.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+
+        Assert.Equal(MirrorProtocol.ErrNoPane, (await harness.Client.FetchPromptAsync("qa")).Error);
+    }
+
+    [Fact]
+    public async Task AnAnswerVerifiesAgainstTheDialogSeamsScreen()
+    {
+        var harness = new Harness(_dir) { Screen = "gate sees nothing", DialogScreen = PaneFixtures.QaFormQ1 };
+        harness.AddSession("qa", WriteTranscript("dialogseam-answer.jsonl", Conversation(2)));
+        await harness.HandshakeAsync("qa");
+
+        var prompt = (await harness.Client.FetchPromptAsync("qa")).Prompt!;
+        Assert.Null(await harness.Client.AnswerPromptAsync("qa", "1", prompt.Fingerprint));
+        Assert.Equal(new[] { "1" }, harness.Pressed);
+    }
+
     // No route check wired is "readable": the capture itself decides.
     [Fact]
     public async Task WithNoRouteCheckTheCaptureDecides()
@@ -4784,6 +4820,12 @@ public partial class MirrorRoundTripTests : IDisposable
         public bool PressThrows { get; set; }
         public bool PaneReadable { get; set; } = true;
 
+        // CB-412: the dialog reader, apart from the typing gate's. Null leaves the
+        // server on CapturePane/CanReadPane, as every harness before this was.
+        public string? DialogScreen { get; set; }
+        public bool DialogReadable { get; set; } = true;
+        public int DialogReads { get; private set; }
+
         // The far screen moving after a key or typed text, as a real one
         // does: return the next screen, or null to leave it as it is.
         public Func<string, string?>? AfterPress { get; set; }
@@ -4928,6 +4970,13 @@ public partial class MirrorRoundTripTests : IDisposable
                 RecordStatus: ungated ? null : ReadRecord,
                 CapturePane: ungated ? null : CaptureScreen,
                 CanReadPane: ungated || noCanReadPane ? null : _ => PaneReadable,
+                DialogCapture: ungated ? null : status =>
+                {
+                    if (DialogScreen is null) return CaptureScreen(status);
+                    DialogReads++;
+                    return Task.FromResult<string?>(DialogScreen);
+                },
+                DialogCanRead: _ => DialogScreen is null ? noCanReadPane || PaneReadable : DialogReadable,
                 PressKey: ungated || noPressKey ? null : (_, key) =>
                 {
                     if (PressThrows) throw new InvalidOperationException("tmux went away");

@@ -182,7 +182,15 @@ namespace Orbweaver
             // Buddy shows the controls disabled and never sends the flag.
             // RunControlsHost reads cached readings only, so asking it on the
             // peer pump costs no disk walk (the CB-306 freeze).
-            IRunControls? RunControls = null);
+            IRunControls? RunControls = null,
+
+            // CB-412: what a dialog or `/login` screen is read through, kept apart
+            // from CapturePane/CanReadPane because those also feed the typing gate,
+            // which stays on the tmux pane. Null falls back to that pair, so every
+            // harness built before this reads exactly as it did; LiveSeams wires the
+            // route-aware reader (tmux, iTerm2, kitty, WezTerm, a Windows console).
+            Func<SessionStatus, Task<string?>>? DialogCapture = null,
+            Func<SessionStatus, bool>? DialogCanRead = null);
 
         // What running a slash line on the far machine came to: one of
         // MirrorProtocol.ViaTyped/ViaControl/ViaRefused, and for a refusal the
@@ -191,6 +199,9 @@ namespace Orbweaver
 
         private readonly string _account;
         private readonly Seams _seams;
+
+        private Func<SessionStatus, Task<string?>>? DialogCapture => _seams.DialogCapture ?? _seams.CapturePane;
+        private Func<SessionStatus, bool>? DialogCanRead => _seams.DialogCanRead ?? _seams.CanReadPane;
         private readonly object _gate = new();
 
         // One subscription: someone is watching a session and wants what's new.
@@ -519,11 +530,13 @@ namespace Orbweaver
                 RecordStatus: status => RecordStatusFor(status, localSessions),
                 CapturePane: TerminalFocuser.CapturePane,
                 CanReadPane: TerminalFocuser.CanReadPane,
-                PressKey: TerminalFocuser.SendPaneKey,
-                TypeLiteral: TerminalFocuser.SendPaneText,
+                PressKey: (status, key) => LocalCliChatSession.PickPress(TerminalFocuser.RouteFor(status))(status, key),
+                TypeLiteral: (status, text) => LocalCliChatSession.PickType(TerminalFocuser.RouteFor(status))(status, text),
                 Shadow: RealShadowOn,
                 Files: LiveFiles,
-                RunControls: RunControlsLive.Shared);
+                RunControls: RunControlsLive.Shared,
+                DialogCapture: status => LocalCliChatSession.PickCapture(TerminalFocuser.RouteFor(status))(status),
+                DialogCanRead: status => TerminalFocuser.CanReadPane(status) || ScreenReaders.For(status) is not null);
         }
 
         // CB-307: shadow mode, read the way the local panel's gate reads it —
@@ -1231,7 +1244,7 @@ namespace Orbweaver
 
             var code = _seams.PressKey is not { } press
                 ? MirrorProtocol.ErrUnsupported
-                : await FormAnswer.AnswerAsync(status, _seams.CapturePane!, press, _seams.TypeLiteral,
+                : await FormAnswer.AnswerAsync(status, DialogCapture!, press, _seams.TypeLiteral,
                     wanted, key, action, text, why => AnswerLog("answer", $"n={name} {why}")).ConfigureAwait(false);
 
             var what = action is null ? $"key={key}" : $"act={action}";
@@ -1263,7 +1276,7 @@ namespace Orbweaver
                      || Resolve(name, _seams.Agents(), _seams.LocalSessions()) is not { } resolved)
                 code = MirrorProtocol.ErrNoSession;
             else if (!_seams.ReplyEnabled(resolved.Status.Source)) code = MirrorProtocol.ErrReplyOff;
-            else if (_seams.CapturePane is null || !(_seams.CanReadPane?.Invoke(resolved.Status) ?? true))
+            else if (DialogCapture is null || !(DialogCanRead?.Invoke(resolved.Status) ?? true))
                 code = MirrorProtocol.ErrNoPane;
             else status = resolved.Status;
 
@@ -1274,7 +1287,7 @@ namespace Orbweaver
         private async Task<(MirrorProtocol.WirePrompt? Prompt, string CallWhy)> ReadPromptAsync(SessionStatus status)
         {
             string? screen;
-            try { screen = await _seams.CapturePane!(status).ConfigureAwait(false); }
+            try { screen = await DialogCapture!(status).ConfigureAwait(false); }
             catch { screen = null; }
 
             var (call, why) = AskFormTranscript.CallForWhy(screen, status.TranscriptPath);

@@ -259,46 +259,86 @@ namespace Orbweaver
             // generically, its preview as the prompt and one preselected choice,
             // where a `permission` with one option would show "Allow this
             // command to run?" and no buttons.
-            var kind = form is null && !fp.Overlay ? "permission" : "question";
+            var login = fp.Login;
+            var kind = form is null && !fp.Overlay && login is null ? "permission" : "question";
+            var canPress = _seams.CanPress?.Invoke(status) ?? true;
             // A trust, update or hooks-review screen numbers its choices like a
             // permission dialog, so the fingerprint alone cannot tell them apart.
             // It goes to the phone as "Open on desk": the same prompt with no
             // options, and the gate refuses anything an answer names.
+            // A /login screen (CB-412) is a question whose choices are the screen's
+            // own: the picker's digits, or Enter on the error screen. The URL step
+            // offers none, and that empty list is not "Open on desk" for it: it
+            // takes the code instead, where the route can type one.
             var questionOptions = form is not null ? QuestionOptions(form)
+                : login is not null ? LoginOptions(login)
                 : fp.Overlay ? [new PromptOption(fp.Prompt.Options[0].Key, fp.Prompt.Options[0].Label, OptionKinds.Option, null)]
                 : null;
-            var deskOnly = FirstRunDialogs.Is(screen) || !(_seams.CanPress?.Invoke(status) ?? true) || questionOptions is { Count: 0 };
+            var deskOnly = FirstRunDialogs.Is(screen) || !canPress || (questionOptions is { Count: 0 } && login is not { Step: LoginStep.Url });
             var options = deskOnly ? [] : questionOptions ?? fp.Prompt.Options.Select(o =>
             {
                 var c = OptionKinds.Classify(kind, o.Label, o.Mode);
                 return new PromptOption(o.Key, o.Label, c.Kind, c.Scope, o.ScopeTruncated);
             }).ToList();
-            var preview = form is not null ? QuestionPreview(form) : fp.Overlay ? OverlayPreview(fp.Preview) : string.Join("\n", fp.Preview);
-            var tool = form is null && !fp.Overlay ? ToolOf(fp.Preview) : "";
+            var preview = form is not null ? QuestionPreview(form) : login is not null ? LoginPreview(login)
+                : fp.Overlay ? OverlayPreview(fp.Preview) : string.Join("\n", fp.Preview);
+            var tool = login is not null ? LoginTool : form is null && !fp.Overlay ? ToolOf(fp.Preview) : "";
             // frames-v7-questions: what else the question takes, from the screen,
             // so the phone never has to guess. Neither on a question that went
             // out with nothing to answer.
             var multi = form is { MultiSelect: true } && options.Count > 0;
             var text = form is { MultiSelect: false, IsReview: false, FreeTextKey: not null } && options.Count > 0;
-            var prompt = PromptFrames.Prompt(requestId, sid, kind, cli, tool, preview, options, fp.Hash, expires, multi, text, quiet: fp.Overlay);
+            var code = login is { Step: LoginStep.Url } && !deskOnly;
+            var loginInfo = login is null ? null : new LoginInfo(StepName(login.Step), login.Step == LoginStep.Url ? login.Url : null, code);
+            var quiet = fp.Overlay || login is not null;
+            var prompt = PromptFrames.Prompt(requestId, sid, kind, cli, tool, preview, options, fp.Hash, expires, multi, text, quiet: quiet, login: loginInfo);
             var label = string.IsNullOrWhiteSpace(status.Title) ? _machine : $"{status.Title} on {_machine}";
             var persona = _send.PersonaFor(sid);
-            var push = fp.Overlay ? null : PromptFrames.FitPush(requestId, sid, label, tool, form is null ? SummaryOf(tool) : AsksAQuestion, preview, expires, options, fp.Hash, persona);
+            var push = quiet ? null : PromptFrames.FitPush(requestId, sid, label, tool, form is null ? SummaryOf(tool) : AsksAQuestion, preview, expires, options, fp.Hash, persona);
 
             // A question presses only what it offered (the gate's rule 7).
-            var keys = form is null && !fp.Overlay ? null : options.Select(o => o.Key).ToList();
-            var live = new Live { Pending = new PendingPrompt(requestId, sid, kind, fp.Hash, expires, deskOnly, keys, multi, text), Status = status, Prompt = prompt, Push = push?.Plaintext, Label = label, Quiet = fp.Overlay };
+            var keys = form is null && !fp.Overlay && login is null ? null : options.Select(o => o.Key).ToList();
+            var live = new Live { Pending = new PendingPrompt(requestId, sid, kind, fp.Hash, expires, deskOnly, keys, multi, text, code), Status = status, Prompt = prompt, Push = push?.Plaintext, Label = label, Quiet = quiet };
             _live[sid] = live;
             // Before the send, so the activity frame that goes ahead of this
             // prompt's push already names it.
             // A question's line on the island is the question itself; its
             // preview's first line is the form's tab bar ("☐ Colour").
-            lock (_activityGate) _activity[sid] = new ActivityPrompt(requestId, tool, form is null ? (fp.Overlay ? fp.Prompt.Title : RelayActivity.CommandOf(fp.Preview)) : form.Prompt.Title);
-            if (fp.Overlay) _send.PromptQuiet(requestId, sid, prompt);
+            lock (_activityGate) _activity[sid] = new ActivityPrompt(requestId, tool, form is null ? (login is not null ? LoginTool : fp.Overlay ? fp.Prompt.Title : RelayActivity.CommandOf(fp.Preview)) : form.Prompt.Title);
+            if (quiet) _send.PromptQuiet(requestId, sid, prompt);
             else _send.Prompt(requestId, sid, prompt, push?.Plaintext);
-            _seams.Log($"prompt {requestId} {fp.Hash}{(deskOnly ? " desk-only" : "")}{(fp.Overlay ? " quiet" : push is null ? " no-e" : "")} "
+            _seams.Log($"prompt {requestId} {fp.Hash}{(deskOnly ? " desk-only" : "")}{(quiet ? " quiet" : push is null ? " no-e" : "")} "
                 + PushPersona.LogTagFor(persona, push is { PersonaDropped: false } && persona is not null));
         }
+
+        // CB-412: what a phone is told of /login. The tool name is fixed, and the
+        // URL step's preview never holds the URL (it travels in login.url alone).
+        internal const string LoginTool = "Login";
+        internal const string LoginUrlPreview = "Sign in with the link on your desk, then paste the code here.";
+
+        internal static string StepName(LoginStep step) => step switch
+        {
+            LoginStep.Url => "url",
+            LoginStep.Error => "error",
+            _ => "picker",
+        };
+
+        internal static string LoginPreview(LoginScreen login) =>
+            login.Step switch
+            {
+                LoginStep.Url => LoginUrlPreview,
+                // The picker's question ("Select login method:") is its title, the
+                // text above it the preview; the phone shows both, in screen order.
+                LoginStep.Picker => string.Join("\n", login.Preview.Append(login.Title)),
+                _ => string.Join("\n", login.Preview),
+            };
+
+        // The screen's own options, as plain choices: the digits, or Enter ("Try
+        // again"). The URL step has none.
+        internal static IReadOnlyList<PromptOption> LoginOptions(LoginScreen login) =>
+            login.Step == LoginStep.Url
+                ? []
+                : login.Options.Select(o => new PromptOption(o.Key, o.Label, OptionKinds.Option, null)).ToList();
 
         // frames-v3 push_plaintext_e.summary for a question.
         internal const string AsksAQuestion = "Asks a question";
@@ -462,7 +502,9 @@ namespace Orbweaver
                 // line can press this dialog again.
                 var pending = live!.Pending;
                 pending.Answered = true;
-                var outcome = d.Keys is { } ticks
+                var outcome = d.IsLoginCode
+                    ? await PressCodeAsync(live.Status, pending, answer.RequestId, d.Text!).ConfigureAwait(false)
+                    : d.Keys is { } ticks
                     ? await PressOptionsAsync(live.Status, pending, answer.RequestId, ticks).ConfigureAwait(false)
                     : d.Text is { } typed
                     ? await PressOtherAsync(live.Status, pending, answer.RequestId, d.Key!, typed).ConfigureAwait(false)
@@ -576,6 +618,11 @@ namespace Orbweaver
         private async Task<PressOutcome> PressOnceAsync(SessionStatus status, PendingPrompt pending, string requestId, string key)
         {
             if (await PressAsync(status, pending, requestId, key).ConfigureAwait(false) is { } early) return early;
+            return await WaitGoneAsync(status, pending).ConfigureAwait(false);
+        }
+
+        private async Task<PressOutcome> WaitGoneAsync(SessionStatus status, PendingPrompt pending)
+        {
             // The same test as before (the approved dialog's hash is gone), asked
             // sooner and again: a dialog that is still up after SettleDelay of
             // looks is as stale as it was after one look at SettleDelay. A single
@@ -654,6 +701,25 @@ namespace Orbweaver
                 why => _seams.Log($"{why} {requestId}")).ConfigureAwait(false);
             if (code is null) _seams.Log($"press {requestId} other");
             return OutcomeOf(code);
+        }
+
+        // CB-412 code: LoginAnswer reads the URL step (this hash, field empty), types
+        // the code without Enter, reads the tail back, and only then presses Enter
+        // on a last look at the same screen. The code is held in this one argument
+        // from the gate to the type call: not logged, not in a field. The log
+        // carries the outcome name alone; LoginAnswer's own codes are fixed words.
+        private async Task<PressOutcome> PressCodeAsync(SessionStatus status, PendingPrompt pending, string requestId, string code)
+        {
+            var press = _seams.CaptureAndPress ?? ((st, key, approved) => CaptureThenPress(st, key, approved));
+            var outcome = await LoginAnswer.SubmitCodeAsync(status, new LoginCapture(_seams.Capture), new LoginType(_seams.TypeLiteral),
+                    new LoginCaptureAndPress(press), _seams.Delay, pending.ScreenHash, code)
+                .ConfigureAwait(false);
+            if (outcome is not null) return OutcomeOf(outcome);
+            _seams.Log($"press {requestId} code");
+            // Took only when the URL step is gone: a wrong code comes back as the
+            // error screen, which hashes differently, and a screen that never moved
+            // is NoEffect.
+            return await WaitGoneAsync(status, pending).ConfigureAwait(false);
         }
 
         // tell: press the option, wait for the dialog to clear (the CLI then

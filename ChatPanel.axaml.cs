@@ -3658,6 +3658,7 @@ namespace Orbweaver
                 _promptArmed = false;
                 _pressedPromptOption = null;
                 HideFreeText();
+                HideLoginEntry();
                 PromptProgress.IsVisible = false;
                 PromptBody.Text = null;
                 PromptBodyCard.IsVisible = false;
@@ -3709,7 +3710,107 @@ namespace Orbweaver
             PromptOptions.ItemsSource = offered.Count > 0 ? offered : null;
             PromptOptions.IsVisible = offered.Count > 0;
 
+            ApplyLoginEntry(prompt);
+
             PromptBox.IsVisible = true;
+        }
+
+        // CB-412: the URL step of /login. The link is the sign-in URL as a control the
+        // existing link handler opens; the field takes the code the browser shows. Both
+        // follow the prompt, so a new screen (a wrong code arrives as an error prompt) removes
+        // them, and a field that was open is emptied whenever the prompt stops asking for it.
+        private string? _loginLinkUrl;
+        private IRemoteChatLoginCode? _loginCodeSession;
+
+        private void ApplyLoginEntry(ChatPrompt prompt)
+        {
+            _loginLinkUrl = prompt.Link;
+            PromptLoginLink.Text = prompt.Link;
+            PromptLoginLink.IsVisible = prompt.Link is not null;
+
+            if (prompt.CodeEntry && _session is IRemoteChatLoginCode codes)
+            {
+                _loginCodeSession = codes;
+                PromptLoginCode.IsVisible = true;
+                return;
+            }
+
+            // HideLoginEntry empties everything, including the link; a prompt with a link but no
+            // field (an unpressable route) still wants the link, so it is put back.
+            HideLoginEntry();
+            _loginLinkUrl = prompt.Link;
+            PromptLoginLink.IsVisible = prompt.Link is not null;
+        }
+
+        private void HideLoginEntry()
+        {
+            _loginLinkUrl = null;
+            _loginCodeSession = null;
+            PromptLoginLink.Text = null;
+            PromptLoginLink.IsVisible = false;
+            PromptLoginCode.IsVisible = false;
+            PromptLoginCodeBox.Text = "";
+            UpdateLoginCodeSend();
+        }
+
+        private void PromptLoginLink_PointerPressed(object? sender, PointerPressedEventArgs e)
+        {
+            e.Handled = true;
+            if (_loginLinkUrl is { } url) ChatLinks.Open(url);
+        }
+
+        // Send is live only for a code: a blank field must never reach the terminal.
+        private void PromptLoginCodeBox_TextChanged(object? sender, TextChangedEventArgs e) => UpdateLoginCodeSend();
+
+        private void UpdateLoginCodeSend() =>
+            PromptLoginCodeSend.IsEnabled = LoginAnswer.CodeAllowed((PromptLoginCodeBox.Text ?? "").Trim());
+
+        private void PromptLoginCodeBox_KeyDown(object? sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Enter) return;
+
+            e.Handled = true;
+            SubmitLoginCode();
+        }
+
+        private void PromptLoginCodeSend_PointerPressed(object? sender, PointerPressedEventArgs e)
+        {
+            e.Handled = true;
+            SubmitLoginCode();
+        }
+
+        // Internal: driven by the UI suite. The code lives in one local from the control to the
+        // call: the field is emptied before the send is awaited, and nothing here stores it.
+        internal void SubmitLoginCode()
+        {
+            var session = _loginCodeSession;
+            var code = (PromptLoginCodeBox.Text ?? "").Trim();
+
+            // Refused here rather than emptied and then refused downstream: a paste with a space
+            // or a newline in it would otherwise vanish with no word said. The field keeps it.
+            if (session is null || !LoginAnswer.CodeAllowed(code)) return;
+
+            PromptLoginCodeBox.Text = "";
+            UpdateLoginCodeSend();
+            _ = SendLoginCodeAsync(session, code);
+        }
+
+        internal const string LoginCodeFailedNote =
+            "Couldn't send the code. Paste it again, or finish in the terminal.";
+
+        // A faulted send says so in fixed words. The exception is never read: its message could
+        // carry the code, and the field is already empty, so silence would lose the paste unseen.
+        private async Task SendLoginCodeAsync(IRemoteChatLoginCode session, string code)
+        {
+            try
+            {
+                await session.SubmitLoginCodeAsync(code);
+            }
+            catch (Exception)
+            {
+                Dispatcher.UIThread.Post(() =>
+                    OnTurnAdded(new ChatTurn { Role = ChatRole.System, Text = LoginCodeFailedNote }));
+            }
         }
 
         // Whether the body on show is drawn with block glyphs (U+2580 to U+259F: the half
