@@ -233,13 +233,17 @@ Broke clears on the next `succeeded` run, because rule 4 reads the newest finish
 | Asleep | idle, dimmed like a parked session | `OrbPresence.Parked` |
 | Amber | `waiting`, with the "?" | `OrbPresence.NeedsInput` |
 | Broke / Paused / Over budget | a mark in the presence corner: "!" for Broke, a pause glyph for the other two. Amber's "?" wins the corner when both apply; the mark's reason still shows in the hover. Drawn marks go in `SymbolMarks`, not typed glyphs (CB-173). | new `ApplyMark` beside `ApplyPresence` |
-| Budget ring | drawn only when `budgetMonthlyCents > 0` **and** `spentMonthlyCents > 0`; percent is spent over cap, capped at 100 for geometry. Hidden otherwise, so a subscription-billed company shows no empty ring. | The orb's **existing context ring** (`OrbWindow` `ContextRingLayer`, `UsageRingGeometry`, the colour bands account orbs use): `ApplyContextRing(status.BudgetPercent ?? status.ContextPercent)`. No new arc. Budget wins if both are ever set, pinned by a UI test. (Lead's ruling; revision 2 had a new arc.) |
+| Budget ring | drawn only when `budgetMonthlyCents > 0` **and** `spentMonthlyCents > 0`; percent is spent over cap, capped at 100 for geometry. Hidden otherwise, so a subscription-billed company shows no empty ring. | The orb's **existing context ring** (`OrbWindow` `ContextRingLayer`, `UsageRingGeometry`, the colour bands account orbs use): No new arc. `PaperclipOrb.RingPercent(status)` is the gate: a Paperclip row draws `BudgetPercent` only, every other source `ContextPercent` only, and null draws no ring. So `BudgetPercent` must be null, never 0, when the cap or the spend is zero. (Lead's ruling; revision 2 had a new arc.) |
 | Hover | lines in this order, each omitted when empty: need titles; mark reason; task; activity; "running for 3 m"; "last run succeeded 2 h ago"; "$0.26 of $50.00 this month" | tooltip at `OrbWindow.axaml.cs:371` |
 | Click | amber: the first need's URL. Otherwise the agent's page. | `ClickRouting.OpensInABrowser` |
 | Menu | **Open in Paperclip**; **Review in Paperclip** (amber only); **Reconnect** (§2.4 only). Wake, Pause, Resume are release 2. | |
 | Folded count | a "+N" pill on the lead; its tooltip lists the names | new, small |
 
 No chat panel. No kind badge.
+
+**Dimming, as built (`PaperclipOrb.Dims`, B2 at `b6a81bf78`).** A Paperclip orb dims to 0.45 only when it is asleep (`Parked` with no Broke or OverBudget mark) or manually paused (mark Paused, unless it also needs you). Needs-you, broke, over-budget and working draw at full strength, and broke or over-budget win even when the row is `Parked`. The dim is applied to the orb's body, not the whole window, so the presence-corner mark ("?", "!", pause) stays at full strength on a dimmed orb. It is re-applied whenever the verdict changes, even if presence did not. Every other source keeps today's rule.
+
+A report under a lead draws at the existing team-member scale. **Open in Paperclip** and **Review in Paperclip** both open `status.Url`, which §3's merge block sets to the first need's page when the agent is waiting.
 
 ### 2.8 The fold rule (`PaperclipApi.Fold`)
 
@@ -407,7 +411,7 @@ Read from the code at `7155aa3`, not run on a device. The roster decodes; the ro
 | Integration | `PaperclipHttpTests` | The real `IPaperclipApi` against `tests/Shared/LoopbackHttp.cs`: the paths and query strings are exactly §2.3's and §2.5's; `Authorization` sent with a key and absent without; 401, 500, a hung response, a dropped connection and non-JSON come back as typed failures; the challenge POST body is byte-exact. |
 | Integration | settings round trip | The five keys survive save and load; an old file loads defaults; unknown keys survive beside them. |
 | UI | `PaperclipScanTests` (model `CloudScanTests`, in `[Collection("Settings")]`) | Lead and two reports give three orbs with the right keys and leads; state changes in place; a terminated agent's orb goes; switching off removes all; an agent three hours asleep survives the stale timer; `NeedsReconnect` dims and keeps every orb; ten agents fold with the count on the lead; a matching `sdk-cli` row is not drawn while connected and **is** drawn with Paperclip off. |
-| UI | `PaperclipOrbTests` | Badge present; no kind badge; each mark; "?" wins the corner over a mark; the context ring showing budget, hidden with no budget, and budget winning over a context percent; "+N"; every hover line and its order; click target for amber and for not amber; menu rows per state; reset-idle disabled. |
+| UI | `PaperclipOrbTests` | Badge present; no kind badge; each mark; "?" wins the corner over a mark; the context ring drawing budget for a Paperclip row and never a context percent, hidden when budget is null; each row of the dimming rule, with the corner mark at full strength on a dimmed orb and a non-Paperclip control on the old rule; "+N"; every hover line and its order; click target for amber and for not amber; menu rows per state; reset-idle disabled. |
 | UI | `SettingsWindow` tests | Found-instance row and Connect; approving state and Cancel; picker shown only with several companies; Reconnect shown only when needed; the http-on-LAN note; no control ever holds the key. |
 | Screenshot | `tests/UiScreenshots` | (1) a company: lead with reports, one working, one amber, one broke, one paused, one with a ring; (2) a folded lead with "+N"; (3) the Settings group, connected; (4) the dimmed "Reconnect" state. |
 | Console | `ArrangementTests` | Run once; no new geometry expected. |
