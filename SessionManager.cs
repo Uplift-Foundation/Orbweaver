@@ -2904,7 +2904,7 @@ namespace Orbweaver
             // What the orb says is PaperclipScan's, so this is one call.
             found.AddRange(_paperclipScan.Entries(
                 PaperclipSessions.Snapshot(), PaperclipSessions.Link, PaperclipSessions.StatusText,
-                OrbweaverSettings.PaperclipSleeping, DateTime.UtcNow));
+                OrbweaverSettings.PaperclipSleeping, DateTime.UtcNow, PaperclipSessions.Remembered));
 
             // Before InheritTerminalInfo, so this describes the files as the
             // hooks wrote them. It happens to be immune to the donation — pid and

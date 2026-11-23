@@ -24,7 +24,7 @@ namespace Orbweaver
         // why. Never a silent disappearance.
         internal IReadOnlyList<SessionManager.ScanEntry> Entries(
             IReadOnlyList<PaperclipAgent> snapshot, PaperclipLink link, string linkText,
-            string sleeping, DateTime now)
+            string sleeping, DateTime now, bool remembered = false)
         {
             if (snapshot.Count == 0) return Array.Empty<SessionManager.ScanEntry>();
 
@@ -38,7 +38,10 @@ namespace Orbweaver
 
             var folded = PaperclipApi.Fold(snapshot, sleeping, PaperclipApi.DefaultFoldLimit, awake);
             var drawn = folded.Drawn.Select(a => a.Id).ToHashSet();
-            var parked = link is PaperclipLink.NeedsReconnect or PaperclipLink.Unreachable;
+            // Remembered rows are a picture from the last launch, not a live read, so
+            // they are parked exactly as a refused key parks the company (plan 2.4):
+            // dimmed, no mark, no ring, one line saying why.
+            var parked = remembered || link is PaperclipLink.NeedsReconnect or PaperclipLink.Unreachable;
 
             var rows = new List<SessionManager.ScanEntry>(folded.Drawn.Count);
             foreach (var a in folded.Drawn)

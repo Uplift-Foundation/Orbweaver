@@ -111,6 +111,10 @@ holds a secrets directory and a database), and writes nothing.
 - **An already-wide key file is not narrowed at launch, only when the key is next stored.** For Paperclip that is acceptable: the file is new in this release, so only test machines that connected before the owner-only change can have a wide one, and a reconnect or Disconnect/Connect rewrites it owner-only. It is one of CB-423's requirements for the older secret files, which do exist wide in the field.
 - Other secrets in this app are written with the same assumption on Windows (the OpenClaw gateway token and device identity, the peer-link identity, the relay identity, the cached Claude CLI credential): the owner-only mode is set only off Windows and the file otherwise inherits its folder's ACL. Not changed here; reported.
 
+## Remembering the roster across restarts
+
+A key lasts 30 days, and a launch with an expired key (or an unreachable Paperclip) has no snapshot at the first poll, so without help the company would draw nothing: a silent disappearance, which the product plan forbids. The app therefore writes `paperclip-roster.json` beside the settings, only when the roster changed, holding ids, names, roles, titles, `reportsTo`, the issue prefix, the address and the company id, and nothing else (no key, task text, spend, activity, error reason or adapter setting; a test reads the file back and asserts it). It is created owner-only by the same private-create path as the key file. At start, when enabled, those rows are published as sleeping orbs, parked with the link's own words, until the first successful read replaces them; they are never used once a live snapshot exists, agents that no longer exist vanish at that first read, and the file is removed on Disconnect and when the address or company changes. A corrupt or unreadable file is ignored. Not seen on a real machine: written and tested, and the first run that restarts the app with a refused key is the real proof.
+
 ## Timing
 
 - A run shorter than the poll interval never shows as working: a woken agent whose

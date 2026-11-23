@@ -29,6 +29,7 @@ public class PaperclipScanTests : IDisposable
 
     public void Dispose()
     {
+        PaperclipSessions.Publish([], PaperclipLink.Off, "Paperclip is switched off.");   // also clears "remembered"
         PaperclipSessions.SetSnapshotForTests([]);
         PaperclipSessions.SetLinkForTests(PaperclipLink.Off, "Paperclip is switched off.");
         OrbweaverSettings.PaperclipEnabled = _enabled;
@@ -75,6 +76,33 @@ public class PaperclipScanTests : IDisposable
         Assert.Equal("paperclip:lead", orbs["paperclip:x"].LastStatus!.Lead);
         Assert.Equal("paperclip:lead", orbs["paperclip:y"].LastStatus!.Lead);
         Assert.All(orbs.Values, o => Assert.Equal(SessionSource.Paperclip, o.LastStatus!.Source));
+    }
+
+    // The remembered picture of the company, drawn before any read: dimmed orbs on a
+    // real scan, each saying why, never a mark or a ring.
+    [AvaloniaFact]
+    public void ARememberedCompany_DrawsDimmedOrbs_ThroughARealScan_WithTheLinesReason()
+    {
+        OrbweaverSettings.PaperclipEnabled = true;
+        PaperclipSessions.Publish(Team(), PaperclipLink.NeedsReconnect, "Reconnect to Paperclip", remembered: true);
+
+        var m = Manager();
+        m.ScanAndUpdate();
+
+        Assert.Equal(new[] { "paperclip:lead", "paperclip:x", "paperclip:y" }, Orbs(m).Keys.OrderBy(k => k).ToArray());
+        Assert.All(Orbs(m).Values, o =>
+        {
+            Assert.Equal(OrbPresence.Parked, o.LastStatus!.Presence);
+            Assert.Equal("idle", o.LastStatus.State);
+            Assert.Equal(PaperclipMark.None, o.LastStatus.Mark);
+            Assert.Equal(new[] { "Reconnect to Paperclip" }, o.LastStatus.HoverLines.ToArray());
+        });
+
+        // The first live read replaces them: the generating one is back at full strength.
+        PaperclipSessions.Publish([A("lead"), A("x", "lead"), A("y", "lead", state: "generating")], PaperclipLink.Connected, "Connected");
+        m.ScanAndUpdate();
+        Assert.Equal("generating", Orbs(m)["paperclip:y"].LastStatus!.State);
+        Assert.NotEqual(OrbPresence.Parked, Orbs(m)["paperclip:y"].LastStatus!.Presence);
     }
 
     [AvaloniaFact]

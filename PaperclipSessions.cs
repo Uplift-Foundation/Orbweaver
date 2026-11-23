@@ -66,6 +66,17 @@ namespace Orbweaver
         // no scans.
         internal static event Action? Changed;
 
+        // True while what is published is the remembered picture of the company, not
+        // a live read: the scan draws every such row parked, with the link's reason.
+        private static volatile bool _remembered;
+        internal static bool Remembered => _remembered;
+
+        // Where the roster is kept between launches. The app wires a file beside the
+        // settings; nothing here reads settings (the probe compiles this file).
+        internal static IRosterStore RosterStore { get; set; } = new NullRosterStore();
+
+        private static string _lastRosterSignature = "";
+
         private static string _lastDraw = "";
 
         // Everything the orbs draw, and nothing that merely moves with the clock
@@ -88,15 +99,65 @@ namespace Orbweaver
 
         // The one way the loop publishes. Sets what Snapshot, Link and StatusText
         // read, and raises Changed only when what is drawn is different.
-        internal static void Publish(IReadOnlyList<PaperclipAgent> agents, PaperclipLink link, string status)
+        internal static void Publish(IReadOnlyList<PaperclipAgent> agents, PaperclipLink link, string status,
+            bool remembered = false)
         {
-            var signature = DrawSignature(agents, link, status);
+            var signature = DrawSignature(agents, link, status) + (remembered ? "\nremembered" : "");
+            _remembered = remembered;
             _snapshot = agents;
             _link = link;
             _statusText = status;
             if (signature == _lastDraw) return;
             _lastDraw = signature;
             Changed?.Invoke();
+        }
+
+        // What the loop publishes after a step. A live snapshot is published (and the
+        // roster remembered if it changed). Before the first successful read, the
+        // remembered rows stand in, parked with the link's own words, so a refused
+        // key or an unreachable host at the first poll after a launch dims the company
+        // instead of drawing nothing. Once a live snapshot exists the remembered ones
+        // are never used again.
+        internal static void PublishStep(PollState st, PaperclipConfig cfg,
+            IReadOnlyList<PaperclipAgent> remembered, IRosterStore store, DateTime now)
+        {
+            if (st.Published is { } live)
+            {
+                Publish(live, st.Link, st.Status);
+                RememberRoster(live, st, cfg, store, now);
+            }
+            else if (remembered.Count > 0)
+                Publish(remembered, st.Link, st.Status, remembered: true);
+            else
+                Publish(Array.Empty<PaperclipAgent>(), st.Link, st.Status);
+        }
+
+        // Written only when the roster changed: a healthy company costs no writes.
+        private static void RememberRoster(IReadOnlyList<PaperclipAgent> live, PollState st, PaperclipConfig cfg,
+            IRosterStore store, DateTime now)
+        {
+            if (string.IsNullOrEmpty(cfg.CompanyId)) return;
+            var file = PaperclipRoster.FromLive(cfg.BaseUrl, cfg.CompanyId, st.IssuePrefix, live, now);
+            var signature = PaperclipRoster.Signature(file);
+            if (signature == _lastRosterSignature) return;
+            _lastRosterSignature = signature;
+            store.Save(file);
+        }
+
+        // The picture to draw before the loop's first read, and the signature of what
+        // is on disk so an identical live roster is not rewritten.
+        internal static IReadOnlyList<PaperclipAgent> LoadRemembered(PaperclipConfig cfg, IRosterStore store)
+        {
+            var rows = PaperclipRoster.Remembered(store, cfg.BaseUrl, cfg.CompanyId, out var file);
+            _lastRosterSignature = file is null ? "" : PaperclipRoster.Signature(file);
+            return rows;
+        }
+
+        // Removed on Disconnect and when the company or address changes.
+        internal static void ForgetRoster()
+        {
+            _lastRosterSignature = "";
+            try { RosterStore.Delete(); } catch { }
         }
 
         // The seam every downstream test uses, as ClaudeCloudSessions has.
@@ -356,7 +417,7 @@ namespace Orbweaver
 
         // Excluded from coverage: a `while` around StepAsync and a delay.
         [ExcludeFromCodeCoverage]
-        private static async Task RunAsync(CancellationToken ct)
+        private static async Task RunAsync(IReadOnlyList<PaperclipAgent> remembered, CancellationToken ct)
         {
             var state = PollState.Initial;
             string lastKey = "", lastUrl = "";
@@ -382,7 +443,8 @@ namespace Orbweaver
                     state = state with { Status = ex.Message };
                     wait = Backoff[^1];
                 }
-                Publish(state.Published ?? Array.Empty<PaperclipAgent>(), state.Link, state.Status);
+                PublishStep(state, cfg, remembered, RosterStore, DateTime.UtcNow);
+                if (state.Published != null) remembered = Array.Empty<PaperclipAgent>();   // never used once live
                 try { await Task.Delay(wait, ct).ConfigureAwait(false); } catch { break; }
             }
         }
@@ -399,10 +461,12 @@ namespace Orbweaver
                     Publish(Array.Empty<PaperclipAgent>(), PaperclipLink.Off, "Paperclip is switched off.");
                     return;
                 }
-                Publish(Array.Empty<PaperclipAgent>(), PaperclipLink.Connecting, "Connecting to Paperclip…");
+                var cfg = ConfigSource();
+                var remembered = LoadRemembered(cfg, RosterStore);
+                Publish(remembered, PaperclipLink.Connecting, "Connecting to Paperclip…", remembered: remembered.Count > 0);
                 var cts = new CancellationTokenSource();
                 _cts = cts;
-                _ = Task.Run(() => RunAsync(cts.Token), cts.Token);
+                _ = Task.Run(() => RunAsync(remembered, cts.Token), cts.Token);
             }
         }
     }

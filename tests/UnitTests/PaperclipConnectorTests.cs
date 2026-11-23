@@ -15,8 +15,11 @@ public class PaperclipConnectorTests : IDisposable
     private readonly string _company = OrbweaverSettings.PaperclipCompanyId;
     private readonly bool _hint = OrbweaverSettings.PaperclipHintShown;
 
+    private readonly IRosterStore _rosterWas = PaperclipSessions.RosterStore;
+
     public void Dispose()
     {
+        PaperclipSessions.RosterStore = _rosterWas;
         OrbweaverSettings.PaperclipEnabled = _enabled;
         OrbweaverSettings.PaperclipUrl = _url;
         OrbweaverSettings.PaperclipCompanyId = _company;
@@ -302,5 +305,59 @@ public class PaperclipConnectorTests : IDisposable
         Assert.Empty(w.Anon.Calls);
         Assert.Contains("found", PaperclipHint.Label);
         OrbweaverSettings.PaperclipHintShown = false;
+    }
+
+    // ---- the remembered roster is forgotten with the thing it describes ----
+
+    private FileRosterStore RememberedRoster(string url = Base, string company = "c1")
+    {
+        var store = new FileRosterStore(Path.Combine(_dir, "roster"));
+        store.Save(new RosterFile(url, company, "A", DateTime.UtcNow, [new("a", "A", "r", "t", null)]));
+        PaperclipSessions.RosterStore = store;
+        return store;
+    }
+
+    [Fact]
+    public async Task Disconnect_RemovesTheRememberedRoster()
+    {
+        var w = new World(_dir, TwoCompanies);
+        var store = RememberedRoster();
+        OrbweaverSettings.PaperclipUrl = Base; OrbweaverSettings.PaperclipEnabled = true; OrbweaverSettings.PaperclipCompanyId = "c1";
+        w.Creds.Set(Base, "KEY", DateTime.UtcNow);
+        await w.Connector.DisconnectAsync(default);
+        Assert.False(File.Exists(store.Path_));
+    }
+
+    [Fact]
+    public void ChoosingAnotherCompany_RemovesIt_ChoosingTheSameOneKeepsIt()
+    {
+        var w = new World(_dir, TwoCompanies);
+        var store = RememberedRoster();
+        OrbweaverSettings.PaperclipCompanyId = "c1";
+        w.Connector.ChooseCompany("c1");
+        Assert.True(File.Exists(store.Path_));
+        w.Connector.ChooseCompany("c2");
+        Assert.False(File.Exists(store.Path_));
+    }
+
+    [Fact]
+    public async Task ReconnectingToTheSameAddressAndCompany_KeepsIt_ANewAddressOrCompanyRemovesIt()
+    {
+        var one = "[{\"id\":\"c1\",\"name\":\"One\",\"issuePrefix\":\"A\"}]";
+
+        var same = new World(_dir, one);
+        var store = RememberedRoster();
+        OrbweaverSettings.PaperclipUrl = Base; OrbweaverSettings.PaperclipCompanyId = "c1";
+        await same.Connector.ConnectAsync(Base, default);
+        Assert.True(File.Exists(store.Path_));                      // an expired key renewed: same picture
+
+        OrbweaverSettings.PaperclipUrl = "http://elsewhere:3100";    // the user connected somewhere else before
+        await same.Connector.ConnectAsync(Base, default);
+        Assert.False(File.Exists(store.Path_));
+
+        var store2 = RememberedRoster();
+        OrbweaverSettings.PaperclipUrl = Base; OrbweaverSettings.PaperclipCompanyId = "previous-company";
+        await same.Connector.ConnectAsync(Base, default);
+        Assert.False(File.Exists(store2.Path_));
     }
 }

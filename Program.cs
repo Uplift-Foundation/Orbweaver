@@ -169,6 +169,7 @@ namespace Orbweaver
                     // paperclipEnabled the same way. The config source is wired here so
                     // the loop reads the real settings and key, and nothing earlier does.
                     PaperclipSessions.ConfigSource = PaperclipConfigSource.Read;
+                    PaperclipSessions.RosterStore = new FileRosterStore(OrbweaverSettings.Directory);
                     // The orb menu's Reconnect runs the same approval Settings does.
                     OrbWindow.PaperclipReconnect = () => _ = PaperclipConnector.Current.ConnectAsync(
                         OrbweaverSettings.PaperclipUrl, System.Threading.CancellationToken.None);

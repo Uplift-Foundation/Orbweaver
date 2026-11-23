@@ -19,6 +19,7 @@
     <Compile Include="../../PaperclipHttp.cs" />
     <Compile Include="../../PaperclipDiscovery.cs" />
     <Compile Include="../../PaperclipSessions.cs" />
+    <Compile Include="../../PaperclipRoster.cs" />
   </ItemGroup>
 
 </Project>

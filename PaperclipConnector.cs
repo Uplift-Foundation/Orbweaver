@@ -147,6 +147,12 @@ namespace Orbweaver
             // the picker and the loop waits for the choice.
             Companies = await PaperclipConnect.ListCompaniesAsync(_apiFor(baseUrl, key), ct).ConfigureAwait(false);
             var chosen = PaperclipConnect.ChooseCompany(Companies, OrbweaverSettings.PaperclipCompanyId);
+
+            // A different address or company is a different picture: the remembered
+            // roster of the old one is forgotten.
+            if (!string.Equals(PaperclipRoster.Normalise(OrbweaverSettings.PaperclipUrl), PaperclipRoster.Normalise(baseUrl), StringComparison.Ordinal)
+                || OrbweaverSettings.PaperclipCompanyId != (chosen?.Id ?? ""))
+                PaperclipSessions.ForgetRoster();
             OrbweaverSettings.PaperclipUrl = baseUrl;
             OrbweaverSettings.PaperclipCompanyId = chosen?.Id ?? "";
             OrbweaverSettings.PaperclipEnabled = true;
@@ -160,6 +166,7 @@ namespace Orbweaver
 
         public void ChooseCompany(string companyId)
         {
+            if (OrbweaverSettings.PaperclipCompanyId != companyId) PaperclipSessions.ForgetRoster();
             OrbweaverSettings.PaperclipCompanyId = companyId;
             _restart();
         }
@@ -171,6 +178,8 @@ namespace Orbweaver
             var revoked = await PaperclipConnect.DisconnectAsync(
                 key == null ? null : _apiFor(url, key), () => { if (url.Length > 0) _creds.Delete(url); }, ct).ConfigureAwait(false);
 
+            // Disconnecting forgets the company: its picture is removed with its key.
+            PaperclipSessions.ForgetRoster();
             OrbweaverSettings.PaperclipEnabled = false;
             OrbweaverSettings.PaperclipCompanyId = "";
             Companies = Array.Empty<PaperclipApi.Company>();
