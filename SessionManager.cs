@@ -65,6 +65,12 @@ namespace Orbweaver
         [JsonIgnore]
         public int? BudgetPercent { get; set; }
 
+        // The Paperclip orb's hover, one line each, already in the order plan 2.7
+        // gives and with the empty ones left out (PaperclipApi owns that). The
+        // orb draws what is here and decides nothing about it.
+        [JsonIgnore]
+        public IReadOnlyList<string> HoverLines { get; set; } = Array.Empty<string>();
+
         // What this agent is called inside its team — MenuUX, HitReactSpec.
         // Empty for everything that isn't a team member, and filled in beside
         // Lead from the same read of the process. Everything user-facing
