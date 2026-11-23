@@ -662,17 +662,26 @@ namespace Orbweaver
 
             // CB-212: every pid's team first, in one read, because the plan's
             // gates need the leads and the UI half needs the rest.
-            var teams = _teams(ScanProbePlan.TeamPids(found));
+            var teamPids = ScanProbePlan.TeamPids(found);
+            var teams = Timed("agent teams (pids)", teamPids.Count, () => _teams(teamPids));
 
             // The sessions with no pid to ask about, from their files instead
             // (AgentTeamFiles): a WSL session records none, so its team was
             // unknowable and its orb drew alone. Asked here, off the UI thread,
             // because it opens a file over a VM's share.
-            var fileTeams = _fileTeams(ScanProbePlan.FileTeamCandidates(found));
+            var fileCandidates = ScanProbePlan.FileTeamCandidates(found);
+            var fileTeams = Timed("agent teams (files)", fileCandidates.Count, () => _fileTeams(fileCandidates));
 
+            // Each probe Gather will run is timed on its own, so a slow pass names
+            // the one that was slow.
             return ScanProbes.Gather(
                 ScanProbePlan.For(found, pid => teams.TryGetValue(pid, out var m) ? m.Lead : ""),
-                teams, _paneOwners, _jobListing, _attachClients, _agentViewer, fileTeams);
+                teams,
+                claims => Timed("tmux pane owners", claims.Count, () => _paneOwners(claims)),
+                () => Timed("background-job listing", found.Count, () => _jobListing()),
+                () => Timed("attach clients", found.Count, () => _attachClients()),
+                cwd => Timed("agent viewer", 1, () => _agentViewer(cwd)),
+                fileTeams);
         }
 
         internal static IEnumerable<string?> ClaudeTranscripts(IEnumerable<ScanEntry> found) =>
@@ -2336,7 +2345,7 @@ namespace Orbweaver
         {
             SyncAutoColorMarker();
             var now = DateTime.UtcNow;
-            var found = ReadStatusFiles(now);
+            var found = ReadStatusFilesTimed(now);
             ScanAndUpdateCore(found, GatherProbes(found), now);
         }
 
@@ -2345,6 +2354,19 @@ namespace Orbweaver
         private bool _scanInFlight;
 
         private readonly ScanNudge _nudge = new();
+
+        // The slow-phase diagnostic (SlowPhase): a clock, a threshold and a sink,
+        // all replaceable so the suites can run a "slow" phase without sleeping.
+        internal Func<TimeSpan> ScanClock { get; set; } = SlowPhase.StopwatchClock();
+        internal TimeSpan SlowPhaseThreshold { get; set; } = SlowPhase.DefaultThreshold;
+        internal Action<string> SlowPhaseSink { get; set; } = SlowPhase.DefaultSink;
+
+        private T Timed<T>(string phase, int count, Func<T> work) =>
+            SlowPhase.Measure(phase, count, work, ScanClock, SlowPhaseThreshold, SlowPhaseSink);
+
+        private List<ScanEntry> ReadStatusFilesTimed(DateTime now) =>
+            SlowPhase.Measure("read status files", (List<ScanEntry> r) => r.Count,
+                () => ReadStatusFiles(now), ScanClock, SlowPhaseThreshold, SlowPhaseSink);
 
         // Asks for a scan promptly, through the 150 ms debounce the status-file
         // watcher uses, so a burst is one scan; if one is running, one more runs
@@ -2400,11 +2422,12 @@ namespace Orbweaver
                 var (found, probes) = await Task.Run(() =>
                 {
                     SyncAutoColorMarker();
-                    var read = ReadStatusFiles(now);
+                    var read = ReadStatusFilesTimed(now);
                     return (read, GatherProbes(read));
                 }).ConfigureAwait(true);
 
-                ScanAndUpdateCore(found, probes, now);
+                // The apply runs on the UI thread, so a slow one is a frozen UI.
+                Timed("apply", found.Count, () => { ScanAndUpdateCore(found, probes, now); return 0; });
             }
             finally
             {
