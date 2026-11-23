@@ -735,6 +735,13 @@ public class NewChatWindowHeightTests : IDisposable
         var actual = ContentHeight(window);
         // 6 is _cliList's Spacing, between the OpenClaw row and its reason.
         Assert.Equal(expected + 6 + reason.DesiredSize.Height, actual);
-        Assert.True(actual < ContentHeight(EverythingAvailable()));
+
+        // CB-361: the slot is no longer shorter without a gateway, because the
+        // Resume pane (a local CLI's own pane) is reserved whenever a local CLI
+        // is usable and is as tall as the Open existing list. What stays true
+        // is that nothing is held for OpenClaw: with Resume's ghost off as
+        // well, the slot falls back to the Folder section's own height.
+        window.ResumeGhost.IsVisible = false;
+        Assert.True(ContentHeight(window) < actual);
     }
 }

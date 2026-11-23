@@ -631,8 +631,7 @@ public class NewChatWindowResumeTests : IDisposable
         window.OpenClawRadio().IsChecked = true;
         Flush();
 
-        Assert.Equal(0, window.LocalModeRow.Opacity);
-        Assert.False(window.LocalModeRow.IsHitTestVisible);
+        Assert.False(window.LocalModeRow.IsVisible);
         Assert.False(window.ResumePane.IsVisible);
         Assert.Equal("Open existing", window.OpenExistingRadio.Content);
     }

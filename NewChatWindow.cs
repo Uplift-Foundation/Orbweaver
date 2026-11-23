@@ -349,6 +349,7 @@ namespace Orbweaver
         // is only made invisible), so switching CLI never moves the window.
         // The pane is one more layer of the slot, with its own ghost.
         internal const double ResumeModeRowHeight = 28;
+        private const double LocalModeOffset = ResumeModeRowHeight + 6;
         private readonly RadioButton _localNewRadio = new() { GroupName = "local-mode", Content = "New chat" };
         private readonly RadioButton _localResumeRadio = new() { GroupName = "local-mode", Content = "Resume" };
         private readonly StackPanel _localModeRow = new()
@@ -367,6 +368,7 @@ namespace Orbweaver
             VerticalAlignment = VerticalAlignment.Center,
             Opacity = 0.7
         };
+        private bool _localModeAvailable;
         private bool _resumeMode;
         private bool _settingMode;
         private bool _resumeLoading;
@@ -575,8 +577,15 @@ namespace Orbweaver
             _localModeRow.Children.Add(_localResumeRadio);
             _localNewRadio.IsCheckedChanged += (_, _) => OnLocalModeRadio(_localNewRadio, resume: false);
             _localResumeRadio.IsCheckedChanged += (_, _) => OnLocalModeRadio(_localResumeRadio, resume: true);
-            root.Children.Add(_localModeRow);
-            root.Children.Add(ReservedSlot(_folderGhost, _agentGhost, _existingGhost, _resumeGhost, _trustGhost, _folderSection, _agentSection, _resumePane, _trustPanel));
+            // The mode row is a layer of the slot, not a row above it. Above it
+            // it stacked on top of the OpenClaw pane (which carries a mode row of
+            // its own and already sets the slot's height), and a window with a
+            // gateway and missing account homes measured 729 on Windows against
+            // the 700 bound. Inside, the folder and Resume layers start below
+            // it, and the slot is still as tall as its tallest layer.
+            foreach (var below in new Control[] { _folderGhost, _folderSection, _resumeGhost, _resumePane })
+                below.Margin = new Avalonia.Thickness(0, LocalModeOffset, 0, 0);
+            root.Children.Add(ReservedSlot(_folderGhost, _agentGhost, _existingGhost, _resumeGhost, _trustGhost, _folderSection, _agentSection, _resumePane, _trustPanel, _localModeRow));
 
             _startButton.Click += async (_, _) => await StartClicked();
             root.Children.Add(_startButton);
@@ -819,6 +828,7 @@ namespace Orbweaver
             // its own after show, so the Machine row reserves it too).
             var anyLocal = options.Any(o => o.Enabled) || _machineSection is not null;
             _resumeGhost.IsVisible = anyLocal;
+            _localModeAvailable = anyLocal;
             _localModeRow.IsVisible = anyLocal;
             var replyDisabled = openClawAvailability == OpenClawNewChatAvailability.ReplyDisabled;
             foreach (var g in _modeReasonGhosts) g.IsVisible = replyDisabled;
@@ -2122,16 +2132,14 @@ namespace Orbweaver
             UpdateTargetSectionVisibility();
         }
 
-        // The mode row follows the CLI like the OpenClaw one does, but keeps its
-        // height (invisible, not collapsed) so a switch never moves the window.
+        // The mode row follows the CLI like the OpenClaw one does. It is a slot
+        // layer, so showing or hiding it never moves the window.
         // Remote machines cannot resume (their session files are not ours to
         // read), so the radio is off with the reason on it.
         private void UpdateLocalModeVisibility()
         {
             var local = !_openClawSelected;
-            _localModeRow.Opacity = local ? 1 : 0;
-            _localModeRow.IsHitTestVisible = local;
-            _localNewRadio.Focusable = _localResumeRadio.Focusable = local;
+            _localModeRow.IsVisible = local && _localModeAvailable;
 
             var remote = _machine is not null;
             _localResumeRadio.IsEnabled = !remote;
