@@ -525,7 +525,7 @@ Measured on 2026-11-23 against Paperclip `2026.1117.0` on the Mac mini, with a b
 | 12e | **Decline after approve: 409** `{"error":"This review has already been resolved"}`. **Approve after decline: 409** `{"error":"Tool action request is no longer pending","reasonCode":"action_not_pending"}`. | measured |
 | 12f | Decline with `{"companyId","reason"}`: 200, `status: "rejected"`. No `companyId`: 400 `companyId is required`. Unknown id: 404 with `reasonCode: "action_request_not_found"`. No credential: 403. | measured |
 | 12g | The default list and `?status=pending` return the same rows; a decided request leaves both at once. `?status=failed` and `?status=rejected` list the decided ones. | measured |
-| 12h | **Release 1 on `develop` does not see a real request.** `PaperclipApi.ParseActionRequests` reads `id` from the row's top level and skips a row without one, and the real row keeps it under `request`. | read from `PaperclipApi.cs:200-201` against the measured row; not run. The first test in §13.5 that feeds the captured fixture to the parser is the proof. This is a defect against CB-421's "Ask first" requirement, fixed in this branch. |
+| 12h | **Release 1 on `develop` does not see a real request.** `PaperclipApi.ParseActionRequests` reads `id` from the row's top level and skips a row without one, and the real row keeps it under `request`. | measured by running the parser (identical to `origin/develop` `8bfc5e7b9`) on the captured pending list: 2 real rows in, 0 parsed; the same rows with `request` lifted to the top level, 2 parsed. A defect against CB-421's "Ask first" requirement, fixed in this branch. |
 | 13 | Resume of an agent paused for budget | **not measured**; none exists |
 
 Read from source, not run:
