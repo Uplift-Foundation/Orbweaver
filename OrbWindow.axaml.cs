@@ -306,6 +306,14 @@ namespace Orbweaver
         public void UpdateFrom(SessionStatus status)
         {
             _lastStatus = status;
+            // A failed action's sentence is overtaken once the agent's state moves.
+            if (PaperclipRowNote != null && _noteStateKey != null && StateKeyOf(status) != _noteStateKey)
+            {
+                PaperclipRowNote = null;
+                _noteStateKey = null;
+                PaperclipNoteItem.Header = null;
+                PaperclipNoteItem.IsVisible = false;
+            }
             RefreshSoundKey(status);
 
             var folder = string.IsNullOrEmpty(status.Cwd)
@@ -371,7 +379,7 @@ namespace Orbweaver
             var tipPath = status.Source == SessionSource.ClaudeCloud
                 ? CloudTipDetail(status.StatusDetail, status.RecentAction)
                 : status.Source == SessionSource.Paperclip
-                    ? PaperclipOrb.TipBody(status.HoverLines, status.FoldedCount, status.FoldedNames)
+                    ? PaperclipOrb.TipBody(WithPaperclipNote(status.HoverLines), status.FoldedCount, status.FoldedNames)
                     : string.IsNullOrEmpty(status.Cwd) ? null : status.Cwd;
 
             // UpdateFrom runs on every session poll, but SetTip always builds
@@ -721,6 +729,21 @@ namespace Orbweaver
             PaperclipRowNote = why;
             PaperclipNoteItem.Header = why;
             PaperclipNoteItem.IsVisible = why != null;
+            _noteStateKey = why == null || _lastStatus == null ? null : StateKeyOf(_lastStatus);
+            // The menu closes when its row is pressed, so the sentence is also the
+            // first line of the hover, where it can be read without reopening it.
+            if (_lastStatus is { Source: SessionSource.Paperclip } s) UpdateFrom(s);
+        }
+
+        // What the note was about. When the agent's state or status moves, the
+        // note has been overtaken and goes.
+        private string? _noteStateKey;
+        private static string StateKeyOf(SessionStatus s) => s.State + "|" + s.PaperclipAgentStatus;
+
+        private IReadOnlyList<string> WithPaperclipNote(IReadOnlyList<string> lines)
+        {
+            if (PaperclipRowNote is not { } note) return lines;
+            return new[] { note }.Concat(lines).ToList();
         }
 
         internal bool PaperclipNoteVisible => PaperclipNoteItem.IsVisible;

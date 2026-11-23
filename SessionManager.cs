@@ -65,6 +65,11 @@ namespace Orbweaver
         [JsonIgnore]
         public int? BudgetPercent { get; set; }
 
+        // A shallow copy, for the one caller that must change a status the relay may
+        // already hold: every field is a value, a string or a collection that is
+        // replaced, never edited in place.
+        internal SessionStatus Copy() => (SessionStatus)MemberwiseClone();
+
         // Release 2 (CB-427): what the amber flyout answers and the menu acts on.
         // The agent's own id and Paperclip's status word for it (so the menu can
         // tell a paused agent from a running one), and the needs behind the amber,
@@ -946,7 +951,7 @@ namespace Orbweaver
             // CB-421: a Paperclip snapshot that changes what the orbs draw asks
             // for a scan now rather than at the next 2 s tick. Marshalled to the
             // UI thread, where the scan state lives; Paperclip-only.
-            PaperclipSessions.Changed += () => Dispatcher.UIThread.Post(RequestScan);
+            PaperclipSessions.Changed += () => Dispatcher.UIThread.Post(OnPaperclipChanged);
 
             _ = ScheduleScan();
         }
@@ -960,9 +965,44 @@ namespace Orbweaver
         internal bool ClearPaperclipNeed(string agentId, string needId)
         {
             var key = PaperclipScan.KeyFor(agentId);
-            if (!_statuses.TryGetValue(key, out var status) || !_windows.TryGetValue(key, out var window)) return false;
-            if (!PaperclipFastPath.WithoutNeed(status, needId)) return false;
-            window.UpdateFrom(status);
+            if (!_statuses.TryGetValue(key, out var existing) || !_windows.TryGetValue(key, out var window)) return false;
+            var copy = existing.Copy();      // never the object the relay holds
+            if (!PaperclipFastPath.WithoutNeed(copy, needId)) return false;
+            _statuses[key] = copy;
+            window.UpdateFrom(copy);
+            return true;
+        }
+
+        // A published Paperclip change: draw it now on the orbs that exist
+        // (PaperclipFastPath, CB-425), then ask for the ordinary scan, which
+        // converges whatever the fast path leaves alone.
+        internal void OnPaperclipChanged()
+        {
+            ApplyPaperclipNow();
+            RequestScan();
+        }
+
+        private IReadOnlyList<ScanEntry> PaperclipRows() => _paperclipScan.Entries(
+            PaperclipSessions.Snapshot(), PaperclipSessions.Link, PaperclipSessions.StatusText,
+            OrbweaverSettings.PaperclipSleeping, DateTime.UtcNow, PaperclipSessions.Remembered);
+
+        // UI thread. False when the set of Paperclip orbs differs from what is on
+        // screen, which the full pass handles. Writes the same one line per state
+        // change the full pass writes, so a change is logged once whichever path
+        // draws it.
+        internal bool ApplyPaperclipNow()
+        {
+            var plan = PaperclipFastPath.Plan(PaperclipRows(), _statuses);
+            if (plan == null || plan.Count == 0) return false;
+            var seen = PaperclipSessions.TakeChangeSeen();
+            foreach (var c in plan)
+            {
+                var applied = PaperclipFastPath.Applied(c.Existing, c.Fresh);
+                _statuses[c.Key] = applied;
+                if (_windows.TryGetValue(c.Key, out var window)) window.UpdateFrom(applied);
+                if (seen is { } at && PaperclipFastPath.Line(c.Key, c.Existing.State, applied.State, PaperclipClock() - at) is { } line)
+                    PaperclipLatencySink(line);
+            }
             return true;
         }
 

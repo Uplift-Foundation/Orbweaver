@@ -561,4 +561,52 @@ public class PaperclipActTests : IDisposable
         }
         finally { PaperclipNeedsPanel.Create = () => new PaperclipNeedsPanel(); }
     }
+
+    // ---- a failed action is also the first line of the hover ----------------------------------
+
+    private static List<string> Bubble(OrbWindow orb)
+    {
+        var stack = Assert.IsType<StackPanel>(orb.CurrentThoughtBubble);
+        var content = Assert.IsType<StackPanel>(Assert.IsType<Border>(stack.Children[0]).Child);
+        return content.Children.OfType<TextBlock>().SelectMany(t => (t.Text ?? "").Split('\n')).ToList();
+    }
+
+    [AvaloniaFact]
+    public async Task A_failed_action_is_the_first_line_of_the_hover_until_the_next_action_or_a_change_of_state()
+    {
+        var fake = new FakeActions { Answer = _ => new(PaperclipActionResult.Refused, "Paperclip said 409.") };
+        OrbWindow.PaperclipActionsSource = () => fake;
+        var status = Plain("idle");
+        status.HoverLines = ["last run succeeded"];
+        var orb = Orb(status);
+        Assert.DoesNotContain("Paperclip said 409.", Bubble(orb));
+
+        await orb.PaperclipActAsync("wake");
+        var lines = Bubble(orb);
+        Assert.Equal("Paperclip said 409.", lines.First(l => l.Length > 0 && l != "Atlas" && !l.StartsWith("Atlas")));
+        Assert.Contains("last run succeeded", lines);
+
+        // an unrelated update of the same state keeps it
+        orb.UpdateFrom(status);
+        Assert.Contains("Paperclip said 409.", Bubble(orb));
+
+        // the agent's state moves: the sentence has been overtaken
+        var moved = Plain("running", "generating"); moved.HoverLines = ["last run succeeded"];
+        orb.UpdateFrom(moved);
+        Assert.DoesNotContain("Paperclip said 409.", Bubble(orb));
+        Assert.False(orb.PaperclipNoteVisible);
+    }
+
+    [AvaloniaFact]
+    public async Task A_later_success_takes_the_sentence_out_of_the_hover()
+    {
+        var fake = new FakeActions { Answer = _ => new(PaperclipActionResult.Refused, "nope") };
+        OrbWindow.PaperclipActionsSource = () => fake;
+        var orb = Orb(Plain("idle"));
+        await orb.PaperclipActAsync("wake");
+        Assert.Contains("nope", Bubble(orb));
+        fake.Answer = _ => new(PaperclipActionResult.Done);
+        await orb.PaperclipActAsync("wake");
+        Assert.DoesNotContain("nope", Bubble(orb));
+    }
 }

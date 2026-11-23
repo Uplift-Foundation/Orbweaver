@@ -7,6 +7,63 @@ namespace Orbweaver.Tests;
 // SessionManager is tests/UiTests/PaperclipFastPathUiTests.
 public class PaperclipFastPathTests
 {
+    private static SessionManager.ScanEntry E(string id, string state = "idle", string lead = "", string title = "Atlas") =>
+        new(PaperclipScan.KeyFor(id), new SessionStatus
+        {
+            Source = SessionSource.Paperclip, State = state, Lead = lead, Title = title, PaperclipAgentId = id,
+        }, DateTime.UtcNow);
+
+    private static Dictionary<string, SessionStatus> Current(params SessionManager.ScanEntry[] e) =>
+        e.ToDictionary(x => x.SessionId, x => x.Status);
+
+    [Fact]
+    public void The_same_set_of_orbs_is_planned_and_anything_else_falls_back()
+    {
+        var cur = Current(E("a", "waiting"), E("b"));
+        cur["claude-code-1"] = new SessionStatus { Source = SessionSource.ClaudeCode };   // other sources are not looked at
+        var plan = PaperclipFastPath.Plan([E("a"), E("b")], cur)!;
+        Assert.Equal(["paperclip:a", "paperclip:b"], plan.Select(c => c.Key));
+        Assert.Equal("waiting", plan[0].Existing.State);
+        Assert.Equal("idle", plan[0].Fresh.State);
+
+        Assert.Null(PaperclipFastPath.Plan([E("a"), E("b"), E("c")], cur));    // an orb appeared
+        Assert.Null(PaperclipFastPath.Plan([E("a")], cur));                    // an orb went
+        Assert.Null(PaperclipFastPath.Plan([E("a"), E("z")], cur));            // a different orb
+        Assert.Null(PaperclipFastPath.Plan([E("a", lead: "paperclip:b"), E("b")], cur));   // a lead moved
+        Assert.Null(PaperclipFastPath.Plan([E("a", title: "Renamed"), E("b")], cur));      // a rename
+        Assert.Empty(PaperclipFastPath.Plan([], new Dictionary<string, SessionStatus>())!);
+    }
+
+    [Fact]
+    public void An_applied_status_is_a_copy_the_original_is_untouched_and_what_the_pass_added_is_kept()
+    {
+        var need = new PaperclipNeed("approval", "p1", "Hire", "u");
+        var old = new SessionStatus
+        {
+            Source = SessionSource.Paperclip, State = "waiting", Presence = OrbPresence.NeedsInput, Needs = [need],
+            Agent = "persona-owned", Cwd = "keep", Lead = "L",
+        };
+        var fresh = new SessionStatus
+        {
+            State = "idle", Presence = OrbPresence.Present, Mark = PaperclipMark.Broke, MarkReason = "r", BudgetPercent = 40,
+            FoldedCount = 2, FoldedNames = "x, y", HoverLines = ["h"], StatusDetail = "d", Url = "http://u",
+            PaperclipAgentId = "a", PaperclipAgentStatus = "idle", PaperclipAgentUrl = "http://agent",
+        };
+        var applied = PaperclipFastPath.Applied(old, fresh);
+
+        Assert.NotSame(old, applied);
+        Assert.Equal(("idle", OrbPresence.Present, PaperclipMark.Broke, "r", 40, 2, "x, y", "d", "http://u", "a", "idle", "http://agent"),
+            (applied.State, applied.Presence, applied.Mark, applied.MarkReason, applied.BudgetPercent, applied.FoldedCount, applied.FoldedNames,
+             applied.StatusDetail, applied.Url, applied.PaperclipAgentId, applied.PaperclipAgentStatus, applied.PaperclipAgentUrl));
+        Assert.Equal(["h"], applied.HoverLines);
+        Assert.Empty(applied.Needs);
+        Assert.Equal(("persona-owned", "keep", "L"), (applied.Agent, applied.Cwd, applied.Lead));
+
+        // the object the relay may be holding did not move
+        Assert.Equal(("waiting", OrbPresence.NeedsInput, PaperclipMark.None), (old.State, old.Presence, old.Mark));
+        Assert.Equal([need], old.Needs);
+    }
+
     private static readonly PaperclipNeed A = new("approval", "a", "Hire QA", "http://p/CB/approvals/a");
     private static readonly PaperclipNeed B = new("action", "b", "Run deploy", "http://p/CB/inbox/requests");
 
