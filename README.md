@@ -2062,7 +2062,7 @@ If you run a [Paperclip](https://github.com/paperclipai/paperclip) company, Orbw
 - **Nothing is installed in your Paperclip org**: no hook, skill, MCP server or agent setting. Orbweaver reads Paperclip's API, which works in every agent mode. Where an agent's run also shows up as a local session, the local row is folded away so there is one orb per agent.
 - **Release 1 is view-only.** The key is full board power (Paperclip has no read-only key), so Orbweaver makes `GET`s and the two connect calls and nothing else: it does not approve, decline, wake, pause or resume. Answering in place comes later.
 - **Many agents.** Up to eight always show. Beyond that, sleeping agents with no reports fold into their lead as a "+N" count and unfold while working or needing you; **When agents are asleep** chooses fold, always show, or hide.
-- The board key is stored in `paperclip-credentials.json` beside the settings file (owner-only on macOS), never in `settings.json`.
+- The board key is stored in `paperclip-credentials.json` beside the settings file (owner-only: mode 0600 on macOS, and on Windows an explicit ACL with inheritance off and one rule, your own account with full control, so it does not inherit the profile folder's access list), never in `settings.json`.
 
 Two things to know that are not Orbweaver's to fix, measured on a Mac mini: on a Homebrew Mac the Paperclip launchd service's `PATH` excludes Homebrew, so agents that call `node` or `claude` can fail to start; and Paperclip's Claude sign-in could not parse Claude Code 2.1.330's output (2.1.286 worked). What was measured and what is assumed is in [`docs/paperclip-findings.md`](docs/paperclip-findings.md); `tools/paperclip-probe` is a read-only way to see what Orbweaver sees.
 

@@ -8,5 +8,9 @@ namespace Orbweaver
     internal static class OpenClawGateway
     {
         internal static string ExplainConnectFailure(Exception ex, bool onMacOS) => ex.Message;
+
+        // What PaperclipHttp.Explain asks of it; the probe never appends the macOS hint.
+        internal const string LocalNetworkHint = "";
+        internal static bool IsHostUnreachable(Exception ex) => false;
     }
 }

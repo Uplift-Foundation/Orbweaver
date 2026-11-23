@@ -93,7 +93,7 @@ public class PaperclipSettingsRowsTests : IDisposable
     {
         var rows = NewWindow().PaperclipRows();
         var box = Assert.Single(rows.SelectMany(r => r.GetLogicalDescendants().OfType<TextBox>()));
-        Assert.Equal("http://127.0.0.1:3100", box.Watermark);
+        Assert.Equal(SettingsWindow.AddressExample, box.Watermark);
 
         OrbweaverSettings.PaperclipEnabled = true;
         OrbweaverSettings.PaperclipUrl = "http://127.0.0.1:3100";
@@ -108,22 +108,60 @@ public class PaperclipSettingsRowsTests : IDisposable
         Assert.Contains("Paperclip found on this machine. Show your company?", Text(rows));
         var box = rows.SelectMany(r => r.GetLogicalDescendants().OfType<TextBox>()).Single();
         Assert.Equal("http://127.0.0.1:3100", box.Text);
+        Assert.True(Button(rows, "Connect").IsEnabled);                       // a discovered address is enough
+        Assert.DoesNotContain("Enter your Paperclip address.",
+            string.Join("\n", rows.SelectMany(r => r.GetLogicalDescendants().OfType<TextBlock>().Where(t => t.IsVisible).Select(t => t.Text))));
 
         Click(Button(rows, "Connect"));
         Assert.Contains("connect http://127.0.0.1:3100", _fake.Calls);
     }
 
+    private static TextBox AddressBox(Control[] rows) =>
+        rows.SelectMany(r => r.GetLogicalDescendants().OfType<TextBox>()).Single();
+
     [AvaloniaFact]
-    public void ConnectWithAnEmptyBox_UsesTheDefaultAddress_AndATypedOneIsUsedAsTyped()
+    public void NothingDiscovered_TheBoxIsEmpty_ShowsAnExampleNotLocalhost_AndConnectIsOff()
+    {
+        var rows = NewWindow().PaperclipRows();
+        var box = AddressBox(rows);
+        Assert.True(string.IsNullOrEmpty(box.Text));
+        Assert.Equal("http://192.0.2.10:3100", SettingsWindow.AddressExample);
+        Assert.Equal(SettingsWindow.AddressExample, box.Watermark);
+        Assert.DoesNotContain("127.0.0.1", box.Watermark);
+        Assert.DoesNotContain("localhost", box.Watermark);
+        Assert.False(Button(rows, "Connect").IsEnabled);
+        Assert.Contains("Enter your Paperclip address.", Text(rows));
+    }
+
+    [AvaloniaFact]
+    public void ClickingAnOffConnect_DoesNothing_NotEvenAGuessAtLocalhost()
     {
         var rows = NewWindow().PaperclipRows();
         Click(Button(rows, "Connect"));
-        Assert.Contains("connect " + PaperclipDiscovery.DefaultAddress, _fake.Calls);
+        Assert.DoesNotContain(_fake.Calls, c => c.StartsWith("connect"));
+    }
 
-        var box = rows.SelectMany(r => r.GetLogicalDescendants().OfType<TextBox>()).Single();
+    [AvaloniaFact]
+    public void TypingAnAddress_TurnsConnectOn_AndHidesThePrompt_AndClearingItTurnsItOffAgain()
+    {
+        var rows = NewWindow().PaperclipRows();
+        var box = AddressBox(rows);
+        var prompt = rows.SelectMany(r => r.GetLogicalDescendants().OfType<TextBlock>())
+            .Single(t => t.Text == "Enter your Paperclip address.");
+        Assert.True(prompt.IsVisible);
+
         box.Text = "http://192.0.2.10:3100";
+        Assert.True(Button(rows, "Connect").IsEnabled);
+        Assert.False(prompt.IsVisible);
+
         Click(Button(rows, "Connect"));
         Assert.Contains("connect http://192.0.2.10:3100", _fake.Calls);
+
+        box.Text = "   ";                       // whitespace is empty
+        Assert.False(Button(rows, "Connect").IsEnabled);
+        Assert.True(prompt.IsVisible);
+        box.Text = "";
+        Assert.False(Button(rows, "Connect").IsEnabled);
     }
 
     [AvaloniaFact]

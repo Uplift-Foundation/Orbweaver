@@ -54,6 +54,8 @@ namespace Orbweaver
             return !(u.IsLoopback || string.Equals(u.Host, "localhost", StringComparison.OrdinalIgnoreCase));
         }
 
+        internal const string AddressExample = "http://192.0.2.10:3100";
+
         internal Control[] PaperclipRows()
         {
             _paperclipKey = PaperclipKey();
@@ -112,7 +114,10 @@ namespace Orbweaver
                 : "Shows the agents of a Paperclip company as orbs: asleep, working, waiting on you, or broke. "
                   + "Connecting is one approval in your browser. Nothing is installed in your Paperclip.")));
 
-            var box = new TextBox { Text = suggested, Watermark = "http://127.0.0.1:3100", Width = 240 };
+            // An example address, not localhost: on a machine with no local
+            // Paperclip an empty box must not imply one. 192.0.2.x is the
+            // documentation range, so it cannot be mistaken for a real host.
+            var box = new TextBox { Text = suggested, Watermark = AddressExample, Width = 240 };
             var unencrypted = Note("The key is sent unencrypted on this network.");
             var unencryptedRow = NoteRow(unencrypted);
             unencrypted.IsVisible = unencryptedRow.IsVisible = SendsKeyUnencrypted(suggested);
@@ -127,9 +132,25 @@ namespace Orbweaver
             rows.Add(Row("Address", box));
             rows.Add(unencryptedRow);
 
+            // Nothing typed and nothing discovered: there is nothing to connect to,
+            // so Connect is off and a line says what to do, rather than guessing
+            // 127.0.0.1 on a machine that has no Paperclip.
             var connect = new Button { Content = "Connect", HorizontalAlignment = HorizontalAlignment.Left };
-            connect.Click += (_, _) => _ = OnPaperclipConnectAsync(string.IsNullOrWhiteSpace(box.Text)
-                ? PaperclipDiscovery.DefaultAddress : box.Text!);
+            var prompt = Note("Enter your Paperclip address.");
+            var promptRow = NoteRow(prompt);
+            void Sync()
+            {
+                var has = !string.IsNullOrWhiteSpace(box.Text);
+                connect.IsEnabled = has;
+                prompt.IsVisible = promptRow.IsVisible = !has;
+            }
+            Sync();
+            box.PropertyChanged += (_, e) => { if (e.Property == TextBox.TextProperty) Sync(); };
+            connect.Click += (_, _) =>
+            {
+                if (!string.IsNullOrWhiteSpace(box.Text)) _ = OnPaperclipConnectAsync(box.Text!);
+            };
+            rows.Add(promptRow);
             rows.Add(Row("", connect));
 
             if (conn.Phase == PaperclipPhase.Failed && conn.Message.Length > 0)

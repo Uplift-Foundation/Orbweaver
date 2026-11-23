@@ -102,6 +102,14 @@ holds a secrets directory and a database), and writes nothing.
   passes. What `live-runs` says *during a healthy native run past startup* has
   not been measured.
 
+## Where the board key is stored
+
+`paperclip-credentials.json`, beside the settings file. The key is full board power, so it is created owner-only from its first byte and replaced by renaming a file that was itself created that way:
+
+- **macOS and Linux:** mode 0600 on a temp file, renamed over the real one.
+- **Windows:** an explicit ACL with inheritance off and a single rule, the current user with full control. **"The profile's ACL protects it" was an assumption and it was false on a real PC (measured):** a file created in the profile inherited access for `CodexSandboxUsers` (Modify), an unresolved SID (Modify), SYSTEM, Administrators and the user. The new code was run on that PC: the file as created, as stored, and as replaced over a deliberately world-readable file each had exactly one rule (the user, FullControl, not inherited), inheritance off and the user as owner. The unit tests read the same back on the Windows leg of CI.
+- Other secrets in this app are written with the same assumption on Windows (the OpenClaw gateway token and device identity, the peer-link identity, the relay identity, the cached Claude CLI credential): the owner-only mode is set only off Windows and the file otherwise inherits its folder's ACL. Not changed here; reported.
+
 ## Timing
 
 - A run shorter than the poll interval never shows as working: a woken agent whose

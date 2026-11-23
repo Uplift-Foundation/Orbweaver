@@ -100,8 +100,24 @@ namespace Orbweaver
             {
                 _log?.Invoke($"{method} {PathOnly(path)} -> unreachable ({ex.GetType().Name}), {(int)(DateTime.UtcNow - started).TotalMilliseconds} ms");
                 return new PaperclipResponse(PaperclipHttpKind.Unreachable, 0, "",
-                    OpenClawGateway.ExplainConnectFailure(ex, OperatingSystem.IsMacOS()));
+                    Explain(ex, _baseUrl, OperatingSystem.IsMacOS()));
             }
+        }
+
+        // One reason, once, with the address. .NET nests the same sentence three
+        // deep (the HttpRequestException's, with the address appended, then the
+        // SocketException's), and joining the chain printed it twice. The
+        // innermost message is the reason; the address is added if it lacks it.
+        internal static string Explain(Exception ex, string baseUrl, bool onMacOS)
+        {
+            var inner = ex;
+            while (inner.InnerException is not null) inner = inner.InnerException;
+            var reason = inner.Message.Trim();
+            var host = Uri.TryCreate(baseUrl, UriKind.Absolute, out var u) ? u.Authority : baseUrl;
+            var text = reason.Contains(host, StringComparison.OrdinalIgnoreCase) ? reason : $"{reason} ({host})";
+            return onMacOS && OpenClawGateway.IsHostUnreachable(ex)
+                ? text + " \u2014 " + OpenClawGateway.LocalNetworkHint
+                : text;
         }
 
         // The query is never logged: the poll URL carries the challenge token, and

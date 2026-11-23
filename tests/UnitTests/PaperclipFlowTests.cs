@@ -30,6 +30,40 @@ internal sealed class FakePaperclip : IPaperclipApi
     }
 }
 
+public class PaperclipExplainTests
+{
+    [Fact]
+    public void TheInnermostReasonIsPrintedOnce_WithTheAddress()
+    {
+        var socket = new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.ConnectionRefused);
+        var outer = new HttpRequestException(socket.Message + " (127.0.0.1:3100)", socket);
+        var text = PaperclipHttp.Explain(outer, "http://127.0.0.1:3100", onMacOS: false);
+        Assert.Equal(socket.Message + " (127.0.0.1:3100)", text);
+    }
+
+    [Fact]
+    public void AReasonThatAlreadyNamesTheAddress_IsNotGivenAnother()
+    {
+        var text = PaperclipHttp.Explain(new Exception("refused by 192.0.2.10:3100"), "http://192.0.2.10:3100", false);
+        Assert.Equal("refused by 192.0.2.10:3100", text);
+    }
+
+    [Fact]
+    public void ANoRouteOnAMac_GetsTheLocalNetworkHint_ElsewhereItDoesNot()
+    {
+        var socket = new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.HostUnreachable);
+        var ex = new HttpRequestException("x", socket);
+        Assert.Contains("Local Network", PaperclipHttp.Explain(ex, "http://192.0.2.10:3100", onMacOS: true));
+        Assert.DoesNotContain("Local Network", PaperclipHttp.Explain(ex, "http://192.0.2.10:3100", onMacOS: false));
+    }
+
+    [Fact]
+    public void AnAddressThatIsNotAUrl_IsUsedAsGiven()
+    {
+        Assert.Equal("boom (nonsense)", PaperclipHttp.Explain(new Exception("boom"), "nonsense", false));
+    }
+}
+
 public class PaperclipDiscoveryTests
 {
     private static IEnumerable<string> Folders(string root) => ["/h/.paperclip/instances/default", "/h/.paperclip/instances/prod"];
@@ -597,6 +631,62 @@ public class PaperclipCredentialsTests : IDisposable
         File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
         new PaperclipCredentials(_dir).Set("http://h", "k", DateTime.UtcNow);
         Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(path));
+    }
+
+    // ---- Windows: an explicit owner-only ACL, inheritance off (read back) ----
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static void AssertOwnerOnlyAcl(string path)
+    {
+        var me = System.Security.Principal.WindowsIdentity.GetCurrent().User!;
+        var security = new FileInfo(path).GetAccessControl();
+        Assert.True(security.AreAccessRulesProtected, "inheritance must be off");
+        var rules = security.GetAccessRules(true, true, typeof(System.Security.Principal.SecurityIdentifier))
+            .Cast<System.Security.AccessControl.FileSystemAccessRule>().ToList();
+        var only = Assert.Single(rules);
+        Assert.Equal(me, only.IdentityReference);
+        Assert.Equal(System.Security.AccessControl.AccessControlType.Allow, only.AccessControlType);
+        Assert.Equal(System.Security.AccessControl.FileSystemRights.FullControl, only.FileSystemRights);
+        Assert.False(only.IsInherited);
+        Assert.Equal(me, security.GetOwner(typeof(System.Security.Principal.SecurityIdentifier)));
+    }
+
+    [Fact]
+    public void Windows_TheFileIsCreatedOwnerOnly_BeforeAByteIsWritten()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        Directory.CreateDirectory(_dir);
+        var path = Path.Combine(_dir, "created.tmp");
+        using var fs = PaperclipCredentials.CreatePrivate(path);   // nothing written yet
+        AssertOwnerOnlyAcl(path);
+    }
+
+    [Fact]
+    public void Windows_TheStoredFileIsOwnerOnly_InheritanceOff()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        new PaperclipCredentials(_dir).Set("http://h", "k", DateTime.UtcNow);
+        AssertOwnerOnlyAcl(Path.Combine(_dir, "paperclip-credentials.json"));
+    }
+
+    [Fact]
+    public void Windows_AnExistingWiderFile_DoesNotLeakItsAclToTheReplacement()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        Directory.CreateDirectory(_dir);
+        var path = Path.Combine(_dir, "paperclip-credentials.json");
+        File.WriteAllText(path, "{}");
+        // Make it clearly wider than owner-only: everyone may read it.
+        var wide = new FileInfo(path).GetAccessControl();
+        wide.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(
+            new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.WorldSid, null),
+            System.Security.AccessControl.FileSystemRights.Read, System.Security.AccessControl.AccessControlType.Allow));
+        new FileInfo(path).SetAccessControl(wide);
+
+        new PaperclipCredentials(_dir).Set("http://h", "k", DateTime.UtcNow);
+
+        AssertOwnerOnlyAcl(path);
+        Assert.Equal("k", new PaperclipCredentials(_dir).Get("http://h")!.Key);
     }
 
     [Fact]

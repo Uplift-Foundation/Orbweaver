@@ -131,6 +131,27 @@ public sealed class PaperclipHttpTests : IDisposable
     }
 
     [Fact]
+    public async Task ARefusedPort_SaysTheReasonOnce_WithTheAddress()
+    {
+        using var refusing = LoopbackHttp.RefusingPort();
+        var url = $"http://127.0.0.1:{refusing.Port}";
+        var res = await new PaperclipHttp(url, "k").GetAsync("/x", default);
+        Assert.Equal(PaperclipHttpKind.Unreachable, res.Kind);
+        // The .NET chain nests one sentence three deep; it is printed once, and
+        // the address appears once.
+        Assert.Equal(1, CountOf(res.Detail!, $"127.0.0.1:{refusing.Port}"));
+        var sentence = res.Detail!.Split(" (")[0];
+        Assert.Equal(1, CountOf(res.Detail!, sentence));
+    }
+
+    private static int CountOf(string text, string needle)
+    {
+        var n = 0;
+        for (var i = text.IndexOf(needle, StringComparison.Ordinal); i >= 0; i = text.IndexOf(needle, i + needle.Length, StringComparison.Ordinal)) n++;
+        return n;
+    }
+
+    [Fact]
     public async Task ARefusedPort_IsUnreachable()
     {
         using var refusing = LoopbackHttp.RefusingPort();
