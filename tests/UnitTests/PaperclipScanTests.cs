@@ -8,11 +8,11 @@ public class PaperclipScanTests
     private static PaperclipAgent A(string id, string? lead = null, string state = "idle", PaperclipMark mark = PaperclipMark.None,
         string? markReason = null, IReadOnlyList<PaperclipNeed>? needs = null, bool? sleeping = null, int? budget = null,
         string? task = null, string? activity = null, DateTime? started = null, string? last = null, DateTime? activityAt = null,
-        string name = "") =>
+        string name = "", DateTime? finished = null) =>
         new(id, name == "" ? id : name, "r", "t", "idle", lead, "paperclip_runner", state, mark, markReason,
             needs ?? [], task, activity, started, last, budget, activityAt ?? Now.AddHours(-3),
             "http://127.0.0.1:3100/EX/agents/" + id, sleeping ?? (state == "idle" && mark == PaperclipMark.None && (needs?.Count ?? 0) == 0),
-            null, null, 5000, budget == null ? 0 : budget.Value * 50);
+            null, null, 5000, budget == null ? 0 : budget.Value * 50, finished);
 
     private static readonly PaperclipNeed Need = new("approval", "p1", "Hire QA", "http://127.0.0.1:3100/EX/approvals/p1");
 
@@ -206,7 +206,7 @@ public class PaperclipScanTests
         {
             "Hire QA", "Blocked: EX-6 x", "ACP agent failed.", "Fix it", "Bash",
             "last run succeeded 3 h ago", "$26.00 of $50.00 this month",
-        }, PaperclipHover.Lines(a, Now).ToArray());
+        }, PaperclipHover.Lines(a with { LastRunFinished = Now.AddHours(-3) }, Now).ToArray());
     }
 
     [Fact]
@@ -215,6 +215,24 @@ public class PaperclipScanTests
         Assert.Empty(PaperclipHover.Lines(A("a"), Now));
         var failed = A("a", mark: PaperclipMark.Broke, markReason: "Last run failed: x", last: "failed", sleeping: false);
         Assert.Equal(new[] { "Last run failed: x" }, PaperclipHover.Lines(failed, Now).ToArray());
+    }
+
+    [Fact]
+    public void LastRun_TakesItsTimeFromTheRunsOwnFinish_NotFromLastActivity()
+    {
+        // Amber with a run in flight: LastActivity is just now (the live run's
+        // start) but the previous run ended hours ago.
+        var a = A("a", state: "waiting", needs: [Need], sleeping: false, last: "failed",
+            activityAt: Now.AddSeconds(-5), finished: Now.AddHours(-4));
+        var line = PaperclipHover.Lines(a, Now).Single(l => l.StartsWith("last run"));
+        Assert.Equal("last run failed 4 h ago", line);
+    }
+
+    [Fact]
+    public void LastRun_WithNoFinishedAt_PrintsTheResultWithNoTime()
+    {
+        var a = A("a", sleeping: false, last: "succeeded", activityAt: Now.AddSeconds(-5));
+        Assert.Equal("last run succeeded", PaperclipHover.Lines(a, Now).Single());
     }
 
     [Fact]

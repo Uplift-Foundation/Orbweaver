@@ -34,7 +34,8 @@ namespace Orbweaver
         DateTime LastActivity, string Url,
         bool Sleeping,
         int? RunPid = null, string? RunSessionId = null,
-        long BudgetCapCents = 0, long SpentCents = 0);   // the hover's "$0.26 of $50.00"
+        long BudgetCapCents = 0, long SpentCents = 0,
+        DateTime? LastRunFinished = null);   // the newest finished run's own finishedAt, for "last run … ago"   // the hover's "$0.26 of $50.00"
 
     // The poll loop (plan 2.5), shaped after ClaudeCloudSessions: a volatile
     // snapshot replaced whole, a pure StepAsync that takes its transport and

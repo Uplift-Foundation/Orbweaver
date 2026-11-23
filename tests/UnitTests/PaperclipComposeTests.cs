@@ -193,6 +193,17 @@ public class PaperclipStateTests
     }
 
     [Fact]
+    public void LastRunFinished_IsTheNewestFinishedRunsOwnFinishedAt()
+    {
+        var done = Now.AddHours(-6);
+        var run = new PaperclipApi.RawRun("r", "a", "failed", done.AddSeconds(-8), done, null, null, null, null, false);
+        var noFinish = run with { FinishedAt = null };
+        Assert.Equal(done, One(Input([Agent("a")], runs: [run]), "a").LastRunFinished);
+        Assert.Null(One(Input([Agent("a")], runs: [noFinish]), "a").LastRunFinished);
+        Assert.Null(One(Input([Agent("a")]), "a").LastRunFinished);
+    }
+
+    [Fact]
     public void LastActivity_IsTheNewestTimestamp_NeverNowUnlessNothingElse()
     {
         var hb = Now.AddHours(-3);

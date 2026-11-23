@@ -100,11 +100,15 @@ namespace Orbweaver
             if (!string.IsNullOrEmpty(a.Activity)) lines.Add(a.Activity!);
             if (a.State == "generating" && a.RunStarted is { } started)
                 lines.Add("running for " + Span(now - started));
-            // LastActivity stands in for the run's own finish time: it is the
-            // newest of the heartbeat and the last run's timestamps.
+            // The time is the newest finished run's own finishedAt. LastActivity
+            // includes a live run's start, so using it would print an in-flight
+            // run's start as when the previous one ended. With no finishedAt the
+            // result is printed with no time.
             if (!string.IsNullOrEmpty(a.LastResult) && a.State != "generating"
                 && !(a.MarkReason?.StartsWith("Last run", StringComparison.Ordinal) ?? false))
-                lines.Add($"last run {a.LastResult} {Ago(now - a.LastActivity)}");
+                lines.Add(a.LastRunFinished is { } done
+                    ? $"last run {a.LastResult} {Ago(now - done)}"
+                    : $"last run {a.LastResult}");
             if (a.BudgetPercent != null)
                 lines.Add($"{Money(a.SpentCents)} of {Money(a.BudgetCapCents)} this month");
             return lines;
