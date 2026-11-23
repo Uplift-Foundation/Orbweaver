@@ -44,6 +44,7 @@ public class NewChatWindowResumeTests : IDisposable
         NewChatWindow.ResumeLoadInlineForTests = false;
         NewChatWindow.CurrentStatusesForTests = null;
         NewChatWindow.OrbForTests = null;
+        NewChatWindow.FocusOrbForTests = null;
         NewChatWindow.OpenClawAvailabilityForTests = null;
         NewChatWindow.KnownAgentsForTests = null;
         NewChatWindow.PeerLauncherForTests = null;
@@ -327,8 +328,10 @@ public class NewChatWindowResumeTests : IDisposable
     {
         var launched = false;
         NewChatLauncher.ResumeForTests = (_, _) => { launched = true; return new LaunchResult(LaunchOutcome.Launched, "x"); };
-        var asked = new List<string>();
-        NewChatWindow.OrbForTests = id => { asked.Add(id); return null; };
+        var orb = new OrbWindow("live-1");
+        var focused = new List<OrbWindow>();
+        NewChatWindow.OrbForTests = id => id == "live-1" ? orb : null;
+        NewChatWindow.FocusOrbForTests = focused.Add;
         var window = ResumeWindow(Session("live-1", "Running now"));
         NewChatWindow.CurrentStatusesForTests = () => new Dictionary<string, SessionStatus>
         {
@@ -343,8 +346,156 @@ public class NewChatWindowResumeTests : IDisposable
         Click(window.StartButton);
 
         Assert.False(launched);
-        Assert.Equal(new[] { "live-1" }, asked);
+        Assert.Same(orb, Assert.Single(focused));
         Assert.Equal("Already running — focused its orb.", window.StatusLine.Text);
+    }
+
+    // QA 3: live but with no window to go to (a hidden orb) must not claim a focus.
+    [AvaloniaFact]
+    public void ALiveSessionWithNoOrbWindowSaysItsOrbIsHiddenAndLaunchesNothing()
+    {
+        var launched = false;
+        NewChatLauncher.ResumeForTests = (_, _) => { launched = true; return new LaunchResult(LaunchOutcome.Launched, "x"); };
+        NewChatWindow.OrbForTests = _ => null;
+        var focused = 0;
+        NewChatWindow.FocusOrbForTests = _ => focused++;
+        var window = ResumeWindow(Session("live-1", "Running now"));
+        NewChatWindow.CurrentStatusesForTests = () => new Dictionary<string, SessionStatus>
+        {
+            ["live-1"] = new SessionStatus { Source = SessionSource.ClaudeCode, Cwd = Existing }
+        };
+        window.ResumeList.SelectedIndex = 0;
+        Click(window.StartButton);
+
+        Assert.False(launched);
+        Assert.Equal(0, focused);
+        Assert.Equal("Already running — its orb is hidden.", window.StatusLine.Text);
+    }
+
+    // QA 2: the row was listed as not running; the orb started afterwards. The
+    // click must ask again rather than start a second process on the session.
+    [AvaloniaFact]
+    public void AnOrbThatStartedAfterTheListWasBuiltIsStillNotLaunchedTwice()
+    {
+        var launched = false;
+        NewChatLauncher.ResumeForTests = (_, _) => { launched = true; return new LaunchResult(LaunchOutcome.Launched, "x"); };
+        var orb = new OrbWindow("late-1");
+        var focused = new List<OrbWindow>();
+        NewChatWindow.OrbForTests = _ => orb;
+        NewChatWindow.FocusOrbForTests = focused.Add;
+        var window = ResumeWindow(Session("late-1", "Started meanwhile"));
+        Assert.False(Shown(window)[0].IsLive);
+
+        NewChatWindow.CurrentStatusesForTests = () => new Dictionary<string, SessionStatus>
+        {
+            ["late-1"] = new SessionStatus { Source = SessionSource.ClaudeCode, Cwd = Existing }
+        };
+        window.ResumeList.SelectedIndex = 0;
+        Click(window.StartButton);
+
+        Assert.False(launched);
+        Assert.Single(focused);
+        Assert.True(Shown(window).Single().IsLive); // and the list now says so
+    }
+
+    // QA 1: the launch (which probes the CLI's --help and --version) runs off
+    // the UI thread, so a slow one leaves the dialog responsive.
+    [AvaloniaFact]
+    public void ASlowResumeDoesNotBlockTheUiThreadAndIsNotStartedTwice()
+    {
+        using var release = new ManualResetEventSlim();
+        var calls = 0;
+        NewChatLauncher.ResumeForTests = (_, _) =>
+        {
+            Interlocked.Increment(ref calls);
+            release.Wait(TimeSpan.FromSeconds(30));
+            return new LaunchResult(LaunchOutcome.Launched, "Claude Code resumed.");
+        };
+        var window = ResumeWindow(Session("slow-1", "Slow one"));
+        NewChatWindow.ResumeLoadInlineForTests = false; // the launch goes to a worker
+        window.ResumeList.SelectedIndex = 0;
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        Click(window.StartButton);
+
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), "the click blocked on the launch");
+        Assert.Equal("Resuming…", window.StatusLine.Text);
+        Assert.False(window.StartButton.IsEnabled);
+
+        window.ResumeClicked(NewChatCli.ClaudeCode); // a second gesture while it runs
+        release.Set();
+        for (var i = 0; i < 200 && window.StatusLine.Text == "Resuming…"; i++)
+        {
+            Thread.Sleep(10);
+            Flush();
+        }
+
+        Assert.Equal("Claude Code resumed.", window.StatusLine.Text);
+        Assert.True(window.StartButton.IsEnabled);
+        Assert.Equal(1, calls);
+    }
+
+    [AvaloniaFact]
+    public void AResumeThatThrowsSaysSoAndReenablesStart()
+    {
+        NewChatLauncher.ResumeForTests = (_, _) => throw new InvalidOperationException("boom");
+        var window = ResumeWindow(Session("a", "One"));
+        window.ResumeList.SelectedIndex = 0;
+        Click(window.StartButton);
+
+        Assert.Equal("Couldn't resume that session: boom", window.StatusLine.Text);
+        Assert.True(window.StartButton.IsEnabled);
+    }
+
+    // QA 4: when the resumed orb shows up the row stops reading "not running".
+    [AvaloniaFact]
+    public void TheListIsRefreshedWhenTheResumedOrbAppears()
+    {
+        var window = ResumeWindow(Session("want", "Mine"));
+        Assert.False(Shown(window)[0].IsLive);
+        window.ArmResumeWatchForTests("want", DateTime.UtcNow.AddSeconds(20));
+
+        NewChatWindow.CurrentStatusesForTests = () => new Dictionary<string, SessionStatus>
+        {
+            ["want"] = new SessionStatus { Source = SessionSource.ClaudeCode, Cwd = Existing }
+        };
+        window.OnWatchTick(null, EventArgs.Empty);
+
+        Assert.True(Shown(window)[0].IsLive);
+    }
+
+    // QA 6: a Local-kind clock from a seam must not make the list throw.
+    [AvaloniaTheory]
+    [InlineData(DateTimeKind.Local)]
+    [InlineData(DateTimeKind.Unspecified)]
+    public void ANonUtcClockDoesNotBreakTheList(DateTimeKind kind)
+    {
+        NewChatWindow.NowForTests = () => DateTime.SpecifyKind(Now, kind);
+        var window = ResumeWindow(Session("a", "One"));
+
+        Assert.Single(Shown(window));
+    }
+
+    // QA 5: a persona picture is decoded once, small, and released.
+    [AvaloniaFact]
+    public void APersonaPictureIsDecodedOncePerFileAndShownInTheRow()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "cb-resume-persona-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        using (var bmp = new SkiaSharp.SKBitmap(200, 200))
+        using (var image = SkiaSharp.SKImage.FromBitmap(bmp))
+        using (var data = image.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100))
+            File.WriteAllBytes(Path.Combine(dir, "cto.png"), data.ToArray());
+        File.WriteAllLines(Path.Combine(dir, "CLAUDE.md"), new[] { "## Attributes", "Name Jennifer", "Profile Photo cto.png" });
+
+        var window = ResumeWindow(Session("a", "One", cwd: dir), Session("b", "Two", cwd: dir));
+        var rows = Shown(window);
+        var first = (Control)window.ResumeList.ItemTemplate!.Build(rows[0])!;
+        window.ResumeList.ItemTemplate!.Build(rows[1]);
+
+        var picture = first.GetLogicalDescendants().OfType<Image>().Single();
+        Assert.True(((Avalonia.Media.Imaging.Bitmap)picture.Source!).PixelSize.Width <= 48);
+        Assert.Equal(1, window.ResumeAvatarCount); // two rows, one file, one decode
     }
 
     [AvaloniaFact]

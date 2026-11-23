@@ -453,6 +453,7 @@ namespace Orbweaver
             BuildExistingPane();
             _resumeGhost = ResumePaneGhost();
             BuildResumePane();
+            Closed += (_, _) => DisposeResumeAvatars();
             _newModeRadio.IsCheckedChanged += (_, _) =>
             {
                 if (_newModeRadio.IsChecked != true) return;
@@ -2267,7 +2268,7 @@ namespace Orbweaver
             _resumeSessions = null;
             RefreshResumeList();
 
-            var now = DateTimeOffset.FromUnixTimeMilliseconds(new DateTimeOffset(ResumeNow()).ToUnixTimeMilliseconds());
+            var now = ResumeNowOffset();
             void Apply(IReadOnlyList<PastSession> rows)
             {
                 if (generation != _resumeGeneration) return;
@@ -2293,7 +2294,21 @@ namespace Orbweaver
             catch (Exception) { return Array.Empty<PastSession>(); }
         }
 
-        private static DateTime ResumeNow() => (NowForTests ?? (() => DateTime.UtcNow))();
+        // Always UTC: a Local-kind value from a seam would otherwise make
+        // `new DateTimeOffset(value, TimeSpan.Zero)` throw, and an Unspecified
+        // one is read as UTC, the way every other clock here is.
+        private static DateTime ResumeNow()
+        {
+            var now = (NowForTests ?? (() => DateTime.UtcNow))();
+            return now.Kind switch
+            {
+                DateTimeKind.Local => now.ToUniversalTime(),
+                DateTimeKind.Unspecified => DateTime.SpecifyKind(now, DateTimeKind.Utc),
+                _ => now
+            };
+        }
+
+        private static DateTimeOffset ResumeNowOffset() => new(ResumeNow(), TimeSpan.Zero);
 
         private void BuildResumeFolderFilter()
         {
@@ -2313,7 +2328,7 @@ namespace Orbweaver
             var folder = (_resumeFolderFilter.SelectedItem as ResumeFolder)?.Path;
             return PastSessions.List(
                 _resumeSessions, live, _resumeSearch.Text, folder,
-                new DateTimeOffset(ResumeNow(), TimeSpan.Zero), _resumeOlder.IsChecked == true);
+                ResumeNowOffset(), _resumeOlder.IsChecked == true);
         }
 
         private void RefreshResumeList()
@@ -2339,13 +2354,36 @@ namespace Orbweaver
 
         // The persona's picture if the folder has one, else the initials; read
         // when the row is realised, so only visible rows pay for it.
+        private readonly Dictionary<string, Avalonia.Media.Imaging.Bitmap> _resumeAvatars = new(StringComparer.Ordinal);
+
+        private void DisposeResumeAvatars()
+        {
+            foreach (var bitmap in _resumeAvatars.Values) bitmap.Dispose();
+            _resumeAvatars.Clear();
+        }
+
+        internal int ResumeAvatarCount => _resumeAvatars.Count;
+
         private Control ResumeAvatar(PastSession s)
         {
             try
             {
                 var persona = LocalPersona.Resolve(s.Cwd, SourceOf(s.Cli), LocalPersona.UserConfigDirs());
                 if (persona.AvatarPath is { Length: > 0 } path && File.Exists(path))
-                    return new Image { Source = new Avalonia.Media.Imaging.Bitmap(path), Width = 24, Height = 24 };
+                {
+                    // Decoded at twice the 24 dip it is drawn at, once per file,
+                    // and released with the window: a persona picture can be
+                    // far larger than a thumbnail, and every realised row would
+                    // otherwise decode and leak its own full-size copy.
+                    if (!_resumeAvatars.TryGetValue(path, out var bitmap))
+                    {
+                        using var stream = File.OpenRead(path);
+                        bitmap = Avalonia.Media.Imaging.Bitmap.DecodeToWidth(stream, 48);
+                        _resumeAvatars[path] = bitmap;
+                    }
+
+                    return new Image { Source = bitmap, Width = 24, Height = 24 };
+                }
             }
             catch (Exception)
             {
@@ -2460,8 +2498,13 @@ namespace Orbweaver
             _ = Task.Run(Read).ContinueWith(t => Dispatcher.UIThread.Post(() => Done(t.Result)), TaskScheduler.Default);
         }
 
+        internal static Action<OrbWindow>? FocusOrbForTests;
+        private bool _resumeLaunching;
+
         internal void ResumeClicked(NewChatCli cli)
         {
+            if (_resumeLaunching) return;
+
             if (_resumeList.SelectedItem is not PastSessionRow row)
             {
                 _statusLine.Text = "Choose a session first.";
@@ -2476,21 +2519,63 @@ namespace Orbweaver
             }
 
             // Already running: a second process on the same conversation would
-            // fight the first, so take the user to the one that exists.
-            if (row.IsLive)
+            // fight the first, so take the user to the one that exists. Asked
+            // again here rather than read off the row, which was marked when the
+            // list was built and may be minutes old: an orb that started since
+            // is exactly the case this guards.
+            if (row.IsLive || (CurrentStatuses().TryGetValue(session.Id, out var running) && running.IsLocalCli))
             {
-                OrbForSession(session.Id)?.GoToSession();
-                _statusLine.Text = "Already running — focused its orb.";
+                if (OrbForSession(session.Id) is { } orb)
+                {
+                    (FocusOrbForTests ?? (o => o.GoToSession()))(orb);
+                    _statusLine.Text = "Already running — focused its orb.";
+                }
+                else
+                {
+                    // Live but with no window to go to, a hidden orb for one.
+                    _statusLine.Text = "Already running — its orb is hidden.";
+                }
+
+                RefreshResumeList();
                 return;
             }
 
             var profileDir = SelectedProfileDir();
+            _resumeLaunching = true;
             _startButton.IsEnabled = false;
             _statusLine.Text = "Resuming…";
 
-            var launch = NewChatLauncher.Resume(session, profileDir);
+            // Off the UI thread: the first resume per binary runs `<cli> --help`
+            // and `--version` to check the flag exists, each bounded at 10 s, and
+            // a blocked thread would not even paint "Resuming…".
+            void Finish(LaunchResult launch)
+            {
+                _resumeLaunching = false;
+                _startButton.IsEnabled = true;
+                OnResumeLaunched(cli, session, profileDir, launch);
+            }
+
+            LaunchResult Run()
+            {
+                try { return NewChatLauncher.Resume(session, profileDir); }
+                catch (Exception e)
+                {
+                    return new LaunchResult(LaunchOutcome.Unsupported, "Couldn't resume that session: " + e.Message);
+                }
+            }
+
+            if (ResumeLoadInlineForTests)
+            {
+                Finish(Run());
+                return;
+            }
+
+            _ = Task.Run(Run).ContinueWith(t => Dispatcher.UIThread.Post(() => Finish(t.Result)), TaskScheduler.Default);
+        }
+
+        private void OnResumeLaunched(NewChatCli cli, PastSession session, string? profileDir, LaunchResult launch)
+        {
             _statusLine.Text = launch.Message;
-            _startButton.IsEnabled = true;
             if (launch.Outcome != LaunchOutcome.Launched) return;
 
             OrbweaverSettings.SetNewChatLastCli(cli.ToString());
@@ -2522,6 +2607,7 @@ namespace Orbweaver
             {
                 _statusLine.Text = "Resumed — its orb should be on screen.";
                 _watchTimer?.Stop();
+                RefreshResumeList(); // the row now reads "running"
                 return;
             }
 
