@@ -144,6 +144,42 @@ public class LaunchRunnerResumeTests
         NothingStarted(d);
     }
 
+    // Amendment 3: a phone learns nothing about a session outside its roots,
+    // not even that it is running.
+    [Fact]
+    public async Task Outside_the_phones_scope_wins_over_already_running()
+    {
+        var d = new Desk { Sessions = [(Id, LaunchRunnerTests.Status())] };
+        var outcome = await Runner(d, new Index { InScope = _ => false }.Seams()).RunAsync(R());
+
+        Assert.Equal(new LaunchRunner.Outcome(RelayReplies.UnknownResume, null, null), outcome);
+        // Control: in scope, the same live id is already running.
+        Assert.Equal(RelayReplies.AlreadyRunning, (await Runner(d, new Index { InScope = _ => true }.Seams()).RunAsync(R())).Code);
+    }
+
+    [Fact]
+    public async Task A_help_text_that_could_not_be_read_is_a_failed_launch_to_retry_not_an_old_cli()
+    {
+        var d = new Desk();
+        var index = new Index { Support = ResumeSupport.Unchecked(NewChatCli.ClaudeCode) };
+
+        var outcome = await Runner(d, index.Seams()).RunAsync(R());
+
+        Assert.Equal(new LaunchRunner.Outcome(RelayReplies.LaunchFailed, ResumeSupport.Unchecked(NewChatCli.ClaudeCode).Message, null), outcome);
+        NothingStarted(d);
+    }
+
+    [Fact]
+    public async Task A_cli_gone_since_the_gate_looked_is_unknown_cli_and_nothing_is_probed()
+    {
+        var d = new Desk { Binary = null };
+        var index = new Index();
+
+        Assert.Equal(new LaunchRunner.Outcome(RelayReplies.UnknownCli, null, null), await Runner(d, index.Seams()).RunAsync(R()));
+        Assert.Empty(index.Probes);
+        NothingStarted(d);
+    }
+
     [Fact]
     public async Task Inside_the_scope_goes_on_to_the_index()
     {

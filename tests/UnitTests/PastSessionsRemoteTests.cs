@@ -408,15 +408,31 @@ public class PastSessionsRemoteTests
     }
 
     [Fact]
-    public void Folders_are_trimmed_to_half_a_frame_newest_first()
+    public void Folders_stop_at_the_first_that_would_take_the_canonical_array_past_16000_bytes()
     {
-        var folders = Enumerable.Range(0, 64).Select(i => "/" + i.ToString("D2") + new string('f', 4000)).ToList();
+        // Each quoted folder is 1,002 bytes; 15 of them with brackets and
+        // commas are 2 + 15*1002 + 14 = 15,046, a 16th would be 16,049.
+        var folders = Enumerable.Range(0, 64).Select(i => "/" + i.ToString("D2") + new string('f', 997)).ToList();
+
+        var kept = SessionFrames.FoldersThatFit(folders);
+
+        Assert.Equal(folders.Take(15), kept);
+        var array = "[" + string.Join(",", kept.Select(CanonicalJson.Quote)) + "]";
+        Assert.True(Encoding.UTF8.GetByteCount(array) <= SessionFrames.MaxFoldersBytes);
+        Assert.True(Encoding.UTF8.GetByteCount(array) + 1 + 1002 > SessionFrames.MaxFoldersBytes);
 
         var frame = SessionFrames.Sessions("r", "claude", new PeerPastSessionsResult(true, "ok", 0, 0, [], folders)).Single();
+        Assert.Equal(kept, JsonDocument.Parse(frame).RootElement.GetProperty("folders").EnumerateArray().Select(f => f.GetString()));
+    }
 
-        var kept = JsonDocument.Parse(frame).RootElement.GetProperty("folders").EnumerateArray().Select(f => f.GetString()).ToList();
-        Assert.InRange(kept.Count, 1, 63);
-        Assert.Equal(folders.Take(kept.Count), kept);
-        Assert.True(Encoding.UTF8.GetByteCount(frame) <= BrowseLimits.MaxDirPlaintextBytes);
+    [Fact]
+    public void Folders_stop_at_64_entries_and_an_exact_fit_is_kept()
+    {
+        Assert.Equal(64, SessionFrames.FoldersThatFit(Enumerable.Range(0, 80).Select(i => "/" + i).ToList()).Count);
+
+        // One folder whose array is exactly 16,000 bytes: "[" + quoted + "]".
+        var exact = "/" + new string('f', SessionFrames.MaxFoldersBytes - 5);
+        Assert.Equal([exact], SessionFrames.FoldersThatFit([exact]));
+        Assert.Empty(SessionFrames.FoldersThatFit([exact + "f"]));
     }
 }

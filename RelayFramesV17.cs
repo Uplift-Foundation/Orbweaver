@@ -93,20 +93,23 @@ namespace Orbweaver
             return j.ToString();
         }
 
-        // The folder filter's choices, newest first, as many as fit in half a
-        // frame: 64 folders of 4,096 bytes would not fit one at all, and the
-        // rows must still have room. Real folders are a few dozen bytes.
-        internal const int FolderBudgetBytes = BrowseLimits.MaxDirPlaintextBytes / 2;
+        // frames-v17 max_folders_bytes (contract amendment 3): the folder
+        // filter's choices, newest first, stopping at the first folder that
+        // would take the canonical array — brackets and commas included — past
+        // 16,000 bytes, or past 64 entries. 64 folders of 4,096 bytes would
+        // not fit a frame at all, and the rows must still have room.
+        internal const int MaxFoldersBytes = 16000;
 
-        private static List<string> FoldersThatFit(IReadOnlyList<string> folders)
+        internal static List<string> FoldersThatFit(IReadOnlyList<string> folders)
         {
             var kept = new List<string>();
-            var size = 0;
-            foreach (var quoted in folders.Select(CanonicalJson.Quote))
+            var size = 2; // "[" and "]"
+            foreach (var folder in folders.Take(PastSessionsRemote.MaxFolders))
             {
-                size += Encoding.UTF8.GetByteCount(quoted) + 1;
-                if (size > FolderBudgetBytes) break;
-                kept.Add(JsonSerializer.Deserialize<string>(quoted)!);
+                var add = Encoding.UTF8.GetByteCount(CanonicalJson.Quote(folder)) + (kept.Count > 0 ? 1 : 0);
+                if (size + add > MaxFoldersBytes) break;
+                size += add;
+                kept.Add(folder);
             }
             return kept;
         }

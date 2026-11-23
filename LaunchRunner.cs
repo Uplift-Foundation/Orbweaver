@@ -91,6 +91,13 @@ namespace Orbweaver
         {
             var resume = f.ResumeSessionId;
 
+            // CB-434 (amendment 3): the phone's browse scope comes first of all
+            // the resume checks, so a phone learns nothing about a session
+            // outside its roots, not even that it is running. unknown_resume
+            // is the same answer as an id this desk does not have.
+            if (resume.Length > 0 && _seams.Resume?.InScope is { } inScope && !inScope(f.Cwd))
+                return new(RelayReplies.UnknownResume, null, null);
+
             // CB-434: already running, before anything else is looked at. A
             // second process on one conversation would fight the first, so the
             // caller is sent to the one that exists and nothing is started.
@@ -149,15 +156,19 @@ namespace Orbweaver
             if (_seams.Resume is not { } resume)
                 return new(RelayReplies.ResumeUnsupported, "This machine can't resume sessions.", null);
 
-            if (resume.InScope is { } inScope && !inScope(f.Cwd))
-                return new(RelayReplies.UnknownResume, null, null);
-
             if (resume.Find(cli, profileDir, f.ResumeSessionId) is not { } past
                 || !SameFolder(past.Cwd, f.Cwd, _seams.Launch.IsWindows))
                 return new(RelayReplies.UnknownResume, null, null);
 
-            var support = resume.Support(cli, _seams.Launch.Locate(f.Cli)!);
-            return support.Supported ? null : new(RelayReplies.ResumeUnsupported, support.Message, null);
+            // The gate checked the CLI is installed, but that was another look;
+            // one gone since is the same answer the gate gives.
+            if (_seams.Launch.Locate(f.Cli) is not { } binary) return new(RelayReplies.UnknownCli, null, null);
+
+            var support = resume.Support(cli, binary);
+            if (support.Supported) return null;
+            // A probe that could not read the help text is a failed attempt to
+            // retry, not a CLI to update.
+            return new(support.Checked ? RelayReplies.ResumeUnsupported : RelayReplies.LaunchFailed, support.Message, null);
         }
 
         // The physical spelling of a folder, once per use; a resolver that

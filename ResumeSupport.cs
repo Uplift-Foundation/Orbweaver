@@ -11,7 +11,11 @@ namespace Orbweaver
     // session, or Codex's picker, while the dialog said "resumed" — so the
     // help text is asked first and a launch it does not support is refused
     // with nothing started.
-    internal sealed record ResumeCheck(bool Supported, string Message);
+    // CB-434: Checked is false only for Unchecked — the help text could not be
+    // read at all — which is a failed check to retry, not a CLI that can't.
+    // The desk answers that as launch_failed, never as resume_unsupported,
+    // which both phones follow with "Update it".
+    internal sealed record ResumeCheck(bool Supported, string Message, bool Checked = true);
 
     internal static class ResumeSupport
     {
@@ -65,7 +69,7 @@ namespace Orbweaver
         // version, so it is never worded as "this version can't", never cached,
         // and the next click asks again.
         internal static ResumeCheck Unchecked(NewChatCli cli) =>
-            new(false, "Couldn't check whether " + NewChatLauncher.DisplayName(cli) + " can resume. Try again.");
+            new(false, "Couldn't check whether " + NewChatLauncher.DisplayName(cli) + " can resume. Try again.", Checked: false);
 
         // Tests: a fixed answer per CLI instead of running a binary.
         internal static Func<NewChatCli, string, ResumeCheck>? ProbeForTests;
