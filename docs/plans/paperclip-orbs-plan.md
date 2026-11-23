@@ -1,414 +1,465 @@
-# Paperclip agents as orbs: implementation plan (CB-421 desktop, CB-422 contract)
+# Orbweaver for Paperclip: implementation plan (CB-421 desktop, CB-422 phone contract)
 
-Epic CB-419. Desktop branch `feature/paperclip-orbs`, cut from `develop` at `c9b5bc047`. Mobile read at `Orbweaver-Mobile` `origin/develop` `7155aa3`. Every line reference below is against those two shas. Everything in §1 was measured on 2026-11-22 against Paperclip `2026.1117.0` (authenticated mode) on the Mac mini, or read from its installed server source where it says so.
+Epic CB-419. **The requirement is the product plan** ("Orbweaver for Paperclip: the product"): your Paperclip company, alive on your desktop and in your pocket, and the thing that needs you one tap away. This document turns its release 1 ("see it") into something two engineers and QA can build, and fixes the release 2 ("act on it") contract now so release 1's does not have to be reopened.
 
-Scrubbed captures of everything measured are already committed in `tests/UnitTests/Fixtures/paperclip/` (§9). Engineers do not need the live instance to write the parsers.
+Revision 2. It replaces revision 1 (`f6e7700a0`), which designed a pasted key, no pushes and a legacy-mode dedupe as the main path.
 
-## 0. What changed from the approved plan, and why
+Desktop branch `feature/paperclip-orbs`, cut from `develop` at `c9b5bc047`. Mobile read at `Orbweaver-Mobile` `origin/develop` `7155aa3`. Line references are against those shas. Paperclip is `2026.1117.0`, authenticated mode, on the Mac mini.
 
-| Approved plan said | This plan says | Evidence |
-| --- | --- | --- |
-| WebSocket for `agent.status` / `heartbeat.run.status` when available | **REST polling only in v1.** No WebSocket. | A board API key cannot open the socket: 403 as `Authorization: Bearer` and as `?token=`, while the browser session cookie on the same URL gets 101 (§1.2). The upgrade path only looks bearer tokens up in the *agent* key table. |
-| Poll every 5 s | **Poll every 2 s** | 13 recorded runs lasted 0.4 to 99 s; 2 of 13 were under 5 s, so a 5 s poll never shows them working (§1.4). |
-| Dedupe on `PAPERCLIP_AGENT_ID` in the hook env | **Dedupe on `sdk-cli` + cwd, then pid / session id** | The hook does fire for `claude_local` runs, but the status file records no env. It does record `entrypoint`, `cwd` and `session_pid`, and the run row carries the same pid and session id (§1.5). |
-| Next contract file is `frames-v14` | **`frames-v15.json`** | `contracts/frames-v14-login.json` (CB-412) landed on mobile `develop` after the plan was written. |
-| `amber` push for a pending approval | **No push of any kind for a Paperclip row in v1** | An amber is a sealed `prompt` with a `request_id` the phone answers. Paperclip approvals cannot be answered through it, so an amber would be a notification with dead buttons. The row still shows `waiting`. |
-| Reuse the Cron/Heartbeat cluster and badge for scheduled agents | **Dropped for v1** | Knowing an agent is "scheduled" needs the routines endpoint, whose shape was not measured. The org chart already groups the orbs. |
-| `input` refused with `untypeable` | Kept, and `watch` answers an empty conversation (§6.2) | Today `watch` on a non-local id answers `unknown_session`, which both phones word as "That session is gone from the desk." |
+## 0. Rules this plan holds everywhere
 
-## 1. Measured vs assumed
+1. **Nothing is installed into, or required of, the user's Paperclip org.** No hook, skill, MCP server or agent setting. Orbweaver reads Paperclip's control plane. The API-only path is the main path and must work when no hook ever fires.
+2. **One agent, one orb.** Where an agent's run also shows up as a local session, the local row is folded away (§2.9).
+3. **Amber means you can act.** Release 1: a click on an amber orb opens the exact Paperclip page that answers it. Release 2: answer in place.
+4. **Quiet by default.** No push for a finished run, ever. A routine never starts a Live Activity.
+5. **Release 1 is read-only.** It issues `GET`, plus the two connect calls (`POST cli-auth/challenges`, `POST cli-auth/revoke-current`). Approve, decline, wake, pause and resume are release 2.
 
-### 1.1 REST, measured
+## 1. Measured, read from source, assumed
 
-All with `Authorization: Bearer pcp_board_…` unless stated. No auth at all: `401 {"error":"Unauthorized"}` (the negative control for every 200 below).
+"Measured" means run against the live instance. "Lead" marks measurements the team lead took on 2026-11-22 and sent me; I did not repeat the ones that create keys or decide approvals. "Declared" means Paperclip's own OpenAPI document, which it serves at `GET /api/openapi.json` (200 without a credential, 843 paths) and which names the credential kinds each route accepts.
+
+### 1.1 Connect
+
+| Fact | Status |
+| --- | --- |
+| Unauthenticated `POST /api/cli-auth/challenges` with `{"command":"Orbweaver","clientName":"Orbweaver","requestedAccess":"board"}` returns `id`, `token`, `boardApiToken`, `approvalUrl`, `pollPath`, `expiresAt`, `suggestedPollIntervalMs: 1000` | measured (lead) |
+| `GET /api/cli-auth/challenges/{id}?token=…` reports `status` | measured (lead) |
+| The `boardApiToken` is 401 before approval, 200 after, 401 after `POST /api/cli-auth/revoke-current` | measured (lead) |
+| The key shows in Paperclip as "Orbweaver (board)" and expires in 30 days | measured (lead) |
+| A board key as `Authorization: Bearer` is 200 on every GET in §1.2, from loopback and the LAN; no credential is 401; a wrong key is 401 | measured |
+| `GET /api/cli-auth/me` with a board key: 200, `source: "board_key"` | measured |
+| Challenge body also takes `requestedCompanyId`; `requestedAccess` is `board` or `instance_admin_required` | declared |
+| Challenge lifetime is 10 minutes; statuses are pending, approved, cancelled, expired | read from source |
+| `local_trusted` instances accept requests with no credential | read from source; **not measured** (this instance is `authenticated`) |
+| Instance folder `~/.paperclip/instances/<name>/` holds `runtime-info.json` (`instanceId`, `pid`, `host`, `port`, `dashboardUrl`, `startedAt`) and `config.json` (`server.deploymentMode`, `server.port`, `server.host`) | measured on macOS |
+| `GET /api/health` (no credential): `status`, `deploymentMode`, `bootstrapStatus` | measured |
+| The same folder on Windows is `%USERPROFILE%\.paperclip` | **assumed** |
+
+### 1.2 Reading the company
+
+All measured with a board key unless marked.
 
 | Call | Result |
 | --- | --- |
-| `GET /api/health` (no auth) | 200. `status`, `deploymentMode` (`authenticated` here), `bootstrapStatus`. |
-| `GET /api/companies` | 200, array. Fields used: `id`, `name`, `status`, `issuePrefix`. |
-| `GET /api/companies/{id}/agents` | 200, array of 4, 11.9 KB, 12 ms on loopback. Fields used: `id`, `name`, `role`, `title`, `status`, `reportsTo`, `adapterType`, `budgetMonthlyCents`, `spentMonthlyCents`, `pauseReason`, `errorReason`, `lastHeartbeatAt`, `urlKey`. **Also carries `adapterConfig` with local paths and tool lists: never log this payload.** |
-| `GET /api/companies/{id}/live-runs` | 200. `[]` when idle (2 bytes). During a run: one row with `id`, `agentId`, `status:"running"`, `startedAt`, `issueId`, `invocationSource`, `currentStatusMessage`, `currentToolName`. **No pid and no session id.** |
-| `GET /api/companies/{id}/heartbeat-runs` | 200, newest first. Query params that work: `limit`, `agentId`, `summary=true`. Full rows are ~5 KB each and carry `processPid`, `sessionIdBefore`, `sessionIdAfter`, `status`, `error`, `errorCode`, `exitCode`, `startedAt`, `finishedAt`, `issueId`. **`summary=true` nulls `processPid` and both session ids** (and still costs ~1.8 KB a row). |
-| `GET /api/cli-auth/me` | 200, `source:"board_key"`. A one-call key check. |
-| `POST /api/board-api-keys` (cookie session + `origin` header) | 201 with `token` (`pcp_board_` + 48 hex) and the `expiresAt` that was asked for. |
-| Bad bearer | 401 `Agent token did not verify…` |
-| Same key over the LAN address | 200. |
+| `GET /api/companies` | array; `id`, `name`, `status`, `issuePrefix` |
+| `GET /api/companies/{id}/agents` | 9.6 KB for 4 agents, 11 ms. Used: `id`, `name`, `role`, `title`, `status`, `reportsTo`, `adapterType`, `budgetMonthlyCents`, `spentMonthlyCents`, `pauseReason`, `errorReason`, `lastHeartbeatAt`. **Carries `adapterConfig` with local paths: never log the body.** |
+| An agent in `error` | measured live: `status: "error"` with a one-sentence `errorReason` |
+| `GET …/live-runs` | `[]` idle. Running (measured under the legacy runner only): `id`, `agentId`, `status`, `startedAt`, `issueId`, `invocationSource`, `currentStatusMessage`, `currentToolName` |
+| `GET …/heartbeat-runs` | newest first; `limit`, `agentId`, `summary=true` work. **Rows vary:** the newest row (a failed run under the native runner) came back with 13 keys and `redacted: true` (`status`, `startedAt`, `finishedAt`, `durationMs`, no `errorCode`); the four older rows had 53 keys. Cause of the redaction not established. The parser must accept both. |
+| `GET …/approvals?status=pending` | `[]` now, 7 ms. Two real pending approvals listed in 6 ms (lead). Row, measured from the two now-decided ones: `id`, `type`, `status`, `payload{title, summary, agentId}`, `requestedByAgentId`, `requestedByUserId`, `decisionNote`, `decidedAt`, `createdAt` |
+| `GET …/tools/action-requests` | 200 `{"actionRequests":[]}`, 2 ms. Defaults to `status=pending` (read from source). **A non-empty row has never been seen.** |
+| `GET …/issues?status=blocked` | 200 `[]`, 10 ms. A blocked issue has not been seen. Issue rows elsewhere carry `id`, `identifier`, `title`, `status`, `assigneeAgentId` |
+| `GET …/sidebar-badges` | `{inbox, approvals, failedRuns, joinRequests, unreadIssueIds}`, 28 ms |
+| `GET …/dashboard` | `agents{active,running,paused,error}`, `tasks{…}`, `costs{monthSpendCents, monthBudgetCents, …}`, `pendingApprovals`, `budgets{…}` |
+| Spend | every agent: `budgetMonthlyCents: 5000`, `spentMonthlyCents: 0` after real runs. Paperclip's docs say subscription usage does not count against a budget (lead). |
 
-Statuses seen in recorded runs: `succeeded`, `failed` (`adapter_failed`, `provider_session_open_rejected`), `cancelled` (`issue_dependencies_blocked`). Agent statuses seen: `idle`, `running`.
+Enumerations, read from source: agent status `active, paused, idle, running, error, pending_approval, terminated`; run status `queued, scheduled_retry, running, succeeded, interrupted, failed, cancelled, timed_out`; approval type `hire_agent, approve_ceo_strategy, budget_override_required, request_board_approval`; pause reason includes `manual, budget, system, company_archived`; tool action request status `pending, approved, executing, rejected, expired, cancelled, executed, failed`.
 
-### 1.2 WebSocket, measured
+Web pages, read from the UI bundle's route table, all under `<base>/<issuePrefix>/`: `agents/:agentId`, `approvals/:approvalId`, `inbox/requests`, `inbox/blocked`, `issues/:issueId`. **Not opened in a browser.**
 
-`ws://host:3100/api/companies/{id}/events/ws`, six attempts in one script:
+### 1.3 Acting (release 2)
 
-| Credential | Result |
+| Fact | Status |
 | --- | --- |
-| none | 403 |
-| `Authorization: Bearer <board key>` | 403 |
-| `?token=<board key>` | 403 |
-| browser session cookie | **101**, first frame `{"type":"live.capabilities",…}` |
-| cookie + foreign `Origin` | 101 |
-| cookie, company id that does not exist | 101 (the user is an instance admin) |
+| `POST /api/approvals/{id}/approve` and `/reject` with `{"decisionNote":…}` and the app key: 200, and the pending list emptied; no credential: 403 | measured (lead) |
+| `POST /api/tool-gateway/action-requests/{id}/approve` and `/decline`, body `{"companyId"}`, accept a board key | declared; **never called** |
+| `POST /api/agents/{id}/wakeup` (202), with a browser session | measured |
+| `POST /api/agents/{id}/pause`, `/resume`, and `wakeup` accept a board key | declared; pause and resume **never called** |
 
-With the cookie, one wake produced, in order: `heartbeat.run.queued`, `heartbeat.run.status` running, `agent.status` running (0.2 s after the run status), `heartbeat.run.progress`, `heartbeat.run.status` succeeded (twice), `agent.status` idle. The scrubbed sequence is `ws-events-one-wake.jsonl`. It is kept as a record, not as a fixture any v1 code reads.
+### 1.4 The live feed
 
-Polling at 0.5 s saw the same transitions 0.3 to 0.5 s after the socket did. The socket buys under a second and costs a credential a non-browser client cannot hold.
+`ws://…/api/companies/{id}/events/ws`: no credential 403; board key as Bearer 403; board key as `?token=` 403; browser session cookie 101. Measured. The upgrade path only looks bearer tokens up in the agent-key table (read from source). So Orbweaver polls. Under the legacy runner, a 0.5 s poll saw each change 0.3 to 0.5 s after the socket did.
 
-### 1.3 Auth, measured and read
+### 1.5 Timing
 
-- **Measured:** a board key works as a Bearer on every REST call above, from loopback and the LAN. It does not work on the WebSocket.
-- **Read from source, not exercised:** keys default to a **30-day** expiry (`BOARD_API_KEY_TTL_MS`); `expiresAt: null` in the create body means no expiry. `local_trusted` deployments accept requests with no credential at all. A CLI approval flow exists (`POST /api/cli-auth/challenges`, approve in a browser, poll for a key).
-- **Consequence:** a board key is full board power (it can wake agents and spend budget). There is no read-only board key. v1 only ever issues `GET`.
+Measured under the legacy runner, one small org, one evening: 13 runs lasted 0.4 to 99 s, two under 5 s; a no-work wake showed `running` over REST for 3.7 s. **No run has completed under the native runner yet** (the org's Claude connection is still being set up), so these are not claims about it.
 
-### 1.4 Timing, measured
+### 1.6 Agent modes and the hook
 
-- 13 runs with both timestamps: 0.4, 3.8, 9.0, 10.3, 15.2, 15.7, 27.1, 29.5, 30.8, 32.0, 35.7, 63.3, 99.2 s.
-- One wake of an agent with no issue: `running` visible over REST from 0.5 s after the POST until 4.2 s after it.
-- This is one small org on one evening. It is not a claim about run lengths in general, only that short runs exist.
+| Mode | Hook fires | Status |
+| --- | --- | --- |
+| Default runner (`paperclip_runner`, isolated home) | never | lead, read from code. All four agents are on it now. Nothing local to fold. |
+| "Preconfigured home" | yes | read from code; **not measured**. What its status file looks like is unknown. |
+| Legacy `claude_local` | yes | measured: `entrypoint: sdk-cli`; cwd `~/.paperclip/instances/<name>/workspaces/<agentId>` or `…/isolated-workspaces/<companyId>/<uuid>`; `session_pid` equals the run row's `processPid`; the status file's session id equals `sessionIdAfter`. Nothing from the environment is recorded. |
 
-### 1.5 The hook during a `claude_local` run, measured
-
-The run's Claude process ran the ordinary hooks and wrote an ordinary status file, three times in 2.6 s, then removed it:
-
-- `entrypoint: "sdk-cli"`, `cli: "claude"`, empty `tty`, `term_program`, `tmux_*`.
-- `cwd`: `~/.paperclip/instances/default/workspaces/<agentId>`. **The agent id is the last path segment.**
-- `session_pid` **equals** the run row's `processPid`. The status file's name (the Claude session id) **equals** the run row's `sessionIdAfter`, and sessions are reused across runs (`sessionIdBefore == sessionIdAfter` on the measured run; one session id served three earlier runs).
-- Transcript directories under the Claude config root show two cwd shapes across 5 sessions: `…/instances/default/workspaces/<uuid>` (1) and `…/instances/default/isolated-workspaces/<companyId>/<uuid>` (4, issue-scoped runs).
-- The status file holds nothing from the environment. `PAPERCLIP_AGENT_ID` is not in it.
-
-Captured as `hook-status-during-run-{1,2,3}.json`; the matching run is the newest row of `heartbeat-runs.json`.
-
-### 1.6 Assumed, and who settles it
+### 1.7 Assumed, and who settles it
 
 | Assumption | Settled by |
 | --- | --- |
-| `processPid` is already set on the run row **while** it is running (only read after it finished) | Engineer A's probe, `runs --watch` during QA's wake |
-| `live-runs` also lists `queued` runs | Parser treats `queued` and `running` the same, so either answer is right |
-| Agents on `paperclip_runner` (ACP) fire no hook | Not needed: the source works with no hook by construction |
-| A project workspace outside `~/.paperclip` gives a cwd the path rule misses | Covered by the pid / session rule; unmeasured |
-| Agent page is `<base>/<issuePrefix>/agents/<agentId>` (read from server-generated links) | QA clicks one orb |
-| `paused`, `error`, `pending_approval`, `terminated`, `active` look as the source enum says | Unit tests on hand-edited copies of the real `agents.json`, labelled as edited |
-| `expiresAt: null` mints a key that never expires | Stated as "read from source" in the settings copy's doc, not promised in the UI |
-| No-credential access in `local_trusted` mode | Empty key sends no `Authorization` header; untested |
-| Windows and a LAN instance behave as loopback did | QA real-machine proof on the MacBook and the Windows box against `192.168.0.127:3100` |
+| A tool action request row names its agent (`agentId` or similar) and something to show (a tool name, a summary) | engineer A recaptures when the fixture org's "Ask first" action fires; until then the parser tries the likely keys and falls back to the company's top lead |
+| A `blocked` issue means a person is needed. One measured cancelled run said its issue was blocked on dependencies Paperclip resolves itself, so this may be too broad. | engineer A, on the first real blocked issue; product call if it is too broad |
+| `live-runs` rows under the native runner have the fields the legacy ones had | recapture (§10) |
+| "Preconfigured home" runs match the legacy fold rule | recapture with the one hook-firing agent the product plan keeps |
+| `local_trusted` connect with no approval | QA, only if an instance in that mode exists; otherwise stated as unverified |
+| Windows instance folder; LAN behaviour from Windows | QA real-machine proof |
+| The five page URLs in §1.2 | QA clicks each kind once |
+| `approvalUrl` uses the host the request came in on | engineer A logs the host of one real challenge |
 
-## 2. Desktop design
+## 2. Release 1, desktop design
 
 ### 2.1 Shape
 
-Copy `ClaudeCloudSessions.cs` (poll loop, `Snapshot()`, `SetSnapshotForTests`, `Restart()`, settings gate inside `Snapshot()`), not `OpenClawSessions`.
-
 ```
-PaperclipApi.cs          pure: JSON -> records, state mapping, dedupe rule, URL building. No sockets, no settings.
-PaperclipSessions.cs     the loop: StepAsync(api, clock, state) -> StepResult; Snapshot(); StatusText; Restart().
-PaperclipCredentials.cs  the board key, 0600, outside settings.json.
+PaperclipApi.cs          pure: JSON -> records; state, marks, needs-you, fold, ring, URLs, fold-away rule.
+PaperclipDiscovery.cs    pure over a file-reading seam: instance folders -> candidates.
+PaperclipConnect.cs      the approval flow as a step function over IPaperclipApi and a clock.
+PaperclipSessions.cs     the poll loop (copy ClaudeCloudSessions: StepAsync, Snapshot, SetSnapshotForTests, Restart).
+PaperclipCredentials.cs  key and expiry per base URL, 0600, outside settings.json.
 ```
 
-Interface the two engineers build against (names are binding, bodies are not):
+Binding interface (names fixed so the packages in §11 can build in parallel; bodies free):
 
 ```csharp
+internal enum PaperclipMark { None, Broke, Paused, OverBudget }
+
+internal sealed record PaperclipNeed(
+    string Kind,        // "approval" | "action" | "blocked"
+    string Id,          // Paperclip's id for it
+    string Title,       // one line: what is being asked
+    string Url);        // the page that answers it
+
 internal sealed record PaperclipAgent(
     string Id, string Name, string Role, string Title,
-    string Status,                 // raw agent.status
-    string? ReportsTo,             // agent id or null
-    string AdapterType,
-    string State,                  // "idle" | "generating" | "waiting"  (PaperclipApi.StateOf)
-    OrbPresence Presence,          // Present | Parked | NeedsInput
-    string? StatusDetail,          // one line, see 2.3
-    string? RecentAction,          // live run's currentStatusMessage / currentToolName, else null
-    DateTime LastActivity,         // run startedAt while running, else lastHeartbeatAt, else createdAt
-    string Url,                    // "<base>/<issuePrefix>/agents/<id>"
-    int? RunPid, string? RunSessionId);   // of the live run, when the full row has been read
+    string Status, string? ReportsTo, string AdapterType,
+    string State,                       // "idle" | "generating" | "waiting"
+    PaperclipMark Mark, string? MarkReason,
+    IReadOnlyList<PaperclipNeed> Needs, // empty unless waiting
+    string? Task, string? Activity,     // hover: task line; currentStatusMessage / currentToolName
+    DateTime? RunStarted, string? LastResult,
+    int? BudgetPercent,                 // null = draw no ring
+    DateTime LastActivity, string Url,
+    bool Sleeping,                      // idle, no mark, no need
+    int? RunPid = null, string? RunSessionId = null);
 
 internal static class PaperclipSessions {
-    public static IReadOnlyList<PaperclipAgent> Snapshot();   // empty unless paperclipEnabled
+    public static IReadOnlyList<PaperclipAgent> Snapshot();     // every agent, unfolded; empty unless enabled
     internal static void SetSnapshotForTests(IReadOnlyList<PaperclipAgent> agents);
-    internal static string StatusText { get; }                // the settings status line
+    internal static PaperclipLink Link { get; }                 // Off | Connecting | Connected | NeedsReconnect | Unreachable
+    internal static string StatusText { get; }
     public static void Restart();
-    internal static IReadOnlySet<int> KnownRunPids();         // for dedupe, 2.5
-    internal static IReadOnlySet<string> KnownRunSessionIds();
 }
 ```
 
-### 2.2 Poll loop
+New `SessionStatus` members, all `[JsonIgnore]` like `Kind`: `PaperclipMark Mark`, `string? MarkReason`, `int FoldedCount`, `string? FoldedNames`, `int? BudgetPercent`.
 
-One tick, every `PollInterval = 2 s` while healthy:
+### 2.2 Finding a Paperclip (`PaperclipDiscovery`)
 
-1. `GET agents` and `GET live-runs` (about 12 KB together).
-2. `GET heartbeat-runs?limit=20` (full rows, about 70 KB) **only** when this tick's `live-runs` is non-empty, or any agent's `lastHeartbeatAt` differs from the previous tick, or it is the first successful tick. It supplies the live run's pid and session id, and each agent's most recent finished run.
-3. Publish a whole new snapshot (replace, never mutate).
+- For each folder in `~/.paperclip/instances/*/`: read `runtime-info.json` for `port`, fall back to `config.json` `server.port`. Candidate address is `http://127.0.0.1:<port>` (the files say `0.0.0.0` and a LAN `dashboardUrl`; loopback is what this machine should use).
+- No folder: one candidate, `http://127.0.0.1:3100`.
+- A candidate counts only if `GET /api/health` answers `status: "ok"`. Its `deploymentMode` is kept.
+- Runs when Settings opens, and once at launch if Paperclip is not enabled and the hint has not been shown. A folder read and one loopback GET; never on a timer.
+- A found instance shows **"Paperclip found on this machine. Show your company?"** with a **Connect** button in the Settings group, and one tray-menu row until it is used or dismissed (`paperclipHintShown`).
+- Nothing in that folder is ever written, and no other file in it is read (it also holds a secrets directory and a database).
 
-Company: `paperclipCompanyId` if set; otherwise `GET companies` once per connect and use it when there is exactly one. More than one and none chosen: no orbs, status line says to pick.
+### 2.3 Connecting (`PaperclipConnect`)
 
-Failure: backoff 2, 4, 8, 16, 30 s. The last good snapshot is kept for `DisconnectGrace = 15 s` of consecutive failures, then emptied. A 401 or 403 empties it at once. `StepAsync` takes the API, the clock and the previous state as arguments, as `ClaudeCloudSessions.StepAsync` does, so every branch is a unit test.
+1. `GET /api/health`. If `deploymentMode` is `local_trusted`: `GET /api/companies` with no credential; 200 means connected with no key and no browser.
+2. Otherwise `POST /api/cli-auth/challenges` with `command: "Orbweaver"`, `clientName: "Orbweaver"`, `requestedAccess: "board"`. Open `approvalUrl` in the browser (scheme must be `http` or `https`; anything else is refused and shown as an error). Settings shows "Approve Orbweaver in your browser…" with Cancel.
+3. Poll `pollPath` every `suggestedPollIntervalMs` until `approved`, `cancelled`, `expired`, or the challenge's own `expiresAt`.
+4. On `approved`: `GET /api/cli-auth/me` with the `boardApiToken` must be 200; only then is the token written to `PaperclipCredentials` with its expiry. Before that it lives in memory only.
+5. Company: exactly one means it is chosen; more than one shows the picker.
+6. **Disconnect** (toggle off, or a "Disconnect" button): `POST /api/cli-auth/revoke-current`, then delete the stored key. A failed revoke still deletes the local copy and says the key may still be listed in Paperclip.
+7. **A remote Paperclip:** an address box, then steps 1 to 5 against it. When the scheme is `http` and the host is not loopback, a note: "The key is sent unencrypted on this network."
 
-`HttpClient` with a 5 s timeout. Never log a response body or the key; log status code, byte count and elapsed time.
+The key is full board power and there is no read-only board key. That is why release 1 never issues a write beyond the two connect calls.
 
-### 2.3 Paperclip to `SessionStatus`
+### 2.4 Reconnect, and never a silent disappearance
 
-`PaperclipApi.StateOf(agentStatus, liveRunStatus?)`, first match wins:
-
-| # | Input | `State` | `Presence` | `StatusDetail` |
-| --- | --- | --- | --- | --- |
-| 1 | agent `terminated` | not in the snapshot | | |
-| 2 | live run `running` or `queued` (any agent status but 1) | `generating` | Present | issue id if `issueId` set, else `invocationSource` worded: "Working (on demand)" |
-| 3 | agent `running`, no live row | `generating` | Present | "Working" |
-| 4 | agent `pending_approval` | `waiting` | NeedsInput | "Waiting for board approval" |
-| 5 | agent `paused` | `idle` | Parked | "Paused" + `: <pauseReason>` when set |
-| 6 | agent `error` | `idle` | Present | "Error" + `: <errorReason>` when set |
-| 7 | agent `idle` or `active` | `idle` | Present | last-run line below |
-| 8 | any other string | `idle` | Present | the raw status |
-
-Run statuses, as the live row (rule 2) or the agent's newest finished row (the last-run line for rules 6 to 8):
-
-| Run status | As live row | As last-run line |
+| Condition | Orbs | Words |
 | --- | --- | --- |
-| `queued` | generating | n/a |
-| `running` | generating | n/a |
-| `scheduled_retry` | not live: falls to agent status | "Retry scheduled" |
-| `succeeded` | n/a | "Last run succeeded" |
-| `failed` | n/a | "Last run failed: <errorCode>" |
-| `timed_out` | n/a | "Last run timed out" |
-| `cancelled` | n/a | "Last run cancelled: <errorCode>" when set |
-| `interrupted` | n/a | "Last run interrupted" |
-| anything else | not live | the raw status |
+| 401 or 403 on a poll | **kept, dimmed** (`Presence = Parked`), states frozen, ring and marks hidden | Status line and each orb's tooltip: "Reconnect to Paperclip". Settings button and orb-menu row **Reconnect** run §2.3 again. |
+| Stored expiry within 3 days | unchanged | Status line: "Connected. The key expires in N days." |
+| Unreachable (timeout, refused, 5xx) | kept as they are for `DisconnectGrace = 15 s`, then dimmed the same way | "Can't reach <host>." On `EHOSTUNREACH` for a non-loopback host on macOS, append the Local Network hint `OpenClawGateway.ExplainConnectFailure` uses. |
+| Switched off | removed at once | "Paperclip is switched off." |
 
-Only `errorCode` is shown, never `error`: the measured `error` strings carry commands and JSON. Spend is appended as " · $0.26 of $50.00" only when `budgetMonthlyCents > 0` and `spentMonthlyCents > 0` (it was 0 on this instance despite real runs, because billing was subscription-included).
+Orbs are removed only by switching off, disconnecting, or the agent being terminated or gone from a successful listing.
 
-Other `SessionStatus` fields, set in the merge block: `Source = Paperclip`, `Kind = Unknown` (no kind badge), `Title = Name`, `Cwd = ""`, `Color = OpenClawSessions.ColourForAgent(Id)`, `Url`, `StatusDetail`, `RecentAction`, `Presence`, `Lead` (2.4). `ScanEntry.Written = LastActivity`, never `now` (same reason as the cloud block, `SessionManager.cs:2760` on).
+### 2.5 The poll
 
-### 2.4 Keying, lead, removal
+| Every | Calls | Why |
+| --- | --- | --- |
+| 2 s | `agents`, `live-runs` | working and asleep; two of thirteen measured runs were under 5 s |
+| 4 s | `approvals?status=pending`, `tools/action-requests`, `issues?status=blocked` | needs-you is a slower state; 6, 2 and 10 ms measured |
+| on change | `heartbeat-runs?limit=20` when `live-runs` is non-empty, or any `lastHeartbeatAt` moved, or first tick | last result; legacy pid and session id |
+| on demand | `issues?status=in_progress` when a live run names an `issueId` not yet known | the hover's task line (filter value **assumed**; no task line if it fails) |
 
-- **Key:** `"paperclip:" + agent.Id`. Agent ids are UUIDs, unique across companies.
-- **Lead:** `status.Lead = "paperclip:" + ReportsTo` when `ReportsTo` names an agent in the same snapshot; otherwise empty. A pure function `PaperclipApi.LeadOf(agent, idsInSnapshot)`. The precedent for a lead with no process is the OpenClaw room at `SessionManager.cs:2582`. Chains (a report of a report) are passed through as they are; `ArrangementTests` already covers nested teams.
-- **Removed when:** the agent is `terminated` or absent from a successful listing; the source is switched off (`Snapshot()` returns empty at once); the grace in 2.2 runs out; the key is rejected.
-- **Never removed by the clock:** add `&& status.Source != SessionSource.Paperclip` beside the cloud exemption at `SessionManager.cs:1491`. An agent between runs is the normal state, not a husk.
-- Hidden-orb and group rules need no special case beyond the labels in §3.
+`sidebar-badges` and `dashboard` are not polled: the three lists already say which agent needs you, which the summaries do not.
 
-### 2.5 Dedupe with hook sessions
+Backoff on failure 2, 4, 8, 16, 30 s. `StepAsync` takes the API, the clock and the previous state, so every branch is a unit test. 5 s request timeout. Log status code, byte count and elapsed time; never a body, never the key.
 
-`PaperclipApi.IsRunProcess(entrypoint, cwd, sessionPid, sessionId, runPids, runSessionIds)`, true when `entrypoint` is `sdk-cli` (case-insensitive, reuse `OpenClawCliSession.SdkEntrypoint`) **and** any of:
+### 2.6 States, marks and needs
 
-1. `cwd` has the consecutive segments `.paperclip`, `instances`, `<any>`, then `workspaces` or `isolated-workspaces`. Measured for both run kinds. Needs no request, so it has no race with the poll.
-2. `sessionPid` is in `runPids`.
-3. `sessionId` is in `runSessionIds` (`sessionIdBefore` and `sessionIdAfter` of the rows read in 2.2 step 2).
+`PaperclipApi.Compose`, first match wins for `State`:
 
-`sdk-cli` alone is every `claude -p` anyone runs, and a `.paperclip` cwd alone is a person's own terminal in a workspace; both halves are required, as `OpenClawCliSession.Spawned` requires both of its own.
+| # | Input | `State` | Notes |
+| --- | --- | --- | --- |
+| 1 | agent `terminated` | no orb | |
+| 2 | the agent has at least one need (below) | `waiting` | `Presence = NeedsInput`. Wins over a live run: an agent blocked mid-run is waiting on you. |
+| 3 | agent `pending_approval` with no need found | `waiting` | need synthesised: kind `approval`, URL `approvals/pending` |
+| 4 | live run `running` or `queued` | `generating` | |
+| 5 | agent `running`, no live row | `generating` | |
+| 6 | everything else (`idle`, `active`, `paused`, `error`, unknown) | `idle` | dimmed when `Sleeping` |
 
-A matching local row is **not drawn** when `paperclipEnabled` is on **and** the source has a non-empty snapshot. Call site: beside `OpenClawCliSession.ShowHere` at `SessionManager.cs:3070`. With Paperclip off, or connected to nothing, behaviour is exactly today's (the transient Claude orb), so the feature is a strict no-op for anyone who has not enabled it. The hook row's state is not merged into the Paperclip orb in v1; Paperclip's own state is at most one poll behind it.
+Needs, one per item, attached to an agent:
 
-## 3. Desktop: per-file change list
+| Source | Agent | `Title` | Click opens |
+| --- | --- | --- | --- |
+| pending approval | `payload.agentId`, else `requestedByAgentId`, else the top lead | `payload.title`, else the type worded ("Hire", "Budget override", "Strategy", "Approval") | `approvals/<id>` |
+| pending tool action request | the row's agent, else the top lead | the row's tool or summary, else "Tool action" | `inbox/requests` |
+| blocked issue | `assigneeAgentId`; an unassigned blocked issue is ignored | "Blocked: <identifier> <title>" | `issues/<id>` |
 
-New files:
+`Mark`, independent of `State`, first match wins:
 
-| File | Content |
+| # | Input | `Mark` | `MarkReason` |
+| --- | --- | --- | --- |
+| 1 | agent `paused`, `pauseReason` `budget` | OverBudget | "Paused: over budget" |
+| 2 | agent `paused`, any other reason | Paused | "Paused" + the reason worded when known |
+| 3 | agent `error` | Broke | `errorReason`, cut to 140 characters |
+| 4 | newest finished run `failed` or `timed_out` | Broke | "Last run failed" + `: <errorCode>` when the row has one / "Last run timed out" |
+| 5 | otherwise | None | |
+
+Broke clears on the next `succeeded` run, because rule 4 reads the newest finished run. `cancelled` and `interrupted` are not broke. `LastResult` wording for the hover: "succeeded", "failed", "timed out", "cancelled", "interrupted", "retry scheduled", or the raw status. A run row's `error` text is never shown (measured ones carry commands); `errorCode` and the agent's `errorReason` are.
+
+### 2.7 What the orb shows
+
+| Thing | Rule | Reuses |
+| --- | --- | --- |
+| Paperclip badge | `CliMark.Paperclip` bottom-left on every Paperclip orb, working or not | `CliMark.cs` |
+| Asleep | idle, dimmed like a parked session | `OrbPresence.Parked` |
+| Amber | `waiting`, with the "?" | `OrbPresence.NeedsInput` |
+| Broke / Paused / Over budget | a mark in the presence corner: "!" for Broke, a pause glyph for the other two. Amber's "?" wins the corner when both apply; the mark's reason still shows in the hover. Drawn marks go in `SymbolMarks`, not typed glyphs (CB-173). | new `ApplyMark` beside `ApplyPresence` |
+| Budget ring | drawn only when `budgetMonthlyCents > 0` **and** `spentMonthlyCents > 0`; percent is spent over cap, capped at 100 for geometry. Hidden otherwise, so a subscription-billed company shows no empty ring. | `UsageRingGeometry` (pure, already tested) with a new arc in `OrbWindow.axaml` |
+| Hover | lines in this order, each omitted when empty: need titles; mark reason; task; activity; "running for 3 m"; "last run succeeded 2 h ago"; "$0.26 of $50.00 this month" | tooltip at `OrbWindow.axaml.cs:371` |
+| Click | amber: the first need's URL. Otherwise the agent's page. | `ClickRouting.OpensInABrowser` |
+| Menu | **Open in Paperclip**; **Review in Paperclip** (amber only); **Reconnect** (§2.4 only). Wake, Pause, Resume are release 2. | |
+| Folded count | a "+N" pill on the lead; its tooltip lists the names | new, small |
+
+No chat panel. No kind badge.
+
+### 2.8 The fold rule (`PaperclipApi.Fold`)
+
+Pure: `Fold(agents, mode, limit = 8, recentlyAwake)` returns the agents to draw and, per lead, the count and names folded into it.
+
+- `show`: draw everyone.
+- `fold` (default): with `limit` or fewer agents in the company, draw everyone. Above it, an agent is folded when it is `Sleeping`, has no reports of its own, and has a lead. It unfolds while generating, waiting or carrying any mark, and stays unfolded for `UnfoldHold = 60 s` after it last did, so a short run does not make the picture jump. A manually paused agent carries a mark, so it stays visible.
+- `hide`: the same test, but folded agents are not counted on the lead.
+- A lead is never folded. An agent with no lead is never folded.
+
+Setting `paperclipSleeping`: `fold` | `show` | `hide`.
+
+### 2.9 Keying, lead, and one orb per agent
+
+- **Key** `"paperclip:" + agent.Id`. **Lead** `"paperclip:" + ReportsTo` when that agent is drawn; otherwise empty. The precedent for a lead with no process is the OpenClaw room, `SessionManager.cs:2582`.
+- **Stale timer:** exempt, beside the cloud exemption at `SessionManager.cs:1491`. An agent between runs is the normal state.
+- **Fold-away of a local row** (`PaperclipApi.IsRunProcess`), applied only while Paperclip is enabled and its snapshot is non-empty, at the `OpenClawCliSession.ShowHere` call site (`SessionManager.cs:3070`):
+  - `entrypoint` is `sdk-cli` **and** any of: the cwd has the consecutive segments `.paperclip`, `instances`, `<any>`, then `workspaces` or `isolated-workspaces`; the row's pid is a known run pid; the row's session id is a known run session id.
+  - This is **the rule for hook-firing modes**. Measured for legacy `claude_local`. **Not measured for "preconfigured home"**: if its cwd or entrypoint differs, the rule changes after the recapture in §10, and the product's "one orb" check on the hook-firing fixture agent is the gate.
+  - Under the default runner there is no local row and the rule never fires. Run rows there may be redacted, so the pid and session halves are simply empty.
+  - With Paperclip off, nothing changes from today.
+
+## 3. Release 1, desktop: per-file change list
+
+New: `PaperclipApi.cs`, `PaperclipDiscovery.cs`, `PaperclipConnect.cs`, `PaperclipSessions.cs`, `PaperclipCredentials.cs` (file `paperclip-credentials.json` in `OrbweaverSettings.Directory`, mode 0600 off Windows, copying `OpenClawIdentity.cs:107-186`), `tools/paperclip-probe/` (read-only: `discover`, `check`, `agents`, `needs`, `runs --watch`; key from `PAPERCLIP_BOARD_KEY`; never prints `adapterConfig`), `docs/paperclip-findings.md` (§1 in the voice of `docs/openclaw-findings.md`, updated by the recaptures).
+
+| File (line at `c9b5bc047`) | Change |
 | --- | --- |
-| `PaperclipApi.cs` | Records; `ParseAgents`, `ParseLiveRuns`, `ParseRuns`, `ParseCompanies` (tolerant: unknown fields ignored, a row missing `id` skipped, never throws on shape); `StateOf`; `DetailOf`; `LeadOf`; `IsRunProcess`; `AgentUrl`; `Compose(agents, liveRuns, runs, baseUrl, issuePrefix) -> IReadOnlyList<PaperclipAgent>`. |
-| `PaperclipSessions.cs` | §2.2. `IPaperclipApi` seam with the three GETs; the real one over `HttpClient`. |
-| `PaperclipCredentials.cs` | `KeyFor(baseUrl)`, `SetKeyFor(baseUrl, key)`; file `paperclip-credentials.json` in `OrbweaverSettings.Directory`, written then `File.SetUnixFileMode(… UserRead | UserWrite)` off Windows. Copy `OpenClawIdentity.cs:107-186`. Do not reuse `openclaw-devices.json`. |
-| `tools/paperclip-probe/` | Read-only console app over `PaperclipApi` + the real `IPaperclipApi`, like `tools/openclaw-probe`. Verbs: `agents`, `runs`, `runs --watch` (prints pid and session id each tick), `check` (health + `cli-auth/me`). Takes `--url` and reads the key from `PAPERCLIP_BOARD_KEY`. Prints names, statuses, ids; never `adapterConfig`. |
-| `docs/paperclip-findings.md` | §1 of this plan, in the voice of `docs/openclaw-findings.md`, updated with whatever the probe settles from §1.6. |
+| `SessionManager.cs:342` | `SessionSource.Paperclip`. Not in `IsLocalCli` (`:162`). New `SessionStatus` members (§2.1). |
+| `SessionManager.cs:1491` | Stale exemption. |
+| `SessionManager.cs:~2775` | Merge block after the cloud block: `Fold(PaperclipSessions.Snapshot(), …)`, one `ScanEntry` per drawn agent. `Source = Paperclip`, `Kind = Unknown`, `Title = Name`, `Cwd = ""`, `Color = OpenClawSessions.ColourForAgent(Id)`, `Url` = first need's URL when waiting else the agent page, `StatusDetail`/`RecentAction` from the hover fields, `Presence`, `Lead`, mark, ring, folded count. `Written = LastActivity`, never `now`. When `Link` is `NeedsReconnect` or unreachable past the grace: every row `Parked`, state idle, no mark, no ring. |
+| `SessionManager.cs:3070` | Fold-away (§2.9). |
+| `SessionManager.cs:3652` area | A Paperclip orb never builds a chat session. |
+| `ClickRouting.cs:165` | `OpensInABrowser`: `ClaudeCloud or Paperclip`. Empty `Url` opens nothing. |
+| `CliMark.cs:76` | `Paperclip`: a paperclip outline as one filled path in the 16×16 box, fill `#5B5BD6`. Judged in the screenshot on both rids. |
+| `OrbWindow.axaml`, `.axaml.cs` | Ring arc; mark in the presence corner; "+N" pill; hover lines (`:371`); menu rows; `resetIdleExplanation` arm (`:487`): "Paperclip controls this agent's state". `NewChatHereItem` stays hidden (`:472`). |
+| `SymbolMarks.cs` | Pause and "!" marks as paths. |
+| `HiddenOrbs.cs:117` | `"Paperclip agent"`. |
+| `OrbAutoGroups.cs:46` | key `paperclip`, name `Paperclip`. |
+| `AutoGroupAccounts.cs:75`, `LocalPersona.cs:193` | No account; no local persona. |
+| `OrbweaverSettings.cs:90` | Keys `paperclipEnabled` (false), `paperclipUrl` (""), `paperclipCompanyId` (""), `paperclipSleeping` ("fold"), `paperclipHintShown` (false), in the `OpenClawEnabled` pattern (`:334`, `:1340`). |
+| `SettingsWindow.cs:736` | `Group("paperclip", "Paperclip", …)` after OpenClaw: found-instance row with **Connect**; address box for a remote one; approving state with Cancel; company picker (hidden with one company); "When agents are asleep" (fold / show / hide); **Disconnect**; **Reconnect** when needed; status line refreshed where `_claudeCloudStatus` is (`:2245`). No key is ever shown or typed. |
+| `TrayController.cs` | The one-time "Paperclip found" row. |
+| `Program.cs:166`, `ScreenLockWait.cs:73` | `PaperclipSessions.Restart()`; the comment's list. |
+| `README.md` | A Paperclip section: what it shows; connect is one approval; the key lasts 30 days and Orbweaver asks to reconnect; nothing is installed in the org; release 1 is view-only. Two troubleshooting lines, measured on the mini and not Orbweaver's to fix: on a Homebrew Mac the Paperclip launchd service's `PATH` excludes Homebrew; Paperclip's Claude sign-in could not parse Claude Code 2.1.330's output (2.1.286 worked). |
 
-Existing files (lines at `c9b5bc047`):
+No hook, installer or packaging file changes: the feature is all in the app binary. `tools/build-macos-app.sh`, `tools/Orbweaver.iss` and both `install-hooks` scripts were checked for that and need nothing.
 
-| File | Change |
-| --- | --- |
-| `SessionManager.cs:342` | `SessionSource.Paperclip`, with a comment in the enum's own style. **Not** added to `IsLocalCli` (`:162`). |
-| `SessionManager.cs:1491` | Stale-timer exemption (2.4). |
-| `SessionManager.cs:~2775` | New merge block after the cloud block in `ScanAndUpdateCore`: one `ScanEntry` per `PaperclipSessions.Snapshot()` row (2.3). |
-| `SessionManager.cs:3070` | Dedupe (2.5). |
-| `SessionManager.cs:3652` area | A click on a Paperclip orb must not build a chat session. Confirm what the default arm does for a non-local source with no chat and make it "no panel". |
-| `ClickRouting.cs:165` | `OpensInABrowser`: `ClaudeCloud or Paperclip`. An empty `Url` opens nothing. |
-| `CliMark.cs:76` | `Paperclip` style and its arm in `For(SessionSource)`. A paperclip outline as one filled path in the 16×16 box; fill `#5B5BD6` (indigo: none of terracotta, green, near-black, lobster red). The glyph is judged in the screenshot on both rids. |
-| `HiddenOrbs.cs:117` | `SessionSource.Paperclip => "Paperclip agent"`. |
-| `OrbAutoGroups.cs:46` | `ClassifyCli`: key `paperclip`, name `Paperclip`. `IsClaude` unchanged. |
-| `AutoGroupAccounts.cs:75` | Paperclip has no account: confirm it returns null, add a case to the existing test. |
-| `LocalPersona.cs:193` | Add `SessionSource.Paperclip` to the no-local-persona guard. |
-| `CliChatFormat.cs:38` | No change. `For` is only reached for local CLIs; add a test that a Paperclip status never reaches it via the panel path. |
-| `OrbWindow.axaml.cs:371` | Tooltip path line: show `Url` for Paperclip, as cloud does. |
-| `OrbWindow.axaml.cs:472` | `NewChatHereItem` stays hidden (already false for this source; pin with a test). |
-| `OrbWindow.axaml.cs:487` | `resetIdleExplanation` arm: "Paperclip controls this agent's state" / "This agent runs in Paperclip, so its state is changed there." |
-| `OrbWindow.axaml.cs` menu | "Open in Paperclip" item, visible for this source only, same action as the click. |
-| `OrbweaverSettings.cs:90` | Key list: `paperclipEnabled`, `paperclipUrl`, `paperclipCompanyId`. Model properties and static accessors in the `OpenClawEnabled` pattern (`:334`, `:1340`). Defaults: `false`, `http://127.0.0.1:3100`, `""`. |
-| `SettingsWindow.cs:736` | `Group("paperclip", "Paperclip agents", Card(PaperclipRows()))` after OpenClaw. Rows: enable toggle; URL box; board key box (masked, write-only: shows "saved" not the value); company picker (filled from `companies` after connect, hidden when there is one); status `NoteRow`, refreshed where `_claudeCloudStatus` is (`:2245`). Each change calls `PaperclipSessions.Restart()`. A note under the URL when the scheme is `http` and the host is not loopback: "The key is sent unencrypted on this network." |
-| `Program.cs:166` | `PaperclipSessions.Restart()` beside the cloud one. |
-| `ScreenLockWait.cs:73` | Add the third supervisor to the comment's list. |
-| `Orbweaver.csproj` | No new package. `InternalsVisibleTo` unchanged. |
-| `README.md` | A "Paperclip" section: what it shows, how to mint a key (and that keys expire after 30 days unless minted with `expiresAt: null`), view-only. |
-| `AGENTS.md` / `CLAUDE.md` | No change. |
+## 4. The phone contract: `frames-v15.json` (Orbweaver-Mobile, lands first)
 
-Status line wording (`PaperclipSessions.StatusText`), each a test:
-
-- off: "Paperclip agents are switched off."
-- "Connecting to <host>…"
-- "Connected: 4 agents in <company>."
-- "Can't reach <host>: <reason>." On `EHOSTUNREACH` for a non-loopback host on macOS, append the Local Network hint `OpenClawGateway.ExplainConnectFailure` uses.
-- "The board key was rejected. Keys expire after 30 days unless minted without an expiry."
-- "This instance has N companies. Pick one."
-- "No agents in <company>."
-
-Install paths: no hook, script or installer file changes. `tools/build-macos-app.sh`, `tools/Orbweaver.iss` and both `install-hooks` scripts were considered and need nothing, because the feature is all in the app binary.
-
-## 4. Relay contract: `frames-v15.json` (Orbweaver-Mobile, lands first)
-
-### 4.1 Text
+`frames-v14` is taken (`frames-v14-login.json`, CB-412). One file covers both releases; release 1 implements the `roster` half and sends no prompt.
 
 ```json
 {
   "version": 15,
-  "note": "CB-422: Paperclip agents on the roster, view only. Additive over frames-v2's roster and frames-v4's watch/input. No new frame, no new field, no new state, no new error code, no caps name, nothing for the relay, and no version gate: \"15\" is this file's name in the series and nothing on the wire carries it.",
+  "note": "CB-422: Paperclip agents. Additive over frames-v2's roster, frames-v3's prompt/answer/resolved and frames-v4's watch/input. No new frame, no new roster field, no new state, no new error code, no caps name, nothing for the relay. \"15\" is this file's name; nothing on the wire carries it. Section `roster` ships first; section `prompt` is sent only by a desktop that can carry the answer out.",
   "roster": {
-    "cli": "may be \"paperclip\" beside \"claude\", \"codex\", \"grok\". A phone must treat any cli it does not know as a row it can show and cannot type to.",
+    "cli": "may be \"paperclip\". A phone must treat a cli it does not know as a row it can show and cannot type to.",
     "paperclip_row": {
-      "session_id": "\"paperclip:\" + the agent's id (a UUID). Stable across runs and desktop restarts.",
+      "session_id": "\"paperclip:\" + the agent's id (a UUID). Stable across runs and restarts.",
       "title": "the agent's name",
       "cwd": "\"\" (present, empty)",
-      "state": "idle | generating | waiting, as for any row. generating: a run is queued or running. waiting: the agent is pending board approval. Everything else, including paused and error, is idle.",
-      "since": "unix seconds of the last state change, as for any row",
-      "parent_session_id": "\"paperclip:\" + the id of the agent this one reports to, only when that agent is a row in the same roster; otherwise omitted",
-      "persona": "omitted in v1"
+      "state": "generating: a run is queued or running. waiting: something of this agent's needs a person (an approval, a tool action, a blocked task). idle: everything else, including paused and error.",
+      "since": "unix seconds of the last state change",
+      "parent_session_id": "\"paperclip:\" + the id of the agent it reports to, only when that agent is a row in the same roster",
+      "persona": "omitted"
     },
-    "order": "unchanged: rows sorted by session_id, ordinal",
-    "removal": "an agent that is terminated, or whose Paperclip instance the desktop can no longer read, leaves by the ordinary removal delta"
+    "which_agents": "the agents the desktop is drawing. An agent the desktop has folded into its lead is not a row.",
+    "removal": "the ordinary removal delta"
   },
   "desktop_answers": {
-    "watch": "ok watching with total 0, then no window and no run frame. The subscription holds nothing.",
+    "watch": "ok watching, total 0, then no window and no run frame",
     "unwatch": "ok unwatched",
     "input": "err untypeable, why \"Paperclip agents can't be typed to from a phone\"",
-    "set_run": "err with the frames-v13 code for a session that has no run controls",
+    "set_run": "the frames-v13 refusal for a session with no run controls",
     "launch.parent_session_id naming a paperclip row": "err unsupported_parent"
   },
-  "pushes": "none. A paperclip row's generating to idle is an ordinary delta with no push value, and a waiting row mints no prompt.",
-  "activity": "paperclip rows are not counted in frames-v7 activity counts",
+  "prompt": {
+    "when": "one per pending approval or pending tool action. A blocked task mints none: it has no yes or no.",
+    "frame": {
+      "t": "prompt", "request_id": "<ULID>", "session_id": "paperclip:<agent id>",
+      "kind": "permission", "cli": "paperclip",
+      "tool": "Approval | Hire | Budget override | Strategy | Tool action",
+      "preview": "<title>\\n<summary>, at most 4000 characters",
+      "options": [
+        { "key": "approve", "label": "Approve", "kind": "approve" },
+        { "key": "decline", "label": "Decline", "kind": "deny" }
+      ],
+      "screen_hash": "base64url SHA-256 of UTF-8 \"orbweaver-paperclip-v1\\n\" + (\"approval\" | \"action\") + \"\\n\" + Paperclip's id for the item",
+      "expires_at": "mint time + 86400. The item stays pending in Paperclip for as long as it takes; frames-v3's 1800 is a terminal dialog's lifetime."
+    },
+    "push": "amber, with e, exactly as any prompt",
+    "answer": "frames-v3's answer unchanged. action is approve or deny; anything else is err forbidden_option. A watch-signed approve or deny passes rule 1w as it does today.",
+    "on_a_valid_answer": "the desktop carries it out in Paperclip, then sends resolved by phone:<ph_id>",
+    "resolved": "by desk when it was decided at the desk or in Paperclip; by gone when it is withdrawn or the agent is terminated",
+    "refusals": "the six of frames-v3 and no others. Already decided in Paperclip: not_pending. Paperclip unreachable or refusing the call: stale_prompt, and the prompt stays pending."
+  },
+  "pushes": "amber and resolve for a prompt, as above. Never done: a paperclip row's generating -> idle is an ordinary delta with push none.",
+  "activity": "frames-v7 counts: a paperclip row is never counted as working or idle. It is counted as amber only while a prompt for it is pending.",
   "phone": {
-    "new_builds": "no composer, no watch request, no run controls on a paperclip row; the row shows title, state, machine and its place under its parent. Not offered as a parent for a new session or a team join.",
-    "old_builds": "decode the roster unchanged (cli is a string on both platforms). The row opens to an empty conversation; sending is refused with the untypeable sentence."
+    "row": "title, state, machine, its place under its parent; no composer, no watch request, no run controls. Not offered as a parent for a new session or a team join.",
+    "old_builds": "decode the roster and the prompt unchanged (cli is a string in both). The row opens to an empty conversation; typing is refused with the sentence; a prompt is answerable."
   }
 }
 ```
 
-Engineer C confirms two strings against the files before writing vectors: the exact frames-v13 refusal code for `set_run` on a session without controls (`frames-v13.json`, `set_run` replies), and that `unsupported_parent` is what `RelayLaunch` answers for a non-Claude parent today.
+Three things engineer C confirms against the files before writing vectors, because I did not read them: the exact frames-v13 refusal code for `set_run`; that `RelayLaunch` answers `unsupported_parent` for a non-Claude parent; and whether either phone or the desktop's `AnswerGate` rejects an `expires_at` more than 1800 s out. If the last is true, v15 says 1800 and a still-pending item is re-minted with `quiet: true`.
 
-### 4.2 Files in Orbweaver-Mobile (contract PR)
+**Not in v15, and why:** the **"broke" push**. The relay refuses any `push` value outside `none, amber, resolve, done, limit` (`relay/Relay/Frames.cs:156`), and a new alert needs its own APNs wording and mute class. That is a relay change, so it is `frames-v16` with release 2's tickets. Outline: push value `broke`, class `state`, on the delta where a row's mark becomes Broke, `e` `{v:1, t:"broke", session_id, label, title}`, mutable like `done`.
 
-| File | Change |
-| --- | --- |
-| `contracts/frames-v15.json` | New, 4.1. |
-| `contracts/roster-fixtures.json` | **Add** a fourth roster, `paperclip_roster` (one `claude` row, a Paperclip lead, two reports with `parent_session_id`, one in each of the three states) and `paperclip_deltas_after_roster` (generating to idle, then a removal). The three existing rosters and their bytes do not change, so no existing consumer moves. Regenerated by desktop `tools/relay-vectors` from the `feature/paperclip-orbs` build; `_source.orbweaver_sha` updated. |
-| `contracts/check_vectors.py` | `rosters()` (`:281`) also walks `paperclip_roster`. New rules for a row whose `cli` is `paperclip`: `session_id` matches `^paperclip:[0-9a-f-]{36}$`, `cwd == ""`, no `persona`, a `parent_session_id` starts with `paperclip:`. `ROSTER_FIELDS` unchanged: that is the "no new field" promise, enforced. |
-| `contracts/test_check_vectors_paperclip.py` | New, in the shape of `test_check_vectors_personas.py`: the real file passes; mutations each fail naming their rule (a non-empty cwd, a persona, a bad id, a parent outside the roster, a fourth state, a ninth field). |
-| `contracts/README.md` | Rows for the new and changed files. |
-| `.github/workflows/relay-tests.yml` | Run the new test where the other `test_check_*` run. |
+Files in the contract PR: `contracts/frames-v15.json`; `contracts/roster-fixtures.json` gains a fourth roster `paperclip_roster` (one `claude` row, a Paperclip lead, two reports, all three states) and `paperclip_deltas_after_roster`, the three existing rosters keeping their bytes; `contracts/check_vectors.py` `rosters()` (`:281`) walks it with rules for a paperclip row (`session_id` matches `^paperclip:[0-9a-f-]{36}$`, `cwd == ""`, no persona, parent starts `paperclip:`), `ROSTER_FIELDS` unchanged; `contracts/test_check_vectors_paperclip.py` (the real file passes, six mutations each fail naming their rule); `contracts/README.md`; `.github/workflows/relay-tests.yml`. Prompt vectors for the `prompt` section are release 2's.
 
-### 4.3 Phone work that follows (pointers for the mobile engineers, CB-422)
+Phone pointers for CB-422. Verified at `7155aa3`: `cli` is a `String` in `app/Relay/RosterReducer.swift` (`Entry.cli`), `app/Relay/Prompts.swift:110` and `android/relay/.../Roster.kt` (`entry()`); the team-join filter at `app/Model/LiveMapping.swift:119` is already `cli == "claude"`; `app/Screens/SessionScreen.swift:201,225` print `s.cli` raw. Not re-read at that sha: `canSend`, `SessionScreen.kt`, `Shell.kt`, `NewSessionScreen.kt`. Fixture consumers: `app/Tests/ShellTests/RosterContractTests.swift`, `android/relay/src/test/.../FramesAndRosterTests.kt`, `app/LiveTests/Vectors/`.
 
-Verified at `7155aa3`: `cli` is `String` in `app/Relay/RosterReducer.swift` (`Entry.cli`) and in `android/relay/.../Roster.kt` (`entry()`); the team-join lead filter at `app/Model/LiveMapping.swift:119` is already `cli == "claude"`, so Paperclip leads are excluded with no change; the detail rows at `app/Screens/SessionScreen.swift:201,225` print `s.cli` raw. Not re-read at `7155aa3` (from the lead's reading at `6602ebf`): `SessionScreen.swift` `canSend`, `SessionScreen.kt:255`, `Shell.kt`, `NewSessionScreen.kt`. Consumers of the fixture file to extend: `app/Tests/ShellTests/RosterContractTests.swift`, `android/relay/src/test/.../FramesAndRosterTests.kt`, `app/LiveTests/Vectors/` (vendored copy).
-
-## 5. Relay: desktop side (same desktop branch)
+## 5. Release 1, relay: desktop side
 
 | File | Change |
 | --- | --- |
-| `MirrorProtocol.cs:834` | `CliPaperclip = "paperclip"` and its arm in `CliFor`. Every other caller of `CliFor` (`RemoteMirrorServer`, `PromptPipeline`, `LaunchRunner`, `MirrorRun`) only ever passes a local CLI; add one test that says so for the peer roster, since that is the claim this change leans on. |
-| `RelayRoster.cs:97-106` | `Project` admits `IsLocalCli || Source == Paperclip`. For a Paperclip row: `cwd ""`, `persona null`, `parent_session_id = Lead` only when `Lead` is the id of another admitted row. The Claude rule on `:105` is untouched. |
-| `RelayRoster.cs:55` | `RelayDelta.Finished` must be false for a Paperclip row, so `RelayLink.cs:698` never mints a `done` push for one. Carry the row's cli (or a `Pushable` flag) to the delta where the book stamps it. |
-| `RelayRemote.cs:150` | Keep `Local()`. Add `Listed(sessionId)` returning a Paperclip status. `Watch` (`:430`): Paperclip gives `Ok(…, Watching, sid, 0)` and returns. `Unwatch` (`:471`): ok. `InputAsync` (`:482`): `Err(untypeable, why)`. `SetRunAsync` (`:376`): the frames-v13 refusal. All four before the `Local()` check. |
-| `RelayActivity.cs` | Exclude Paperclip rows from the counts. Find where the counts are taken from the snapshot; if they are taken from the projected rows, filter on `cli`. |
-| `RelayService.cs:310` | No change expected: persona lookup returns null for an empty cwd. Pin with a test. |
-| `tools/relay-vectors` | Emit `paperclip_roster` and its deltas through `RelayRoster`'s own serializer. |
-| `tests/UnitTests/Fixtures/relay/roster-fixtures.json` | The regenerated file, byte-identical to the mobile copy. |
+| `MirrorProtocol.cs:834` | `CliPaperclip = "paperclip"` and its `CliFor` arm. One test that the peer roster never emits it. |
+| `RelayRoster.cs:97-106` | `Project` admits `IsLocalCli || Source == Paperclip`. Paperclip row: `cwd ""`, no persona, `parent_session_id = Lead` only when that row is admitted. |
+| `RelayRoster.cs:55` | `Finished` is false for a Paperclip row, so `RelayLink.cs:698` mints no `done` push. |
+| `RelayRemote.cs:150` | Keep `Local()`. Add `Listed()` for a Paperclip row and the four answers in §4 ahead of the `Local()` checks at `:376`, `:430`, `:471`, `:482`. |
+| `RelayActivity.cs` | Paperclip rows out of `working` and `idle`; out of `amber` too in release 1, since no prompt exists yet. |
+| `tools/relay-vectors`, `tests/UnitTests/Fixtures/relay/roster-fixtures.json` | The fourth roster, byte-identical to the mobile copy. |
 
 ## 6. What old phone builds do
 
-Read from the code at `7155aa3`, not run on a device:
+Read from the code at `7155aa3`, not run on a device. The roster decodes; the row draws with the default look and nests under its lead; opening it shows an empty conversation (not `unknown_session`, which both phones word as "That session is gone from the desk."); typing is refused with the sentence; no push arrives in release 1. In release 2 an old build receives an ordinary answerable prompt.
 
-- The roster decodes: `cli` is a free string on both platforms, no state is new, no field is new.
-- The row draws with the Claude-default look and nests under its lead through the existing team forest.
-- Opening it sends `watch`; the desktop answers an empty conversation (not `unknown_session`, whose phone wording is "That session is gone from the desk.").
-- Typing sends `input`; the refusal's `why` is shown.
-- No push ever arrives for the row, and Live Activity and Watch counts ignore it.
+## 7. Release 2, designed now, built under its own tickets
 
-QA settles this on one real old build (§8). If no old build is installed anywhere, it is stated as unverified in the PR, not assumed.
-
-## 7. Test matrix
-
-Coverage target is 100% of added lines, per `CLAUDE.md`. Lines that cannot be covered: the real `HttpClient` construction in `PaperclipSessions` and `Process.Start` for the browser; name them in the PR body.
-
-| Level | Suite / class | Cases |
-| --- | --- | --- |
-| Unit | `tests/UnitTests/PaperclipApiParseTests` | Each real fixture parses to the expected records (`agents.json`: 4 agents, 3 reporting to 1; `live-runs-running.json`: 1 run for the right agent; `heartbeat-runs.json`: the wake run's pid and session id; `heartbeat-runs-summary.json`: pid null). Tolerance: `[]`, `{}`, a row with no `id`, a number where a string is expected, truncated JSON: none throw. |
-| Unit | `PaperclipStateTests` | One case per row of both tables in 2.3 (8 + 9), plus precedence: `paused` with a live run is generating; `terminated` with a live run is absent. Hand-edited statuses are edited copies of the real `agents.json`, and the test says so. |
-| Unit | `PaperclipDetailTests` | Spend shown and hidden (budget 0, spent 0, both set); `error` never appears in any output; `errorCode` does. |
-| Unit | `PaperclipLeadTests` | Lead present; lead terminated (empty); lead missing; self-reference (empty); three-level chain. |
-| Unit | `PaperclipDedupeTests` | The three real hook files are run processes. Controls that must be **false**: `entrypoint: cli` in the same cwd (a person's terminal); `sdk-cli` in an ordinary repo with no pid or session match; `.paperclip/instances/x/triage` (not a workspace). Pid-only and session-only matches with an outside cwd are true. Windows path separators. |
-| Unit | `PaperclipSessionsStepTests` | `StepAsync` with a fake API and clock: first tick fetches runs; a quiet tick does not; a `lastHeartbeatAt` change does; a live run does; backoff sequence; grace keeps then empties; 401 empties at once; more than one company and none chosen; disabled publishes nothing and makes no call. Every status-line string. |
-| Unit | `PaperclipCredentialsTests` | Round trip per base URL; empty key removes; file mode is 0600 off Windows (skip the mode assert on Windows, say so). |
-| Unit | `RelayRosterTests` (extend) | Paperclip row admitted with `cli:"paperclip"`, `cwd:""`, no persona; parent only when the lead is admitted; a hidden lead gives no parent; `Finished` false for Paperclip with a Claude control that is true; OpenClaw, cloud and Remote Control still excluded. |
-| Unit | `RosterFixtureTests` (extend) | `paperclip_roster` and its deltas re-serialise byte-identically. |
-| Unit | `RelayRemotePaperclipTests` | The four answers in 5, each paired with the unchanged answer for an unknown id (`unknown_session`) and for a local row. No `done` push on generating to idle; a Claude control still gets one. Activity counts exclude it. |
-| Integration | `tests/IntegrationTests/PaperclipHttpTests` | The real `IPaperclipApi` against `tests/Shared/LoopbackHttp.cs` serving the fixtures: the `Authorization` header is sent when a key is set and absent when it is empty; 401, 500, a hung response (timeout), a dropped connection and non-JSON each come back as a typed failure; the URL paths requested are exactly the three in 2.2. |
-| Integration | `OrbweaverSettings` round trip (extend) | The three new keys survive a save and load; an old file without them loads defaults; unknown keys still survive beside them. |
-| UI | `tests/UiTests/PaperclipScanTests` (model: `CloudScanTests`) | `SetSnapshotForTests` with a lead and two reports gives three orbs keyed `paperclip:<id>` with the right leads; a state change updates in place; removing an agent removes its orb; disabling the setting removes all; an agent 3 hours quiet survives a scan with "Keep orbs for" at its minimum; a hook row matching 2.5 is not drawn while the snapshot is non-empty and **is** drawn when Paperclip is off (the control). In `[Collection("Settings")]`. |
-| UI | `PaperclipOrbTests` | `UpdateFrom` a Paperclip status: CLI mark present, no kind badge, reset-idle disabled with the new wording, New Chat Here hidden, "Open in Paperclip" visible; `ClickRouting.OpensInABrowser` true; an empty `Url` opens nothing. |
-| UI | `SettingsWindow` tests (extend) | The group exists; toggling calls `Restart`; the key box never shows a stored key; the http-on-LAN note shows and hides; the status line follows `StatusText`. |
-| Screenshot | `tests/UiScreenshots` | One capture: a lead with two reports, one generating, one waiting. One capture: the settings group, connected. |
-| Console | `ArrangementTests` | No new geometry. Run it once to confirm a three-orb team through the new source arranges as any team does; no new cases unless it fails. |
-| Contract | `contracts/test_check_vectors_paperclip.py`, `relay-tests` | 4.2. |
-
-## 8. Real-machine proof (QA, minutes, paired)
-
-Install owner: QA. Take `/tmp/ow-install.lock` on the mini first, and hash-check each install.
-
-1. **Probe, positive and negative:** `paperclip-probe check` with the real key is 200 with `source: board_key`; the same call with the last character of the key changed is 401.
-2. **Orbs:** on the mini (loopback), the MacBook and the Windows box (LAN URL), four orbs draw linked to the lead. Read window positions back rather than judging by eye.
-3. **Wake:** one `POST /api/agents/{id}/wakeup` on one agent with no issue. Its orb goes generating and back. The run lasts about 4 s, so a window of about 15 s proves it; `paperclip-probe runs --watch` during the same wake settles the pid assumption in §1.6.
-4. **Dedupe:** during that wake on the mini, exactly one orb exists for the agent. Control: switch Paperclip off, wake again, and the transient Claude orb appears as it does today.
-5. **Stopped instance:** not on the production instance. Point `paperclipUrl` at a closed port instead: orbs clear after the grace and the status line names the host.
-6. **Phone:** a current build shows the rows nested under the lead and the state change from step 3; an old build, if one is installed, opens a row to an empty conversation.
-
-Do not write to the instance beyond the one wake per step. It runs a production triage org on a schedule.
-
-## 9. Fixtures already in the branch
-
-`tests/UnitTests/Fixtures/paperclip/`, all from the live instance on 2026-11-22, scrubbed by one script: every UUID remapped to `00000000-0000-4000-8000-…` consistently across files (so the hook file's pid and session id still match their run row), home paths to `/Users/someone`, the company renamed, user ids nulled, `extraArgs` and skill lists replaced, every free-text field over 200 characters and every excerpt, result, context snapshot and log reference removed. Agent names are the persona names already published in `.profiles-assets`. Audited for the home name, the org, LAN addresses, key and cookie prefixes, ticket keys and unmapped UUIDs: none left.
-
-| File | What it is |
+| Piece | Design |
 | --- | --- |
-| `agents.json` | 4 agents, all `idle`, one lead with three reports |
-| `companies.json`, `health.json` | one company; authenticated mode |
-| `live-runs-idle.json`, `live-runs-running.json` | `[]`, and one running run |
-| `heartbeat-runs.json` | 14 full rows: succeeded, 2 failed, 1 cancelled; newest is the wake |
-| `heartbeat-runs-summary.json` | the same listing with `summary=true` |
-| `hook-status-during-run-{1,2,3}.json` | the three status-file writes of the wake |
-| `ws-events-one-wake.jsonl` | the socket's event order for the wake (record only) |
+| Approve / Decline on the desktop | The orb's flyout shows each need's title with **Approve**, **Decline** and "Review in Paperclip", in the shape of today's permission prompt. Calls: approvals `approve` / `reject` with `decisionNote: "From Orbweaver"`; tool actions `tool-gateway/action-requests/{id}/approve` / `decline` with `{companyId}`. Behind an `IPaperclipActions` seam; the UI suite drives a fake. A blocked task shows only "Review in Paperclip". |
+| Wake, Pause, Resume | Orb menu rows calling `wakeup` (`source: "on_demand"`), `pause`, `resume`. Pause and resume are armed-then-confirmed rows, like the OpenClaw end-conversation row. |
+| Answerable push | §4 `prompt`. Minted from `PaperclipAgent.Needs` by a small `PaperclipPrompts` beside `PromptPipeline`; the answer is verified by the existing `AnswerGate` rules and carried out through `IPaperclipActions`. |
+| "Broke" push | `frames-v16`, relay change, outlined in §4. |
+| Must be measured first | a real tool action request row and its approve/decline; pause and resume with the app key; what Paperclip answers when an item is approved twice. |
 
-Statuses never observed (`paused`, `error`, `pending_approval`, `terminated`, `active`, `timed_out`, `interrupted`, `scheduled_retry`, `queued`) are tested from edited copies made inside the tests, not from new files presented as captures.
+## 8. Release 1 test matrix
 
-## 10. Work packages
+100% of added lines. Named exceptions for the PR body: real `HttpClient` construction, `Process.Start` for the browser, real `Environment` home lookup.
 
-Three packages with no shared files except the first commit.
+| Level | Class | Cases |
+| --- | --- | --- |
+| Unit | `PaperclipApiParseTests` | Every file in `native/` and `legacy-claude-local/` parses to the expected records: 4 agents with 3 reporting to 1; the `error` agent with its reason; a redacted run row and a full one in one listing; both decided approvals; empty lists. `[]`, `{}`, a row with no `id`, wrong types, truncated JSON: none throw. |
+| Unit | `PaperclipStateTests` | One case per row of the three tables in §2.6, plus precedence: a need beats a live run; `terminated` beats everything; Broke clears after a newer `succeeded`; `cancelled` is not Broke; a run `error` string never reaches any output. Statuses never captured are built from edited copies of the real files, and the test says so. |
+| Unit | `PaperclipNeedsTests` | Approval by `payload.agentId`, by `requestedByAgentId`, by neither (top lead); each approval type's wording; a tool action row under each candidate agent key and with none; a blocked issue assigned, unassigned (ignored), assigned to an unknown agent (ignored); each need's URL. |
+| Unit | `PaperclipFoldTests` | 8 agents: all drawn. 9: sleeping non-leads folded, count and names right. A folded agent unfolds on generating, waiting, each mark; stays for the hold; folds after. Leads and lead-less agents never fold. `show`, `hide`. Three-level chain. |
+| Unit | `PaperclipRingTests` | No ring for cap 0, spent 0, both 0; percent for a normal pair; over 100 capped. |
+| Unit | `PaperclipRunProcessTests` | The three real legacy hook files are run processes. Must be false: `entrypoint: cli` in the same cwd; `sdk-cli` in an ordinary repo with no pid or session match; a `.paperclip` path that is not a workspace. Windows separators. Empty pid and session sets (the native case) change nothing. |
+| Unit | `PaperclipDiscoveryTests` | The real `runtime-info.json` and config section give `127.0.0.1:3100`; a folder with only `config.json`; two instances; a malformed file is skipped; no folder gives the default candidate; a candidate whose health is not ok is dropped. |
+| Unit | `PaperclipConnectTests` | Fake API and clock: `local_trusted` connects with no challenge; approved stores the key only after `me` is 200; cancelled, expired and timed out store nothing; a non-http `approvalUrl` is refused; Cancel stops polling; disconnect revokes then deletes, and deletes even when the revoke fails. |
+| Unit | `PaperclipSessionsStepTests` | The cadences in §2.5 (what is called on which tick); backoff; 401 gives `NeedsReconnect` with the snapshot kept; unreachable keeps then dims after the grace; recovery clears both; several companies and none chosen; disabled makes no call. Every status-line string, including the expiry countdown. |
+| Unit | `PaperclipCredentialsTests` | Round trip of key and expiry per base URL; delete; 0600 off Windows. |
+| Unit | `RelayRosterTests`, `RosterFixtureTests`, `RelayRemotePaperclipTests` | Row admitted with the §4 shape; parent only when admitted; `Finished` false with a Claude control true; the four answers, each beside the unchanged answer for an unknown id and a local row; activity counts exclude it; the fourth roster re-serialises byte-identically. |
+| Integration | `PaperclipHttpTests` | The real `IPaperclipApi` against `tests/Shared/LoopbackHttp.cs`: the paths and query strings are exactly §2.3's and §2.5's; `Authorization` sent with a key and absent without; 401, 500, a hung response, a dropped connection and non-JSON come back as typed failures; the challenge POST body is byte-exact. |
+| Integration | settings round trip | The five keys survive save and load; an old file loads defaults; unknown keys survive beside them. |
+| UI | `PaperclipScanTests` (model `CloudScanTests`, in `[Collection("Settings")]`) | Lead and two reports give three orbs with the right keys and leads; state changes in place; a terminated agent's orb goes; switching off removes all; an agent three hours asleep survives the stale timer; `NeedsReconnect` dims and keeps every orb; ten agents fold with the count on the lead; a matching `sdk-cli` row is not drawn while connected and **is** drawn with Paperclip off. |
+| UI | `PaperclipOrbTests` | Badge present; no kind badge; each mark; "?" wins the corner over a mark; ring shown and hidden; "+N"; every hover line and its order; click target for amber and for not amber; menu rows per state; reset-idle disabled. |
+| UI | `SettingsWindow` tests | Found-instance row and Connect; approving state and Cancel; picker shown only with several companies; Reconnect shown only when needed; the http-on-LAN note; no control ever holds the key. |
+| Screenshot | `tests/UiScreenshots` | (1) a company: lead with reports, one working, one amber, one broke, one paused, one with a ring; (2) a folded lead with "+N"; (3) the Settings group, connected; (4) the dimmed "Reconnect" state. |
+| Console | `ArrangementTests` | Run once; no new geometry expected. |
+| Contract | `test_check_vectors_paperclip.py`, `relay-tests` | §4. |
 
-**Commit 0 (engineer 1, first, minutes):** `SessionSource.Paperclip` in the enum and `MirrorProtocol.CliPaperclip`, plus empty `PaperclipAgent` / `PaperclipSessions.Snapshot()` / `SetSnapshotForTests` with the signatures in 2.1. Pushed at once so nobody waits on anybody.
+## 9. Release 1 real-machine proof (QA; minutes each, paired)
 
-| Package | Owner | Files | Depends on |
-| --- | --- | --- | --- |
-| **A. Source** | engineer 1 | `PaperclipApi.cs`, `PaperclipSessions.cs`, `PaperclipCredentials.cs`, `tools/paperclip-probe/`, `docs/paperclip-findings.md`, their unit and integration tests | commit 0 |
-| **B. Orbs and settings** | engineer 1 after A's parser; settings rows can start at once | `SessionManager.cs`, `ClickRouting.cs`, `CliMark.cs`, `HiddenOrbs.cs`, `OrbAutoGroups.cs`, `AutoGroupAccounts.cs`, `LocalPersona.cs`, `OrbWindow.axaml(.cs)`, `OrbweaverSettings.cs`, `SettingsWindow.cs`, `Program.cs`, `README.md`, UI tests, screenshots | commit 0 (uses `SetSnapshotForTests`, not the live loop) |
-| **C. Contract and relay** | engineer 2 | Mobile: 4.2. Desktop: §5 files and their tests | commit 0. The mobile contract PR opens first; the desktop relay half follows on the desktop branch. |
+Install owner: QA. Take `/tmp/ow-install.lock` on the mini first and hash-check each install. Do not decide approvals or wake agents on the fixture org without the lead's go-ahead.
 
-If engineer 2 finishes C while B is open, the settings group (`OrbweaverSettings.cs`, `SettingsWindow.cs`, `PaperclipCredentials.cs` wiring and their tests) is the piece of B to hand over: it touches no file A or the rest of B touches.
+1. **Connect, timed.** On the MacBook (remote address) and the Windows PC: from opening Settings to orbs on screen, nothing pasted. Target under 30 s. On the mini: the "Paperclip found" row appears with no address typed.
+2. **Connect, negative.** Cancel in the browser: no key stored, no orbs.
+3. **Company.** Four orbs linked to the lead on all three machines; positions read back, not judged by eye.
+4. **Presence.** When an agent can run: its orb is working within about 2 s and asleep after. Size the window to about three times the run.
+5. **Needs you.** With a real pending item: the orb is amber and a click opens the page that decides it. Paired negative: a finished run changes nothing on a paired phone.
+6. **Broke.** The agent currently in `error` wears the mark and its reason.
+7. **Expiry.** Revoke the app's key in Paperclip: orbs dim, "Reconnect" restores them with one approval. Control: an unreachable address dims after the grace and says so.
+8. **One orb.** On the hook-firing fixture agent: one orb during a run. Control: Paperclip off, the transient local orb appears as today.
+9. **Phone.** A current build shows the company under its lead with states; an old build, if one is installed anywhere, opens a row to an empty conversation.
 
-QA starts with commit 0: writes the §8 script and the old-phone check while the engineers build, then reviews coverage of added lines once per PR.
+## 10. Fixtures in the branch, and what must be recaptured
 
-One desktop PR against `develop` naming CB-421 and CB-422; one mobile contract PR against mobile `develop` naming CB-422. The mobile PR merges first. A desktop that sends `cli:"paperclip"` before any phone updates is safe by §6.
+`tests/UnitTests/Fixtures/paperclip/`, scrubbed by one script: every UUID remapped consistently across both folders (the same agent has the same fake id in each), home paths and the company replaced, user ids nulled, approval titles, summaries and decision notes replaced, tool lists emptied, all free text over 200 characters and every excerpt and log reference removed. Audited for the home name, the org, LAN addresses, key and cookie prefixes, ticket keys and unmapped UUIDs: none left.
 
-## 11. Non-goals for v1
+| Folder | Files | State |
+| --- | --- | --- |
+| `native/` | `agents.json` (4 on `paperclip_runner`, one in `error`), `approvals-decided.json` (one approved, one rejected), `heartbeat-runs.json` (one redacted row, four full), `dashboard.json`, `sidebar-badges.json`, `org.json`, `runtime-info.json`, `config-server-section.json`, and the empty lists | current |
+| `legacy-claude-local/` | `agents.json`, `live-runs-running.json`, `heartbeat-runs.json`, `heartbeat-runs-summary.json`, `hook-status-during-run-{1,2,3}.json`, `ws-events-one-wake.jsonl` | **legacy mode only.** Kept because the fold-away rule is tested against them. Their `processPid`, session ids and `runtimeMode` say nothing about the native runner. |
+| top level | `companies.json`, `health.json` | current |
 
-- The WebSocket (§0). Revisit if Paperclip accepts board keys on the upgrade, or for `local_trusted` instances.
-- Wake, pause, approve from Orbweaver or the phone. View only.
-- A chat panel or run transcript for an agent.
-- More than one Paperclip instance, or more than one company at a time.
-- Pending approvals from `GET approvals` (returned `[]` here; shape unmeasured). `pending_approval` on the agent is the only waiting signal.
-- Routine or schedule badges.
-- Persona pictures, by name match or from Paperclip's `avatarUrl`.
-- The browser approval flow for minting a key (`cli-auth/challenges`); v1 is paste-a-key.
-- Merging the hook row's finer-grained state into the Paperclip orb.
+**To recapture once an agent can run under the native runner** (engineer A, with the probe, read-only):
+
+1. `live-runs` during a native run: confirm the hover fields exist there.
+2. `heartbeat-runs` after a successful native run: which rows are redacted, and why.
+3. A **pending** approval (not yet decided).
+4. A **non-empty tool action request** row. This is the least-known shape in the plan.
+5. A **blocked** issue, and whether it means a person is needed.
+6. An agent `paused` manually and one paused by budget (the fixture org's tiny-budget agent), and a non-zero `spentMonthlyCents` if metered billing ever produces one.
+7. The status file of the "preconfigured home" fixture agent during a run.
+
+Until each exists, its tests run on edited copies made inside the test and labelled as edited.
+
+## 11. Work packages (release 1)
+
+**Commit 0, engineer 1, first and at once:** `SessionSource.Paperclip`, the new `SessionStatus` members, `MirrorProtocol.CliPaperclip`, and the §2.1 records with an empty `PaperclipSessions` (`Snapshot`, `SetSnapshotForTests`, `Link`, `StatusText`). After it, nobody waits on anybody.
+
+| Package | Owner | Files |
+| --- | --- | --- |
+| **A. Paperclip side** | engineer 1 | `PaperclipApi.cs`, `PaperclipDiscovery.cs`, `PaperclipConnect.cs`, `PaperclipSessions.cs`, `PaperclipCredentials.cs`, `tools/paperclip-probe/`, `docs/paperclip-findings.md`, their unit and integration tests, the recaptures in §10 |
+| **C. Contract and relay** | engineer 2, first | Mobile contract PR (§4). Desktop §5 files and tests. |
+| **B2. What the orb shows** | engineer 2, after C | `OrbWindow.axaml(.cs)`, `SymbolMarks.cs`, `CliMark.cs`, `HiddenOrbs.cs`, `OrbAutoGroups.cs`, `AutoGroupAccounts.cs`, `LocalPersona.cs`, `PaperclipOrbTests`, screenshots 1 and 2. Built from hand-made `SessionStatus` values, so it needs only commit 0. |
+| **B1. Wiring and settings** | engineer 1, after A's `Compose` and `Fold` exist | `SessionManager.cs`, `ClickRouting.cs`, `OrbweaverSettings.cs`, `SettingsWindow.cs`, `TrayController.cs`, `Program.cs`, `README.md`, `PaperclipScanTests`, settings tests, screenshots 3 and 4 |
+
+No file appears in two packages. QA starts at commit 0: writes the §9 script and checks which old phone builds exist, then measures added-line coverage once per PR.
+
+One desktop PR against `develop` naming CB-421 and CB-422; one mobile contract PR against mobile `develop` naming CB-422, merged first. A desktop that sends `cli:"paperclip"` before any phone updates is safe by §6. The phone screens follow under CB-422 in the mobile repo.
+
+Release 2 is staffed from §7 under its own tickets once its three measurements exist.
+
+## 12. Not in release 1
+
+- Approve, decline, wake, pause, resume; any push; the "broke" push (release 2, §7).
+- The live-feed socket (§1.4).
+- A chat panel or run transcript.
+- Several instances or several companies side by side.
+- Folded agents on the phone (the roster is what the desktop draws).
+- Persona pictures from Paperclip's avatars.
 - TLS pinning for an `https` instance.
+- Merging a hook row's finer state into the Paperclip orb.

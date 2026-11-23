@@ -1,0 +1,38 @@
+[
+  {
+    "id": "00000000-0000-4000-8000-000000001000",
+    "companyId": "00000000-0000-4000-8000-000000000002",
+    "type": "request_board_approval",
+    "requestedByAgentId": "00000000-0000-4000-8000-000000000003",
+    "requestedByUserId": null,
+    "status": "approved",
+    "payload": {
+      "title": "Example: allow the agent to post a comment",
+      "agentId": "00000000-0000-4000-8000-000000000003",
+      "summary": "Example summary of what is being asked."
+    },
+    "decisionNote": "Example decision note.",
+    "decidedByUserId": null,
+    "decidedAt": "2026-11-23T03:48:12.152Z",
+    "createdAt": "2026-11-23T03:48:12.085Z",
+    "updatedAt": "2026-11-23T03:48:12.152Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000001001",
+    "companyId": "00000000-0000-4000-8000-000000000002",
+    "type": "request_board_approval",
+    "requestedByAgentId": "00000000-0000-4000-8000-000000000003",
+    "requestedByUserId": null,
+    "status": "rejected",
+    "payload": {
+      "title": "Example: allow the agent to post a comment",
+      "agentId": "00000000-0000-4000-8000-000000000003",
+      "summary": "Example summary of what is being asked."
+    },
+    "decisionNote": "Example decision note.",
+    "decidedByUserId": null,
+    "decidedAt": "2026-11-23T03:48:12.255Z",
+    "createdAt": "2026-11-23T03:48:12.098Z",
+    "updatedAt": "2026-11-23T03:48:12.255Z"
+  }
+]
