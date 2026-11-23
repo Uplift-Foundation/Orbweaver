@@ -91,6 +91,12 @@
                           Header="New chat here"
                           IsVisible="False"
                           Click="NewChatHere_Click"/>
+                <!-- CB-361: opens New chat in Resume mode, filtered to this
+                     orb's CLI, account and folder. Local-CLI orbs only. -->
+                <MenuItem x:Name="ResumeHereItem"
+                          Header="Resume a session here…"
+                          IsVisible="False"
+                          Click="ResumeHere_Click"/>
                 <Separator/>
                 <!-- Only shown for an orb the user has dragged; see
                      OrbWindow.SetPinned. -->

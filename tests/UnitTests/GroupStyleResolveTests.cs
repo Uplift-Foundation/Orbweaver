@@ -98,4 +98,40 @@ public class GroupStyleResolveTests
         Assert.Equal((byte)System.Math.Round(OrbweaverSettings.DefaultGroupOutlineStrokeOpacity * 255), s2.A);
         Assert.Equal((byte)System.Math.Round(OrbweaverSettings.DefaultGroupOutlineFillOpacity * 255), f2.A);
     }
+
+    // CB-409: the random hue sits between an override and the global.
+    [Fact]
+    public void RandomBeatsTheGlobalForBothColoursButNotTheOpacity()
+    {
+        var (stroke, fill) = GroupStyle.Resolve(null, Globals, "#00AA00");
+
+        Assert.Equal(Color.FromArgb(128, 0, 0xAA, 0), stroke);
+        Assert.Equal(Color.FromArgb(64, 0, 0xAA, 0), fill);
+    }
+
+    [Fact]
+    public void AnOverrideBeatsRandomFieldByField()
+    {
+        var (stroke, fill) = GroupStyle.Resolve(new GroupStyle("#112233", null, null, 1.0), Globals, "#00AA00");
+
+        Assert.Equal(Color.FromArgb(128, 0x11, 0x22, 0x33), stroke);   // own colour wins
+        Assert.Equal(Color.FromArgb(255, 0, 0xAA, 0), fill);           // random hue, own opacity
+    }
+
+    [Fact]
+    public void NullRandomIsExactlyTodaysResult()
+    {
+        var over = new GroupStyle("#112233", 0.4, null, null);
+
+        Assert.Equal(GroupStyle.Resolve(over, Globals), GroupStyle.Resolve(over, Globals, null));
+        Assert.Equal(GroupStyle.Resolve(null, Globals), GroupStyle.Resolve(null, Globals, null));
+    }
+
+    [Fact]
+    public void AnUnparsableRandomFallsBackToTheFallbackColour()
+    {
+        var (stroke, _) = GroupStyle.Resolve(null, Globals, "nonsense");
+
+        Assert.Equal(Color.FromArgb(128, 255, 255, 255), stroke);
+    }
 }

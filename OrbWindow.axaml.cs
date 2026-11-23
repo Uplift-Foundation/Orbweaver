@@ -484,6 +484,7 @@ namespace Orbweaver
             // orb offers neither — there's no local CLI to relaunch and no
             // OpenClaw agent to point at.
             NewChatHereItem.IsVisible = status.IsLocalCli || status.Source == SessionSource.OpenClaw;
+            ResumeHereItem.IsVisible = status.IsLocalCli;
 
             // Back to the plain wording on every pass, so a refusal explained
             // once does not outlive the thing it was about. A husk whose job has
@@ -3670,6 +3671,27 @@ namespace Orbweaver
             OpenNewChatWindow(prefill.Cli, prefill.Cwd, prefill.AgentId);
         }
 
+        // CB-361: what "Resume a session here…" would prefill — the orb's CLI
+        // and folder, and the account its transcript lives under (null for the
+        // default account or when it cannot be told). Pure, like
+        // NewChatPrefillFor. Null for anything that is not a local CLI.
+        internal static (NewChatCli Cli, string Cwd, string? ProfileDir)? ResumePrefillFor(SessionStatus? status)
+        {
+            if (status is null || !status.IsLocalCli) return null;
+            if (NewChatOrbWatch.CliOf(status.Source) is not { } cli) return null;
+            return (cli, status.Cwd, AutoGroupAccounts.HomeOf(status.Source, status.TranscriptPath));
+        }
+
+        internal void ResumeHere_Click(object? sender, RoutedEventArgs e)
+        {
+            if (ResumePrefillFor(_lastStatus) is not { } prefill) return;
+            OpenResumeWindow(prefill.Cli, prefill.Cwd, prefill.ProfileDir);
+        }
+
+        [ExcludeFromCodeCoverage]
+        private static void OpenResumeWindow(NewChatCli cli, string cwd, string? profileDir) =>
+            NewChatWindow.ToggleResume(cli, cwd, profileDir);
+
         [ExcludeFromCodeCoverage]
         private static void OpenNewChatWindow(NewChatCli? cli, string cwd, string? agentId) =>
             NewChatWindow.Toggle(cli, cwd, agentId);
@@ -3951,6 +3973,22 @@ namespace Orbweaver
             var style = new MenuItem { Header = "Style…" };
             style.Click += (_, _) => GroupStyleWindow.Toggle(group.Id, focusName: false);
             GroupMenuItem.Items.Add(style);
+
+            // CB-409: the per-group re-roll, for two groups that landed on the
+            // same hue. Hidden where it would do nothing: outside random mode, or
+            // when the group's own style sets both colours (an opacity-only or
+            // one-colour override still leaves a random hue to re-roll).
+            var reroll = new MenuItem
+            {
+                Header = "New random colour",
+                IsVisible = OrbweaverSettings.GroupColourRandom && !(group.Style is { Stroke: not null, Fill: not null })
+            };
+            reroll.Click += (_, _) =>
+            {
+                OrbweaverSettings.RerollOrbGroupColour(group.Id);
+                CurrentManager()?.ReapplyGroupStyles();
+            };
+            GroupMenuItem.Items.Add(reroll);
 
             GroupMenuItem.Items.Add(new Separator());
 

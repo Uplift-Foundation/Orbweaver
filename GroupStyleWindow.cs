@@ -165,10 +165,16 @@ namespace Orbweaver
         {
             var over = Group?.Style;
             var globals = OrbweaverSettings.GroupOutlineGlobals();
+
+            // CB-409: in random mode the colour a group inherits is its own hue,
+            // not the global, so the pickers show what is on screen — and
+            // unticking "Use default style" then writes that hue as an ordinary
+            // override with no further code.
+            var random = OrbweaverSettings.RandomColourFor(Group);
             return new GroupStyle(
-                over?.Stroke ?? globals.Stroke,
+                over?.Stroke ?? random ?? globals.Stroke,
                 over?.StrokeOpacity ?? globals.StrokeOpacity,
-                over?.Fill ?? globals.Fill,
+                over?.Fill ?? random ?? globals.Fill,
                 over?.FillOpacity ?? globals.FillOpacity);
         }
 
@@ -180,7 +186,7 @@ namespace Orbweaver
 
             NameBox = new TextBox { MinWidth = 240, Text = group?.Name ?? "" };
             NameBox.PropertyChanged += OnNameBoxChanged;
-            UseDefaultBox = new CheckBox { Content = "Use default style", IsChecked = usingDefault };
+            UseDefaultBox = new CheckBox { Content = OrbweaverSettings.GroupColourRandom ? "Use default style (random colour)" : "Use default style", IsChecked = usingDefault };
             UseDefaultBox.IsCheckedChanged += OnUseDefaultChanged;
 
             var root = new StackPanel { Margin = new Thickness(20), Spacing = 12 };

@@ -103,6 +103,7 @@ namespace Orbweaver
             // to orbGroups, so an older build still reads the file.
             "orbGroups", "groupOutlinesEnabled", "groupNamesVisible", "groupOutlineStroke",
             "groupOutlineStrokeOpacity", "groupOutlineFill", "groupOutlineFillOpacity",
+            "groupColourMode", "groupColourSeed",
             "codexChatEnabled", "codexReplyEnabled", "codexAccountUsageEnabled", "autoColorSessions",
             "claudeCodeEnabled", "codexEnabled",
             "grokChatEnabled", "grokReplyEnabled", "grokEnabled", "grokAccountUsageEnabled",
@@ -124,6 +125,7 @@ namespace Orbweaver
             "lastUpdateCheckUtc", "lastRunVersion",
             "newChatRecentFolders", "newChatLastCli", "newChatLastProfile",
             "newChatLastProfiles",
+            "newChatResumeModes",
             "phoneLaunchProfiles",
             // CB-339: what a paired phone's folder picker may browse. See PhoneBrowseRoots.
             "phoneBrowseRoots", "phoneBrowseHome",
@@ -268,6 +270,8 @@ namespace Orbweaver
         public const double DefaultGroupOutlineStrokeOpacity = 0.35;
         public const string DefaultGroupOutlineFill = "#FFFFFF";
         public const double DefaultGroupOutlineFillOpacity = 0.06;
+        public const string GroupColourModeSame = "same";
+        public const string GroupColourModeRandom = "random";
 
         private sealed class Model
         {
@@ -920,6 +924,10 @@ namespace Orbweaver
             // nor a downgrade loses a saved pick.
             public Dictionary<string, string> NewChatLastProfiles { get; init; } = new(StringComparer.Ordinal);
 
+            // CB-361: the CLIs whose New chat dialog was last left in Resume
+            // mode. Value is always "resume"; absence means New.
+            public Dictionary<string, string> NewChatResumeModes { get; init; } = new(StringComparer.Ordinal);
+
             // CB-316: the account a session started from a phone runs under when the phone names
             // none, per CLI ("ClaudeCode": ".claude-uplift"). A designated default, not a
             // last-used: it stays what the user said until they say otherwise. "default" names
@@ -959,6 +967,9 @@ namespace Orbweaver
             public double GroupOutlineStrokeOpacity { get; set; } = DefaultGroupOutlineStrokeOpacity;
             public string GroupOutlineFill { get; set; } = DefaultGroupOutlineFill;
             public double GroupOutlineFillOpacity { get; set; } = DefaultGroupOutlineFillOpacity;
+            // CB-409: "same" (every group wears the global outline) or "random".
+            public string GroupColourMode { get; set; } = GroupColourModeSame;
+            public int GroupColourSeed { get; set; }
             public double ArrangeSpacing { get; set; } = DefaultArrangeSpacing;
 
             // How much bigger or smaller than shipped the chat panel draws its
@@ -1648,6 +1659,24 @@ namespace Orbweaver
             }
         }
 
+        // CB-361: whether New chat was last left in Resume mode for this CLI.
+        internal static bool NewChatResumeModeFor(NewChatCli cli)
+        {
+            Load();
+            lock (Gate) return _model.NewChatResumeModes.ContainsKey(cli.ToString());
+        }
+
+        internal static void SetNewChatResumeMode(NewChatCli cli, bool resume)
+        {
+            Load();
+            lock (Gate)
+            {
+                if (resume) _model.NewChatResumeModes[cli.ToString()] = "resume";
+                else _model.NewChatResumeModes.Remove(cli.ToString());
+            }
+            Save();
+        }
+
         internal static string? PhoneLaunchProfileFor(NewChatCli cli)
         {
             Load();
@@ -2273,6 +2302,49 @@ namespace Orbweaver
             }
         }
 
+        // CB-409. Whether groups without their own style each wear a hue of their
+        // own instead of the global outline colours.
+        public static bool GroupColourRandom
+        {
+            get { Load(); lock (Gate) return _model.GroupColourMode == GroupColourModeRandom; }
+            set
+            {
+                Load();
+                lock (Gate) _model.GroupColourMode = value ? GroupColourModeRandom : GroupColourModeSame;
+                Save();
+            }
+        }
+
+        // Re-rolls every group's colour at once: a new seed changes the hash
+        // input for all of them. The seed is random on purpose, unlike the hash.
+        public static void ShuffleGroupColours()
+        {
+            Load();
+            lock (Gate) _model.GroupColourSeed = Random.Shared.Next(1, int.MaxValue);
+            Save();
+        }
+
+        // One group's re-roll: bumps its salt through the table, so the change
+        // saves like any other group edit.
+        public static void RerollOrbGroupColour(string id)
+        {
+            var salt = OrbGroupFor(id)?.ColourSalt;
+            if (salt is null) return;
+            ChangeGroups(groups => groups.SetColourSalt(id, salt.Value == int.MaxValue ? 1 : salt.Value + 1));
+        }
+
+        // The hue `group` wears in random mode, or null in "Same for all" (and
+        // for no group), which is what makes GroupStyle.Resolve behave as before.
+        public static string? RandomColourFor(OrbGroup? group)
+        {
+            if (group is null) return null;
+            Load();
+            lock (Gate)
+                return _model.GroupColourMode == GroupColourModeRandom
+                    ? GroupColour.For(group.Id, _model.GroupColourSeed, group.ColourSalt)
+                    : null;
+        }
+
         // The four globals as the fully populated GroupStyle that
         // GroupStyle.Resolve takes as its `globals` argument.
         public static GroupStyle GroupOutlineGlobals()
@@ -2839,6 +2911,16 @@ namespace Orbweaver
                         }
                     }
 
+                    if (root["newChatResumeModes"] is JsonObject resumeModes)
+                    {
+                        foreach (var (cliName, node) in resumeModes)
+                        {
+                            if (Enum.TryParse<NewChatCli>(cliName, out var parsedCli)
+                                && parsedCli.ToString() == cliName && Text(node) is not null)
+                                model.NewChatResumeModes[cliName] = "resume";
+                        }
+                    }
+
                     if (root["phoneBrowseRoots"] is JsonArray browseRoots)
                     {
                         model.PhoneBrowseRoots = [];
@@ -3169,6 +3251,11 @@ namespace Orbweaver
                     model.GroupOutlineFillOpacity =
                         OrbGroups.ClampOpacity(Number(root["groupOutlineFillOpacity"]))
                         ?? DefaultGroupOutlineFillOpacity;
+                    model.GroupColourMode = Text(root["groupColourMode"]) == GroupColourModeRandom
+                        ? GroupColourModeRandom
+                        : GroupColourModeSame;
+                    model.GroupColourSeed = Number(root["groupColourSeed"]) is { } seed
+                        && seed >= 0 && seed <= int.MaxValue ? (int)seed : 0;
 
                     // Anything above this line is a key this build understands.
                     // Whatever is left belongs to a different version and is kept
@@ -3575,6 +3662,7 @@ namespace Orbweaver
                         ["newChatLastProfile"] = _model.NewChatLastProfiles.TryGetValue(
                             nameof(NewChatCli.ClaudeCode), out var claudeLastProfile) ? claudeLastProfile : null,
                         ["newChatLastProfiles"] = NewChatLastProfilesNode(_model.NewChatLastProfiles),
+                        ["newChatResumeModes"] = NewChatLastProfilesNode(_model.NewChatResumeModes),
                         ["phoneLaunchProfiles"] = NewChatLastProfilesNode(_model.PhoneLaunchProfiles),
                         ["phoneBrowseRoots"] = phoneBrowseRoots,
                         ["phoneBrowseHome"] = _model.PhoneBrowseHome,
@@ -3609,7 +3697,9 @@ namespace Orbweaver
                         ["groupOutlineStroke"] = _model.GroupOutlineStroke,
                         ["groupOutlineStrokeOpacity"] = _model.GroupOutlineStrokeOpacity,
                         ["groupOutlineFill"] = _model.GroupOutlineFill,
-                        ["groupOutlineFillOpacity"] = _model.GroupOutlineFillOpacity
+                        ["groupOutlineFillOpacity"] = _model.GroupOutlineFillOpacity,
+                        ["groupColourMode"] = _model.GroupColourMode,
+                        ["groupColourSeed"] = _model.GroupColourSeed
                     };
 
                     // Keys this build doesn't understand, put back exactly as they

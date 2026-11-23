@@ -180,6 +180,34 @@ Reading `~/.grok` itself: the shell's `ls` here is aliased to a tool that, given
 
 The New chat dialog still sets nothing for the default account (`NewChatAccountHome`, `ClaudeProfile.ConfigDirFor`): one rule for all three CLIs, and a `GROK_HOME` Buddy itself was launched under reaches the chat unchanged.
 
+## Resuming a session by id (CB-361)
+
+**`grok --resume <id>` exists and keeps the id.** It retires the old "no resume
+flag is known" reading of this file: New chat's Resume mode starts
+`grok --resume <id>` in the session's own folder rather than scraping the home
+menu. What was observed, by machine:
+
+- **Mac mini, Grok 1.0.13:** `--help` lists `--resume`, and a disposable session
+  resumed with `grok --resume <id>` reused the same session directory, appended
+  to the same `updates.jsonl`, kept the same id, and fired `session_start`
+  within 2 s of launch (CB-361 architect, 23 Nov 2026) — so a resumed Grok orb
+  appears without a prompt, unlike Codex.
+- **MacBook, Grok 1.0.92, and Windows, Grok 1.0.77:** `--help` lists `--resume`
+  on both. **Only the help text was read there; a resume was not run**, so
+  "keeps the id" is measured on 1.0.13 only.
+
+The same-id result is why a resumed orb is found again by its session id. It
+does not by itself carry an orb's saved position, size or group, which are keyed
+by folder and title (`SessionManager.PositionKeyFor`), not by id; hidden state
+*is* keyed by id and is pruned two minutes after the session leaves the status
+folder, so a session resumed after that comes back visible, while one resumed
+inside the two minutes still carries its hide (CB-361 architect's reading of
+`HiddenOrbs.DuePrunes`, not run).
+
+The resume token is what `ResumeSupport` looks for in `<binary> --help`, so an
+older Grok without it gets a plain refusal instead of a launch that errors in a
+terminal nobody is watching.
+
 ## Still unknown
 
 - The JSON field `/rename` writes when `title_is_manual` is true.

@@ -39,14 +39,17 @@ namespace Orbweaver
     /// <c>star</c>, <c>grid</c>, <c>line</c>, <c>vline</c>). <paramref name="Anchor"/>
     /// is the shape's centre in physical pixels, null until the group has been
     /// drawn once; <paramref name="Style"/> is a per-group override, null meaning
-    /// "use the global outline style" outright.
+    /// "use the global outline style" outright. <paramref name="ColourSalt"/>
+    /// (CB-409) is what "New random colour" bumps to re-roll this group's hue in
+    /// "Random per group" mode; 0 for a group never re-rolled.
     /// </summary>
     internal sealed record OrbGroup(
         string Id,
         string Name,
         string Shape,
         OrbweaverSettings.OrbPlacement? Anchor,
-        GroupStyle? Style);
+        GroupStyle? Style,
+        int ColourSalt = 0);
 
     /// <summary>
     /// A group's outline style. Every field is an override: null inherits the

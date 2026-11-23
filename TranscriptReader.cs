@@ -246,14 +246,14 @@ namespace Orbweaver
         // an encoded cwd, and which of the files under them is newest, is the part
         // with a decision in it.
         [ExcludeFromCodeCoverage]
-        private static IEnumerable<string> SafeDirectories(string root)
+        internal static IEnumerable<string> SafeDirectories(string root)
         {
             try { return Directory.EnumerateDirectories(root).ToList(); }
             catch { return Array.Empty<string>(); }
         }
 
         [ExcludeFromCodeCoverage]
-        private static IEnumerable<string> SafeFiles(string dir, string pattern)
+        internal static IEnumerable<string> SafeFiles(string dir, string pattern)
         {
             try { return Directory.EnumerateFiles(dir, pattern).ToList(); }
             catch { return Array.Empty<string>(); }
@@ -306,6 +306,87 @@ namespace Orbweaver
         {
             try { return ReadTail(path, tailBytes); }
             catch { return Array.Empty<string>(); }
+        }
+
+        // CB-361: the other end of the file, for the rows a CLI writes first
+        // (Claude's cwd and sessionId, Codex's session_meta, everyone's first
+        // prompt). Same FileShare.ReadWrite, same torn-line rule mirrored: when
+        // the window stops short of the end of the file, its last line is cut
+        // and is dropped. A CRLF file reads the same as an LF one.
+        internal const int HeadBytes = 65536;
+
+        // Excluded for the catch only, as TailLines is; ReadHead is measured.
+        [ExcludeFromCodeCoverage]
+        internal static string[] HeadLines(string path, int headBytes = HeadBytes)
+        {
+            try { return ReadHead(path, headBytes); }
+            catch { return Array.Empty<string>(); }
+        }
+
+        internal static string[] ReadHead(string path, int headBytes)
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            var buffer = new byte[(int)Math.Min(headBytes, fs.Length)];
+            var read = fs.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
+            var chunk = System.Text.Encoding.UTF8.GetString(buffer, 0, read);
+
+            // Only a window that stopped short has a torn last line. Cutting
+            // there also discards any UTF-8 sequence the window split.
+            if (fs.Length > read)
+            {
+                var nl = chunk.LastIndexOf('\n');
+                chunk = nl >= 0 ? chunk[..nl] : "";
+            }
+
+            return chunk.Split('\n')
+                .Select(line => line.TrimEnd('\r'))
+                .Where(line => line.Length > 0)
+                .ToArray();
+        }
+
+        // CB-361, for Codex: the first row read whole however long it is, up
+        // to firstRowCap bytes, then up to `budget` more bytes of rows with the
+        // usual torn-line rule. Null when the first row runs past the cap (the
+        // caller skips the file rather than reading on). A file that is one
+        // row with no newline is that row.
+        [ExcludeFromCodeCoverage]
+        internal static string[]? HeadRows(string path, int firstRowCap, int budget)
+        {
+            try { return ReadHeadRows(path, firstRowCap, budget); }
+            catch { return null; }
+        }
+
+        internal static string[]? ReadHeadRows(string path, int firstRowCap, int budget)
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            var acc = new MemoryStream();
+            var buffer = new byte[65536];
+            long firstEnd = -1;
+            while (firstEnd < 0 || acc.Length - firstEnd - 1 < budget)
+            {
+                var n = fs.Read(buffer, 0, buffer.Length);
+                if (n == 0) break;
+                var offset = acc.Length;
+                acc.Write(buffer, 0, n);
+                if (firstEnd < 0)
+                {
+                    var nl = Array.IndexOf(buffer, (byte)'\n', 0, n);
+                    if (nl >= 0) firstEnd = offset + nl;
+                    else if (acc.Length > firstRowCap) return null;
+                }
+            }
+            if (firstEnd < 0 && acc.Length > firstRowCap) return null;
+
+            var end = firstEnd < 0 ? acc.Length : Math.Min(acc.Length, firstEnd + 1 + budget);
+            var chunk = System.Text.Encoding.UTF8.GetString(acc.GetBuffer(), 0, (int)end);
+            // Stopped short of the end: drop the torn last row. The first row
+            // ends at a newline, so it always survives the cut.
+            if (end < fs.Length) chunk = chunk[..chunk.LastIndexOf('\n')];
+
+            return chunk.Split('\n')
+                .Select(line => line.TrimEnd('\r'))
+                .Where(line => line.Length > 0)
+                .ToArray();
         }
 
         private static string[] ReadTail(string path, int tailBytes)
