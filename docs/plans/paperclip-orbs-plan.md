@@ -517,7 +517,15 @@ Measured on 2026-11-23 against Paperclip `2026.1117.0` on the Mac mini, with a b
 | 9 | Pausing an agent in `error` and resuming it leaves it `idle`: the error status is gone. What resume alone does to an `error` agent was not measured. | measured, twice |
 | 10 | `POST /api/agents/{id}/wakeup` with a board key and body `{"source":"on_demand"}`: 202 and the run row (`id`, `status: "queued"`, `triggerDetail: "manual"`). `forceFreshSession` is not needed, whatever the OpenAPI document says. | measured |
 | 11 | **That wake, on a `paperclip_runner` agent with no task waiting, failed in 0.7 s** with `errorCode: adapter_failed` ("Paperclip Runner requires a standard, planning, ask, or skill test task") and put the agent in `error`. It never appeared in `live-runs` at a 1 to 2 s poll. Two `on_demand` runs of the same agent the night before succeeded, so this is not every wake; what differed was not established. | measured, once |
-| 12 | A tool action request and its approve and decline | **declared, never called.** No real request exists yet. |
+| 12 | A pending tool action request, minted without an agent run by a test call on the fixture's example tool (the lead's recipe: `POST /api/tool-connections/{id}/test-calls`, which answers `{"decision":"ask_first","invocationId","actionRequestId"}`). The list is `{"actionRequests":[row]}` and **the row is nested**: `request{id, status, previewMarkdown, canonicalArgumentsSummary{summary}, requestedByAgentId, requestedByUserId, createdAt, expiresAt, …}` beside `toolName`, `toolTitle`, `connectionName`, `applicationName`, `riskLevel`, `requestedByAgentId`. There is no `id` at the row's top level. | measured, 4 rows |
+| 12a | On a test-call request `requestedByAgentId` is null at both levels and `requestedByUserId` is set, though the call named an agent. What a request raised by a real run carries has still not been seen. | measured (lead, and again here) |
+| 12b | A request lives one hour (`expiresAt` is `createdAt` + 1 h). `previewMarkdown` is markdown ("create_item · \*\*Title:\*\* …"); `toolName` is the gateway's namespaced name. | measured |
+| 12c | Approve with `{"companyId"}` and a board key: 200 and the request object itself (not wrapped). **The tool runs inside that call**, and the status in the answer is the run's: here `failed`, with `error` set to the tool's own message. So a 200 does not mean the tool worked. | measured, once |
+| 12d | Approve again: 200, the same row. Decline again after a decline: 200, the same row. | measured |
+| 12e | **Decline after approve: 409** `{"error":"This review has already been resolved"}`. **Approve after decline: 409** `{"error":"Tool action request is no longer pending","reasonCode":"action_not_pending"}`. | measured |
+| 12f | Decline with `{"companyId","reason"}`: 200, `status: "rejected"`. No `companyId`: 400 `companyId is required`. Unknown id: 404 with `reasonCode: "action_request_not_found"`. No credential: 403. | measured |
+| 12g | The default list and `?status=pending` return the same rows; a decided request leaves both at once. `?status=failed` and `?status=rejected` list the decided ones. | measured |
+| 12h | **Release 1 on `develop` does not see a real request.** `PaperclipApi.ParseActionRequests` reads `id` from the row's top level and skips a row without one, and the real row keeps it under `request`. | read from `PaperclipApi.cs:200-201` against the measured row; not run. The first test in §13.5 that feeds the captured fixture to the parser is the proof. This is a defect against CB-421's "Ask first" requirement, fixed in this branch. |
 | 13 | Resume of an agent paused for budget | **not measured**; none exists |
 
 Read from source, not run:
@@ -540,8 +548,7 @@ Assumed, and who settles it:
 
 | Assumption | Settled by |
 | --- | --- |
-| A tool action request row names its agent and something to show | unchanged from §1.7; the lead is producing the first real one |
-| Tool action approve and decline answer like approvals do (2xx with the row, an error once decided) | the same first real request; `DecideAsync` is shaped so the answer does not matter (§13.2) |
+| A tool action request raised by a real agent run names that agent in `requestedByAgentId` | the first native run that reaches an "Ask first" tool; until then every real row seen names no agent and lands on the company's lead (§13.2) |
 | Both phones key a pending prompt by session and would overwrite a second one | phone engineer, by reading; the desktop rule in §13.4 is safe either way |
 | The phone sends `prefs` on every connect, not only on a change | phone engineer; if only on change, a fresh install sends it once at pairing |
 
@@ -566,7 +573,7 @@ Reached as `PaperclipSessions.Actions`, a static settable property like `RosterS
 | Call | Request |
 | --- | --- |
 | Decide, `need.Kind == "approval"` | `POST /api/approvals/{id}/approve` or `/reject`, body `{"decisionNote":"From Orbweaver"}` |
-| Decide, `need.Kind == "action"` | `POST /api/tool-gateway/action-requests/{id}/approve` or `/decline`, body `{"companyId":…}`. **Declared, never called.** |
+| Decide, `need.Kind == "action"` | `POST /api/tool-gateway/action-requests/{id}/approve` or `/decline`, body `{"companyId":…}` (measured, rows 12c to 12f) |
 | Decide, any other kind, or the synthetic need whose id is `pending` | no request; `Refused`. The UI never offers buttons for these. |
 | Wake | `POST /api/agents/{id}/wakeup`, body `{"source":"on_demand"}` (measured, §13.1 row 10) |
 | Pause, Resume | `POST /api/agents/{id}/pause`, `/resume`, no body |
@@ -575,8 +582,8 @@ Outcome, the same for every call:
 
 | Paperclip answers | Outcome | Words (`Why`) |
 | --- | --- | --- |
-| 2xx | `Done` | none |
-| 422 on an approval decide, then `GET /api/approvals/{id}` says anything but `pending`; 404 on a decide | `AlreadyDecided` | "Already answered in Paperclip" |
+| 2xx | `Done` | none. One exception: a tool action approve whose answer says `status: "failed"` is still `Done` (the decision was made, and the item is gone), with `Why` "Approved, but the tool failed", shown at the desk in the ordinary colour. The tool's own error text is not shown and never leaves the desktop. |
+| 422 on an approval decide, then `GET /api/approvals/{id}` says anything but `pending`; 409 on a tool action decide; 404 on either | `AlreadyDecided` | "Already answered in Paperclip" |
 | 401 | `NeedsReconnect` | "Reconnect to Paperclip to answer" |
 | any other 4xx | `Refused` | Paperclip's `error` text cut to 140 characters, else "Paperclip refused that" |
 | no connection, timeout, 5xx | `Unreachable` | "Can't reach Paperclip" |
@@ -584,6 +591,10 @@ Outcome, the same for every call:
 `AlreadyDecided` is decided without trusting how Paperclip words a double decision: on a 4xx other than 401 to an approval decide, the implementation reads `GET /api/approvals/{id}` once, and a status other than `pending` is `AlreadyDecided`. That is the measured 422 (§13.1 row 4). The same decision made twice is a 200 and so `Done`, which is true: the item is in the state the user asked for (row 3). A 404 on a decide is `AlreadyDecided` (the item is gone, which is what the user needs to know).
 
 After every `Done` and `AlreadyDecided` the implementation calls `PaperclipSessions.PollNow()`, new: it releases the poll loop's wait so the next step runs at once. That is requirement 3 and the CB-425 fix in one place, since the three seconds were the loop waiting out its interval.
+
+**Reading a tool action request (corrects release 1).** `ParseActionRequests` reads the nested row: id `request.id`, status `request.status`, agent `request.requestedByAgentId` then the row's `requestedByAgentId`, created `request.createdAt`, expiry `request.expiresAt`. The need's title is `toolTitle`, else the part of `toolName` after its last colon, else "Tool action"; its summary is `previewMarkdown` with `**` removed, cut to 4000. The flat shape release 1 guessed stays accepted, so the old fixtures still parse. **A need that names no agent, approval or tool action, belongs to the company's lead** (the lead's decision; it is what `Compose.Resolve` already does), because it still needs the human. A tool action prompt's `expires_at` is the request's own expiry when that is sooner than a day.
+
+**Wake, decided by the lead.** A Wake that fails at once must not raise its own alarm. The poll's issue queries are `status=blocked` and `status=in_progress`, so they cannot say whether an agent has an assigned task not yet started (the fixture has none in any open state to check against), and Wake therefore cannot be gated on a task at no extra query. So: Wake is offered as the ticket says and shows Paperclip's reason when the run fails; and a Broke transition for an agent within 30 s of a Wake pressed on this desktop mints no "broke" push. The orb still shows Broke. `PaperclipSessions.NoteWake(agentId, now)` records the press; `BrokeTransitions` takes those times and the clock.
 
 **What the orb shows.** `SessionStatus` gains `Needs` (`IReadOnlyList<PaperclipNeed>`, `[JsonIgnore]`, empty for every other source), filled where `HoverLines` is.
 
@@ -640,6 +651,7 @@ No hook, installer or packaging file changes, as in release 1; the five install 
   "desktop": {
     "when": "the poll in which a Paperclip agent's mark becomes Broke, when the previous successful poll in this process showed it not Broke and the agent is a row in the roster. The first poll after a start or a reconnect sets the baseline and sends nothing. An agent that stays Broke sends nothing more; it is armed again when its mark leaves Broke.",
     "ct": "the delta this scan already has for the row, else a delta restating the row's state and since",
+    "own_wake": "no broke push for an agent whose Wake was pressed on this desktop in the last 30 s",
     "never": "for a finished run. A paperclip row's generating to idle with no Broke mark is a delta with push none.",
     "old_relay": "err bad_envelope for the envelope's id: the desktop sends no more broke pushes until its next welcome. The phone recovers the lost delta by its ordinary gap resync."
   },
@@ -688,14 +700,15 @@ Phones (CB-428): the prompt is an ordinary frames-v3 prompt, so nothing new is p
 
 ### 13.5 Test matrix (release 2)
 
-100% of added lines. Named exceptions for the PR body: the real `HttpClient` POST construction; the tool action route against a real Paperclip.
+100% of added lines. Named exception for the PR body: the real `HttpClient` POST construction. Fixtures for the tool action routes are in `tests/UnitTests/Fixtures/paperclip/native/tool-actions/`, captured 2026-11-23 and scrubbed (ids remapped, user ids replaced, `signedArguments` removed).
 
 | Level | Class | Cases |
 | --- | --- | --- |
-| Unit | `PaperclipOutcomeTests` | One case per row of the outcome table for each of the four calls; the 4xx-then-read path for both read answers; a 404 action decide; a `blocked` and a `pending` need make no request; `Why` is cut at 140 and never carries a path-shaped string from a 5xx body. |
+| Unit | `PaperclipApiTests` (extend) | The captured `tool-actions/action-requests-pending.json` parses to its rows with id, title, summary, created and expiry (this fails on `develop`, row 12h); a row naming no agent lands on the lead; the flat release 1 shape still parses; markdown stripped. |
+| Unit | `PaperclipOutcomeTests` | One case per row of the outcome table for each of the four calls; the 4xx-then-read path for both read answers; each captured tool action answer in `tool-actions/` (200 failed, 200 again, both 409s, 400, 404) maps to its outcome; a `blocked` and a `pending` need make no request; `Why` is cut at 140 and never carries a path-shaped string from a 5xx body. |
 | Unit | `PaperclipOrbDecisionTests` (extend) | `MenuOffer` for each of running, idle, paused, over budget, broke, terminated, and each link state; `NeedOffer` per kind; the click rule for answerable, link-only and mixed needs. |
 | Unit | `PaperclipPromptsTests` | Mint once across three polls; nothing for blocked, pending or a non-roster agent; two needs give one prompt then the second; each resolve cause; each outcome's reply; expiry; the member-amber pref; restart mints again. |
-| Unit | `PaperclipBrokeTests` | Baseline sends nothing; None to Broke sends once with each `why`; Broke through three more failed runs sends nothing; Broke, None, Broke sends twice; prefs absent, false and true; not a roster row; the `bad_envelope` latch and its release on welcome; a finished run with no mark sends push none (the quiet control). |
+| Unit | `PaperclipBrokeTests` | Baseline sends nothing; None to Broke sends once with each `why`; Broke through three more failed runs sends nothing; Broke, None, Broke sends twice; prefs absent, false and true; not a roster row; a Wake pressed 5 s before sends nothing and one pressed 31 s before sends; the `bad_envelope` latch and its release on welcome; a finished run with no mark sends push none (the quiet control). |
 | Unit | relay vector tests | Every v16 and prompt vector re-serialises byte-identically. |
 | Integration | `PaperclipHttpTests` (extend) | Each POST's path and body byte-exact against the loopback server; `Authorization` present; 401, 409, 422, 500, hung and dropped map to the typed failures. |
 | UI | `PaperclipNeedsPanelTests` | With a fake `IPaperclipActions`: a block per need; link-only kinds have no buttons; a click calls `DecideAsync` once with the right need and flag; buttons disabled while the call is out; each outcome's result on screen; the panel follows a new `UpdateFrom`. |
@@ -709,9 +722,10 @@ Phones (CB-428): the prompt is an ordinary frames-v3 prompt, so nothing new is p
 
 Install owner: QA. Test approvals are created for the purpose (`POST /api/companies/{id}/approvals`, type `request_board_approval`); nothing real is decided, and every agent is left in the state it was found.
 
+0. **Ask first.** Mint a tool action request with the test call (§13.1 row 12); the lead's orb goes amber with the tool's name; Approve; the request leaves Paperclip's pending list. Decline a second one. They expire in an hour, so mint them when needed.
 1. **Approve in place.** Create a test approval; the lead's orb goes amber; Approve in the flyout; `GET /api/approvals/{id}` says `approved` and the orb leaves amber within one poll. About a minute. **Paired negative:** revoke the app's key, create another, press Approve: the block stays, with the reconnect sentence, and Paperclip still says `pending`.
 2. **Decline, and answered elsewhere.** Decline one from the flyout. Approve another in Paperclip's own page while the flyout is open, then press Approve: "Already answered in Paperclip", no error styling.
-3. **Wake, Pause, Resume.** Wake an idle agent: a working orb within about 2 s. Pause: the pause mark, and Paperclip's page says paused. Resume: the mark clears. Window sized to three times the run, not to a round number.
+3. **Wake, Pause, Resume.** Wake an idle agent that has a task: a working orb within about 2 s. Wake one with nothing waiting: the Broke mark with Paperclip's reason, and no push on a paired phone with "Agent broke" on (the paired positive is proof 5). Pause: the pause mark, and Paperclip's page says paused. Resume: the mark clears. Window sized to three times the run, not to a round number.
 4. **Phone, needs you.** On the staging relay with a current build: a test approval produces exactly one push; Approve from the notification; Paperclip says `approved`; the notification clears. Repeat from the watch. **Paired negative:** a run that finishes cleanly produces no push (judge from `mirror-log.txt`, turns under 3 s do not count).
 5. **Phone, broke.** With "Agent broke" on: an agent's failed run produces one push with the agent's name and no buttons; a second failed run on the same agent produces none. **Paired negative:** the switch off, the same failure, no push.
 6. **Old phone build**, if one is installed anywhere: the answerable prompt arrives and works; no broke push arrives.
