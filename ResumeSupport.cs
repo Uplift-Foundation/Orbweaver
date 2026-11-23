@@ -60,30 +60,30 @@ namespace Orbweaver
             versionText is null ? null
             : Regex.Match(versionText, @"\d+(\.\d+)+") is { Success: true } m ? m.Value : null;
 
-        // Tests: a fixed help text per CLI instead of running a binary.
+        // The refusal when the help text could not be read at all — the probe
+        // timed out, failed to start, or threw. That says nothing about the
+        // version, so it is never worded as "this version can't", never cached,
+        // and the next click asks again.
+        internal static ResumeCheck Unchecked(NewChatCli cli) =>
+            new(false, "Couldn't check whether " + NewChatLauncher.DisplayName(cli) + " can resume. Try again.");
+
+        // Tests: a fixed answer per CLI instead of running a binary.
         internal static Func<NewChatCli, string, ResumeCheck>? ProbeForTests;
 
-        // The check for a real binary, cached by path and write time so the
-        // dialog does not run `--help` on every click, and a reinstall (new
-        // mtime) is asked again. A refusal is cached the same as a pass, so a
-        // CLI that hangs costs its 20 s once, not on every click.
-        //
-        // Blocking — up to 10 s each for --help and --version. Only ever called
-        // from NewChatLauncher.Resume, which the dialog runs off the UI thread.
+        // Blocking — up to 10 s for --help and --version together. Only ever
+        // called from NewChatLauncher.Resume, which the dialog runs off the UI
+        // thread.
         internal static ResumeCheck Probe(NewChatCli cli, string binary) =>
-            ProbeForTests?.Invoke(cli, binary) ?? ProbeReal(cli, binary);
-
-        private static readonly ConcurrentDictionary<(string, DateTime), ResumeCheck> Probed = new();
+            ProbeForTests?.Invoke(cli, binary) ?? Shared.Probe(cli, binary);
 
         [ExcludeFromCodeCoverage]
-        private static ResumeCheck ProbeReal(NewChatCli cli, string binary)
-        {
-            DateTime stamp;
-            try { stamp = File.GetLastWriteTimeUtc(binary); }
-            catch { stamp = DateTime.MinValue; }
+        internal static ResumeProbe Shared { get; } = new(Run, StampOf);
 
-            return Probed.GetOrAdd((binary, stamp), _ =>
-                Check(cli, Run(binary, "--help"), VersionFrom(Run(binary, "--version"))));
+        [ExcludeFromCodeCoverage]
+        private static DateTime StampOf(string binary)
+        {
+            try { return File.GetLastWriteTimeUtc(binary); }
+            catch { return DateTime.MinValue; }
         }
 
         // Bounded at 10 s: a CLI that hangs on --help (a login prompt, an
@@ -114,6 +114,36 @@ namespace Orbweaver
                 return stdout.Result + "\n" + stderr.Result;
             }
             catch { return null; }
+        }
+    }
+
+    // The probe and its cache, with the process run and the file stamp as
+    // seams. Cached by binary path and write time, so the dialog does not run
+    // --help on every click and a reinstall is asked again.
+    //
+    // Only an answer that came from real help text is cached (QA, CB-361): a
+    // first run on the MacBook returned nothing, once, and caching that as
+    // "unsupported" refused every resume of that CLI until the app restarted,
+    // while telling the user their version was too old.
+    internal sealed class ResumeProbe(Func<string, string, string?> run, Func<string, DateTime> stamp)
+    {
+        private readonly ConcurrentDictionary<(string, DateTime), ResumeCheck> _probed = new();
+
+        internal ResumeCheck Probe(NewChatCli cli, string binary)
+        {
+            var key = (binary, stamp(binary));
+            if (_probed.TryGetValue(key, out var known)) return known;
+
+            // Both at once, so a slow binary costs one 10 s bound, not two.
+            var help = Task.Run(() => run(binary, "--help"));
+            var version = Task.Run(() => run(binary, "--version"));
+            Task.WaitAll(help, version);
+
+            if (help.Result is null) return ResumeSupport.Unchecked(cli);
+
+            var check = ResumeSupport.Check(cli, help.Result, ResumeSupport.VersionFrom(version.Result));
+            _probed[key] = check;
+            return check;
         }
     }
 }

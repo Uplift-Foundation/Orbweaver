@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using Xunit;
 
@@ -139,5 +140,48 @@ public class ResumeCommandTests
             Assert.True(ResumeSupport.Probe(NewChatCli.Grok, "--resume").Supported);
         }
         finally { ResumeSupport.ProbeForTests = null; }
+    }
+
+    // ---- the probe's cache (QA, real-machine finding) ----
+
+    private static (ResumeProbe Probe, List<string> Calls) Prober(Func<string, string?> answer)
+    {
+        var calls = new List<string>();
+        var probe = new ResumeProbe((bin, arg) => { lock (calls) calls.Add(arg); return answer(arg); }, _ => new System.DateTime(2026, 11, 1));
+        return (probe, calls);
+    }
+
+    [Fact]
+    public void HelpThatCouldNotBeReadIsNotCachedAndNotCalledTooOld()
+    {
+        string? help = null;
+        var (probe, calls) = Prober(arg => arg == "--help" ? help : "codex-cli 0.169.0");
+
+        var first = probe.Probe(NewChatCli.Codex, "/bin/codex");
+        Assert.False(first.Supported);
+        Assert.Equal("Couldn't check whether Codex can resume. Try again.", first.Message);
+        Assert.Equal(ResumeSupport.Unchecked(NewChatCli.Codex), first);
+
+        help = "Commands:\n  resume      Resume\n";
+        Assert.True(probe.Probe(NewChatCli.Codex, "/bin/codex").Supported);
+        Assert.Equal(4, calls.Count);
+    }
+
+    [Fact]
+    public void ARealAnswerIsCachedPassOrRefusal()
+    {
+        var (probe, calls) = Prober(arg => arg == "--help" ? "  -c, --continue" : "0.9.1 (grok)");
+
+        var refused = probe.Probe(NewChatCli.Grok, "/bin/grok");
+        Assert.Equal("This version of Grok can't resume from here (0.9.1).", refused.Message);
+        Assert.Same(refused, probe.Probe(NewChatCli.Grok, "/bin/grok"));
+        Assert.Equal(2, calls.Count);
+    }
+
+    [Fact]
+    public void TheVersionSuffixIsOnlyAddedWhenVersionAnswered()
+    {
+        var (probe, _) = Prober(arg => arg == "--help" ? "nothing" : null);
+        Assert.Equal("This version of Claude Code can't resume from here.", probe.Probe(NewChatCli.ClaudeCode, "/bin/claude").Message);
     }
 }
