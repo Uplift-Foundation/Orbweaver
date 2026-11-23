@@ -180,6 +180,23 @@ Reading `~/.grok` itself: the shell's `ls` here is aliased to a tool that, given
 
 The New chat dialog still sets nothing for the default account (`NewChatAccountHome`, `ClaudeProfile.ConfigDirFor`): one rule for all three CLIs, and a `GROK_HOME` Buddy itself was launched under reaches the chat unchanged.
 
+## Resuming a session by id (CB-361)
+
+**Grok 1.0.13's `--help` lists `--resume <id>`**, which retires the old "no
+resume flag is known" reading of this file: New chat's Resume mode starts
+`grok --resume <id>` in the session's own folder rather than scraping the home
+menu. Read off `grok --help` on the MacBook while CB-361 was planned; **not
+re-run on the Mac mini, where Grok is not installed, and not on Windows.** What
+the plan relies on and the architect's spike is to confirm on a real session:
+that a UUID always means an id, and that the id is kept unless `--fork-session`
+is passed — which is what lets a resumed orb come back with the same saved
+position, size and group. Until that spike is back, "keeps the id" is the
+plan's reading of the help text, not an observation.
+
+The resume token is what `ResumeSupport` looks for in `<binary> --help`, so an
+older Grok without it gets a plain refusal instead of a launch that errors in a
+terminal nobody is watching.
+
 ## Still unknown
 
 - The JSON field `/rename` writes when `title_is_manual` is true.
