@@ -91,4 +91,37 @@ public class PaperclipOrbScreenshots
         ScreenshotHelper.Flush();
         ScreenshotHelper.SideBySide([folded, plain], "paperclip-orbs-folded-lead.png");
     }
+
+    // The same two scenes at twice the orb size, so a reviewer can judge the marks and the
+    // dimmed letters that are hard to read at actual size, and a parked local Claude Code
+    // orb beside them as the reference for "asleep" as the app already draws it.
+    [AvaloniaFact]
+    public void TheCompanyAndTheFoldedLeadAtTwiceTheSizeBesideAParkedLocalOrb()
+    {
+        var before = OrbweaverSettings.OrbSize;
+        try
+        {
+            OrbweaverSettings.OrbSize = 2.0;
+            var company = new[]
+            {
+                Orb(Agent("Atlas", "generating", budget: 22)),
+                Orb(Agent("Beacon", "waiting", OrbPresence.NeedsInput, budget: 48, lead: "paperclip:atlas")),
+                Orb(Agent("Cinder", "idle", mark: PaperclipMark.Broke, lead: "paperclip:atlas")),
+                Orb(Agent("Dune", "idle", OrbPresence.Parked, PaperclipMark.Paused, lead: "paperclip:atlas")),
+                Orb(Agent("Ember", "idle", OrbPresence.Parked, PaperclipMark.OverBudget, budget: 96, lead: "paperclip:atlas")),
+                Orb(Agent("Fern", "idle", OrbPresence.Parked)),
+            };
+            var parkedLocal = new OrbWindow("local-parked");
+            parkedLocal.UpdateFrom(new SessionStatus
+            {
+                Source = SessionSource.ClaudeCode, State = "idle", Title = "Fern", Cwd = "/w", Presence = OrbPresence.Parked,
+            });
+            parkedLocal.Show();
+            var folded = Orb(Agent("Atlas", "idle", OrbPresence.Present, folded: 3));
+
+            ScreenshotHelper.Flush();
+            ScreenshotHelper.SideBySide(company.Append(parkedLocal).Append(folded).ToList(), "paperclip-orbs-2x.png");
+        }
+        finally { OrbweaverSettings.OrbSize = before; }
+    }
 }

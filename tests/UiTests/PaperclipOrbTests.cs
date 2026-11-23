@@ -168,6 +168,22 @@ public class PaperclipOrbTests : IDisposable
         Assert.Null(orb.ContextRingColour);
     }
 
+    // The budget ring is the context ring's layer, so the two can never both be drawn: one layer,
+    // one arc. A status carrying both draws the budget's (a Paperclip agent never has a context
+    // percent; this pins what happens if one ever does), and a non-Paperclip orb is untouched.
+    [AvaloniaFact]
+    public void The_budget_and_the_context_percent_share_one_ring_and_budget_wins()
+    {
+        var both = Agent(budget: 100);
+        both.ContextPercent = 10;
+        Assert.Equal(AccountOrbWindow.DangerHex, Orb(both).ContextRingColour);
+
+        var contextOnly = Agent(budget: null);
+        contextOnly.ContextPercent = 10;
+        Assert.Equal(AccountOrbWindow.CalmHex, Orb(contextOnly).ContextRingColour);
+        Assert.Single(Orb(both).FindControl<Canvas>("ContextRingLayer")!.Children.OfType<Avalonia.Controls.Shapes.Path>());
+    }
+
     // ---- the folded count ----------------------------------------------------
 
     [AvaloniaFact]
