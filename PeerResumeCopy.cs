@@ -15,6 +15,9 @@ namespace Orbweaver
         internal static string Capped(string machine, int shown) =>
             "Showing the newest " + shown.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " sessions on " + machine + ".";
 
+        internal static string NoFolder(string machine) =>
+            "That session has no folder on " + machine + ", so it can't be resumed there.";
+
         internal static string Unreachable(string machine, string? why) =>
             "Couldn't reach " + machine + " for its sessions" + (string.IsNullOrWhiteSpace(why) ? "." : " (" + why + ").");
 

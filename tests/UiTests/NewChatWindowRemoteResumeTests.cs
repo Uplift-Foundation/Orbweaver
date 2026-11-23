@@ -285,8 +285,12 @@ public class NewChatWindowRemoteResumeTests : IDisposable
         Assert.Equal(PeerResumeCopy.AlreadyRunning("mini"), window.StatusLine.Text);
 
         OrbWindow? focused = null;
-        var orb = new OrbWindow("live");
-        NewChatWindow.OrbForTests = id => id == "live" ? orb : null;
+        var orb = new OrbWindow("rc:acct:live");
+        NewChatWindow.CurrentStatusesForTests = () => new Dictionary<string, SessionStatus>
+        {
+            ["rc:acct:live"] = new SessionStatus { Source = SessionSource.RemoteControl }
+        };
+        NewChatWindow.OrbForTests = id => id == "rc:acct:live" ? orb : null;
         NewChatWindow.FocusOrbForTests = o => focused = o;
         window.ResumeList.SelectedIndex = 0;
         Click(window.StartButton);
@@ -457,5 +461,77 @@ public class NewChatWindowRemoteResumeTests : IDisposable
         window.ResumeFolderFilter.SelectedItem = folders.Single(f => f.ToString() == "app");
         Assert.Equal(new[] { "a", "c" }, Shown(window).Select(r => r.Session.Id));
         Assert.Equal("app · 6 messages", NewChatWindow.ResumeDetail(Shown(window)[0], remote: true));
+    }
+
+    [AvaloniaFact]
+    public void ARowWithNoFolderIsGreyedAndNeverSentAnEmptyCwd()
+    {
+        var remote = new FakeRemote
+        {
+            List = new(RemoteListOutcome.Ok, new[] { Row("nofolder", "No folder", cwd: "") with { } }, null)
+        };
+        var window = Window(remote);
+        window.ResumeList.SelectedIndex = 0;
+
+        Click(window.StartButton);
+
+        Assert.Equal(PeerResumeCopy.NoFolder("mini"), window.StatusLine.Text);
+        Assert.Empty(remote.Resumed);
+    }
+
+    [AvaloniaFact]
+    public void AFailedResumeReloadsTheStaleListAndKeepsItsStatus()
+    {
+        var remote = new FakeRemote
+        {
+            List = new(RemoteListOutcome.Ok, new[] { Row("a", "One") }, null),
+            Resume = new(RemoteResumeOutcome.Failed, "mini no longer has that session in that folder.", false)
+        };
+        var window = Window(remote);
+        window.ResumeList.SelectedIndex = 0;
+        var loads = remote.Listed.Count;
+
+        remote.List = new(RemoteListOutcome.Ok, Array.Empty<PastSessionRow>(), null);
+        Click(window.StartButton);
+
+        Assert.Equal(loads + 1, remote.Listed.Count);
+        Assert.Equal("mini no longer has that session in that folder.", window.StatusLine.Text);
+        Assert.Empty(Shown(window));
+        Assert.True(window.StartButton.IsEnabled);
+    }
+
+    // The off-UI-thread path: the same answers, reached through Task.Run and the
+    // dispatcher instead of inline.
+    private static void WaitFor(Func<bool> done)
+    {
+        for (var i = 0; i < 300 && !done(); i++)
+        {
+            Thread.Sleep(10);
+            Flush();
+        }
+
+        Assert.True(done(), "timed out waiting for the UI thread to be handed the result");
+    }
+
+    [AvaloniaFact]
+    public void TheAsyncPathLoadsListsFailuresAndResumes()
+    {
+        NewChatWindow.ResumeLoadInlineForTests = false;
+        var remote = new FakeRemote { List = new(RemoteListOutcome.Ok, new[] { Row("a", "One") }, null) };
+        var window = Window(remote);
+        WaitFor(() => window.ResumeList.IsVisible);
+        Assert.Equal("a", Shown(window).Single().Session.Id);
+
+        window.ResumeList.SelectedIndex = 0;
+        Click(window.StartButton);
+        WaitFor(() => window.StatusLine.Text == PeerResumeCopy.Resumed("mini"));
+        Assert.True(window.StartButton.IsEnabled);
+
+        remote.ThrowResume = new InvalidOperationException("x");
+        Click(window.StartButton);
+        WaitFor(() => window.StatusLine.Text == "Couldn't resume that session: InvalidOperationException");
+
+        var throwing = Window(new FakeRemote { ThrowList = new InvalidOperationException("boom") });
+        WaitFor(() => throwing.ResumeEmpty.Text == "Couldn't reach mini for its sessions (InvalidOperationException).");
     }
 }

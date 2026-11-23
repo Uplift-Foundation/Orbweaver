@@ -2235,7 +2235,9 @@ namespace Orbweaver
             _resumeList.ContainerPrepared += (_, e) =>
             {
                 if (e.Container is ListBoxItem item)
-                    item.IsEnabled = item.DataContext is not PastSessionRow { Session.FolderMissing: true };
+                    item.IsEnabled = item.DataContext is not PastSessionRow { Session.FolderMissing: true }
+                        // A far row with no folder cannot be resumed: its folder is in the signed request.
+                        && !(_resumeRemote && item.DataContext is PastSessionRow { Session.Cwd: null or "" });
             };
             var box = new Grid { Height = ExistingListHeight };
             box.Children.Add(_resumeList);
@@ -2366,7 +2368,7 @@ namespace Orbweaver
                     BuildResumeFolderFilter();
                     // The far desk caps what it returns; say so rather than let
                     // a short list read as the whole history.
-                    if (result.Total is { } total && total > result.Rows.Count)
+                    if (result.Total is { } total && total > result.Rows.Count && string.IsNullOrEmpty(_statusLine.Text))
                         _statusLine.Text = PeerResumeCopy.Capped(machine, result.Rows.Count);
                 }
                 else
@@ -2644,6 +2646,12 @@ namespace Orbweaver
                 return;
             }
 
+            if (_resumeRemote && string.IsNullOrEmpty(session.Cwd))
+            {
+                _statusLine.Text = PeerResumeCopy.NoFolder(_machine?.Name ?? "that machine");
+                return;
+            }
+
             if (_resumeRemote && _machine?.Name is { } machineName)
             {
                 RemoteResumeClicked(cli, row, machineName);
@@ -2747,6 +2755,22 @@ namespace Orbweaver
             _ = Task.Run(Run).ContinueWith(t => Dispatcher.UIThread.Post(() => Finish(t.Result)), TaskScheduler.Default);
         }
 
+        // A far session's orb here is keyed "rc:<account>:<route>", not by its
+        // bare id, so find the mirrored status whose key ends in the id. NOT
+        // verified against a real peer-mirrored roster that the route carries
+        // the id; the real-machine check (G4) is what settles it.
+        private static OrbWindow? MirroredOrbFor(string machine, string sessionId)
+        {
+            foreach (var (key, status) in CurrentStatuses())
+            {
+                if (status.Source != SessionSource.RemoteControl) continue;
+                if (key == sessionId || key.EndsWith(":" + sessionId, StringComparison.Ordinal))
+                    if (OrbForSession(key) is { } orb) return orb;
+            }
+
+            return OrbForSession(sessionId);
+        }
+
         private void OnRemoteResumed(NewChatCli cli, PastSession session, string machine, RemoteResumeResult result)
         {
             switch (result.Outcome)
@@ -2760,7 +2784,7 @@ namespace Orbweaver
                         : PeerResumeCopy.Resumed(machine);
                     break;
                 case RemoteResumeOutcome.AlreadyRunning:
-                    if (OrbForSession(session.Id) is { } orb)
+                    if (MirroredOrbFor(machine, session.Id) is { } orb)
                     {
                         (FocusOrbForTests ?? (o => o.GoToSession()))(orb);
                         _statusLine.Text = PeerResumeCopy.AlreadyRunningFocused(machine);
@@ -2779,6 +2803,13 @@ namespace Orbweaver
                     break;
                 case RemoteResumeOutcome.NeedsUpdate:
                     _statusLine.Text = PeerResumeCopy.NeedsUpdate(machine);
+                    break;
+                case RemoteResumeOutcome.Failed:
+                    // The far desk may no longer have this session (unknown_resume),
+                    // so the list on screen is stale: ask again, keeping the status.
+                    _resumeLoadedKey = null;
+                    LoadResume();
+                    _statusLine.Text = PeerResumeCopy.Failed(machine, result.Message);
                     break;
                 case RemoteResumeOutcome.Unreachable:
                     _statusLine.Text = PeerResumeCopy.Unreachable(machine, result.Message);
