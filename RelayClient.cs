@@ -104,13 +104,16 @@ namespace Orbweaver
         // dead token. Measured on the installed app: the first offer failed
         // 401 and the socket was refused, until a retry.
         private readonly SemaphoreSlim _registering = new(1, 1);
+        private readonly Func<IReadOnlyList<PaperclipAgent>> _paperclipAgents;
         private string? _refusedCode;
 
         internal RelayClient(RelayIdentity identity, Options options, IRelayTransport transport,
             HttpMessageHandler? http = null, Func<DateTimeOffset>? now = null,
             Func<TimeSpan, CancellationToken, Task>? delay = null, PromptPipeline.Seams? promptSeams = null,
-            RelayRemote.Seams? remoteSeams = null)
+            RelayRemote.Seams? remoteSeams = null, Func<IPaperclipActions?>? paperclipActions = null,
+            Func<IReadOnlyList<PaperclipAgent>>? paperclipAgents = null, Func<string, DateTimeOffset, bool>? ownWake = null)
         {
+            _paperclipAgents = paperclipAgents ?? PaperclipSessions.Snapshot;
             _identity = identity;
             _options = options;
             _transport = transport;
@@ -146,7 +149,11 @@ namespace Orbweaver
             // the pipeline) and never under the lock.
             Prompts = new PromptPipeline(promptSeams ?? DefaultPromptSeams(_now), this, options.DesktopName);
             // CB-323: the activity frame's oldest amber names its minted prompt.
-            _link.ActivityPrompts = Prompts.ActivityFor;
+            // CB-428: the answerable Paperclip prompts, beside it.
+            Paperclip = new PaperclipPrompts(this, _now, options.DesktopName, paperclipActions ?? (() => PaperclipSessions.Actions), Prompts.Nonces,
+                line => MirrorLog.Say("relay", line));
+            _link.OwnWake = ownWake ?? ((sid, now) => PaperclipPrompts.OwnWake(sid, now, PaperclipSessions.Wakes()));
+            _link.ActivityPrompts = sid => Prompts.ActivityFor(sid) ?? Paperclip.ActivityFor(sid);
             _link.ActivityDue += at => Defer(() => _ = FlushActivityLaterAsync(at));
             if (options.ActivityLog is { } activityLog)
             {
@@ -155,16 +162,19 @@ namespace Orbweaver
             }
             // Every pending prompt goes out again on each welcome (see
             // ResendPendingAsync for why every one, not only the unsent).
-            _link.WelcomeReceived += () => Defer(() => _ = Prompts.ResendPendingAsync());
+            _link.WelcomeReceived += () => Defer(() => { _ = Prompts.ResendPendingAsync(); _ = Paperclip.ResendPendingAsync(); });
             // CB-401: a phone that came online or resynced gets the prompts
             // still pending, after its roster (see ResendPendingToAsync).
-            _link.PhoneNeedsPrompts += phone => Defer(() => _ = Prompts.ResendPendingToAsync(phone));
+            _link.PhoneNeedsPrompts += phone => Defer(() => { _ = Prompts.ResendPendingToAsync(phone); _ = Paperclip.ResendPendingToAsync(phone); });
             // CB-323: with the phone's accepted watch key, read now, under the lock,
             // so the gate judges the answer against the key as of its arrival.
             _link.AnswerReceived += (phone, idPub, answer) =>
             {
                 var watch = _identity.WatchPublicOf(phone);
-                Defer(() => _ = Prompts.OnAnswerAsync(phone, idPub, answer, watch));
+                // CB-428: a Paperclip session's prompt is answered through Paperclip, never by a key press.
+                Defer(() => _ = answer.SessionId.StartsWith(PaperclipScan.KeyPrefix, StringComparison.Ordinal)
+                    ? Paperclip.OnAnswerAsync(phone, idPub, answer, watch)
+                    : Prompts.OnAnswerAsync(phone, idPub, answer, watch));
             };
 
             // CB-316: watch / unwatch / input / launch, carried out off the
@@ -187,6 +197,8 @@ namespace Orbweaver
         }
 
         internal PromptPipeline Prompts { get; }
+
+        internal PaperclipPrompts Paperclip { get; }
 
         internal RelayRemote Remote { get; }
 
@@ -308,7 +320,10 @@ namespace Orbweaver
         internal Task OnStatuses(IReadOnlyList<(string SessionId, SessionStatus Status)> snapshot)
         {
             Remote.OnStatuses(snapshot);
-            return _identity.Phones.Count == 0 ? Task.CompletedTask : Prompts.OnScannedAsync(snapshot);
+            if (_identity.Phones.Count == 0) return Task.CompletedTask;
+            // CB-428: the Paperclip needs of the same moment, minted only for agents the phones hold as rows.
+            var roster = snapshot.Where(s => s.Status.Source == SessionSource.Paperclip).Select(s => s.SessionId).Where(id => { lock (_gate) return _link.HasRow(id); }).ToHashSet(StringComparer.Ordinal);
+            return Task.WhenAll(Prompts.OnScannedAsync(snapshot), Paperclip.OnPolledAsync(_paperclipAgents(), roster));
         }
 
         bool IPromptSender.Prompt(string requestId, string sessionId, string prompt, string? pushPlaintext) =>

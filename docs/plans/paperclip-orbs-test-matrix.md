@@ -107,3 +107,104 @@ Anything I create (approvals, wakes, pauses) is cleaned up and listed to the lea
 ## I. What QA checks on every review round
 
 For each engineer push: (1) the tests named above exist for the lines added; (2) a targeted run of the classes the push touched is green and the summary total shows the filter took; (3) any claim about Paperclip's behaviour in a comment is either measured in `docs/paperclip-findings.md` or labelled assumed; (4) fixtures contain no home paths, real UUIDs, key prefixes, LAN addresses or ticket keys (grep the staged diff by file, naming the files); (5) no `GET`-only rule break: release 1 issues no write beyond `cli-auth/challenges` and `cli-auth/revoke-current` (grep the client for POST, PUT, PATCH and DELETE); (6) PR body names the uncovered lines (real `HttpClient` construction, browser `Process.Start`, real home lookup) and says which cadence step produced each figure.
+
+---
+
+# Release 2 (CB-427 desktop, CB-428 phone and watch, CB-425 bug): "Act on it"
+
+Written from the three tickets and plan §7 before any release 2 code was pushed, so it names behaviours, not classes the engineers have not yet chosen: where a row says "class" it is a placeholder to be renamed to what lands. Same levels, gate rules and review checklist as release 1 (section I applies unchanged, with one change below).
+
+**Change to review item (5).** Release 1 allowed no write beyond `cli-auth/challenges` and `cli-auth/revoke-current`. Release 2 allows exactly: approvals `approve` / `reject`, tool-gateway `action-requests/{id}/approve` / `decline`, `wakeup`, `pause`, `resume`. The check becomes: grep the client for every POST, PUT, PATCH and DELETE and confirm that set and no other, each behind `IPaperclipActions`, and that no call edits an agent, tool, budget or schedule (requirement 4).
+
+**Measured before it is built (plan §7).** Three facts the tickets say to measure first. A test that encodes any of them without a captured fixture is labelled assumed: (a) a real "Ask first" tool action row and its approve and decline; (b) pause and resume with the app key (is the app key even allowed?); (c) what Paperclip answers on a second approve of the same item. Row A4 and A5 depend on (c).
+
+## J. Product acceptance, release 2
+
+| # | Behaviour | Proof | Level | Paired negative control | Status |
+|---|---|---|---|---|---|
+| Q1 | Approve from the flyout changes the item in Paperclip's own approvals list | Test approval created by QA; click Approve; read the approvals list from Paperclip itself, not from the orb | RM | Same click with the app's key revoked: list unchanged and the flyout says why (Q2) | Needs a build |
+| Q2 | A failed answer says why and leaves the item answerable | UI with a fake `IPaperclipActions` failing 401, 500, timeout; RM with the revoked key | U, UI, RM | A succeeding fake clears the row | Ready |
+| Q3 | Decline, same as Q1 | As Q1 with Decline; item shows rejected | RM | Item not touched stays pending | Needs a build |
+| Q4 | Orb leaves amber on the next poll after an answer, without waiting | Time from click to orb not amber, read from the window server and status; compare to the cadence | RM | Local-orb control for the lag (Q9) | Needs a build |
+| Q5 | An item already answered elsewhere is reported as such, not an error | Approve in Paperclip's UI or API first, then click Approve in the flyout; text differs from the failure text of Q2 | U, UI, RM | An item that really failed (revoked key) shows the failure text | Blocked on measurement (c) |
+| Q6 | Blocked task shows only "Review in Paperclip" | UI | UI | An approval beside it shows Approve and Decline | Ready |
+| Q7 | Wake now produces a working orb | Wake the paused-free fixture agent; orb working within a poll | RM | No wake: stays asleep through an equal window | Needs a build; the run may end Broke (as release 1 R3) |
+| Q8 | Pause shows the mark, Resume clears it, armed-then-confirmed rows | UI: first click arms, second confirms, a click elsewhere or a timeout disarms, nothing sent before the second click. RM: mark appears and clears | U, UI, RM | Resume on an agent not paused is not offered | Blocked on measurement (b) |
+| Q9 | CB-425: amber clears as fast as it appears | Local-orb control on the same machine measured first, then the Paperclip orb, same method, 20 reps each side if the cadence allows | RM | The local orb is the control, since "never taken" is the open item in the ticket | Ready for the control now |
+| Q10 | Nothing in the user's org is edited | Diff Paperclip's agents, tools, budgets and routines list before and after a full session | RM | Before/after of a session with no clicks is identical | Ready |
+| Q11 | Needs-you push: exactly one answerable push per need | Staging relay: create a need, count pushes; see section M | RM | A completed run: zero pushes | Needs the relay build |
+| Q12 | Approve through the phone path changes the item | Section M | RM | Approve of an already-answered item is reported, not an error | Needs the relay build |
+| Q13 | Broke push, once, not answerable, taps through to read-only detail | Section M | RM, UI | A completed run: zero pushes. A `cancelled` run does not produce one (release 1 mark rules) | Needs frames-v16 |
+| Q14 | Quiet: no Live Activity for a scheduled routine, a need answered elsewhere resolves the notification | Contract vectors and relay tests; RM on the staging relay | K, RM | A user-started run does start one if it did before | Needs frames-v16 |
+| Q15 | Paperclip rows stay out of session counts | `RelayActivity` counts unchanged with a Paperclip need present | U | A Claude control row still counts | Ready |
+| Q16 | Windows and macOS parity, installers, README | Section G rules from release 1 plus: `tools/Orbweaver.iss`, `build-macos-*` need nothing new unless the branch adds a file | Review | n/a | End of ticket |
+
+## K. Pure logic and seams, release 2
+
+| # | Behaviour | Class (placeholder) | Cases and controls |
+|---|---|---|---|
+| V1 | The five calls build the right request | `PaperclipActionsHttpTests` against `LoopbackHttp` | Method, path, body byte-exact for approvals `approve` / `reject` with `decisionNote: "From Orbweaver"`, tool action `approve` / `decline` with `{companyId}`, `wakeup` with `source: "on_demand"`, `pause`, `resume`. Authorization present. Control: a body is never logged and the key never appears in a log line |
+| V2 | Outcome mapping | same | 200 is Done; the already-answered status, whatever measurement (c) shows, is `AlreadyAnswered`; 401 is NeedsReconnect, not a failure of the item; 404, 409, 500, hung response and dropped connection each map to a typed failure with its own message. Control: a 2xx with an unexpected body is not Done unless the shape says so |
+| V3 | Which need is which call | `PaperclipActionsTests` | Approval need to approvals route; tool action need to tool-gateway route; blocked issue has no action. Control: an approval id never goes to the tool-gateway route |
+| V4 | Optimistic clear and rollback | scan tests | After a successful answer the need is dropped from the snapshot before the next poll; a failed answer leaves it; a poll that still lists the item after a success does not flicker the orb to idle and back for the already-dropped need beyond one poll. Control: an unrelated need on the same agent stays |
+| V5 | Double click | UI | A second Approve while the first is in flight sends one call. Control: Decline after a failed Approve is allowed |
+| V6 | Pause and resume rows | UI | Rows per state; Pause disabled or absent when the agent is terminated or already paused; arming timeout; the confirmed row sends once. Control: the OpenClaw end-conversation row's behaviour is unchanged |
+| V7 | CB-425 | scan and orb tests | The update path from "need gone" to `UpdateFrom` has a measured bound; a test with a fake clock asserts no timer between them above the bound. Control: gaining a need keeps its current latency. Whatever the diagnosis, the PR names the cause, read from the log line, not assumed |
+| V8 | Prompt minting | `PaperclipPromptsTests` | One prompt per need with a stable id across polls (no duplicate on a re-poll), the §4 `prompt` shape, options Approve and Decline only, answer verified by `AnswerGate`, carried out through `IPaperclipActions`, a wrong or unknown answer rejected. Control: a blocked task mints no prompt; a Claude permission prompt is unchanged |
+| V9 | Prompt lifecycle | same | Need answered elsewhere resolves the prompt; need gone on restart does not leave a stale prompt; two needs on one agent are two prompts. Control: a need that persists across five polls is still one prompt |
+| V10 | Broke detection edge | state tests | One broke event per transition into Broke, not per poll; a second failed run after Broke is a new event only if the rule says so (state the rule in the PR); `cancelled` is not Broke. Control: restart with an already-Broke agent sends no push |
+| V11 | Relay frames-v16 | `RelayRosterTests`, `RosterFixtureTests`, relay tests | The new push value and wording; old phone builds still receive an ordinary answerable prompt; fixtures byte-identical to the merged mobile copy. Control: a one-byte edit fails (K2) |
+| V12 | Settings round trip | settings tests | New keys, if any, round trip; old file loads defaults; unknown keys survive |
+| V13 | Screenshots | `tests/UiScreenshots` | The flyout with Approve, Decline and the link; the flyout for a blocked task (link only); the flyout after a failed answer; the orb menu with Wake, Pause and Resume. Reviewed on both rids in the PR comment |
+| V14 | Console | `ArrangementTests` | Once; the flyout should not change geometry |
+
+## L. Mobile (CB-428), what QA checks and what it cannot
+
+| # | Behaviour | Proof | Control |
+|---|---|---|---|
+| M1 | `frames-v16` contract and vectors green in Mobile CI, merged before the relay and phones | `test_check_vectors_paperclip.py` and relay tests; vectors include the prompt vectors CB-428 names | The checker's mutations each fail naming their rule |
+| M2 | iOS, watchOS, Android handle both pushes | Read from code and the repo's own tests. I run targeted tests only. No simulator work by QA unless Hana asks: the mini has about two simulator slots and other teams use them | An old phone build is read from code only, as release 1 K3 |
+| M3 | TestFlight build uploaded | Read the build number from App Store Connect with the API key | Build number is higher than the last |
+
+## M. Real-machine proof, release 2
+
+I own the installs. Before anything: take `/tmp/ow-install.lock` on the mini, copy each machine's `settings.json` aside, SHA-256 the installed binary against the built one, re-check before reporting, and restore every setting and delete every file I created, listing the directory to prove it. Never touch input on the MacBook or Windows PC. Sizing: a window is about three times the event's own cadence. The app polls at 2 s and 4 s, so a need appearing or clearing is observed over about 12 s. Test approvals only, each named `QA <date> <n>`, all rejected or deleted at the end. Every key I mint is revoked and I list them.
+
+| # | Step | Window | Negative control | Status |
+|---|---|---|---|---|
+| X1 | Approve: create a test approval; orb amber; click Approve in the flyout | 12 s; read the item from Paperclip's own approvals list | Item not clicked stays pending over an equal window | Needs a build |
+| X2 | Decline: same | 12 s | same | Needs a build |
+| X3 | Revoked-key negative: revoke the app's own key from Paperclip, click Approve | 12 s | The item stays pending; the flyout says why; reconnect restores answers (one approval) | Needs a build and a key I minted myself (the lead decides on the app's own key) |
+| X4 | Already answered: approve in Paperclip first, then in the flyout | 12 s | A really failing call (X3) shows different text | Blocked on measurement (c) |
+| X5 | Wake: wake the fixture agent | 25 s at 1 s samples (the run is about 8 s) | No wake: asleep through an equal window | Needs a build |
+| X6 | Pause, then Resume | 12 s each way | Resume on a never-paused agent is not offered | Blocked on measurement (b) |
+| X7 | CB-425 control: a local session's orb leaves amber (an existing permission prompt answered by a test session I own). Sample the window server every 0.25 s from the answer to the orb losing amber. Then the Paperclip orb, same instrument, same machine | 10 s per rep, at least 5 reps each, both on the mini; the Windows PC if the lead lets me, since the ticket was measured there | A control that is itself slow (local orb about as slow) says the cause is not Paperclip-specific. A fast control says it is. Report both numbers with the poll time from `diagnostics.log`, never an unanchored guess | Ready for the control now |
+| X8 | Staging relay: one need gives exactly one answerable push | Judged from `mirror-log.txt` (UTC, rotates; copy it aside first). Turns under 3 s never count on the mini, so only runs that last longer count | A completed run gives no push over the same window | Needs a relay build and a phone path |
+| X9 | Approve through the phone path | 12 s after the answer, read the item from Paperclip | A second approve is reported, not an error | Needs the relay build |
+| X10 | Broke push | One failing run | A completed run: none | Needs frames-v16 |
+| X11 | Nothing else changed | Before and after listing of agents, tools, budgets and routines | A session with no clicks is identical | Ready |
+
+**Connect challenges.** When a build needs a challenge approved I write its token to `~/.paperclip/instances/default/qa-approval-token.txt` at mode 0600 and message the lead the challenge id, never the token.
+
+**Not checkable by me, and the report will say so:** an old phone build on a device, iOS and Android on real phones and the watch unless a build lands on one; macOS Local Network consent after an upgrade; the Windows PC if it is off.
+
+## N. Updated to plan revision 4 (§13, origin/feature/paperclip-act c10094e3c)
+
+The three measurements section J called blocked are now in plan §13.1. Where this section and J disagree, this one wins. Class names now follow §13.5.
+
+| Row | What changed |
+| --- | --- |
+| Q5, X4 (already answered) | Measured. An approval approved twice answers 200 with the same row, so it maps to `Done`. The opposite decision answers 422, and the implementation reads the approval back and maps it to `AlreadyDecided` ("Already answered in Paperclip"). A tool action answers 409 on the opposite decision and 200 on the same one. The real-machine step is proof 2 of §13.6: approve in Paperclip's own page while the flyout is open, then press Approve. Control: a revoked key shows the reconnect sentence and **not** the already-answered one. |
+| Q8, X6 (pause, resume) | Measured. Both work with a board key. After Resume, Paperclip still says `paused` for up to 2 s, so the mark clears on the poll after the immediate one. That is not a failure. The window is 3 x 2 s plus a poll, about 12 s, and an observation inside the first 2 s that still sees the mark is not a defect. Control: Resume is not offered on an agent that is not paused. An agent paused for budget is offered neither Pause nor Resume (resume of a budget pause is unmeasured): check it only on a fixture, labelled edited. |
+| Q7, X5 (wake) | Wake on an agent with no task waiting fails in about 0.7 s and leaves the agent in `error`. So "a working orb" can only be proved on an agent with an assigned open task. Without one the proof is the opposite: Broke with Paperclip's reason, and **no push** to a paired phone within 30 s of the Wake pressed on that desktop (the lead's decision, §13.6 proof 3). Paired positive: a failure that was not a local Wake does push when "Agent broke" is on (proof 5). |
+| Q1, Q3 (tool action) | A real "Ask first" request exists: `819406f3…` (pending, expires 19:54Z); more via the test-call recipe. The row is nested under `request`. A request names **no agent** (`requestedByAgentId` null), so its need lands on the company lead's orb. Approve answers 200 and the tool runs inside the call; on this fixture it fails, so the expected flyout text is "Approved, but the tool failed", not an error, and the item moves to `?status=failed`, not `executed`. Control: Decline another one, which leaves the list as `rejected`. |
+| New R1 | `develop` draws nothing for a real request (parser reads the id from the wrong level, §13.1 row 12h). The proof is the captured `tool-actions/action-requests-pending.json` parsed by `PaperclipApiTests`, which must fail on `develop` and pass on the branch. Run it on `origin/develop` first to see it fail. There is no release 1 baseline to compare against on a real machine, and the report says so. |
+| New R2 | After Approve, Paperclip starts a run on the agent that asked about 1.7 s later, so the orb goes amber to working, not to asleep. The Q4 timing reads "not amber", not "asleep". Control: Decline does not necessarily start a run (not separated out in §13.1 row 6), so a Decline observation does not assert either way. |
+| New R3 | Several needs on one agent: one prompt at a time, the oldest first. Phone proof: two approvals on one agent give one push, the second after the first resolves. |
+| New R4 | The desktop restart mints a fresh prompt and alerts again (named limit in §13.4). The report records it as a known behaviour, not a failure. Control: no restart gives no repeat. |
+| V1, V2 | The outcome table is in §13.2: 2xx `Done`; 4xx then a read-back for approvals; 409 and 404 `AlreadyDecided` for tool actions; 401 `NeedsReconnect`; other 4xx `Refused` (text cut to 140 characters, no path-shaped string from a 5xx body); no connection, timeout or 5xx `Unreachable`. One case per row for each of the four calls. A `blocked` need and the synthetic `pending` need make no request. |
+| V10 | `PaperclipBrokeTests` per §13.5. Add: a Wake pressed 5 s before sends nothing and 31 s before sends; a finished run with no mark sends push `none`. |
+
+**The write allow-list for review item (5) is now exactly:** approvals `approve` / `reject` (body `{"decisionNote":"From Orbweaver"}`), tool-gateway `action-requests/{id}/approve` / `decline` (body `{"companyId"}`), `agents/{id}/wakeup` (body `{"source":"on_demand"}`), `agents/{id}/pause`, `agents/{id}/resume`, plus release 1's challenge and revoke. A POST to anything else fails the review. The one extra read is `GET /api/approvals/{id}` after a 4xx on an approval decide.
+
+**CB-425.** §13.2 puts the fix in `PaperclipSessions.PollNow()`, which releases the poll loop's wait so the next step runs at once. My Windows log evidence (scan passes of 1.0 to 7.7 s on that PC) says the wait may not be where the time goes. Whichever it is, the proof is the same: the local-orb control and the Paperclip orb measured on the same machine with the same instrument before and after, with the poll time from `diagnostics.log`. The PR names the cause from that reading.

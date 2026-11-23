@@ -2,7 +2,7 @@
 
 Epic CB-419. **The requirement is the product plan** ("Orbweaver for Paperclip: the product"): your Paperclip company, alive on your desktop and in your pocket, and the thing that needs you one tap away. This document turns its release 1 ("see it") into something two engineers and QA can build, and fixes the release 2 ("act on it") contract now so release 1's does not have to be reopened.
 
-Revision 3. Revision 1 (`f6e7700a0`) designed a pasted key, no pushes and a legacy-mode dedupe as the main path; revision 2 (`0c7d29c3c`) rebuilt it on the product plan. This one adds the first run under Paperclip's own runner: a second, measured hook-firing mode, a real blocked task, and a real failed run.
+Revision 4. It adds §13, the buildable release 2 (CB-427 desktop, CB-428 phone and watch), with its own measurements, and replaces §7's outline and §4's "broke" outline where they differ; §13 says where. Sections 0 to 12 are revision 3, unchanged. Revision 1 (`f6e7700a0`) designed a pasted key, no pushes and a legacy-mode dedupe as the main path; revision 2 (`0c7d29c3c`) rebuilt it on the product plan. Revision 3 added the first run under Paperclip's own runner: a second, measured hook-firing mode, a real blocked task, and a real failed run.
 
 Desktop branch `feature/paperclip-orbs`, cut from `develop` at `c9b5bc047`. Mobile read at `Orbweaver-Mobile` `origin/develop` `7155aa3`. Line references are against those shas. Paperclip is `2026.1117.0`, authenticated mode, on the Mac mini.
 
@@ -392,6 +392,8 @@ Read from the code at `7155aa3`, not run on a device. The roster decodes; the ro
 
 ## 7. Release 2, designed now, built under its own tickets
 
+**Superseded by §13 (revision 4).** Kept as the record of what release 1 promised.
+
 | Piece | Design |
 | --- | --- |
 | Approve / Decline on the desktop | The orb's flyout shows each need's title with **Approve**, **Decline** and "Review in Paperclip", in the shape of today's permission prompt. Calls: approvals `approve` / `reject` with `decisionNote: "From Orbweaver"`; tool actions `tool-gateway/action-requests/{id}/approve` / `decline` with `{companyId}`. Behind an `IPaperclipActions` seam; the UI suite drives a fake. A blocked task shows only "Review in Paperclip". |
@@ -491,3 +493,255 @@ Release 2 is staffed from §7 under its own tickets once its three measurements 
 - Persona pictures from Paperclip's avatars.
 - TLS pinning for an `https` instance.
 - Merging a hook row's finer state into the Paperclip orb.
+
+## 13. Release 2, "Act on it" (CB-427 desktop, CB-428 phone and watch)
+
+Revision 4. Desktop read at `origin/develop` `8bfc5e7b9`, mobile at `origin/develop` `69b663e`. Shared desktop branch `feature/paperclip-act`. The requirement is the two tickets; this section is how they are built.
+
+Where this section differs from §4 and §7: the "broke" push is muted through the phone's `prefs` frame, not the relay's `push_mute` (§13.3); its `e` carries a `why` code; a desktop sends one Paperclip prompt per agent at a time (§13.4); `expires_at` and the option list are §4's, unchanged.
+
+### 13.1 Measured, read from source, assumed (release 2)
+
+Measured on 2026-11-23 against Paperclip `2026.1117.0` on the Mac mini, with a board key obtained through the one-click challenge and revoked afterwards. Two test approvals were created for the purpose and both are decided; one agent was used and left `idle`, as found, though its newest run is now a failed one (rows 6 and 10).
+
+| # | Fact | Status |
+| --- | --- | --- |
+| 1 | `POST /api/companies/{id}/approvals` with a board key, type `request_board_approval`, `payload{title, summary, agentId}`: 201, a `pending` row with `createdAt` | measured |
+| 2 | Approve a pending approval: 200, the row with `status: "approved"`, `decidedAt`, `decisionNote` | measured (3.4 s the first time, 0.2 s for the reject) |
+| 3 | **Approve an approved one again: 200, the same row, the same `decidedAt`.** Reject a rejected one again: the same. | measured |
+| 4 | **Reject an approved one: 422** `{"error":"Only pending or revision requested approvals can be rejected"}`. Approve a rejected one: 422 with the matching sentence. The row does not change. | measured |
+| 5 | Approve an id that does not exist: 404 `Approval not found`. No credential: 403 `Board access required`. A key that is not a key, or a revoked one: 401. | measured |
+| 6 | **Approving wakes the agent that asked.** A run with `invocationSource: "automation"` started 1.7 s after the decision. On this org it failed after 7.8 s and the agent went to `error`. Whether a reject does the same was not separated out. | measured, once |
+| 7 | `POST /api/agents/{id}/pause` with a board key: 200, the agent row with `status: "paused"`, `pauseReason: "manual"`, `pausedAt`. Again: 200, the same `pausedAt`. | measured |
+| 8 | `POST /api/agents/{id}/resume`: 200. **The row it returns, and the agent list for up to 2 s after, still say `paused` with `pauseReason: null`; then `idle`.** A second resume is 200. | measured, twice |
+| 9 | Pausing an agent in `error` and resuming it leaves it `idle`: the error status is gone. What resume alone does to an `error` agent was not measured. | measured, twice |
+| 10 | `POST /api/agents/{id}/wakeup` with a board key and body `{"source":"on_demand"}`: 202 and the run row (`id`, `status: "queued"`, `triggerDetail: "manual"`). `forceFreshSession` is not needed, whatever the OpenAPI document says. | measured |
+| 11 | **That wake, on a `paperclip_runner` agent with no task waiting, failed in 0.7 s** with `errorCode: adapter_failed` ("Paperclip Runner requires a standard, planning, ask, or skill test task") and put the agent in `error`. It never appeared in `live-runs` at a 1 to 2 s poll. Two `on_demand` runs of the same agent the night before succeeded, so this is not every wake; what differed was not established. | measured, once |
+| 12 | A pending tool action request, minted without an agent run by a test call on the fixture's example tool (the lead's recipe: `POST /api/tool-connections/{id}/test-calls`, which answers `{"decision":"ask_first","invocationId","actionRequestId"}`). The list is `{"actionRequests":[row]}` and **the row is nested**: `request{id, status, previewMarkdown, canonicalArgumentsSummary{summary}, requestedByAgentId, requestedByUserId, createdAt, expiresAt, …}` beside `toolName`, `toolTitle`, `connectionName`, `applicationName`, `riskLevel`, `requestedByAgentId`. There is no `id` at the row's top level. | measured, 4 rows |
+| 12a | On a test-call request `requestedByAgentId` is null at both levels and `requestedByUserId` is set, though the call named an agent. What a request raised by a real run carries has still not been seen. | measured (lead, and again here) |
+| 12b | A request lives one hour (`expiresAt` is `createdAt` + 1 h). `previewMarkdown` is markdown ("create_item · \*\*Title:\*\* …"); `toolName` is the gateway's namespaced name. | measured |
+| 12c | Approve with `{"companyId"}` and a board key: 200 and the request object itself (not wrapped). **The tool runs inside that call**, and the status in the answer is the run's: here `failed`, with `error` set to the tool's own message. So a 200 does not mean the tool worked. | measured, once |
+| 12d | Approve again: 200, the same row. Decline again after a decline: 200, the same row. | measured |
+| 12e | **Decline after approve: 409** `{"error":"This review has already been resolved"}`. **Approve after decline: 409** `{"error":"Tool action request is no longer pending","reasonCode":"action_not_pending"}`. | measured |
+| 12f | Decline with `{"companyId","reason"}`: 200, `status: "rejected"`. No `companyId`: 400 `companyId is required`. Unknown id: 404 with `reasonCode: "action_request_not_found"`. No credential: 403. | measured |
+| 12g | The default list and `?status=pending` return the same rows; a decided request leaves both at once. `?status=failed` and `?status=rejected` list the decided ones. | measured |
+| 12h | **Release 1 on `develop` does not see a real request.** `PaperclipApi.ParseActionRequests` reads `id` from the row's top level and skips a row without one, and the real row keeps it under `request`. | measured by running the parser (identical to `origin/develop` `8bfc5e7b9`) on the captured pending list: 2 real rows in, 0 parsed; the same rows with `request` lifted to the top level, 2 parsed. A defect against CB-421's "Ask first" requirement, fixed in this branch. |
+| 13 | Resume of an agent paused for budget | **not measured**; none exists |
+
+Read from source, not run:
+
+| Fact | Where |
+| --- | --- |
+| The relay refuses a `push` outside `none, amber, resolve, done, limit` with `bad_envelope`, and the envelope is dropped with it | mobile `relay/Relay/Frames.cs:156` |
+| `done` and `limit` need class `state`, desktop to phone, and go through `StatePushAsync`: mute check, token lookup, 30 s window keyed `push|from|ck|to`, no reminder, no ack | `relay/Relay/Push.cs:44,84,158` |
+| `hello.push_mute` naming anything but `done` or `limit` is `bad_hello` and the socket closes 1008 | `relay/Relay/Frames.cs:119-130` |
+| A phone already sends its alert choices to each desktop in a sealed `prefs` frame (class `pair`); the desktop keeps them per phone, ignores keys it does not know, and decides the done push from them | desktop `RelayAlertRules.cs`, `RelayLink.cs:428,741`; iOS `app/Relay/AlertPrefs.swift`. **Android: not found by a search of `android/relay`; the phone engineer confirms.** |
+| The iOS notification extension tells a push's kind by the APNs body's top-level `push`, then the plaintext's `t`; an unknown `push` falls through to the amber path, fails to parse and keeps the relay's text | `app/Relay/PushRewrite.swift:283-296`, `app/NSE/NotificationService.swift:54-98` |
+| Roster deltas are numbered per phone; a phone that sees a gap resyncs | desktop `RelayRoster.cs:302-309` |
+| The desktop prompt pipeline holds one live prompt per session id | `PromptPipeline.cs:120` |
+| A prompt may be sent with no push (`PromptQuiet`) | `PromptPipeline.cs:36` |
+| The wakeup body declares `forceFreshSession` as required; `source` is one of `timer, assignment, on_demand, automation` | Paperclip `GET /api/openapi.json` |
+| Tool action approve and decline accept a board session or board key only (no agent key); body `{companyId}`; 404 is a declared answer | same |
+| An approval can also be sent back (`request-revision`) and resubmitted | same; not used |
+
+Assumed, and who settles it:
+
+| Assumption | Settled by |
+| --- | --- |
+| A tool action request raised by a real agent run names that agent in `requestedByAgentId` | the first native run that reaches an "Ask first" tool; until then every real row seen names no agent and lands on the company's lead (§13.2) |
+
+Settled by the phone engineer, read from the phone code on mobile PR 129, not run on a device here: both phones key a pending prompt by `request_id` and could hold several, but each draws one card per session (the newest), so one prompt per agent is the safe rule. iOS sends `prefs` on every welcome, on pairing, when a desk comes back and on a change. **Android sent no `prefs` frame at all before this work**; PR 129 adds one, so an Android phone gets no broke alert until it runs that build. Android has no push service: its alerts come from socket frames, the socket does not hand it the sealed `e`, and so its broke alert always reads "Needs attention", with the row saying the rest.
+
+### 13.2 Desktop: acting (CB-427)
+
+**The seam.** New file `PaperclipActions.cs`:
+
+```csharp
+internal enum PaperclipActionResult { Done, AlreadyDecided, Refused, Unreachable, NeedsReconnect }
+internal readonly record struct PaperclipOutcome(PaperclipActionResult Result, string? Why);
+internal interface IPaperclipActions
+{
+    Task<PaperclipOutcome> DecideAsync(PaperclipNeed need, bool approve, CancellationToken ct);
+    Task<PaperclipOutcome> WakeAsync(string agentId, CancellationToken ct);
+    Task<PaperclipOutcome> PauseAsync(string agentId, CancellationToken ct);
+    Task<PaperclipOutcome> ResumeAsync(string agentId, CancellationToken ct);
+}
+```
+
+Reached as `PaperclipSessions.Actions`, a static settable property like `RosterStore`. The flyout, the orb menu and `PaperclipPrompts` all call it and nothing else calls Paperclip to change anything. The address, key and company id stay inside the implementation, which is built from the same `IPaperclipApi` the poll uses.
+
+| Call | Request |
+| --- | --- |
+| Decide, `need.Kind == "approval"` | `POST /api/approvals/{id}/approve` or `/reject`, body `{"decisionNote":"From Orbweaver"}` |
+| Decide, `need.Kind == "action"` | `POST /api/tool-gateway/action-requests/{id}/approve` or `/decline`, body `{"companyId":…}` (measured, rows 12c to 12f) |
+| Decide, any other kind, or the synthetic need whose id is `pending` | no request; `Refused`. The UI never offers buttons for these. |
+| Wake | `POST /api/agents/{id}/wakeup`, body `{"source":"on_demand"}` (measured, §13.1 row 10) |
+| Pause, Resume | `POST /api/agents/{id}/pause`, `/resume`, no body |
+
+Outcome, the same for every call:
+
+| Paperclip answers | Outcome | Words (`Why`) |
+| --- | --- | --- |
+| 2xx | `Done` | none. One exception: a tool action approve whose answer says `status: "failed"` is still `Done` (the decision was made, and the item is gone), with `Why` "Approved, but the tool failed", shown at the desk in the ordinary colour. The tool's own error text is not shown and never leaves the desktop. |
+| 422 on an approval decide, then `GET /api/approvals/{id}` says anything but `pending`; 409 on a tool action decide; 404 on either | `AlreadyDecided` | "Already answered in Paperclip" |
+| 401 | `NeedsReconnect` | "Reconnect to Paperclip to answer" |
+| any other 4xx | `Refused` | Paperclip's `error` text cut to 140 characters, else "Paperclip refused that" |
+| no connection, timeout, 5xx | `Unreachable` | "Can't reach Paperclip" |
+
+`AlreadyDecided` is decided without trusting how Paperclip words a double decision: on a 4xx other than 401 to an approval decide, the implementation reads `GET /api/approvals/{id}` once, and a status other than `pending` is `AlreadyDecided`. That is the measured 422 (§13.1 row 4). The same decision made twice is a 200 and so `Done`, which is true: the item is in the state the user asked for (row 3). A 404 on a decide is `AlreadyDecided` (the item is gone, which is what the user needs to know).
+
+After every `Done` and `AlreadyDecided` the implementation calls `PaperclipSessions.PollNow()`, new: it releases the poll loop's wait so the next step runs at once. That is requirement 3 and the CB-425 fix in one place, since the three seconds were the loop waiting out its interval.
+
+**Reading a tool action request (corrects release 1).** `ParseActionRequests` reads the nested row: id `request.id`, status `request.status`, agent `request.requestedByAgentId` then the row's `requestedByAgentId`, created `request.createdAt`, expiry `request.expiresAt`. The need's title is `toolTitle`, else the part of `toolName` after its last colon, else "Tool action"; its summary is `previewMarkdown` with `**` removed, cut to 4000. The flat shape release 1 guessed stays accepted, so the old fixtures still parse. **A need that names no agent, approval or tool action, belongs to the company's lead** (the lead's decision; it is what `Compose.Resolve` already does), because it still needs the human. A tool action prompt's `expires_at` is the request's own expiry when that is sooner than a day.
+
+**Wake, decided by the lead.** A Wake that fails at once must not raise its own alarm. The poll's issue queries are `status=blocked` and `status=in_progress`, so they cannot say whether an agent has an assigned task not yet started (the fixture has none in any open state to check against), and Wake therefore cannot be gated on a task at no extra query. So: Wake is offered as the ticket says and shows Paperclip's reason when the run fails; and a Broke transition for an agent within 30 s of a Wake pressed on this desktop mints no "broke" push. The orb still shows Broke. `PaperclipSessions.NoteWake(agentId, now)` records the press; `BrokeTransitions` takes those times and the clock.
+
+**What the orb shows.** `SessionStatus` gains `Needs` (`IReadOnlyList<PaperclipNeed>`, `[JsonIgnore]`, empty for every other source), filled where `HoverLines` is.
+
+- **Flyout, amber orb.** One block per need, in `Needs` order: the title, **Approve**, **Decline**, and a "Review in Paperclip" link that opens `need.Url`. A `blocked` need and the `pending` synthetic need show the title and the link only. While a call is out, that block's two buttons are disabled. `Done` and `AlreadyDecided` remove the block at once, without waiting for the poll (`AlreadyDecided` leaves its sentence in place of the block for the life of the flyout, in the ordinary text colour). `Refused`, `Unreachable` and `NeedsReconnect` put `Why` under the block in the warning colour and leave it answerable. A click on the amber orb opens this flyout instead of the browser; an orb whose only needs are link-only keeps release 1's click.
+- **Orb menu.** `PaperclipOrb.MenuOffer` gains `Wake`, `Pause`, `Resume`. All three need `link == Connected`. `Wake` is offered when the agent is not running, not paused and not terminated. `Pause` when the mark is not `Paused` or `OverBudget`. `Resume` when the mark is `Paused`. An agent paused for budget is offered neither (lifting a budget pause is Paperclip's decision, and that resume is unmeasured). Pause and Resume are armed-then-confirmed rows like the OpenClaw end-conversation row; Wake acts at once. A failure shows `Why` as the orb's transient note, the way a failed focus does.
+
+Three measured behaviours the UI has to live with. After **Resume**, Paperclip goes on saying `paused` for up to 2 s (row 8), so the pause mark clears on the poll after the immediate one; that is not a failure and nothing is shown for it. After **Approve**, Paperclip starts a run on the agent that asked (row 6), so the orb goes from amber to working, not to asleep. And a **Wake** is a real run that can fail at once (row 11): the orb then wears the Broke mark with Paperclip's reason, and a phone with "Agent broke" on gets that push. Nothing hides this; it is what happened. Whether Wake should be offered at all for an agent with nothing waiting is put to the lead as a product question, and the menu rule above stands until it is answered.
+
+**Per-file change list (desktop).**
+
+| File | Change |
+| --- | --- |
+| `PaperclipActions.cs` (new) | The seam, the outcome mapping (pure, a function from status code and body to `PaperclipOutcome`), the implementation. |
+| `PaperclipApi.cs` | `IPaperclipApi` gains `PostAsync(path, body)` returning status and body, and `GetApprovalAsync(id)`. `RawApproval` gains `Summary` (`payload.summary`) and `CreatedAt`; `PaperclipNeed` gains `Summary` and `CreatedAt` (both optional, defaulted, so release 1's call sites compile). |
+| `PaperclipHttp.cs` | The POST, with the same typed failures as GET. |
+| `PaperclipSessions.cs` | `Actions`; `PollNow()`; the mark-transition list the relay reads (§13.3). |
+| `PaperclipOrb.cs` | `MenuOffer` with the three rows; `NeedOffer(need)` (buttons or link only); the click rule. |
+| `SessionManager.cs` | `SessionStatus.Needs`; filled in the Paperclip merge. |
+| `ClickRouting.cs` | An amber Paperclip orb with an answerable need opens the flyout. |
+| `OrbFlyout.axaml(.cs)` or a new `PaperclipNeedsPanel` hosted by it | The blocks. The engineer picks whichever keeps `OrbFlyout`'s arc untouched; the panel is a control that takes `Needs` and an `IPaperclipActions`, so the UI suite drives it with a fake. |
+| `OrbWindow.axaml(.cs)` | Three menu rows and their handlers. |
+| `PaperclipPrompts.cs` (new) | §13.4. |
+| `RelayLink.cs`, `RelayAlertRules.cs`, `RelayActivity.cs`, `RelayRoster.cs` | §13.3, §13.4. |
+| `README.md` | The Paperclip section: answering in place, the three menu rows, the two phone alerts and where to mute "broke". |
+| `tests/UnitTests/Fixtures/relay/` | The v16 and prompt vectors, byte-identical to the mobile copies. |
+
+No hook, installer or packaging file changes, as in release 1; the five install paths were checked for release 1 and nothing here adds a file outside the app binary.
+
+### 13.3 The "broke" push: `frames-v16.json` (Orbweaver-Mobile, contract first)
+
+```json
+{
+  "version": 16,
+  "note": "CB-428: one new push value, broke, for a Paperclip agent that stopped working. Additive over frames-v4's state pushes and frames-v15. No new sealed frame, roster field, state, class, error code or caps name; hello and push_mute are byte-identical. Also records one narrowing of frames-v15's prompt rule.",
+  "envelope": {
+    "push_values": ["none", "amber", "resolve", "done", "limit", "broke"],
+    "rules": "broke is accepted only with class state, desktop to phone, like done and limit. e is optional with the frames-v3 grammar.",
+    "frame": { "id": "<ULID>", "class": "state", "push": "broke", "ck": "Ck(ck_key, session_id)", "ct": "an ordinary numbered frames-v2 delta for the agent's row", "e": "<sealed>" }
+  },
+  "relay": {
+    "route": "the done and limit route: token lookup, the 30 s window per (push, from, ck, to), no reminder, no /v1/ack, no WasPushed entry",
+    "replies": "ok pushed, ok push_throttled, ok push_no_token, err push_failed. Never push_muted: broke is not a relay mute class.",
+    "apns": { "title": "Orbweaver", "body": "An agent stopped working", "interruption-level": "active", "mutable-content": 1, "category": "none", "sound": "none", "content-available": "absent", "priority": 10 },
+    "push_mute": "unchanged: distinct names from done and limit. broke there is bad_hello, as any unknown name is."
+  },
+  "e": {
+    "plaintext": { "v": 1, "t": "broke", "session_id": "paperclip:<agent id>", "label": "<agent name> on <machine>", "title": "<agent name>", "why": "run_failed | timed_out | error" },
+    "rules": "No persona. No text from Paperclip: an agent's error reason can hold a path. A why the phone does not know is shown as the fallback line."
+  },
+  "prefs": {
+    "frame": { "t": "prefs", "done_alerts": "all", "amber_members": true, "broke_alerts": true },
+    "rules": "broke_alerts is an optional boolean beside CB-358's two keys. The desktop sends a broke push to a phone only when that phone's stored prefs say true. Absent is false. A desktop that does not know the key ignores it."
+  },
+  "desktop": {
+    "when": "the poll in which a Paperclip agent's mark becomes Broke, when the previous successful poll in this process showed it not Broke and the agent is a row in the roster. The first poll after a start or a reconnect sets the baseline and sends nothing. An agent that stays Broke sends nothing more; it is armed again when its mark leaves Broke.",
+    "ct": "the delta this scan already has for the row, else a delta restating the row's state and since",
+    "own_wake": "no broke push for an agent whose Wake was pressed on this desktop in the last 30 s",
+    "never": "for a finished run. A paperclip row's generating to idle with no Broke mark is a delta with push none.",
+    "old_relay": "err bad_envelope for the envelope's id: the desktop sends no more broke pushes until its next welcome. The phone recovers the lost delta by its ordinary gap resync."
+  },
+  "phone": {
+    "rewrite": "title \"Orbweaver · <label>\"; body by why: run_failed \"Last run failed\", timed_out \"Last run timed out\", error \"Is in an error state\", anything else \"Needs attention\". push and t must agree or the relay's text stands.",
+    "actions": "none. A tap opens the agent's row. Nothing resolves it and no resolve push follows.",
+    "setting": "\"Agent broke\", on by default, sent as broke_alerts.",
+    "android": "no push service: the alert is raised from the envelope's push value on the socket, without e, so its body is always the fallback line",
+    "watch": "the mirrored notification, no action",
+    "old_builds": "never sent one, because they never send broke_alerts. One that reached an old iOS build would show the relay's text with no buttons."
+  },
+  "activity": "unchanged from frames-v15: a broke agent is not amber and starts no Live Activity.",
+  "prompt_narrowing": "frames-v15 said one prompt per pending approval or tool action. A desktop sends at most one pending prompt per session_id at a time, the oldest need first, and the next when that one resolves."
+}
+```
+
+Deploy order: the contract PR, the relay, then desktop and phones in either order. Each pair of old and new is safe: an old relay refuses the envelope and the desktop stops (above); an old phone is never sent one; an old desktop never sends one and ignores the prefs key.
+
+Vectors (`contracts/frames-v16-vectors.json`, `make_v16_vectors.py`, `check_v16_vectors.py`, `test_check_v16_vectors.py`): the envelope, the APNs body bytes, the sealed `e` for each `why`, the prefs frame with and without the key; mutations that must fail: `broke` with class `action`, phone to desktop, `push_mute: ["broke"]`, an `e` whose `t` is `done`.
+
+Per-file (mobile): `relay/Relay/Frames.cs` (the value and its class rule), `relay/Relay/Push.cs` (the route), `relay/Relay/Apns.cs` (`ApnsPayload.Broke`), `relay/tests/RelayTests/` (a `V16PushTests` beside `V4PushTests`); iOS `app/Relay/PushRewrite.swift` (`StatusRewrite.Kind.broke`, `BrokePlaintext`), `app/Relay/AlertPrefs.swift`, the settings screen, `app/NSE/NotificationService.swift` only if the kind switch needs an arm, the watch's mirrored text; Android `Prompts.kt` (`BrokePlaintext`), `Notifier.kt` (a channel), `ShellPrefs.kt` and the settings row, and wherever Android sends prefs.
+
+Per-file (desktop): `RelayAlertRules.cs` (`AlertPrefs.BrokeAlerts`, parsed, stored, default false; `PushBroke(prefs)`), `RelayLink.cs` (`OnScan` mints it; `BrokeE`; the `bad_envelope` latch in `OnControl`), `PaperclipSessions.cs` (a pure `BrokeTransitions(previous, current)` returning the agent ids and `why`, with the baseline rule).
+
+### 13.4 The answerable prompt (frames-v15 `prompt`, sent from release 2)
+
+`PaperclipPrompts.cs`, beside `PromptPipeline`, pure over its inputs (the agents' needs, the roster's session ids, the clock) with the send and the action behind interfaces.
+
+| Rule | Decision |
+| --- | --- |
+| Which needs | `approval` and `action` with a real Paperclip id. Never `blocked`, never the `pending` synthetic need. Only for an agent that is a roster row. |
+| Identity of a need | `kind + "\n" + id`. `screen_hash` as §4. |
+| `request_id` | A ULID minted the first time the need is seen, kept in memory by identity, so every later poll reuses it. A restart mints again and alerts again, as a terminal prompt does; named as a limit, not fixed here. |
+| Several needs on one agent | One prompt at a time, the oldest by `createdAt` then id. The next is minted when the first resolves. |
+| `tool`, `preview` | `PaperclipApi.ApprovalWording(type)` or "Tool action"; `title + "\n" + summary` cut to 4000. |
+| Push | amber, unless the phone's prefs withhold ambers for members (`RelayAlertRules.PushAmber`, where a member is an agent whose lead is a row). |
+| The need leaves the pending list | `resolved` `by: "desk"` when it was answered from the flyout or Paperclip shows it decided; `by: "gone"` when the agent is terminated or its row leaves the roster. |
+| A valid answer | `DecideAsync(need, action == "approve")`. `Done`: `resolved by phone:<id>`. `AlreadyDecided`: `err not_pending`, then `resolved by desk`. `Refused`, `Unreachable`, `NeedsReconnect`: `err stale_prompt`, the prompt stays pending. |
+| An answer for a prompt already resolved | the gate's existing `not_pending`; nothing is called. |
+| Any other action | `err forbidden_option`. |
+| `expires_at` passes with the need still pending | `resolved by gone`, then a fresh prompt sent with no push. |
+| Activity counts | a Paperclip row is amber only while it has a pending prompt (`RelayActivity.cs`, which excluded it entirely in release 1). |
+
+Prompt vectors (mobile `contracts/`, copied to the desktop): a board approval, a hire and a tool action prompt; an approve and a deny answer for each; the three `resolved` forms; `not_pending`, `stale_prompt`, `forbidden_option`; a watch-signed approve.
+
+Phones (CB-428): the prompt is an ordinary frames-v3 prompt, so nothing new is parsed. The work is that a Paperclip row's view, read-only in release 1, shows the pending prompt with Approve and Decline, the notification and the watch offer both, and `stale_prompt` leaves it answerable with the desk's sentence.
+
+### 13.5 Test matrix (release 2)
+
+100% of added lines. Named exception for the PR body: the real `HttpClient` POST construction. Fixtures for the tool action routes are in `tests/UnitTests/Fixtures/paperclip/native/tool-actions/`, captured 2026-11-23 and scrubbed (ids remapped, user ids replaced, `signedArguments` removed).
+
+| Level | Class | Cases |
+| --- | --- | --- |
+| Unit | `PaperclipApiTests` (extend) | The captured `tool-actions/action-requests-pending.json` parses to its rows with id, title, summary, created and expiry (this fails on `develop`, row 12h); a row naming no agent lands on the lead; the flat release 1 shape still parses; markdown stripped. |
+| Unit | `PaperclipOutcomeTests` | One case per row of the outcome table for each of the four calls; the 4xx-then-read path for both read answers; each captured tool action answer in `tool-actions/` (200 failed, 200 again, both 409s, 400, 404) maps to its outcome; a `blocked` and a `pending` need make no request; `Why` is cut at 140 and never carries a path-shaped string from a 5xx body. |
+| Unit | `PaperclipOrbDecisionTests` (extend) | `MenuOffer` for each of running, idle, paused, over budget, broke, terminated, and each link state; `NeedOffer` per kind; the click rule for answerable, link-only and mixed needs. |
+| Unit | `PaperclipPromptsTests` | Mint once across three polls; nothing for blocked, pending or a non-roster agent; two needs give one prompt then the second; each resolve cause; each outcome's reply; expiry; the member-amber pref; restart mints again. |
+| Unit | `PaperclipBrokeTests` | Baseline sends nothing; None to Broke sends once with each `why`; Broke through three more failed runs sends nothing; Broke, None, Broke sends twice; prefs absent, false and true; not a roster row; a Wake pressed 5 s before sends nothing and one pressed 31 s before sends; the `bad_envelope` latch and its release on welcome; a finished run with no mark sends push none (the quiet control). |
+| Unit | relay vector tests | Every v16 and prompt vector re-serialises byte-identically. |
+| Integration | `PaperclipHttpTests` (extend) | Each POST's path and body byte-exact against the loopback server; `Authorization` present; 401, 409, 422, 500, hung and dropped map to the typed failures. |
+| UI | `PaperclipNeedsPanelTests` | With a fake `IPaperclipActions`: a block per need; link-only kinds have no buttons; a click calls `DecideAsync` once with the right need and flag; buttons disabled while the call is out; each outcome's result on screen; the panel follows a new `UpdateFrom`. |
+| UI | `PaperclipOrbTests` (extend) | The three menu rows' visibility; arm then confirm for Pause and Resume; Wake calls once; a failure's note. |
+| Screenshot | `PaperclipOrbScreenshots` | (1) the flyout with an approval and a tool action; (2) the same after a refused answer, with its sentence; (3) the orb menu on a running and on a paused agent. |
+| Contract | `test_check_v16_vectors.py`, prompt vector checks, `relay-tests` | §13.3, §13.4. |
+| Relay | `V16PushTests` | Accepted with class state; refused with class action and from a phone; APNs body bytes; throttle; `push_mute` with `broke` is `bad_hello`; done and limit unchanged. |
+| Phone | iOS and Android unit suites | The broke rewrite per `why` and the disagreeing-`t` case; the prefs frame with the key; the Paperclip row with a pending prompt; the watch context. |
+
+### 13.6 Real-machine proof (QA; minutes each, paired)
+
+Install owner: QA. Test approvals are created for the purpose (`POST /api/companies/{id}/approvals`, type `request_board_approval`); nothing real is decided, and every agent is left in the state it was found.
+
+0. **Ask first.** Mint a tool action request with the test call (§13.1 row 12); the lead's orb goes amber with the tool's name; Approve; the request leaves Paperclip's pending list. Decline a second one. They expire in an hour, so mint them when needed.
+1. **Approve in place.** Create a test approval; the lead's orb goes amber; Approve in the flyout; `GET /api/approvals/{id}` says `approved` and the orb leaves amber within one poll. About a minute. **Paired negative:** revoke the app's key, create another, press Approve: the block stays, with the reconnect sentence, and Paperclip still says `pending`.
+2. **Decline, and answered elsewhere.** Decline one from the flyout. Approve another in Paperclip's own page while the flyout is open, then press Approve: "Already answered in Paperclip", no error styling.
+3. **Wake, Pause, Resume.** Wake an idle agent that has a task: a working orb within about 2 s. Wake one with nothing waiting: the Broke mark with Paperclip's reason, and no push on a paired phone with "Agent broke" on (the paired positive is proof 5). Pause: the pause mark, and Paperclip's page says paused. Resume: the mark clears. Window sized to three times the run, not to a round number.
+4. **Phone, needs you.** On the staging relay with a current build: a test approval produces exactly one push; Approve from the notification; Paperclip says `approved`; the notification clears. Repeat from the watch. **Paired negative:** a run that finishes cleanly produces no push (judge from `mirror-log.txt`, turns under 3 s do not count).
+5. **Phone, broke.** With "Agent broke" on: an agent's failed run produces one push with the agent's name and no buttons; a second failed run on the same agent produces none. **Paired negative:** the switch off, the same failure, no push.
+6. **Old phone build**, if one is installed anywhere: the answerable prompt arrives and works; no broke push arrives.
+7. **Windows and the MacBook:** proofs 1 and 3 repeated on each, since the flyout and menu are the platform-specific surfaces.
+
+### 13.7 Work packages (release 2)
+
+| Package | Owner | Files |
+| --- | --- | --- |
+| **R. Contract, relay, desktop relay side** | Wren Asare | Mobile: `contracts/frames-v16*`, the prompt vectors, `relay/`. Desktop: `PaperclipPrompts.cs`, `RelayLink.cs`, `RelayAlertRules.cs`, `RelayActivity.cs`, `RelayRoster.cs`, the relay fixtures and their tests. |
+| **D. Desktop actions** | Juno Abernathy | `PaperclipActions.cs`, `PaperclipApi.cs`, `PaperclipHttp.cs`, `PaperclipSessions.cs` (`Actions`, `PollNow`), `PaperclipOrb.cs`, `SessionManager.cs`, `ClickRouting.cs`, the flyout panel, `OrbWindow.axaml(.cs)`, `README.md`, their tests and screenshots. |
+| **P. Phones and watch** | Hana Moriyama | iOS, watchOS and Android as §13.3 and §13.4; the TestFlight build. |
+
+Two shared files: `PaperclipActions.cs` is created by whoever lands first, with exactly the interface above, and `PaperclipSessions.cs` takes `BrokeTransitions` from R and `Actions`/`PollNow` from D in separate regions. Everything else has one owner.
+
+### 13.8 Not in release 2
+
+Wake, pause or resume from the phone; commenting on a task; sending an approval back for revision; a trust rule from a tool action; keeping a prompt's id across a desktop restart; several companies side by side.

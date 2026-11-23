@@ -1,0 +1,28 @@
+{
+  "id": "00000000-0000-4000-8000-000000000009",
+  "companyId": "00000000-0000-4000-8000-000000000002",
+  "invocationId": "00000000-0000-4000-8000-000000000010",
+  "issueId": null,
+  "interactionId": null,
+  "approvalId": null,
+  "status": "rejected",
+  "canonicalArgumentsHash": "5010b72f107f6f9ae19368c072d248ae6486d68b877b38edde36b2fce869ff54",
+  "canonicalArgumentsSummary": {
+    "sha256": "5010b72f107f6f9ae19368c072d248ae6486d68b877b38edde36b2fce869ff54",
+    "summary": "{\"title\":\"Orbweaver measurement 2\"}",
+    "sizeBytes": 35,
+    "redactedFields": []
+  },
+  "previewMarkdown": "create_item \u00b7 **Title:** Orbweaver measurement 2",
+  "requestedByAgentId": null,
+  "requestedByUserId": "user-1",
+  "resolvedByAgentId": null,
+  "resolvedByUserId": "user-1",
+  "decidedByAgentId": null,
+  "decidedByUserId": "user-1",
+  "decidedAt": "2026-11-23T18:59:01.078Z",
+  "expiresAt": "2026-11-23T19:58:42.489Z",
+  "resolvedAt": "2026-11-23T18:59:01.078Z",
+  "createdAt": "2026-11-23T18:58:42.248Z",
+  "updatedAt": "2026-11-23T18:59:01.078Z"
+}
