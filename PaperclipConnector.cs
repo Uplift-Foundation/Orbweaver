@@ -41,6 +41,7 @@ namespace Orbweaver
         private readonly Func<TimeSpan, CancellationToken, Task> _delay;
         private readonly Action _restart;
         private readonly Func<IReadOnlyList<PaperclipDiscovery.Candidate>> _candidates;
+        private readonly Func<string, IPaperclipApi> _probeFor;
         private CancellationTokenSource? _connectCts;
 
         public PaperclipPhase Phase { get; private set; }
@@ -51,11 +52,20 @@ namespace Orbweaver
         internal PaperclipConnector(
             Func<string, string?, IPaperclipApi> apiFor, Func<string, bool> openBrowser,
             PaperclipCredentials creds, Func<DateTime> now, Func<TimeSpan, CancellationToken, Task> delay,
-            Action restart, Func<IReadOnlyList<PaperclipDiscovery.Candidate>> candidates)
+            Action restart, Func<IReadOnlyList<PaperclipDiscovery.Candidate>> candidates,
+            Func<string, IPaperclipApi>? probeFor = null)
         {
             _apiFor = apiFor; _openBrowser = openBrowser; _creds = creds; _now = now;
             _delay = delay; _restart = restart; _candidates = candidates;
+            // Discovery asks each candidate address one question, and a miss is the
+            // normal case, so it has its own client (short timeout, no failure log).
+            _probeFor = probeFor ?? (u => _apiFor(u, null));
         }
+
+        // How long a discovery probe waits for one address. The general request
+        // timeout is five seconds; a Paperclip on this machine answers in
+        // milliseconds, and a miss should be over quickly.
+        internal static readonly TimeSpan DiscoveryTimeout = TimeSpan.FromMilliseconds(1500);
 
         // The production wiring. Excluded from coverage: it names the real
         // HttpClient, the real browser launch and the real home directory.
@@ -68,7 +78,8 @@ namespace Orbweaver
             () => PaperclipDiscovery.Candidates(
                 root => Directory.Exists(root) ? Directory.GetDirectories(root) : Array.Empty<string>(),
                 f => File.Exists(f) ? File.ReadAllText(f) : null,
-                PaperclipDiscovery.InstancesRoot(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile))));
+                PaperclipDiscovery.InstancesRoot(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile))),
+            url => new PaperclipHttp(url, null, timeout: DiscoveryTimeout));
 
         // What Settings talks to. Tests replace it.
         private static IPaperclipConnector? _current;
@@ -81,7 +92,16 @@ namespace Orbweaver
 
         public async Task DiscoverAsync(CancellationToken ct)
         {
-            Found = await PaperclipDiscovery.FindAsync(_candidates(), u => _apiFor(u, null), ct).ConfigureAwait(false);
+            var candidates = _candidates();
+            Found = await PaperclipDiscovery.FindAsync(candidates, u => _probeFor(u), ct).ConfigureAwait(false);
+
+            // A miss is the normal case for almost every user and is not a failure:
+            // it is written only when something was found, or when the user has
+            // Paperclip switched on and so would want to know it was looked for.
+            if (Found.Count > 0)
+                DiagnosticsLog.Write("paperclip: discovery found " + string.Join(", ", Found.Select(f => f.BaseUrl)));
+            else if (OrbweaverSettings.PaperclipEnabled)
+                DiagnosticsLog.Write("paperclip: discovery found nothing at " + string.Join(", ", candidates.Select(k => k.BaseUrl)));
         }
 
         public async Task LoadCompaniesAsync(CancellationToken ct)

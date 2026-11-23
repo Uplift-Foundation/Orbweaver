@@ -360,4 +360,63 @@ public class PaperclipConnectorTests : IDisposable
         await same.Connector.ConnectAsync(Base, default);
         Assert.False(File.Exists(store2.Path_));
     }
+
+    // ---- a discovery miss is not a failure ----
+
+    private string? DiscoveryLog(Func<Task> act, out string dir)
+    {
+        dir = Path.Combine(_dir, "diag");
+        using (CrashLog.ScopeForTests(dir)) act().GetAwaiter().GetResult();
+        var path = DiagnosticsLog.PathIn(dir);
+        return File.Exists(path) ? File.ReadAllText(path) : null;
+    }
+
+    [Fact]
+    public void ADiscoveryMiss_WithPaperclipOff_WritesNothing_ThisIsTheNormalCase()
+    {
+        OrbweaverSettings.PaperclipEnabled = false;
+        var w = new World(_dir, TwoCompanies);
+        w.Anon.Gets.Remove("/api/health");   // nothing answers
+        var log = DiscoveryLog(() => w.Connector.DiscoverAsync(default), out _);
+        Assert.Null(log);
+        Assert.Empty(w.Connector.Found);
+    }
+
+    [Fact]
+    public void ADiscoveryMiss_WithPaperclipOn_WritesOneLine_NamingWhatWasTried()
+    {
+        OrbweaverSettings.PaperclipEnabled = true;
+        var w = new World(_dir, TwoCompanies);
+        w.Anon.Gets.Remove("/api/health");
+        var log = DiscoveryLog(() => w.Connector.DiscoverAsync(default), out _)!;
+        Assert.Single(log.Split('\n', StringSplitOptions.RemoveEmptyEntries));
+        Assert.Contains("discovery found nothing at http://127.0.0.1:3100", log);
+    }
+
+    [Fact]
+    public void AFind_WritesOneLine_WithTheAddress()
+    {
+        OrbweaverSettings.PaperclipEnabled = false;
+        var w = new World(_dir, TwoCompanies);
+        var log = DiscoveryLog(() => w.Connector.DiscoverAsync(default), out _)!;
+        Assert.Single(log.Split('\n', StringSplitOptions.RemoveEmptyEntries));
+        Assert.Contains("paperclip: discovery found http://127.0.0.1:3100", log);
+    }
+
+    [Fact]
+    public async Task DiscoveryUsesItsOwnClient_NotTheGeneralOne()
+    {
+        var probed = new List<string>();
+        var general = new FakePaperclip(); general.Gets["/api/health"] = FakePaperclip.Ok("{\"status\":\"ok\",\"deploymentMode\":\"authenticated\"}");
+        var probe = new FakePaperclip();
+        var connector = new PaperclipConnector((u, k) => general, u => true, new PaperclipCredentials(_dir), () => DateTime.UtcNow,
+            (d, c) => Task.CompletedTask, () => { }, () => [new(Base, "default")], u => { probed.Add(u); return probe; });
+        OrbweaverSettings.PaperclipEnabled = false;
+        await connector.DiscoverAsync(default);
+        Assert.Equal(new[] { Base }, probed.ToArray());
+        Assert.Empty(general.Calls);                  // the general client was never asked
+        Assert.Equal(new[] { "GET /api/health" }, probe.Calls.ToArray());
+        Assert.True(PaperclipConnector.DiscoveryTimeout < PaperclipHttp.RequestTimeout);
+        Assert.Equal(TimeSpan.FromMilliseconds(1500), PaperclipConnector.DiscoveryTimeout);
+    }
 }
