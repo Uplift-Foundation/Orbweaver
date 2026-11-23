@@ -45,10 +45,23 @@ namespace Orbweaver
         // frame's own fields — so any other byte layout the phone signed fails
         // as bad_signature rather than being trusted.
         internal static string Body(LaunchFields f) =>
-            AccountField(new CanonicalJson().Str("cwd", f.Cwd).Str("cli", f.Cli).Str("persona", f.Persona).Str("model", f.Model), f)
-                .Str("parent_session_id", f.ParentSessionId)
+            ResumeField(AccountField(new CanonicalJson().Str("cwd", f.Cwd).Str("cli", f.Cli).Str("persona", f.Persona).Str("model", f.Model), f)
+                .Str("parent_session_id", f.ParentSessionId), f)
                 .Str("first_message_sha256", RelayCrypto.Hex(SHA256.HashData(Encoding.UTF8.GetBytes(f.FirstMessage))))
                 .Str("nonce", f.Nonce).Num("expires_at", f.ExpiresAt).ToString();
+
+        // CB-434 (frames-v17): resume_session_id is signed only when non-empty,
+        // after parent_session_id, by the same rule as account. A sender that
+        // never resumes signs exactly the bytes it always did, and a receiver
+        // that predates the field rebuilds the body without it and answers
+        // bad_signature — so it can never be talked into starting a fresh
+        // session from a resume request.
+        private static CanonicalJson ResumeField(CanonicalJson body, LaunchFields f) =>
+            f.ResumeSessionId.Length > 0 ? body.Str("resume_session_id", f.ResumeSessionId) : body;
+
+        // The id shape a resume may carry: what PastSessions puts on a command
+        // line, capped at 128.
+        internal static bool ResumeIdOk(string id) => id.Length <= 128 && PastSessions.IsSafeId(id);
 
         // account is signed only when the phone named one, between model and
         // parent_session_id, so a phone that never sends it (the iPhone app)
@@ -171,6 +184,15 @@ namespace Orbweaver
             }
             if (!RelayText.Typeable(f.FirstMessage, allowEmpty: true)) return RelayReplies.BadInput;
             if (env.IsWindows && f.Cli is "codex" or "grok" && ExpandsOnWindows(f.FirstMessage)) return RelayReplies.BadInput;
+            // CB-434: a resume continues a conversation as it was. It is not
+            // handed a first message, a parent or a model, and a frame naming
+            // one is not something a person asked for. The id's shape is the
+            // parsers' bad_frame; held again here for any caller that skips them.
+            if (f.ResumeSessionId.Length > 0)
+            {
+                if (!ResumeIdOk(f.ResumeSessionId)) return RelayReplies.BadFrame;
+                if (f.FirstMessage.Length > 0 || f.ParentSessionId.Length > 0 || f.Model.Length > 0) return RelayReplies.BadInput;
+            }
             return null;
         }
 

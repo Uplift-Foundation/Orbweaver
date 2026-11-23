@@ -38,8 +38,10 @@ namespace Orbweaver
                 .Select(a => new PeerLaunchAccount(a.Cli, a.Id, a.Label))
                 .ToList();
 
+            // CB-434: this build lists and resumes past sessions, and says so
+            // here so an asker knows before it waits on a request.
             return new PeerLaunchInfo(
-                true, os, _seams.Home(), _seams.Terminal(), clis, accounts, _seams.Recents());
+                true, os, _seams.Home(), _seams.Terminal(), clis, accounts, _seams.Recents(), PastSessionsRemote.ResumeVersion);
         }
 
         // The real desk. Excluded: each lambda is one line into the settings,

@@ -60,7 +60,8 @@ namespace Orbweaver
                 client,
                 PeerBrowseServer.ForThisDesk(() => OrbweaverSettings.PeerLaunchInboundEnabled),
                 PeerLaunchServer.Shared.HandleTrustAsync,
-                machine => _ = PeerLaunchServer.Shared.OnDisconnectedAsync(machine));
+                machine => _ = PeerLaunchServer.Shared.OnDisconnectedAsync(machine),
+                PeerPastSessionsServer.ForThisDesk(() => OrbweaverSettings.PeerLaunchInboundEnabled));
 
         // What New Chat asks to start a session on another desktop: null until
         // the link is running.

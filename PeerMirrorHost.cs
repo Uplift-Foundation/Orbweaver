@@ -47,6 +47,7 @@ namespace Orbweaver
         private Func<string, JsonElement, Task<PeerLaunchResult>>? _launchHandler;
         private PeerLaunchClient? _launchClient;
         private PeerBrowseServer? _browse;
+        private PeerPastSessionsServer? _past;
 
         internal PeerMirrorHost(OpenClawIdentitySeams? openClawIdentity = null)
         {
@@ -82,10 +83,12 @@ namespace Orbweaver
             PeerLaunchClient? client,
             PeerBrowseServer? browse = null,
             Func<string, JsonElement, Task<PeerLaunchResult>>? trustHandler = null,
-            Action<string>? onDisconnected = null)
+            Action<string>? onDisconnected = null,
+            PeerPastSessionsServer? past = null)
         {
             lock (_gate)
             {
+                _past = past;
                 _trustHandler = trustHandler;
                 _launchDisconnected = onDisconnected;
                 _browse = browse;
@@ -243,9 +246,15 @@ namespace Orbweaver
                     if (MayAsk(machine)) _ = Task.Run(() => AnswerListDirAsync(machine, message));
                     return;
 
+                // CB-434: reads every transcript head in a window, so off the queue too.
+                case PeerProtocol.PastSessionsGet:
+                    if (MayAsk(machine)) _ = Task.Run(() => AnswerPastSessionsAsync(machine, message));
+                    return;
+
                 case PeerProtocol.LaunchInfo:
                 case PeerProtocol.LaunchResult:
                 case PeerProtocol.ListDir:
+                case PeerProtocol.PastSessions:
                     if (MayAsk(machine)) LaunchClient?.OnReply(machine, message);
                     return;
             }
@@ -329,6 +338,28 @@ namespace Orbweaver
             catch (Exception e)
             {
                 MirrorLog.Say("peer-list-dir-failed", $"from={machine} {e.GetType().Name}");
+            }
+        }
+
+        private async Task AnswerPastSessionsAsync(string machine, PeerProtocol.PeerMessage message)
+        {
+            PeerPastSessionsServer? server;
+            lock (_gate) server = _past;
+
+            // No server wired is an older desk's silence, as for list-dir.
+            if (server is null) return;
+
+            try
+            {
+                var result = server.Handle(message.Body ?? default);
+                // Codes and counts only: titles and folders never reach the log.
+                MirrorLog.Say("peer-past-sessions", $"from={machine} {result.Code} rows={result.Rows.Count}");
+                await _link.SendAsync(machine, PeerProtocol.Message(PeerProtocol.PastSessions, message.Id,
+                    body: PastSessionsWire.EncodePage(result))).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                MirrorLog.Say("peer-past-sessions-failed", $"from={machine} {e.GetType().Name}");
             }
         }
 

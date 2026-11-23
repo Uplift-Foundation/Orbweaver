@@ -77,6 +77,10 @@ namespace Orbweaver
             // forbidden_path for a list_dir, as a desk with nothing to share would.
             internal BrowseSeams? Browse { get; init; }
 
+            // CB-434: resume. Null means this desk cannot resume (resume_unsupported)
+            // and, with Past null too, does not advertise the cap.
+            internal LaunchRunner.ResumeSeams? Resume { get; init; }
+
             // CB-404: the run controls a set_run drives and a run frame reports.
             // Null means none: no run frames, and every set_run is unavailable.
             internal IRunControls? RunControls { get; init; }
@@ -623,7 +627,8 @@ namespace Orbweaver
                 Err(phoneId, r.Ref, outcome.Code, why: outcome.Why);
                 return;
             }
-            Ok(phoneId, r.Ref, RelayReplies.Launched, sessionId);
+            // launched, or CB-434's already_running and resume_started, each with the id.
+            Ok(phoneId, r.Ref, outcome.Code, sessionId);
             if (f.FirstMessage.Length == 0) return;
 
             // Codex and Grok were handed the message as their launch prompt, so
@@ -641,7 +646,7 @@ namespace Orbweaver
         }
 
         private LaunchRunner Runner() =>
-            new(new LaunchRunner.Seams(_seams.Launch, _seams.Accounts, Snapshot, _seams.Now, _seams.Delay));
+            new(new LaunchRunner.Seams(_seams.Launch, _seams.Accounts, Snapshot, _seams.Now, _seams.Delay) { Resume = _seams.Resume });
 
         // Kept where RelayRemote's callers already look for it.
         internal static bool SameFolder(string? a, string b, bool isWindows) => LaunchRunner.SameFolder(a, b, isWindows);

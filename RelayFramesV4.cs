@@ -137,7 +137,7 @@ namespace Orbweaver
 
     internal sealed record LaunchFields(
         string Cwd, string Cli, string Persona, string Model, string ParentSessionId,
-        string FirstMessage, string Nonce, long ExpiresAt, string Account = "");
+        string FirstMessage, string Nonce, long ExpiresAt, string Account = "", string ResumeSessionId = "");
 
     internal static class RelayRequests
     {
@@ -215,12 +215,21 @@ namespace Orbweaver
                 if (a.ValueKind != JsonValueKind.String) return new BadFrameRequest(reference, null);
                 account = a.GetString()!;
             }
+            // CB-434 (frames-v17): resume_session_id is additive too; when present
+            // it must be a string of the id shape ("" is a new chat).
+            var resume = "";
+            if (f.TryGetProperty("resume_session_id", out var r))
+            {
+                if (r.ValueKind != JsonValueKind.String) return new BadFrameRequest(reference, null);
+                resume = r.GetString()!;
+                if (resume.Length > 0 && !LaunchGate.ResumeIdOk(resume)) return new BadFrameRequest(reference, null);
+            }
             if (Str(f, "cwd") is not { } cwd || Str(f, "cli") is not { } cli || Str(f, "persona") is not { } persona
                 || Str(f, "model") is not { } model || Str(f, "first_message") is not { } message
                 || Str(f, "nonce") is not { } nonce || Str(f, "sig") is not { } sig
                 || !f.TryGetProperty("expires_at", out var e) || e.ValueKind != JsonValueKind.Number || !e.TryGetInt64(out var expires))
                 return new BadFrameRequest(reference, null);
-            return new LaunchRequest(reference, new LaunchFields(cwd, cli, persona, model, parent, message, nonce, expires, account), sig);
+            return new LaunchRequest(reference, new LaunchFields(cwd, cli, persona, model, parent, message, nonce, expires, account, resume), sig);
         }
 
         private static string? Str(JsonElement e, string name) =>

@@ -95,7 +95,8 @@ namespace Orbweaver
                 spec.Cwd, spec.Cli, "", "", spec.Account, "", "",
                 _seams.NewNonce(),
                 _seams.Now().Add(Lifetime).ToUnixTimeSeconds(),
-                "", "", CanTrust: true);
+                "", "", CanTrust: true,
+                ResumeSessionId: spec.ResumeSessionId.Length > 0 ? spec.ResumeSessionId : null);
 
             (string Sig, string Cert)? signed;
 
@@ -179,6 +180,26 @@ namespace Orbweaver
             var parsed = reply.Body is { } b ? PeerLaunchWire.ParseResult(b) : null;
 
             return parsed ?? new PeerLaunchResult(false, PeerLaunchCodes.NoAnswer, null, "unreadable reply");
+        }
+
+        // CB-434: one page of the far desk's past sessions, on the list-dir
+        // timeout. Every failure is a result with a code, as ListDirAsync's are.
+        public async Task<PeerPastSessionsResult> PastSessionsAsync(string machine, PastSessionQuery query, CancellationToken ct)
+        {
+            var reply = await AskAsync(
+                machine, PeerProtocol.PastSessionsGet, PastSessionsWire.EncodeQuery(query),
+                PeerProtocol.PastSessions, _seams.ListWait, ct).ConfigureAwait(false);
+
+            if (reply is null)
+            {
+                bool lost;
+                lock (_gate) lost = _lost.Contains(machine);
+                return PeerPastSessionsResult.Fail(lost ? PeerLaunchCodes.LinkLost : PeerLaunchCodes.NoAnswer);
+            }
+
+            return reply.Body is { } b && PastSessionsWire.ParsePage(b) is { } parsed
+                ? parsed
+                : PeerPastSessionsResult.Fail(PeerLaunchCodes.NoAnswer);
         }
 
         public async Task<PeerDirResult> ListDirAsync(string machine, string path, CancellationToken ct)
@@ -298,7 +319,8 @@ namespace Orbweaver
 
                 var fields = new LaunchFields(
                     request.Cwd, request.Cli, request.Persona, request.Model, request.ParentSessionId,
-                    request.FirstMessage, request.Nonce, request.ExpiresAt, request.Account);
+                    request.FirstMessage, request.Nonce, request.ExpiresAt, request.Account,
+                    request.ResumeSessionId ?? "");
 
                 var signature = await sign(LaunchGate.PeerMessage(receiverPin, LaunchGate.Body(fields)))
                     .ConfigureAwait(false);
