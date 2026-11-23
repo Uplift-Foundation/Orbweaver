@@ -189,12 +189,17 @@ public class RelayResumeHandlerTests
     }
 
     // Nothing was started, so nothing is typed into somebody's live session.
-    [Fact]
-    public async Task Already_running_answers_once_and_types_nothing_even_with_a_message()
+    // Codex and Grok too: their message would have gone in argv, and with no
+    // start there is no argv, so it reaches nothing.
+    [Theory]
+    [InlineData("claude", SessionSource.ClaudeCode)]
+    [InlineData("codex", SessionSource.Codex)]
+    [InlineData("grok", SessionSource.Grok)]
+    public async Task Already_running_answers_once_and_types_nothing_even_with_a_message(string cli, SessionSource source)
     {
-        var r = new Rig();
-        r.Remote.OnStatuses([(Id, new SessionStatus { State = "idle", Source = SessionSource.ClaudeCode, Cwd = Inside })]);
-        await r.Resume(message: "hello");
+        var r = new Rig { Binary = "/bin/" + cli };
+        r.Remote.OnStatuses([(Id, new SessionStatus { State = "idle", Source = source, Cwd = Inside })]);
+        await r.Resume(cli: cli, message: "hello");
 
         Assert.Equal([RelayReplies.AlreadyRunning], r.Codes);
         Assert.Equal(Id, r.Sent.Replies[0].Body.GetProperty("session_id").GetString());
