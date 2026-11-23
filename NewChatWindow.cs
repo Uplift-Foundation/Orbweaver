@@ -2755,20 +2755,24 @@ namespace Orbweaver
             _ = Task.Run(Run).ContinueWith(t => Dispatcher.UIThread.Post(() => Finish(t.Result)), TaskScheduler.Default);
         }
 
-        // A far session's orb here is keyed "rc:<account>:<route>", not by its
-        // bare id, so find the mirrored status whose key ends in the id. NOT
-        // verified against a real peer-mirrored roster that the route carries
-        // the id; the real-machine check (G4) is what settles it.
+        // A far session's orb here is keyed "rc:<account>:<route>"
+        // (RemoteControlSessions.Remote.Key), and the far desk's route for a
+        // session is "sid:<session id>" (RemoteMirrorServer.RouteFor, which is
+        // what its roster offers as Route). So the key is the one builder's
+        // output, not the bare id, and only the account in the middle is not
+        // known here; match the rest exactly.
         private static OrbWindow? MirroredOrbFor(string machine, string sessionId)
         {
+            var route = ":" + RemoteMirrorServer.RouteFor(sessionId);
             foreach (var (key, status) in CurrentStatuses())
             {
                 if (status.Source != SessionSource.RemoteControl) continue;
-                if (key == sessionId || key.EndsWith(":" + sessionId, StringComparison.Ordinal))
-                    if (OrbForSession(key) is { } orb) return orb;
+                if (key.StartsWith("rc:", StringComparison.Ordinal) && key.EndsWith(route, StringComparison.Ordinal)
+                    && OrbForSession(key) is { } orb)
+                    return orb;
             }
 
-            return OrbForSession(sessionId);
+            return null;
         }
 
         private void OnRemoteResumed(NewChatCli cli, PastSession session, string machine, RemoteResumeResult result)

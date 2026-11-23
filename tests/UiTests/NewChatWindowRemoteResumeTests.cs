@@ -76,6 +76,11 @@ public class NewChatWindowRemoteResumeTests : IDisposable
         }
     }
 
+    // The key a mirrored orb really has: RemoteControlSessions.Remote.Key over the
+    // far desk's route for the session.
+    private static string MirrorKey(string sessionId) =>
+        new RemoteControlSessions.Remote("far name", sessionId, "idle", DateTime.UtcNow, "acct", Route: RemoteMirrorServer.RouteFor(sessionId)).Key;
+
     private static void FreshSettings()
     {
         var dir = Path.Combine(Path.GetTempPath(), "cb-newchat-remote-resume-" + Guid.NewGuid());
@@ -285,12 +290,12 @@ public class NewChatWindowRemoteResumeTests : IDisposable
         Assert.Equal(PeerResumeCopy.AlreadyRunning("mini"), window.StatusLine.Text);
 
         OrbWindow? focused = null;
-        var orb = new OrbWindow("rc:acct:live");
+        var orb = new OrbWindow(MirrorKey("live"));
         NewChatWindow.CurrentStatusesForTests = () => new Dictionary<string, SessionStatus>
         {
-            ["rc:acct:live"] = new SessionStatus { Source = SessionSource.RemoteControl }
+            [MirrorKey("live")] = new SessionStatus { Source = SessionSource.RemoteControl }
         };
-        NewChatWindow.OrbForTests = id => id == "rc:acct:live" ? orb : null;
+        NewChatWindow.OrbForTests = id => id == MirrorKey("live") ? orb : null;
         NewChatWindow.FocusOrbForTests = o => focused = o;
         window.ResumeList.SelectedIndex = 0;
         Click(window.StartButton);
