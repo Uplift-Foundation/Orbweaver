@@ -70,6 +70,8 @@ Engineers and architects build, QA tests, back and forth until it stops coming b
 
 **A feature works on Windows and macOS or it is not a feature.** CI enforces the shape: `macos-latest`/`osx-arm64` and `windows-latest`/`win-x64`, every suite on both legs. Parity is more than a green build, though — a feature no install path wires up is equally unfinished, so check `tools/build-macos-dmg.sh`, `tools/build-macos-app.sh`'s Resources copy, `tools/Orbweaver.iss`, `tools/install-hooks.sh`/`.ps1` and the README install section, and confirm any platform gate is real (WSL) rather than accidental.
 
+**It also works on a remote machine and on the phone, or it is not done — features and bug fixes alike (CB-435).** The three paths are the local desktop, a remote machine over the peer link (New Chat's machine row; `PeerLaunchContract.cs`, `IPeerLauncher`), and the phone over the relay and `Uplift-Foundation/Orbweaver-Mobile` (`RelayLaunch.cs`, `LaunchGate`). Anything a user can do or see locally must work from the other two, and a bug fix is checked on all three. CB-361 shipped resume local-only with the phone filed as a follow-up (CB-434); that is no longer done. Refinement names remote and mobile behaviour in the requirement, and the only exception is a surface that cannot exist there, stated in the ticket with the reason. The ticket stays out of Done until all three work. A peer or relay contract change is expected: staff an architect and an `Orbweaver-Mobile` engineer from the start and open a paired PR there. The real-machine proof includes one remote and one phone observation, and the PR body says which paths were exercised.
+
 ### PR, screenshots, and the call on done
 
 The feature goes up as a PR against `develop`, per **Pull requests** below.
