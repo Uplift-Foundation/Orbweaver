@@ -71,6 +71,10 @@ namespace Orbweaver
                     Mark = parked ? PaperclipMark.None : a.Mark,
                     MarkReason = parked ? null : a.MarkReason,
                     BudgetPercent = parked ? null : a.BudgetPercent,
+                    PaperclipAgentId = a.Id,
+                    PaperclipAgentUrl = a.Url,
+                    PaperclipAgentStatus = parked ? "" : a.Status,
+                    Needs = waiting ? a.Needs : Array.Empty<PaperclipNeed>(),
                     FoldedCount = count,
                     FoldedNames = names,
                     // The orb's own tooltip composes the folded-count line, so this

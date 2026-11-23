@@ -20,7 +20,15 @@ namespace Orbweaver
         string Kind,
         string Id,
         string Title,
-        string Url);
+        string Url,
+        // What a person needs to tell two of one kind apart, and when it was raised
+        // (and, for a tool action, when Paperclip lets it lapse). All optional.
+        string? Summary = null,
+        DateTime? CreatedAt = null,
+        DateTime? ExpiresAt = null,
+        // CB-428: what a phone's prompt calls it ("Hire", "Budget override", "Strategy", "Approval",
+        // "Tool action"). Null on a need no prompt is minted for.
+        string? Tool = null);
 
     internal sealed record PaperclipAgent(
         string Id, string Name, string Role, string Title,
@@ -104,12 +112,22 @@ namespace Orbweaver
         {
             var signature = DrawSignature(agents, link, status) + (remembered ? "\nremembered" : "");
             _remembered = remembered;
-            _snapshot = agents;
+            bool changed;
+            // The snapshot and the mark that says when it was published go in together,
+            // so a scan that reads one reads the other (CB-425).
+            lock (PubGate)
+            {
+                _snapshot = agents;
+                changed = signature != _lastDraw;
+                if (changed)
+                {
+                    _lastDraw = signature;
+                    MarkChanged(DateTime.UtcNow);
+                }
+            }
             _link = link;
             _statusText = status;
-            if (signature == _lastDraw) return;
-            _lastDraw = signature;
-            Changed?.Invoke();
+            if (changed) Changed?.Invoke();
         }
 
         // What the loop publishes after a step. A live snapshot is published (and the
@@ -161,12 +179,155 @@ namespace Orbweaver
         }
 
         // The seam every downstream test uses, as ClaudeCloudSessions has.
-        internal static void SetSnapshotForTests(IReadOnlyList<PaperclipAgent> agents) => _snapshot = agents;
+        internal static void SetSnapshotForTests(IReadOnlyList<PaperclipAgent> agents)
+        {
+            lock (PubGate) _snapshot = agents;
+        }
 
         internal static void SetLinkForTests(PaperclipLink link, string statusText)
         {
             _link = link;
             _statusText = statusText;
+        }
+
+        // ---- how long a change takes to reach the orbs (CB-425) --------------------
+
+        // When the poll published the earliest change no orb update has drawn yet.
+        // Published together with the snapshot it belongs to (under PubGate), and
+        // taken together with it: a scan that took the mark at the start of its pass
+        // and read the snapshot later lost the line whenever a poll published in
+        // between (the new state was drawn with no mark to report).
+        private static readonly object PubGate = new();
+        private static long _changedTicks;
+
+        internal static void MarkChanged(DateTime nowUtc) =>
+            Interlocked.CompareExchange(ref _changedTicks, nowUtc.Ticks, 0);
+
+        internal static DateTime? TakeChangeSeen()
+        {
+            lock (PubGate)
+            {
+                var t = Interlocked.Exchange(ref _changedTicks, 0);
+                return t == 0 ? null : new DateTime(t, DateTimeKind.Utc);
+            }
+        }
+
+        // The snapshot to draw and the earliest change published since the last
+        // draw, read as one: the mark is never older or newer than its snapshot.
+        internal static (IReadOnlyList<PaperclipAgent> Agents, DateTime? Seen) TakeSnapshotAndSeen()
+        {
+            lock (PubGate)
+            {
+                var t = Interlocked.Exchange(ref _changedTicks, 0);
+                return (_snapshot, t == 0 ? null : new DateTime(t, DateTimeKind.Utc));
+            }
+        }
+
+        // ---- answering in place (CB-427) -------------------------------------
+
+        // Wakes the loop now and makes its next step re-read everything, so an
+        // answer given in the flyout is seen at once rather than at the next
+        // tick. Safe from any thread; a nudge with no loop running is dropped.
+        private static readonly SemaphoreSlim NudgeSignal = new(0, 1);
+        private static int _nudgePending;
+
+        internal static void PollNow()
+        {
+            Interlocked.Exchange(ref _nudgePending, 1);
+            try { NudgeSignal.Release(); } catch (SemaphoreFullException) { }
+        }
+
+        // True once per PollNow, however many were asked for.
+        internal static bool TakeNudge() => Interlocked.Exchange(ref _nudgePending, 0) == 1;
+
+        // What a nudge does to the loop's memory: both cadences come due, and a
+        // backoff is not waited out. The last answers are kept so a failed read
+        // still has something to publish.
+        internal static PollState Nudged(PollState st) =>
+            st with { LastFast = null, LastSlow = null, NextAttempt = null };
+
+        // The delay between ticks, cut short by PollNow. Returns true when it was
+        // cut short. A wake with no nudge behind it (the signal can outlive the
+        // nudge that raised it) is ignored and the rest of the wait is served.
+        internal static async Task<bool> WaitAsync(TimeSpan wait, CancellationToken ct)
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (true)
+            {
+                if (TakeNudge()) { DrainSignal(); return true; }
+                var left = wait - clock.Elapsed;
+                if (left <= TimeSpan.Zero) return false;
+                if (!await NudgeSignal.WaitAsync(left, ct).ConfigureAwait(false)) return false;
+            }
+        }
+
+        private static void DrainSignal() { NudgeSignal.Wait(0); }
+
+        // The actions the flyout and the menu make, bound to the live key and
+        // company. Rebuilt only when either moves, as the poll's own client is;
+        // null while Paperclip is switched off or has no company.
+        // An approve runs a tool inside the call (3.4 s measured), so an answer gets
+        // far more than the poll's 5 s: a timeout there would say "can't reach"
+        // after Paperclip had in fact approved.
+        internal static readonly TimeSpan ActionTimeout = TimeSpan.FromSeconds(20);
+
+        private static readonly object ActionsGate = new();
+        private static PaperclipActions? _actions;
+        private static PaperclipHttp? _actionsHttp;
+        private static string _actionsKey = "", _actionsUrl = "", _actionsCompany = "";
+
+        private static volatile IPaperclipActions? _actionsOverride;
+
+        // The seam the flyout, the menu and the phone's answers call. Settable, like
+        // RosterStore, so a suite can hand it a fake; otherwise the live one.
+        internal static IPaperclipActions? Actions
+        {
+            get => _actionsOverride ?? LiveActions();
+            set => _actionsOverride = value;
+        }
+
+        internal static IPaperclipActions? LiveActions()
+        {
+            var cfg = ConfigSource();
+            if (!cfg.Enabled || string.IsNullOrEmpty(cfg.CompanyId)) return null;
+            lock (ActionsGate)
+            {
+                if (_actions == null || cfg.Key != _actionsKey || cfg.BaseUrl != _actionsUrl || cfg.CompanyId != _actionsCompany)
+                {
+                    _actionsHttp?.Dispose();
+                    _actionsHttp = new PaperclipHttp(cfg.BaseUrl, cfg.Key, timeout: ActionTimeout, log: PaperclipHttp.DefaultLog, logSuccess: true);
+                    _actions = new PaperclipActions(_actionsHttp, cfg.CompanyId);
+                    _actionsKey = cfg.Key; _actionsUrl = cfg.BaseUrl; _actionsCompany = cfg.CompanyId;
+                }
+                return _actions;
+            }
+        }
+
+        // The last Wake pressed on this desktop, per agent. A Wake that fails at
+        // once is an event the person caused, so it must not also raise a "broke"
+        // alarm on a phone (plan 13.2); BrokeTransitions reads these times.
+        private static readonly object WakeGate = new();
+        private static readonly Dictionary<string, DateTime> _wakes = new();
+
+        internal static void NoteWake(string agentId, DateTime now)
+        {
+            lock (WakeGate) _wakes[agentId] = now;
+        }
+
+        // Whether a Wake was pressed on this desktop for this agent within the last
+        // 30 s: a Broke that follows it is the person's own doing, not news.
+        internal static readonly TimeSpan OwnWakeWindow = TimeSpan.FromSeconds(30);
+
+        internal static bool WokeRecently(string agentId, DateTimeOffset now)
+        {
+            lock (WakeGate)
+                return _wakes.TryGetValue(agentId, out var at) && now.UtcDateTime - at >= TimeSpan.Zero
+                    && now.UtcDateTime - at <= OwnWakeWindow;
+        }
+
+        internal static IReadOnlyDictionary<string, DateTime> Wakes()
+        {
+            lock (WakeGate) return new Dictionary<string, DateTime>(_wakes);
         }
 
         // ---- cadences and wording -------------------------------------------
@@ -445,7 +606,11 @@ namespace Orbweaver
                 }
                 PublishStep(state, cfg, remembered, RosterStore, DateTime.UtcNow);
                 if (state.Published != null) remembered = Array.Empty<PaperclipAgent>();   // never used once live
-                try { await Task.Delay(wait, ct).ConfigureAwait(false); } catch { break; }
+                try
+                {
+                    if (await WaitAsync(wait, ct).ConfigureAwait(false)) state = Nudged(state);
+                }
+                catch { break; }
             }
         }
 

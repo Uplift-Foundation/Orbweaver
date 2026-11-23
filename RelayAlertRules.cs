@@ -9,7 +9,10 @@ namespace Orbweaver;
 // and no window, relay or clock behind it.
 internal enum DoneAlerts { All, Leads, Off }
 
-internal readonly record struct AlertPrefs(DoneAlerts DoneAlerts, bool AmberMembers)
+// BrokeAlerts (CB-428, frames-v16 prefs): whether this phone wants the push for a Paperclip agent that stopped
+// working. Off until the phone says true: absent, false and anything that is not the JSON true all read as off,
+// so a phone that predates the key (or sends it garbled) is never sent one.
+internal readonly record struct AlertPrefs(DoneAlerts DoneAlerts, bool AmberMembers, bool BrokeAlerts = false)
 {
     // What a phone gets before it has ever sent prefs: today's behaviour.
     internal static readonly AlertPrefs Default = new(DoneAlerts.All, AmberMembers: true);
@@ -21,7 +24,8 @@ internal readonly record struct AlertPrefs(DoneAlerts DoneAlerts, bool AmberMemb
         if (!body.TryGetProperty("done_alerts", out var done) || done.ValueKind != JsonValueKind.String) return null;
         if (Mode(done.GetString()) is not { } known) return null;
         var amber = !body.TryGetProperty("amber_members", out var a) || a.ValueKind != JsonValueKind.False;
-        return new AlertPrefs(known, amber);
+        var broke = body.TryGetProperty("broke_alerts", out var b) && b.ValueKind == JsonValueKind.True;
+        return new AlertPrefs(known, amber, broke);
     }
 
     private static DoneAlerts? Mode(string? name) => name switch
@@ -43,8 +47,8 @@ internal readonly record struct AlertPrefs(DoneAlerts DoneAlerts, bool AmberMemb
         _ => "off",
     };
 
-    internal static AlertPrefs? FromStored(string? doneAlerts, bool? amberMembers) =>
-        Mode(doneAlerts) is { } known ? new AlertPrefs(known, amberMembers ?? true) : null;
+    internal static AlertPrefs? FromStored(string? doneAlerts, bool? amberMembers, bool? brokeAlerts = null) =>
+        Mode(doneAlerts) is { } known ? new AlertPrefs(known, amberMembers ?? true, brokeAlerts ?? false) : null;
 }
 
 internal static class RelayAlertRules
@@ -63,6 +67,9 @@ internal static class RelayAlertRules
     };
 
     internal static bool PushAmber(AlertPrefs prefs, bool member) => !member || prefs.AmberMembers;
+
+    // CB-428: a broke push goes only to a phone whose stored prefs ask for it.
+    internal static bool PushBroke(AlertPrefs prefs) => prefs.BrokeAlerts;
 
     // The lead's done alert names how many members finished since its last
     // one, so the summary is the one place a team's noise is collapsed.

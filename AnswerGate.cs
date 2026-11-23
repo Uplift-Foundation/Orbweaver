@@ -178,12 +178,13 @@ namespace Orbweaver
         // never from a cache (IScreenReader promises that).
         // watchPublic: that phone's watch key as this desktop last accepted it,
         // or null when it holds none (CB-323).
-        internal static Decision Decide(PendingPrompt? pending, PhoneAnswer answer, string? freshCapture,
-            string phoneId, byte[] phoneIdPublic, DateTimeOffset now, NonceWindow nonces, byte[]? watchPublic = null,
-            // CB-327: the transcript's pending AskUserQuestion, for the fresh
-            // capture's form (AskFormTranscript.CallFor), or null.
-            AskFormTranscript.Call? call = null)
-        {
+        // Rules 1 to 5, which need no screen: the signature and its shape, the pending prompt, expiry,
+        // the nonce, the echoed hash. Null means they all passed. Decide goes on to read the screen;
+        // DecideExternal (CB-428) is for a prompt that has none, a Paperclip need, where "still
+        // pending" is the owner's own bookkeeping.
+        private static Decision? Early(PendingPrompt? pending, PhoneAnswer answer,
+            string phoneId, byte[] phoneIdPublic, DateTimeOffset now, NonceWindow nonces, byte[]? watchPublic)
+{
             // 1. signature, under the key the answer names
             var verifier = answer.Key switch
             {
@@ -219,6 +220,25 @@ namespace Orbweaver
 
             // 5. echoed hash
             if (answer.ScreenHash != pending.ScreenHash) return Refuse(5, StalePrompt);
+            return null;
+        }
+
+        // CB-428: rules 1 to 5 as above, then rule 6 is the caller's own (it holds the item only while
+        // Paperclip still lists it, and says so through stillPending), and rule 7 is the one answer the
+        // prompt offered: approve or deny, never an always, a tell or a typed note.
+        internal static Decision DecideExternal(PendingPrompt? pending, PhoneAnswer answer, bool stillPending,
+            IReadOnlyList<PromptOption> offered, string phoneId, byte[] phoneIdPublic, DateTimeOffset now, NonceWindow nonces, byte[]? watchPublic = null)
+        {
+            if (Early(pending, answer, phoneId, phoneIdPublic, now, nonces, watchPublic) is { } refused) return refused;
+            if (!stillPending) return Refuse(6, StalePrompt);
+            return Rule7(pending!, answer, offered, null);
+        }
+
+        internal static Decision Decide(PendingPrompt? pending, PhoneAnswer answer, string? freshCapture,
+            string phoneId, byte[] phoneIdPublic, DateTimeOffset now, NonceWindow nonces, byte[]? watchPublic = null,
+            AskFormTranscript.Call? call = null)
+        {
+            if (Early(pending, answer, phoneId, phoneIdPublic, now, nonces, watchPublic) is { } refused) return refused;
 
             // 6. fresh capture
             var fresh = PromptFingerprint.Of(freshCapture, call);

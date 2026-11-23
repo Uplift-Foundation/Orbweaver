@@ -1,0 +1,4 @@
+{
+  "error": "Tool action request is no longer pending",
+  "reasonCode": "action_not_pending"
+}

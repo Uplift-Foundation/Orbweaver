@@ -27,6 +27,25 @@ public class PaperclipScanTests
     }
 
     [Fact]
+    public void The_row_carries_what_the_flyout_and_menu_act_on_and_a_parked_row_carries_none_of_it()
+    {
+        var waiting = A("w", state: "waiting", needs: [Need]);
+        var live = Rows(new PaperclipScan(), [waiting])[0].Status;
+        Assert.Equal("w", live.PaperclipAgentId);
+        Assert.Equal("idle", live.PaperclipAgentStatus);
+        Assert.Equal("http://127.0.0.1:3100/EX/agents/w", live.PaperclipAgentUrl);
+        Assert.Equal([Need], live.Needs);
+
+        var parked = Rows(new PaperclipScan(), [waiting], PaperclipLink.Unreachable)[0].Status;
+        Assert.Equal("w", parked.PaperclipAgentId);
+        Assert.Equal("", parked.PaperclipAgentStatus);
+        Assert.Empty(parked.Needs);
+
+        // not waiting: no needs on the row even if the agent record holds some
+        Assert.Empty(Rows(new PaperclipScan(), [A("i")])[0].Status.Needs);
+    }
+
+    [Fact]
     public void KeysLeadsSourceColourAndStamp()
     {
         var rows = Rows(new PaperclipScan(), [A("lead"), A("x", "lead"), A("y", "lead")]);

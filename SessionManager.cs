@@ -65,6 +65,29 @@ namespace Orbweaver
         [JsonIgnore]
         public int? BudgetPercent { get; set; }
 
+        // A shallow copy, for the one caller that must change a status the relay may
+        // already hold: every field is a value, a string or a collection that is
+        // replaced, never edited in place.
+        internal SessionStatus Copy() => (SessionStatus)MemberwiseClone();
+
+        // Release 2 (CB-427): what the amber flyout answers and the menu acts on.
+        // The agent's own id and Paperclip's status word for it (so the menu can
+        // tell a paused agent from a running one), and the needs behind the amber,
+        // each with the id an answer is made against. Paperclip-only, set beside
+        // the mark by PaperclipScan.
+        [JsonIgnore]
+        public string PaperclipAgentId { get; set; } = "";
+
+        [JsonIgnore]
+        public string PaperclipAgentStatus { get; set; } = "";
+
+        // The agent's own page, so an orb that stops asking points there again.
+        [JsonIgnore]
+        public string PaperclipAgentUrl { get; set; } = "";
+
+        [JsonIgnore]
+        internal IReadOnlyList<PaperclipNeed> Needs { get; set; } = Array.Empty<PaperclipNeed>();
+
         // The Paperclip orb's hover, one line each, already in the order plan 2.7
         // gives and with the empty ones left out (PaperclipApi owns that). The
         // orb draws what is here and decides nothing about it.
@@ -928,10 +951,108 @@ namespace Orbweaver
             // CB-421: a Paperclip snapshot that changes what the orbs draw asks
             // for a scan now rather than at the next 2 s tick. Marshalled to the
             // UI thread, where the scan state lives; Paperclip-only.
-            PaperclipSessions.Changed += () => Dispatcher.UIThread.Post(RequestScan);
+            PaperclipSessions.Changed += () => Dispatcher.UIThread.Post(OnPaperclipChanged);
 
             _ = ScheduleScan();
         }
+
+        // CB-427: the user answered a need in the panel and Paperclip took it. Clear
+        // that need from the orb's own status and update that one orb now, so the
+        // orb the user just acted on leaves amber at once instead of after the poll
+        // and a scan (the scan pass is slow on some machines, CB-425 / CB-424).
+        //
+        // On a copy, never the object in the table: the last scan handed that one to
+        // the relay, which reads it on its own threads, and every other path
+        // publishes a fresh object and leaves it alone.
+        //
+        // The need is also remembered against the snapshot it was answered on, and
+        // the scan's rows leave it out while that same snapshot is current, so a
+        // pass that applies before the nudged poll cannot flash the orb amber again
+        // ("it did not take"). The next published snapshot is the truth: the memory
+        // is dropped there, and a need Paperclip still lists comes back.
+        // UI thread. False when there is no such orb.
+        internal bool ClearPaperclipNeed(string agentId, string needId)
+        {
+            var key = PaperclipScan.KeyFor(agentId);
+            if (!_statuses.TryGetValue(key, out var existing) || !_windows.TryGetValue(key, out var window)) return false;
+            var copy = existing.Copy();
+            if (!PaperclipFastPath.WithoutNeed(copy, needId)) return false;
+            var snapshot = PaperclipSessions.Snapshot();
+            if (!ReferenceEquals(snapshot, _answeredOn)) { _answeredOn = snapshot; _answeredNeeds.Clear(); }
+            _answeredNeeds.Add(needId);
+            _statuses[key] = copy;
+            window.UpdateFrom(copy);
+            return true;
+        }
+
+        private IReadOnlyList<PaperclipAgent>? _answeredOn;
+        private readonly HashSet<string> _answeredNeeds = new();
+
+        // The snapshot the scan draws Paperclip rows from: the published one, less
+        // the needs answered here while it was current. A newer snapshot clears the
+        // memory and is used as it is.
+        // A test seam: runs just before the scan reads the Paperclip snapshot, where a
+        // poll publishing on its own thread can land in the middle of a pass.
+        internal Action? BeforePaperclipRead { get; set; }
+
+        internal IReadOnlyList<PaperclipAgent> PaperclipSnapshotForScan(out DateTime? changeSeen)
+        {
+            BeforePaperclipRead?.Invoke();
+            // The snapshot and the time its change was published, read as one.
+            var (snapshot, seen) = PaperclipSessions.TakeSnapshotAndSeen();
+            changeSeen = seen;
+            if (!ReferenceEquals(snapshot, _answeredOn))
+            {
+                _answeredOn = null;
+                _answeredNeeds.Clear();
+                return snapshot;
+            }
+            return _answeredNeeds.Count == 0 ? snapshot : PaperclipFastPath.WithoutAnswered(snapshot, _answeredNeeds);
+        }
+
+        // A published Paperclip change: draw it now on the orbs that exist
+        // (PaperclipFastPath, CB-425), then ask for the ordinary scan, which
+        // converges whatever the fast path leaves alone.
+        internal void OnPaperclipChanged()
+        {
+            ApplyPaperclipNow();
+            RequestScan();
+        }
+
+        private IReadOnlyList<ScanEntry> PaperclipRows(out DateTime? changeSeen) => _paperclipScan.Entries(
+            PaperclipSnapshotForScan(out changeSeen), PaperclipSessions.Link, PaperclipSessions.StatusText,
+            OrbweaverSettings.PaperclipSleeping, DateTime.UtcNow, PaperclipSessions.Remembered);
+
+        // UI thread. False when the set of Paperclip orbs differs from what is on
+        // screen, which the full pass handles. Writes the same one line per state
+        // change the full pass writes, so a change is logged once whichever path
+        // draws it. Works onto copies, never the objects the relay holds.
+        internal bool ApplyPaperclipNow()
+        {
+            var plan = PaperclipFastPath.Plan(PaperclipRows(out var seen), _statuses);
+            if (plan == null || plan.Count == 0)
+            {
+                // Not drawn here: the full pass will draw it, so the mark goes back for it.
+                if (seen is { } unused) PaperclipSessions.MarkChanged(unused);
+                return false;
+            }
+            foreach (var c in plan)
+            {
+                var applied = PaperclipFastPath.Applied(c.Existing, c.Fresh);
+                _statuses[c.Key] = applied;
+                if (_windows.TryGetValue(c.Key, out var window)) window.UpdateFrom(applied);
+                if (PaperclipFastPath.Line(c.Key, c.Existing.State, applied.State,
+                        seen is { } at ? PaperclipClock() - at : null) is { } line)
+                    PaperclipLatencySink(line);
+            }
+            return true;
+        }
+
+        // CB-425: one line per Paperclip state change drawn by the scan, with the
+        // milliseconds from the poll that published it. The clock and sink are
+        // injectable so a test reads the number off a fake clock.
+        internal Func<DateTime> PaperclipClock { get; set; } = () => DateTime.UtcNow;
+        internal Action<string> PaperclipLatencySink { get; set; } = line => DiagnosticsLog.Write(line);
 
         // Excluded from coverage: creates a FileSystemWatcher on the status
         // directory. The poll timer covers the same job — the comment in the catch
@@ -1701,6 +1822,23 @@ namespace Orbweaver
         // that predates the upgrade must not report it missing; left out with
         // a statusDir handed in, it is no second folder at all, so every test
         // written before the second folder existed still reads exactly one.
+        // CB-431: the Paperclip company in the roster a parked or unattended host serves. The live scan
+        // adds these rows in ScanAndUpdateCore, which only runs once the UI is attached; the poll loop
+        // (PaperclipSessions) runs without it, so its snapshot is carried here the same way. Without
+        // them a phone never sees the company, and PaperclipPrompts and the broke push, which need a
+        // row, have nothing to speak about.
+        private static readonly PaperclipScan HeadlessPaperclipScan = new();
+
+        internal static List<(string SessionId, SessionStatus Status)> HeadlessPaperclipRows(
+            List<(string SessionId, SessionStatus Status)> kept, DateTime now)
+        {
+            foreach (var e in HeadlessPaperclipScan.Entries(
+                         PaperclipSessions.Snapshot(), PaperclipSessions.Link, PaperclipSessions.StatusText,
+                         OrbweaverSettings.PaperclipSleeping, now, PaperclipSessions.Remembered))
+                kept.Add((e.SessionId, e.Status));
+            return kept;
+        }
+
         internal static List<(string SessionId, SessionStatus Status)> HeadlessSnapshot(
             string? statusDir = null,
             Func<Dictionary<string, string>?>? jobListing = null,
@@ -1727,7 +1865,7 @@ namespace Orbweaver
             {
                 // No directory yet means no sessions yet, which is an answer.
                 MirrorLog.SayOnce("headless-scan", $"dir={statusDir} unreadable");
-                return new List<(string, SessionStatus)>();
+                return HeadlessPaperclipRows(new List<(string, SessionStatus)>(), now);
             }
 
             var reads = NewestPerSession(current ?? new(), legacy ?? new());
@@ -1919,7 +2057,7 @@ namespace Orbweaver
             if (claudePids.Count > 0)
                 ApplyTeams(kept, teams is null ? AgentTeam.OfAll(claudePids) : teams(claudePids));
 
-            return kept;
+            return HeadlessPaperclipRows(kept, now);
         }
 
         // Team membership onto snapshot statuses, by the live scan's own rule
@@ -2902,8 +3040,9 @@ namespace Orbweaver
             // the lead pointing at its manager. Empty and free unless
             // paperclipEnabled is on - PaperclipSessions.Snapshot holds that gate.
             // What the orb says is PaperclipScan's, so this is one call.
+            var paperclipSnapshot = PaperclipSnapshotForScan(out var paperclipChangeSeen);
             found.AddRange(_paperclipScan.Entries(
-                PaperclipSessions.Snapshot(), PaperclipSessions.Link, PaperclipSessions.StatusText,
+                paperclipSnapshot, PaperclipSessions.Link, PaperclipSessions.StatusText,
                 OrbweaverSettings.PaperclipSleeping, DateTime.UtcNow, PaperclipSessions.Remembered));
 
             // Before InheritTerminalInfo, so this describes the files as the
@@ -3341,6 +3480,8 @@ namespace Orbweaver
                         turnSignal, SoundKeyFor(status, sessionId), sessionId));
                 }
 
+                var paperclipBefore = status.Source == SessionSource.Paperclip && _statuses.TryGetValue(sessionId, out var prior)
+                    ? prior.State : null;
                 _statuses[sessionId] = status;
 
                 var isNew = !_windows.TryGetValue(sessionId, out var window);
@@ -3357,6 +3498,11 @@ namespace Orbweaver
                 }
 
                 window!.UpdateFrom(status);
+
+                if (paperclipBefore != null
+                    && PaperclipFastPath.Line(sessionId, paperclipBefore, status.State,
+                        paperclipChangeSeen is { } seenAt ? PaperclipClock() - seenAt : null) is { } latencyLine)
+                    PaperclipLatencySink(latencyLine);
 
                 // The chat panel's view of "waiting for a permission prompt"
                 // comes from here rather than from the transcript, because the

@@ -306,6 +306,14 @@ namespace Orbweaver
         public void UpdateFrom(SessionStatus status)
         {
             _lastStatus = status;
+            // A failed action's sentence is overtaken once the agent's state moves.
+            if (PaperclipRowNote != null && _noteStateKey != null && StateKeyOf(status) != _noteStateKey)
+            {
+                PaperclipRowNote = null;
+                _noteStateKey = null;
+                PaperclipNoteItem.Header = null;
+                PaperclipNoteItem.IsVisible = false;
+            }
             RefreshSoundKey(status);
 
             var folder = string.IsNullOrEmpty(status.Cwd)
@@ -371,7 +379,7 @@ namespace Orbweaver
             var tipPath = status.Source == SessionSource.ClaudeCloud
                 ? CloudTipDetail(status.StatusDetail, status.RecentAction)
                 : status.Source == SessionSource.Paperclip
-                    ? PaperclipOrb.TipBody(status.HoverLines, status.FoldedCount, status.FoldedNames)
+                    ? PaperclipOrb.TipBody(WithPaperclipNote(status.HoverLines), status.FoldedCount, status.FoldedNames)
                     : string.IsNullOrEmpty(status.Cwd) ? null : status.Cwd;
 
             // UpdateFrom runs on every session poll, but SetTip always builds
@@ -597,6 +605,11 @@ namespace Orbweaver
             OpenPaperclipItem.IsVisible = offer.Open;
             ReviewPaperclipItem.IsVisible = offer.Review;
             ReconnectPaperclipItem.IsVisible = offer.Reconnect;
+            WakePaperclipItem.IsVisible = offer.Wake;
+            PausePaperclipItem.IsVisible = offer.Pause;
+            ResumePaperclipItem.IsVisible = offer.Resume;
+            if (!offer.Pause && !offer.Resume) DisarmPaperclip();
+            PaperclipNeedsPanel.Refresh(status);
         }
 
         private void FoldedPillVisible_Set(string? label)
@@ -651,6 +664,98 @@ namespace Orbweaver
         internal void OpenPaperclip_Click(object? sender, RoutedEventArgs e)
         {
             if (_lastStatus is { Source: SessionSource.Paperclip } status) CloudSessionLink.Open(status.Url);
+        }
+
+        // --- Paperclip actions (CB-427) -----------------------------------------
+        // Wake acts at once; Pause and Resume are armed-then-confirmed, like the
+        // OpenClaw end-conversation row: the first click asks, the second within
+        // four seconds does it. The effect goes through PaperclipActionsSource so
+        // the suite drives a fake and never reaches a Paperclip.
+        internal static Func<IPaperclipActions?> PaperclipActionsSource { get; set; } = () => PaperclipSessions.Actions;
+
+        private string? _paperclipArmed;
+        private DispatcherTimer? _paperclipDisarm;
+        internal string? PaperclipArmed => _paperclipArmed;
+        internal string? PaperclipRowNote { get; private set; }
+
+        internal async void WakePaperclip_Click(object? sender, RoutedEventArgs e) => await PaperclipActAsync("wake");
+        internal async void PausePaperclip_Click(object? sender, RoutedEventArgs e) => await PaperclipActAsync("pause");
+        internal async void ResumePaperclip_Click(object? sender, RoutedEventArgs e) => await PaperclipActAsync("resume");
+
+        internal async System.Threading.Tasks.Task PaperclipActAsync(string verb)
+        {
+            if (_lastStatus is not { Source: SessionSource.Paperclip } status || status.PaperclipAgentId.Length == 0) return;
+            if (verb != "wake" && _paperclipArmed != verb)
+            {
+                DisarmPaperclip();
+                _paperclipArmed = verb;
+                var row = verb == "pause" ? PausePaperclipItem : ResumePaperclipItem;
+                row.Header = verb == "pause" ? "Click again to pause" : "Click again to resume";
+                _paperclipDisarm = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+                _paperclipDisarm.Tick += (_, _) => DisarmPaperclip();
+                _paperclipDisarm.Start();
+                return;
+            }
+            DisarmPaperclip();
+            ShowPaperclipNote(null);
+            var actions = PaperclipActionsSource();
+            PaperclipOutcome result;
+            if (actions == null) result = new(PaperclipActionResult.Unreachable, "Paperclip is not connected.");
+            else
+            {
+                try
+                {
+                    result = verb switch
+                    {
+                        "wake" => await actions.WakeAsync(status.PaperclipAgentId, default),
+                        "pause" => await actions.PauseAsync(status.PaperclipAgentId, default),
+                        _ => await actions.ResumeAsync(status.PaperclipAgentId, default),
+                    };
+                }
+                catch (Exception ex)
+                {
+                    DiagnosticsLog.Write("paperclip: " + verb + " threw " + ex.GetType().Name);
+                    result = new(PaperclipActionResult.Unreachable, PaperclipActions.UnreachableWhy);
+                }
+            }
+            ShowPaperclipNote(result.Settled ? null : result.Why ?? PaperclipActions.RefusedWhy);
+            if (!result.Settled) DiagnosticsLog.Write($"paperclip: {verb} failed: {result.Result}");
+        }
+
+        // A failed Wake, Pause or Resume says why on a disabled row in the menu
+        // (Paperclip's own sentence, never an exception's), until the next action,
+        // the next update that offers different rows, or the menu being rebuilt.
+        private void ShowPaperclipNote(string? why)
+        {
+            PaperclipRowNote = why;
+            PaperclipNoteItem.Header = why;
+            PaperclipNoteItem.IsVisible = why != null;
+            _noteStateKey = why == null || _lastStatus == null ? null : StateKeyOf(_lastStatus);
+            // The menu closes when its row is pressed, so the sentence is also the
+            // first line of the hover, where it can be read without reopening it.
+            if (_lastStatus is { Source: SessionSource.Paperclip } s) UpdateFrom(s);
+        }
+
+        // What the note was about. When the agent's state or status moves, the
+        // note has been overtaken and goes.
+        private string? _noteStateKey;
+        private static string StateKeyOf(SessionStatus s) => s.State + "|" + s.PaperclipAgentStatus;
+
+        private IReadOnlyList<string> WithPaperclipNote(IReadOnlyList<string> lines)
+        {
+            if (PaperclipRowNote is not { } note) return lines;
+            return new[] { note }.Concat(lines).ToList();
+        }
+
+        internal bool PaperclipNoteVisible => PaperclipNoteItem.IsVisible;
+
+        internal void DisarmPaperclip()
+        {
+            _paperclipDisarm?.Stop();
+            _paperclipDisarm = null;
+            _paperclipArmed = null;
+            PausePaperclipItem.Header = "Pause";
+            ResumePaperclipItem.Header = "Resume";
         }
 
         internal void ReconnectPaperclip_Click(object? sender, RoutedEventArgs e) => PaperclipReconnect?.Invoke();
@@ -3085,6 +3190,7 @@ namespace Orbweaver
             // is certainly no terminal, so without this arm the click fell all
             // the way through to TerminalFocuser.Focus and went hunting a pane
             // for a conversation that has never been on this disk.
+            if (TryOpenNeedsPanel()) return;
             if (TryOpenInBrowser()) return;
 
             // A Claude Desktop-hosted session has no terminal; its window is the
@@ -4082,6 +4188,21 @@ namespace Orbweaver
         // halves of what it decides are reachable elsewhere — the rule is
         // ClickRouting.OpensInABrowser and the launch is
         // CloudSessionLink.StartInfoFor, and both are pure and covered.
+        // An amber Paperclip orb holding something this app can answer opens the
+        // answer panel instead of the browser (CB-427); the panel's own "Review in
+        // Paperclip" is the browser. Covered headlessly: the suite shows the panel, closes it and
+        // shows it again.
+        internal bool TryOpenNeedsPanel()
+        {
+            if (!PaperclipOrb.ShowsNeeds(_lastStatus, PaperclipSessions.Link)) return false;
+            var scale = RenderScaling;
+            var anchor = new PixelPoint(Position.X + (int)(Bounds.Width * scale / 2), Position.Y + (int)(Bounds.Height * scale));
+            var work = (Screens.ScreenFromWindow(this) ?? Screens.Primary)?.WorkingArea
+                ?? new PixelRect(0, 0, 1920, 1080);
+            PaperclipNeedsPanel.ShowFor(_lastStatus!, anchor, work);
+            return true;
+        }
+
         [ExcludeFromCodeCoverage]
         internal bool TryOpenInBrowser()
         {
