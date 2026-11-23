@@ -106,13 +106,40 @@ public class PaperclipStateTests
     }
 
     [Fact]
-    public void NativeFixture_ErrorAgentIsBroke()
+    public void NativeFixture_BothErrorAgentsAreBroke_AndTheBlockedOneIsAmberAndBroke()
     {
         var agents = PaperclipApi.ParseAgents(Read("native/agents.json"));
-        var all = PaperclipApi.Compose(Input(agents));
-        var broke = Assert.Single(all, a => a.Mark == PaperclipMark.Broke);
-        Assert.False(string.IsNullOrEmpty(broke.MarkReason));
+        var blocked = PaperclipApi.ParseIssues(Read("native/issues-blocked.json"));
+        var all = PaperclipApi.Compose(Input(agents, blocked: blocked));
         Assert.Equal(4, all.Count);
+        Assert.Equal(2, all.Count(a => a.Mark == PaperclipMark.Broke));
+        Assert.All(all.Where(a => a.Mark == PaperclipMark.Broke), b => Assert.False(string.IsNullOrEmpty(b.MarkReason)));
+        // The real agent that is both in error and the assignee of a blocked task.
+        var both = all.Single(a => a.Id.EndsWith("4"));
+        Assert.Equal(("waiting", PaperclipMark.Broke), (both.State, both.Mark));
+        var need = Assert.Single(both.Needs);
+        Assert.Equal(("blocked", "Blocked: EX-6 Example task"), (need.Kind, need.Title));
+    }
+
+    [Theory]
+    [InlineData("runner span: runner.process.launch (124 ms)", true)]
+    [InlineData("Runner Span: x", true)]
+    [InlineData("runner.process.launch", true)]
+    [InlineData("runner.process.launch (124 ms)", true)]
+    [InlineData("Receiving agent output", false)]
+    [InlineData("Done. Next up", false)]
+    [InlineData("Reading the repo.", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void InternalLookingStatusMessages_AreRecognised(string? msg, bool internalText) =>
+        Assert.Equal(internalText, PaperclipApi.LooksInternal(msg));
+
+    [Fact]
+    public void Activity_PrefersToolName_DropsInternalSpanText_KeepsASentence()
+    {
+        Assert.Equal("Bash", One(Input([Agent("a")], live: [Live("a", msg: "runner span: x", tool: "Bash")]), "a").Activity);
+        Assert.Null(One(Input([Agent("a")], live: [Live("a", msg: "runner span: runner.process.launch (124 ms)")]), "a").Activity);
+        Assert.Equal("Receiving agent output", One(Input([Agent("a")], live: [Live("a", msg: "Receiving agent output")]), "a").Activity);
     }
 
     [Fact]
@@ -235,7 +262,7 @@ public class PaperclipStateTests
     {
         var issues = new PaperclipApi.RawIssue[]
         {
-            new("i1", "EX-1", "Do it", "blocked", "x"),
+            new("i1", "EX-1", "Do it", "blocked", "x", "needs_attention"),
             new("i2", "EX-2", "Nobody", "blocked", null),
             new("i3", "EX-3", "Ghost", "blocked", "ghost"),
             new("i4", "", "", "blocked", "y"),
@@ -245,6 +272,17 @@ public class PaperclipStateTests
         Assert.Equal(("blocked", "Blocked: EX-1 Do it", "http://127.0.0.1:3100/EX/issues/i1"), (x.Kind, x.Title, x.Url));
         Assert.Equal("Blocked: ", all.Single(a => a.Id == "y").Needs[0].Title);
         Assert.Empty(all.Single(a => a.Id == "lead").Needs);
+    }
+
+    [Fact]
+    public void BlockedIssue_OnlyNeedsAPersonWhenPaperclipSaysSo()
+    {
+        // Edited copies of the real row: the other verdicts have never been captured.
+        PaperclipApi.RawIssue Row(string? state) => new("i", "EX-1", "T", "blocked", "x", state);
+        Assert.Single(PaperclipApi.Compose(Input(Team, blocked: [Row("needs_attention")])).Single(a => a.Id == "x").Needs);
+        Assert.Single(PaperclipApi.Compose(Input(Team, blocked: [Row(null)])).Single(a => a.Id == "x").Needs);
+        Assert.Empty(PaperclipApi.Compose(Input(Team, blocked: [Row("covered")])).Single(a => a.Id == "x").Needs);
+        Assert.Equal("idle", PaperclipApi.Compose(Input(Team, blocked: [Row("covered")])).Single(a => a.Id == "x").State);
     }
 
     [Fact]
@@ -378,6 +416,16 @@ public class PaperclipRunProcessTests
         var r = doc.RootElement;
         Assert.True(PaperclipApi.IsRunProcess(r.GetProperty("entrypoint").GetString(), r.GetProperty("cwd").GetString(),
             r.GetProperty("session_pid").GetInt32(), null, NoPids, NoSessions));
+    }
+
+    [Fact]
+    public void ThePreconfiguredModeRow_SdkTsInAnIsolatedWorkspace_IsARunProcess()
+    {
+        // Built from the measured values (plan 1.6): the status file itself was
+        // never captured, so sdk-ts is inferred from the transcript, not observed.
+        Assert.True(PaperclipApi.IsRunProcess("sdk-ts",
+            "/Users/u/.paperclip/instances/default/isolated-workspaces/co/uuid", null, null, NoPids, NoSessions));
+        Assert.False(PaperclipApi.IsRunProcess("sdk-ts", "/Users/u/src/repo", null, null, NoPids, NoSessions));
     }
 
     [Fact]

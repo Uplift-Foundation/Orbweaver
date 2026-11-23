@@ -53,7 +53,7 @@ namespace Orbweaver
 
         internal sealed record RawIssue(
             string Id, string Identifier, string Title, string Status,
-            string? AssigneeAgentId);
+            string? AssigneeAgentId, string? BlockerState = null);
 
         internal sealed record Health(string Status, string DeploymentMode);
 
@@ -216,8 +216,11 @@ namespace Orbweaver
             {
                 var id = Str(r, "id");
                 if (string.IsNullOrEmpty(id)) return null;
+                string? blocker = null;
+                if (r.TryGetProperty("blockerAttention", out var b) && b.ValueKind == JsonValueKind.Object)
+                    blocker = NonEmpty(Str(b, "state"));
                 return new RawIssue(id, Str(r, "identifier") ?? "", Str(r, "title") ?? "",
-                    Str(r, "status") ?? "", NonEmpty(Str(r, "assigneeAgentId")));
+                    Str(r, "status") ?? "", NonEmpty(Str(r, "assigneeAgentId")), blocker);
             }).Where(a => a != null).Select(a => a!).ToList();
 
         internal static Health? ParseHealth(string? json)
@@ -329,8 +332,12 @@ namespace Orbweaver
                         RequestsUrl(c.BaseUrl, c.IssuePrefix)));
             foreach (var i in c.BlockedIssues)
             {
-                // An unassigned blocked issue is nobody's orb to light.
+                // An unassigned blocked issue is nobody's orb to light. Paperclip's
+                // own verdict decides whether a person is needed: only
+                // `needs_attention` (or no verdict at all) is. A task blocked on
+                // another task, which Paperclip resolves itself, is not.
                 if (i.AssigneeAgentId == null || !known.Contains(i.AssigneeAgentId)) continue;
+                if (i.BlockerState != null && i.BlockerState != "needs_attention") continue;
                 var label = string.Join(" ", new[] { i.Identifier, i.Title }.Where(s => s.Length > 0));
                 Add(i.AssigneeAgentId, new PaperclipNeed("blocked", i.Id, "Blocked: " + label,
                     IssueUrl(c.BaseUrl, c.IssuePrefix, i.Id)));
@@ -375,7 +382,7 @@ namespace Orbweaver
                 if (run?.IssueId != null && c.TaskTitles.TryGetValue(run.IssueId, out var t)) task = t;
 
                 var started = run?.StartedAt;
-                var activity = run?.ToolName ?? run?.StatusMessage;
+                var activity = run?.ToolName ?? (LooksInternal(run?.StatusMessage) ? null : run?.StatusMessage);
 
                 var lastActivity = new[] { a.LastHeartbeatAt, last?.FinishedAt, last?.StartedAt, started }
                     .Where(d => d != null).Select(d => d!.Value).DefaultIfEmpty(c.Now).Max();
@@ -392,6 +399,13 @@ namespace Orbweaver
             }
             return result;
         }
+
+        // Under the native runner the live run's status message was internal span
+        // text ("runner span: runner.process.launch ..."), not a sentence. Those
+        // are dropped so the hover falls back to the task line.
+        internal static bool LooksInternal(string? message) =>
+            message != null && (message.StartsWith("runner span:", StringComparison.OrdinalIgnoreCase)
+                || System.Text.RegularExpressions.Regex.IsMatch(message, @"^[\w-]+\.[\w-]"));
 
         internal static string ApprovalWording(string type) => type switch
         {
@@ -513,7 +527,10 @@ namespace Orbweaver
         internal static bool IsRunProcess(string? entrypoint, string? cwd, int? pid, string? sessionId,
             IReadOnlySet<int> knownPids, IReadOnlySet<string> knownSessions)
         {
-            if (!string.Equals(entrypoint, "sdk-cli", StringComparison.Ordinal)) return false;
+            // sdk-cli is legacy claude_local, sdk-ts the preconfigured native
+            // mode. Both halves are required: sdk- alone is every headless
+            // Claude anyone runs, a .paperclip cwd alone a person's terminal.
+            if (entrypoint == null || !entrypoint.StartsWith("sdk-", StringComparison.Ordinal)) return false;
             if (pid is int p && knownPids.Contains(p)) return true;
             if (!string.IsNullOrEmpty(sessionId) && knownSessions.Contains(sessionId)) return true;
             return InWorkspace(cwd);

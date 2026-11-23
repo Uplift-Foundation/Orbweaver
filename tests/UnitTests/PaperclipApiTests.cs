@@ -40,8 +40,9 @@ public class PaperclipApiParseTests
         var lead = agents.Single(a => a.ReportsTo == null);
         Assert.Equal(3, agents.Count(a => a.ReportsTo == lead.Id));
         Assert.All(agents, a => Assert.Equal("paperclip_runner", a.AdapterType));
-        var broke = Assert.Single(agents, a => a.Status == "error");
-        Assert.False(string.IsNullOrEmpty(broke.ErrorReason));
+        var broken = agents.Where(a => a.Status == "error").ToList();
+        Assert.Equal(2, broken.Count);
+        Assert.All(broken, b => Assert.False(string.IsNullOrEmpty(b.ErrorReason)));
         Assert.All(agents, a => Assert.Equal(5000, a.BudgetCents));
     }
 
@@ -57,11 +58,14 @@ public class PaperclipApiParseTests
     public void NativeRuns_RedactedAndFullRowsInOneListing()
     {
         var runs = PaperclipApi.ParseRuns(PaperclipFx.Read("native/heartbeat-runs.json"));
-        Assert.Equal(5, runs.Count);
-        Assert.True(runs[0].Redacted);
-        Assert.Equal("failed", runs[0].Status);
-        Assert.Null(runs[0].ErrorCode);
-        Assert.All(runs.Skip(1), r => Assert.False(r.Redacted));
+        Assert.Equal(3, runs.Count);
+        // newest first: a full failed native row, a redacted row, a legacy success
+        Assert.False(runs[0].Redacted);
+        Assert.Equal(("failed", "native_provider_terminal_failed", null), (runs[0].Status, runs[0].ErrorCode, runs[0].ProcessPid));
+        Assert.True(runs[1].Redacted);
+        Assert.Equal("failed", runs[1].Status);
+        Assert.Null(runs[1].ErrorCode);
+        Assert.Equal(("succeeded", 41486), (runs[2].Status, runs[2].ProcessPid));
     }
 
     [Fact]
@@ -106,7 +110,15 @@ public class PaperclipApiParseTests
         Assert.Empty(PaperclipApi.ParseLiveRuns(PaperclipFx.Read("native/live-runs-idle.json")));
         Assert.Empty(PaperclipApi.ParseApprovals(PaperclipFx.Read("native/approvals-pending-empty.json")));
         Assert.Empty(PaperclipApi.ParseActionRequests(PaperclipFx.Read("native/tool-action-requests-empty.json")));
-        Assert.Empty(PaperclipApi.ParseIssues(PaperclipFx.Read("native/issues-blocked-empty.json")));
+    }
+
+    [Fact]
+    public void RealBlockedIssue_CarriesItsAttentionVerdictAndAssignee()
+    {
+        var i = Assert.Single(PaperclipApi.ParseIssues(PaperclipFx.Read("native/issues-blocked.json")));
+        Assert.Equal(("blocked", "EX-6", "needs_attention"), (i.Status, i.Identifier, i.BlockerState));
+        Assert.EndsWith("4", i.AssigneeAgentId);
+        Assert.Null(Assert.Single(PaperclipApi.ParseIssues("[{\"id\":\"i\",\"blockerAttention\":5}]")).BlockerState);
     }
 
     [Theory]
