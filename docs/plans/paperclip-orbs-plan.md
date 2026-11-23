@@ -316,11 +316,11 @@ No hook, installer or packaging file changes: the feature is all in the app bina
     "watch": "ok watching, total 0, then no window and no run frame",
     "unwatch": "ok unwatched",
     "input": "err untypeable, why \"Paperclip agents can't be typed to from a phone\"",
-    "set_run": "the frames-v13 refusal for a session with no run controls",
-    "launch.parent_session_id naming a paperclip row": "err unsupported_parent"
+    "set_run": "err unavailable, why \"This desk can't change that session's model or effort.\" (frames-v13's code for a control that is off for the session)",
+    "launch.parent_session_id naming a paperclip row": "err unsupported_parent, whatever the launch's own cli"
   },
   "prompt": {
-    "when": "one per pending approval or pending tool action. A blocked task mints none: it has no yes or no.",
+    "when": "one per pending approval or pending tool action, and only for an agent that is already a row in the roster the phone holds. A blocked task mints none: it has no yes or no.",
     "frame": {
       "t": "prompt", "request_id": "<ULID>", "session_id": "paperclip:<agent id>",
       "kind": "permission", "cli": "paperclip",
@@ -348,7 +348,11 @@ No hook, installer or packaging file changes: the feature is all in the app bina
 }
 ```
 
-Three things engineer C confirms against the files before writing vectors, because I did not read them: the exact frames-v13 refusal code for `set_run`; that `RelayLaunch` answers `unsupported_parent` for a non-Claude parent; and whether either phone or the desktop's `AnswerGate` rejects an `expires_at` more than 1800 s out. If the last is true, v15 says 1800 and a still-pending item is re-minted with `quiet: true`.
+Three things I had not read, confirmed by engineer 2 from the code at desktop `0c7d29c3c` and mobile `7155aa3` (read, not run on a device):
+
+- `set_run` on a session with no run controls answers `unavailable` with `RelayRemote.NoRunControlsWhy`. Today a Paperclip id would answer `unknown_session` first, so the `Listed()` check goes before `Local()`.
+- `RelayLaunch.Rules` (`RelayLaunch.cs:161-165`) tests the **request's** cli, not the parent's, so a `claude` launch naming a Paperclip row as its parent is **not refused today**. Release 1 adds one check: the parent is a Paperclip row, answer `unsupported_parent`. Scoped to Paperclip only; what a Codex or Grok parent does today is not changed here.
+- Nothing rejects an `expires_at` a day out: `AnswerGate` rule 3 compares the answer's to the pending prompt's and to now; both phones use the prompt's own value. So 86400 stands. One cosmetic case: iOS `WatchContextBuild.swift:37` derives an orphan amber's `since` as `expires_at - 1800`, which would be wrong for a prompt whose session is not in the roster. The `when` rule above (mint only for a row already in the roster) keeps a Paperclip prompt off that path.
 
 **Not in v15, and why:** the **"broke" push**. The relay refuses any `push` value outside `none, amber, resolve, done, limit` (`relay/Relay/Frames.cs:156`), and a new alert needs its own APNs wording and mute class. That is a relay change, so it is `frames-v16` with release 2's tickets. Outline: push value `broke`, class `state`, on the delta where a row's mark becomes Broke, `e` `{v:1, t:"broke", session_id, label, title}`, mutable like `done`.
 
@@ -364,6 +368,7 @@ Phone pointers for CB-422. Verified at `7155aa3`: `cli` is a `String` in `app/Re
 | `RelayRoster.cs:97-106` | `Project` admits `IsLocalCli || Source == Paperclip`. Paperclip row: `cwd ""`, no persona, `parent_session_id = Lead` only when that row is admitted. |
 | `RelayRoster.cs:55` | `Finished` is false for a Paperclip row, so `RelayLink.cs:698` mints no `done` push. |
 | `RelayRemote.cs:150` | Keep `Local()`. Add `Listed()` for a Paperclip row and the four answers in §4 ahead of the `Local()` checks at `:376`, `:430`, `:471`, `:482`. |
+| `RelayLaunch.cs:161` | In `Rules`, after the `InRoster` check: a parent that is a Paperclip row answers `unsupported_parent`. A vector for it, beside a control with a Claude parent that still launches. |
 | `RelayActivity.cs` | Paperclip rows out of `working` and `idle`; out of `amber` too in release 1, since no prompt exists yet. |
 | `tools/relay-vectors`, `tests/UnitTests/Fixtures/relay/roster-fixtures.json` | The fourth roster, byte-identical to the mobile copy. |
 
