@@ -141,7 +141,7 @@ namespace Orbweaver
         // being three separate overloads RealLaunch would have to pick between.
         internal static LaunchResult Decide(
             string displayName, string? binary, string directory, NewChatPlatform platform,
-            bool? windowsLaunched, string? macTmuxPane, bool? macTerminalLaunched)
+            bool? windowsLaunched, string? macTmuxPane, bool? macTerminalLaunched, string verb = "started")
         {
             if (binary is null)
             {
@@ -153,11 +153,11 @@ namespace Orbweaver
             return platform switch
             {
                 NewChatPlatform.Windows => windowsLaunched == true
-                    ? Launched(displayName, directory)
+                    ? Launched(displayName, directory, verb)
                     : SpawnFailed(displayName),
 
                 NewChatPlatform.MacOS => !string.IsNullOrEmpty(macTmuxPane) || macTerminalLaunched == true
-                    ? Launched(displayName, directory)
+                    ? Launched(displayName, directory, verb)
                     : SpawnFailed(displayName),
 
                 _ => new LaunchResult(
@@ -165,8 +165,77 @@ namespace Orbweaver
             };
         }
 
-        private static LaunchResult Launched(string displayName, string directory) =>
-            new(LaunchOutcome.Launched, displayName + " started in " + directory + ".");
+        private static LaunchResult Launched(string displayName, string directory, string verb) =>
+            new(LaunchOutcome.Launched, displayName + " " + verb + " in " + directory + ".");
+
+        // ---- CB-361: resume a past session --------------------------------------
+
+        // The dialog's seam for Resume, the twin of LaunchForTests: the session
+        // chosen and the account's profile directory.
+        internal static Func<PastSession, string?, LaunchResult>? ResumeForTests;
+
+        // Starts the session's own CLI with its resume arguments, in the
+        // session's own folder, under the chosen account. Never in a fallback
+        // folder: a conversation resumed in the wrong project would run its
+        // tools against the wrong files.
+        internal static LaunchResult Resume(PastSession session, string? profileDir = null) =>
+            ResumeForTests?.Invoke(session, profileDir) ?? RealResume(session, profileDir);
+
+        // Every reason a resume is refused before anything starts, in the order
+        // they are checked; null when it may go ahead. Pure, so each refusal's
+        // wording is a test rather than a trip to a machine without the CLI.
+        internal static LaunchResult? ResumeRefusal(PastSession session, string? binary, bool folderExists, ResumeCheck? support)
+        {
+            var name = DisplayName(session.Cli);
+            if (binary is null)
+                return new LaunchResult(LaunchOutcome.NotFound, name + " " + NewChatAvailability.NotFoundReasonSuffix + ".");
+            if (NewChatCommand.ResumeArgs(session.Cli, session.Id) is null)
+                return new LaunchResult(LaunchOutcome.Unsupported, "That session's id can't be resumed from here.");
+            if (session.Cwd is null || !folderExists)
+                return new LaunchResult(LaunchOutcome.Unsupported,
+                    "That session's folder is missing" + (session.Cwd is null ? "" : " (" + session.Cwd + ")") + ".");
+            if (support is { Supported: false })
+                return new LaunchResult(LaunchOutcome.Unsupported, support.Message);
+            return null;
+        }
+
+        // Excluded for the same reason RealLaunch is: every line is real IO,
+        // and every decision is ResumeRefusal, ConfigDirFor, ResumeArgs,
+        // ExecLine or Decide, each tested directly.
+        [ExcludeFromCodeCoverage]
+        private static LaunchResult RealResume(PastSession session, string? profileDir)
+        {
+            var cli = session.Cli;
+            var name = DisplayName(cli);
+            var binary = LocateFresh(cli);
+            var folderExists = session.Cwd is not null && Directory.Exists(session.Cwd);
+            var support = binary is null ? null : ResumeSupport.Probe(cli, binary);
+
+            if (ResumeRefusal(session, binary, folderExists, support) is { } refused) return refused;
+
+            var directory = session.Cwd!;
+            var args = NewChatCommand.ResumeArgs(cli, session.Id)!;
+            var configDir = ConfigDirFor(
+                cli, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), profileDir);
+
+            if (OperatingSystem.IsWindows())
+            {
+                var started = TerminalLauncher.StartWindowsProcess(useWindowsTerminal =>
+                    NewChatCommand.WindowsProcessStartInfo(cli, binary, directory, useWindowsTerminal, configDir, args));
+                return Decide(name, binary, directory, NewChatPlatform.Windows, started, null, null, "resumed");
+            }
+
+            if (!OperatingSystem.IsMacOS())
+                return Decide(name, binary, directory, NewChatPlatform.Other, null, null, null, "resumed");
+
+            var command = NewChatCommand.ExecLine(cli, binary!, configDir, args);
+            var tmuxPane = TerminalLauncher.PlaceInOwnTmuxWindow(command, directory);
+            bool? terminalLaunched = null;
+            if (string.IsNullOrEmpty(tmuxPane))
+                terminalLaunched = TerminalLauncher.LaunchInTerminal(TerminalLauncher.TerminalApp(), directory, command);
+
+            return Decide(name, binary, directory, NewChatPlatform.MacOS, null, tmuxPane, terminalLaunched, "resumed");
+        }
 
         private static LaunchResult SpawnFailed(string displayName) =>
             new(LaunchOutcome.SpawnFailed, "Couldn't open a terminal for " + displayName + ".");

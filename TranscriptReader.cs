@@ -246,14 +246,14 @@ namespace Orbweaver
         // an encoded cwd, and which of the files under them is newest, is the part
         // with a decision in it.
         [ExcludeFromCodeCoverage]
-        private static IEnumerable<string> SafeDirectories(string root)
+        internal static IEnumerable<string> SafeDirectories(string root)
         {
             try { return Directory.EnumerateDirectories(root).ToList(); }
             catch { return Array.Empty<string>(); }
         }
 
         [ExcludeFromCodeCoverage]
-        private static IEnumerable<string> SafeFiles(string dir, string pattern)
+        internal static IEnumerable<string> SafeFiles(string dir, string pattern)
         {
             try { return Directory.EnumerateFiles(dir, pattern).ToList(); }
             catch { return Array.Empty<string>(); }
