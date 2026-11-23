@@ -141,7 +141,7 @@ internal static class PaperclipSessions {
 }
 ```
 
-New `SessionStatus` members, all `[JsonIgnore]` like `Kind`: `PaperclipMark Mark`, `string? MarkReason`, `int FoldedCount`, `string? FoldedNames`, `int? BudgetPercent`.
+New `SessionStatus` members, all `[JsonIgnore]` like `Kind`: `PaperclipMark Mark`, `string? MarkReason`, `int FoldedCount`, `string? FoldedNames`, `int? BudgetPercent`, `IReadOnlyList<string> HoverLines` (the hover's lines, already ordered, so the orb prints them and decides nothing).
 
 ### 2.2 Finding a Paperclip (`PaperclipDiscovery`)
 
@@ -233,7 +233,7 @@ Broke clears on the next `succeeded` run, because rule 4 reads the newest finish
 | Asleep | idle, dimmed like a parked session | `OrbPresence.Parked` |
 | Amber | `waiting`, with the "?" | `OrbPresence.NeedsInput` |
 | Broke / Paused / Over budget | a mark in the presence corner: "!" for Broke, a pause glyph for the other two. Amber's "?" wins the corner when both apply; the mark's reason still shows in the hover. Drawn marks go in `SymbolMarks`, not typed glyphs (CB-173). | new `ApplyMark` beside `ApplyPresence` |
-| Budget ring | drawn only when `budgetMonthlyCents > 0` **and** `spentMonthlyCents > 0`; percent is spent over cap, capped at 100 for geometry. Hidden otherwise, so a subscription-billed company shows no empty ring. | `UsageRingGeometry` (pure, already tested) with a new arc in `OrbWindow.axaml` |
+| Budget ring | drawn only when `budgetMonthlyCents > 0` **and** `spentMonthlyCents > 0`; percent is spent over cap, capped at 100 for geometry. Hidden otherwise, so a subscription-billed company shows no empty ring. | The orb's **existing context ring** (`OrbWindow` `ContextRingLayer`, `UsageRingGeometry`, the colour bands account orbs use): `ApplyContextRing(status.BudgetPercent ?? status.ContextPercent)`. No new arc. Budget wins if both are ever set, pinned by a UI test. (Lead's ruling; revision 2 had a new arc.) |
 | Hover | lines in this order, each omitted when empty: need titles; mark reason; task; activity; "running for 3 m"; "last run succeeded 2 h ago"; "$0.26 of $50.00 this month" | tooltip at `OrbWindow.axaml.cs:371` |
 | Click | amber: the first need's URL. Otherwise the agent's page. | `ClickRouting.OpensInABrowser` |
 | Menu | **Open in Paperclip**; **Review in Paperclip** (amber only); **Reconnect** (§2.4 only). Wake, Pause, Resume are release 2. | |
@@ -256,6 +256,7 @@ Setting `paperclipSleeping`: `fold` | `show` | `hide`.
 
 - **Key** `"paperclip:" + agent.Id`. **Lead** `"paperclip:" + ReportsTo` when that agent is drawn; otherwise empty. The precedent for a lead with no process is the OpenClaw room, `SessionManager.cs:2582`.
 - **Stale timer:** exempt, beside the cloud exemption at `SessionManager.cs:1491`. An agent between runs is the normal state.
+- **Hiding a lead does not hide its reports.** `HiddenOrbs.PropagatingLead` returns "" for a Paperclip row: an org chart is not an agent team whose members only make sense with their lead on screen. A report whose lead is hidden draws with no lead.
 - **Fold-away of a local row** (`PaperclipApi.IsRunProcess`), applied only while Paperclip is enabled and its snapshot is non-empty, at the `OpenClawCliSession.ShowHere` call site (`SessionManager.cs:3070`):
   - `entrypoint` starts with `sdk-` (measured: `sdk-cli` for legacy, `sdk-ts` for preconfigured) **and** any of: the cwd has the consecutive segments `.paperclip`, `instances`, `<any>`, then `workspaces` or `isolated-workspaces`; the row's pid is a known run pid; the row's session id is a known run session id.
   - **The cwd half is the one that covers both measured modes.** The pid and session halves only ever match under legacy `claude_local`; under the native runner the run row carries neither and Paperclip's session id is a different id. They stay because they catch a legacy agent whose project workspace lies outside `.paperclip`.
@@ -277,9 +278,9 @@ New: `PaperclipApi.cs`, `PaperclipDiscovery.cs`, `PaperclipConnect.cs`, `Papercl
 | `SessionManager.cs:3652` area | A Paperclip orb never builds a chat session. |
 | `ClickRouting.cs:165` | `OpensInABrowser`: `ClaudeCloud or Paperclip`. Empty `Url` opens nothing. |
 | `CliMark.cs:76` | `Paperclip`: a paperclip outline as one filled path in the 16×16 box, fill `#5B5BD6`. Judged in the screenshot on both rids. |
-| `OrbWindow.axaml`, `.axaml.cs` | Ring arc; mark in the presence corner; "+N" pill; hover lines (`:371`); menu rows; `resetIdleExplanation` arm (`:487`): "Paperclip controls this agent's state". `NewChatHereItem` stays hidden (`:472`). |
+| `OrbWindow.axaml`, `.axaml.cs` | Budget through the existing context ring; mark in the presence corner; "+N" pill; hover lines (`:371`); menu rows; `resetIdleExplanation` arm (`:487`): "Paperclip controls this agent's state". `NewChatHereItem` stays hidden (`:472`). |
 | `SymbolMarks.cs` | Pause and "!" marks as paths. |
-| `HiddenOrbs.cs:117` | `"Paperclip agent"`. |
+| `HiddenOrbs.cs:117` | `"Paperclip agent"`. `PropagatingLead` gives "" for Paperclip. |
 | `OrbAutoGroups.cs:46` | key `paperclip`, name `Paperclip`. |
 | `AutoGroupAccounts.cs:75`, `LocalPersona.cs:193` | No account; no local persona. |
 | `OrbweaverSettings.cs:90` | Keys `paperclipEnabled` (false), `paperclipUrl` (""), `paperclipCompanyId` (""), `paperclipSleeping` ("fold"), `paperclipHintShown` (false), in the `OpenClawEnabled` pattern (`:334`, `:1340`). |
@@ -406,7 +407,7 @@ Read from the code at `7155aa3`, not run on a device. The roster decodes; the ro
 | Integration | `PaperclipHttpTests` | The real `IPaperclipApi` against `tests/Shared/LoopbackHttp.cs`: the paths and query strings are exactly §2.3's and §2.5's; `Authorization` sent with a key and absent without; 401, 500, a hung response, a dropped connection and non-JSON come back as typed failures; the challenge POST body is byte-exact. |
 | Integration | settings round trip | The five keys survive save and load; an old file loads defaults; unknown keys survive beside them. |
 | UI | `PaperclipScanTests` (model `CloudScanTests`, in `[Collection("Settings")]`) | Lead and two reports give three orbs with the right keys and leads; state changes in place; a terminated agent's orb goes; switching off removes all; an agent three hours asleep survives the stale timer; `NeedsReconnect` dims and keeps every orb; ten agents fold with the count on the lead; a matching `sdk-cli` row is not drawn while connected and **is** drawn with Paperclip off. |
-| UI | `PaperclipOrbTests` | Badge present; no kind badge; each mark; "?" wins the corner over a mark; ring shown and hidden; "+N"; every hover line and its order; click target for amber and for not amber; menu rows per state; reset-idle disabled. |
+| UI | `PaperclipOrbTests` | Badge present; no kind badge; each mark; "?" wins the corner over a mark; the context ring showing budget, hidden with no budget, and budget winning over a context percent; "+N"; every hover line and its order; click target for amber and for not amber; menu rows per state; reset-idle disabled. |
 | UI | `SettingsWindow` tests | Found-instance row and Connect; approving state and Cancel; picker shown only with several companies; Reconnect shown only when needed; the http-on-LAN note; no control ever holds the key. |
 | Screenshot | `tests/UiScreenshots` | (1) a company: lead with reports, one working, one amber, one broke, one paused, one with a ring; (2) a folded lead with "+N"; (3) the Settings group, connected; (4) the dimmed "Reconnect" state. |
 | Console | `ArrangementTests` | Run once; no new geometry expected. |
