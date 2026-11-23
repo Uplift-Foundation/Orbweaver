@@ -582,20 +582,18 @@ public class PaperclipCredentialsTests : IDisposable
         again.Delete("http://never");
     }
 
-    [Fact]
+    [UnixModeFact]
     public void FileIsOwnerOnly_OffWindows()
     {
-        if (OperatingSystem.IsWindows()) return;
         var c = new PaperclipCredentials(_dir);
         c.Set("http://h", "k", DateTime.UtcNow);
         Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite,
             File.GetUnixFileMode(Path.Combine(_dir, "paperclip-credentials.json")));
     }
 
-    [Fact]
+    [UnixModeFact]
     public void TheKeyFileIsNeverWiderThan0600_NotEvenWhileItIsBeingWritten()
     {
-        if (OperatingSystem.IsWindows()) return;   // no mode to read; see PaperclipCredentials.Save
         Directory.CreateDirectory(_dir);
         var c = new PaperclipCredentials(_dir);
         var wide = new List<string>();
@@ -621,10 +619,9 @@ public class PaperclipCredentialsTests : IDisposable
         Assert.Equal(new[] { "paperclip-credentials.json" }, Directory.GetFiles(_dir).Select(Path.GetFileName).ToArray());
     }
 
-    [Fact]
+    [UnixModeFact]
     public void AnExistingWiderFile_DoesNotLeakItsModeToTheReplacement()
     {
-        if (OperatingSystem.IsWindows()) return;
         Directory.CreateDirectory(_dir);
         var path = Path.Combine(_dir, "paperclip-credentials.json");
         File.WriteAllText(path, "{}");
@@ -651,28 +648,25 @@ public class PaperclipCredentialsTests : IDisposable
         Assert.Equal(me, security.GetOwner(typeof(System.Security.Principal.SecurityIdentifier)));
     }
 
-    [Fact]
+    [WindowsAclFact]
     public void Windows_TheFileIsCreatedOwnerOnly_BeforeAByteIsWritten()
     {
-        if (!OperatingSystem.IsWindows()) return;
         Directory.CreateDirectory(_dir);
         var path = Path.Combine(_dir, "created.tmp");
         using var fs = PaperclipCredentials.CreatePrivate(path);   // nothing written yet
         AssertOwnerOnlyAcl(path);
     }
 
-    [Fact]
+    [WindowsAclFact]
     public void Windows_TheStoredFileIsOwnerOnly_InheritanceOff()
     {
-        if (!OperatingSystem.IsWindows()) return;
         new PaperclipCredentials(_dir).Set("http://h", "k", DateTime.UtcNow);
         AssertOwnerOnlyAcl(Path.Combine(_dir, "paperclip-credentials.json"));
     }
 
-    [Fact]
+    [WindowsAclFact]
     public void Windows_AnExistingWiderFile_DoesNotLeakItsAclToTheReplacement()
     {
-        if (!OperatingSystem.IsWindows()) return;
         Directory.CreateDirectory(_dir);
         var path = Path.Combine(_dir, "paperclip-credentials.json");
         File.WriteAllText(path, "{}");
