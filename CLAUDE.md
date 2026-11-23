@@ -78,6 +78,13 @@ Engineers and architects build, QA agents test, and the work goes back and forth
 
 **A feature works on Windows and macOS, or it is not a feature.** CI enforces the shape of that already: the matrix is `macos-latest`/`osx-arm64` and `windows-latest`/`win-x64`, and every suite runs on both legs. Parity is more than a green build, though — a feature no install path wires up is equally unfinished. Before calling it done, check `tools/build-macos-dmg.sh`, `tools/build-macos-app.sh`'s Resources copy, `tools/Orbweaver.iss`, `tools/install-hooks.sh`/`.ps1` and the README's install section, and satisfy yourself that any platform-specific gate is real (WSL) rather than accidental.
 
+**It also works on a remote machine and on the phone, or it is not done — features and bug fixes alike (CB-435).** Orbweaver is reached three ways: the desktop app on the machine where the session runs, a *remote* machine through the peer link (New Chat's machine row, CB-357; `PeerLaunchContract.cs`, `IPeerLauncher`), and the *phone* through the relay and the separate `Uplift-Foundation/Orbweaver-Mobile` repo (`RelayLaunch.cs`, `LaunchGate`). Anything a user can do or see on the local desktop, they must be able to do or see from the other two, and a bug fixed on one path is checked on the others, because the same defect usually lives in the shared code under all three. CB-361 is why this is written down: it shipped resume for the local machine only, greyed it out for a remote machine and filed the phone as a follow-up (CB-434), and every review passed it because nothing here said remote and mobile were part of done. They are now:
+
+- **Refinement** names the remote and mobile behaviour in the ticket's requirement, not in a follow-up. Where a surface genuinely cannot exist there — a tray icon has no phone equivalent — the ticket says so and why, as a decision, and that is the only exception.
+- **Shipping desktop-local first and filing the rest is not done.** The ticket stays out of Done until all three work. Splitting the build into stages is fine; closing the feature after the first stage is not.
+- **A contract change is expected, not a reason to defer.** Remote and mobile usually need a peer request or a relay frame, which is exactly the "contract someone else reads" the architect stage exists for, so staff it from the start, with an engineer on `Orbweaver-Mobile` beside the desktop ones and a paired PR there.
+- **The real-machine proof includes one remote and one phone observation,** sized like every other (see **Speed**), and the PR body's `## Verified` / `## Not verified` say which of the three paths were actually exercised.
+
 ### PR, screenshots, and the call on done
 
 The feature goes up as a PR against `develop`, per **Pull requests** below.
