@@ -1,0 +1,25 @@
+[
+  {
+    "id": "00000000-0000-4000-8000-000000000002",
+    "name": "Example Org",
+    "description": "An example company.",
+    "status": "active",
+    "pauseReason": null,
+    "pausedAt": null,
+    "issuePrefix": "EX",
+    "issueCounter": 5,
+    "budgetMonthlyCents": 0,
+    "spentMonthlyCents": 0,
+    "defaultResponsibleUserId": null,
+    "requireBoardApprovalForNewAgents": false,
+    "interactionResolverGovernance": {},
+    "feedbackDataSharingEnabled": false,
+    "feedbackDataSharingConsentAt": null,
+    "feedbackDataSharingConsentByUserId": null,
+    "feedbackDataSharingTermsVersion": null,
+    "logoAssetId": null,
+    "createdAt": "2026-11-23T02:38:40.096Z",
+    "updatedAt": "2026-11-23T02:38:40.122Z",
+    "logoUrl": null
+  }
+]
