@@ -54,7 +54,8 @@ namespace Orbweaver
             _seams.Launch.IsWindows,
             cli => _seams.Launch.Locate(cli) is not null,
             _seams.Launch.DirectoryExists,
-            sid => Local(sid) is not null);
+            sid => Local(sid) is not null,
+            sid => _seams.Snapshot().Any(e => e.SessionId == sid && e.Status.Source == SessionSource.Paperclip));
 
         internal SessionStatus? Local(string sessionId)
         {

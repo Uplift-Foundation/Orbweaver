@@ -309,6 +309,84 @@ public class RelayRemoteTests
         Assert.Empty(w.Desk.Typed);
     }
 
+    // CB-422 (frames-v15 desktop_answers): a Paperclip row the desk draws is
+    // answered, not told it is gone, and nothing about it reaches a terminal.
+    private static SessionStatus Agent(string state = "idle") => new() { Source = SessionSource.Paperclip, State = state, Title = "Atlas" };
+
+    [Fact]
+    public async Task A_paperclip_row_watches_to_nothing_unwatches_and_refuses_typing_and_run_changes()
+    {
+        var w = new World(run: new FakeRun());
+        w.Sessions(("paperclip:a", Agent()));
+
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r1", "paperclip:a", null));
+        await w.Remote.HandleAsync("ph", [], new UnwatchRequest("r2", "paperclip:a"));
+        await w.Remote.HandleAsync("ph", [], new InputRequest("r3", "paperclip:a", "go"));
+        await w.Remote.HandleAsync("ph", [], new SetRunRequest("r4", "paperclip:a", "model", "sonnet"));
+
+        var r = w.Sent.Replies;
+        Assert.Equal(["watching", "unwatched", "untypeable", "unavailable"], Codes(w));
+        Assert.Equal(0, r[0].Body.GetProperty("total").GetInt32());
+        Assert.False(r[2].Body.TryGetProperty("why", out _));   // frames-v4: untypeable carries no why
+        Assert.Equal(RelayRemote.NoRunControlsWhy, r[3].Body.GetProperty("why").GetString());
+        // Every reply travels under the row's own ck, since the request named a row the desk has.
+        Assert.All(r, x => Assert.Equal("paperclip:a", x.Session));
+        // Nothing to read, nothing sent, no subscription, nothing typed.
+        Assert.Empty(w.Sent.Windows);
+        Assert.Empty(w.Sent.Runs);
+        Assert.Equal(0, w.Remote.WatchCount);
+        Assert.False(w.Remote.IsWatching("ph", "paperclip:a"));
+        Assert.Empty(w.Desk.Typed);
+    }
+
+    // The negative control: the same four requests against an id the desk does
+    // not have, and against a row that is not Paperclip's, answer as before.
+    [Fact]
+    public async Task The_paperclip_answers_apply_to_paperclip_rows_only()
+    {
+        var w = new World();
+        w.Sessions(("paperclip:a", Agent()), ("oc", new SessionStatus { Source = SessionSource.OpenClaw }));
+        Assert.True(w.Remote.Listed("paperclip:a"));
+        Assert.False(w.Remote.Listed("paperclip:gone"));
+        Assert.False(w.Remote.Listed("oc"));
+        Assert.Null(w.Remote.Local("paperclip:a"));      // Listed() is not Local(): no terminal, no transcript
+
+        foreach (var id in new[] { "paperclip:gone", "oc" })
+        {
+            await w.Remote.HandleAsync("ph", [], new WatchRequest("r", id, null));
+            await w.Remote.HandleAsync("ph", [], new InputRequest("r", id, "go"));
+            await w.Remote.HandleAsync("ph", [], new SetRunRequest("r", id, "model", "sonnet"));
+        }
+        Assert.All(Codes(w), c => Assert.Equal("unknown_session", c));
+        // watch and input name no ck for an id the desk does not have; set_run always does (frames-v13).
+        Assert.Equal([null, null, "paperclip:gone", null, null, "oc"], w.Sent.Replies.Select(x => x.Session));
+    }
+
+    // A claude launch under a paperclip parent is refused for what it is. The
+    // controls: no parent still launches, a claude parent still launches, an id
+    // nobody has is still unknown_parent.
+    [Fact]
+    public async Task A_launch_under_a_paperclip_parent_is_unsupported_parent_and_starts_nothing()
+    {
+        var w = new World();
+        w.Sessions(("paperclip:a", Agent()), ("lead", Status()));
+
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, parent: "paperclip:a"));
+        Assert.Equal(["unsupported_parent"], Codes(w));
+        Assert.Empty(w.MacStarts);
+
+        var unknown = new World();
+        unknown.Sessions(("lead", Status()));
+        await unknown.Remote.HandleAsync("ph", PhoneKey.Public, Launch(unknown, parent: "paperclip:gone"));
+        Assert.Equal(["unknown_parent"], Codes(unknown));
+
+        var ok = new World();
+        ok.Sessions(("old", Status()), ("lead", Status()));
+        ChecksIn(ok, "new", Status(cwd: "/w/"));
+        await ok.Remote.HandleAsync("ph", PhoneKey.Public, Launch(ok, parent: "lead"));
+        Assert.Equal(["launched", "typed"], Codes(ok));
+    }
+
     [Fact]
     public async Task A_bad_frame_names_a_known_session_in_its_ck_only()
     {

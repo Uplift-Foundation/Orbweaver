@@ -92,19 +92,37 @@ namespace Orbweaver
         // come from the LocalPersonas registry, which is keyed by it.
         internal static IReadOnlyList<RelaySession> Project(
             IEnumerable<(string SessionId, SessionStatus Status)> sessions,
-            Func<string, SessionStatus, RelayPersona?> persona) =>
-            sessions
-                .Where(s => s.Status.IsLocalCli)
+            Func<string, SessionStatus, RelayPersona?> persona)
+        {
+            // CB-422 (frames-v15): a Paperclip agent is a row too, though not a
+            // local CLI session. Its identity is the "paperclip:<uuid>" key the
+            // scan already uses, its cwd is empty, it carries no persona, and
+            // it names a parent only when that lead is itself a row, so a lead
+            // the scan folded away or never drew leaves the report a root.
+            var admitted = sessions
+                .Where(s => s.Status.IsLocalCli || s.Status.Source == SessionSource.Paperclip)
                 .OrderBy(s => s.SessionId, StringComparer.Ordinal)
-                .Select(s => new RelaySession(
+                .ToList();
+            var paperclipIds = admitted.Where(s => s.Status.Source == SessionSource.Paperclip)
+                .Select(s => s.SessionId).ToHashSet(StringComparer.Ordinal);
+            return admitted.Select(s => s.Status.Source == SessionSource.Paperclip
+                ? new RelaySession(
+                    s.SessionId,
+                    MirrorProtocol.CliFor(s.Status.Source),
+                    TrayController.DisplayName(new TrayController.SessionEntry(s.SessionId, s.Status)),
+                    "",
+                    MapState(s.Status.State),
+                    paperclipIds.Contains(s.Status.Lead) ? s.Status.Lead : null,
+                    null)
+                : new RelaySession(
                     s.SessionId,
                     MirrorProtocol.CliFor(s.Status.Source),
                     TrayController.DisplayName(new TrayController.SessionEntry(s.SessionId, s.Status)),
                     s.Status.Cwd,
                     MapState(s.Status.State),
                     s.Status.Source == SessionSource.ClaudeCode && !string.IsNullOrEmpty(s.Status.Lead) ? s.Status.Lead : null,
-                    persona(s.SessionId, s.Status)))
-                .ToList();
+                    persona(s.SessionId, s.Status))).ToList();
+        }
 
         // The persona a phone draws for a session: the name the persona files
         // give it, the orb's own two-letter glyph for that name, and the team
@@ -239,7 +257,9 @@ namespace Orbweaver
                         titleChanged ? row.Title : null,
                         stateChanged ? since : null,
                         Removed: false,
-                        From: stateChanged ? old.State : null));
+                        // A Paperclip agent finishing a routine run is not news (principle 4):
+                        // no From, so no `done` push and no summary.
+                        From: stateChanged && row.Cli != MirrorProtocol.CliPaperclip ? old.State : null));
             }
 
             // Gone from the scan: one last delta saying it ended, and the row
