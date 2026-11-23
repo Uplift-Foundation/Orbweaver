@@ -370,6 +370,14 @@ public class PastSessionIndexTests : IDisposable
         Assert.Equal(Path.Combine(home, expected), got);
     }
 
+    // The UI's entry point with no seam set goes to the shared index.
+    [Fact]
+    public void CountMessagesReadsThroughTheSharedIndex()
+    {
+        var file = Write(Path.Combine(_root, A + ".jsonl"), Now, ClaudeUser(A, "one"), ClaudeUser(A, "two"));
+        Assert.Equal(2, PastSessions.CountMessages(NewChatCli.ClaudeCode, file));
+    }
+
     [Fact]
     public void LoadGoesThroughItsSeam()
     {

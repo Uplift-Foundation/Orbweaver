@@ -251,8 +251,8 @@ namespace Orbweaver
             var id = sessionDir is null ? null : Path.GetFileName(sessionDir);
             if (!IsSafeId(id)) return null;
 
-            var encoded = Path.GetFileName(Path.GetDirectoryName(sessionDir!) ?? "");
-            var cwd = Field(summaryJson, "info", "cwd") ?? (encoded.Length > 0 ? Uri.UnescapeDataString(encoded) : null);
+            var encoded = Path.GetFileName(Path.GetDirectoryName(sessionDir));
+            var cwd = Field(summaryJson, "info", "cwd") ?? (string.IsNullOrEmpty(encoded) ? null : Uri.UnescapeDataString(encoded));
 
             var title = Field(summaryJson, "generated_title") ?? FirstUserText(turns);
             return Make(NewChatCli.Grok, id!, cwd, title, lastActivity, path, folderExists);
@@ -360,13 +360,12 @@ namespace Orbweaver
         {
             doc = null;
             if (line.Length == 0 || line[0] != '{') return false;
+            // A line that opens with '{' and parses at all is an object, so a
+            // successful parse is the whole test.
             try
             {
                 doc = JsonDocument.Parse(line);
-                if (doc.RootElement.ValueKind == JsonValueKind.Object) return true;
-                doc.Dispose();
-                doc = null;
-                return false;
+                return true;
             }
             catch (JsonException) { return false; }
         }
@@ -483,7 +482,8 @@ namespace Orbweaver
             switch (cli)
             {
                 case NewChatCli.ClaudeCode:
-                    var sidecar = Path.Combine(Path.GetDirectoryName(path) ?? "", Path.GetFileNameWithoutExtension(path), "custom-title.json");
+                    // projects/<slug>/<id>.jsonl -> projects/<slug>/<id>/custom-title.json
+                    var sidecar = Path.Join(Path.ChangeExtension(path, null), "custom-title.json");
                     return PastSessions.FromClaude(
                         _seams.Head(path, TranscriptReader.HeadBytes), _seams.Tail(path), _seams.ReadText(sidecar),
                         path, at, _seams.DirectoryExists);
@@ -493,7 +493,7 @@ namespace Orbweaver
                         : null;
                 default:
                     return PastSessions.FromGrok(
-                        RunSources.GrokSummaryOf(path) is { } s ? _seams.ReadText(s) : null,
+                        _seams.ReadText(Path.Join(Path.GetDirectoryName(path), "summary.json")),
                         _seams.Head(path, TranscriptReader.HeadBytes), path, at, _seams.DirectoryExists);
             }
         }

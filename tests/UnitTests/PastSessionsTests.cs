@@ -332,6 +332,28 @@ public class PastSessionsTests
         Assert.Equal("(untitled)", Claude("/x/" + Id + ".jsonl", null, image)!.Title);
     }
 
+    // ---- QA coverage batch ----
+
+    // Empty rows, rows whose fields are the wrong JSON type, and a
+    // session_meta with no payload are all passed over, not misread.
+    [Fact]
+    public void WrongTypedAndEmptyRowsAreSkipped()
+    {
+        var s = Claude("/x/" + Id + ".jsonl", null,
+            "",
+            "{\"type\":\"mode\",\"cwd\":5,\"sessionId\":7}",
+            ClaudeUser("hi"))!;
+        Assert.Equal("/work/app", s.Cwd);
+        Assert.Equal(Id, s.Id);
+
+        var codex = Codex(CodexFile, "{\"type\":\"session_meta\"}", CodexMeta(), CodexUser("x"))!;
+        Assert.Equal("/work/api", codex.Cwd);
+    }
+
+    [Fact]
+    public void AGrokPathWithNoDirectoryIsSkipped() =>
+        Assert.Null(PastSessions.FromGrok(null, new[] { GrokUser("hi") }, System.IO.Path.GetPathRoot(System.IO.Path.GetTempPath())!, At, Exists));
+
     // ---- counting ----
 
     [Fact]
