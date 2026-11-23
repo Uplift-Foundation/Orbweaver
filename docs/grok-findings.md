@@ -182,16 +182,27 @@ The New chat dialog still sets nothing for the default account (`NewChatAccountH
 
 ## Resuming a session by id (CB-361)
 
-**Grok 1.0.13's `--help` lists `--resume <id>`**, which retires the old "no
-resume flag is known" reading of this file: New chat's Resume mode starts
+**`grok --resume <id>` exists and keeps the id.** It retires the old "no resume
+flag is known" reading of this file: New chat's Resume mode starts
 `grok --resume <id>` in the session's own folder rather than scraping the home
-menu. Read off `grok --help` on the MacBook while CB-361 was planned; **not
-re-run on the Mac mini, where Grok is not installed, and not on Windows.** What
-the plan relies on and the architect's spike is to confirm on a real session:
-that a UUID always means an id, and that the id is kept unless `--fork-session`
-is passed — which is what lets a resumed orb come back with the same saved
-position, size and group. Until that spike is back, "keeps the id" is the
-plan's reading of the help text, not an observation.
+menu. What was observed, by machine:
+
+- **Mac mini, Grok 1.0.13:** `--help` lists `--resume`, and a disposable session
+  resumed with `grok --resume <id>` reused the same session directory, appended
+  to the same `updates.jsonl`, kept the same id, and fired `session_start`
+  within 2 s of launch (CB-361 architect, 23 Nov 2026) — so a resumed Grok orb
+  appears without a prompt, unlike Codex.
+- **MacBook, Grok 1.0.92, and Windows, Grok 1.0.77:** `--help` lists `--resume`
+  on both. **Only the help text was read there; a resume was not run**, so
+  "keeps the id" is measured on 1.0.13 only.
+
+The same-id result is why a resumed orb is found again by its session id. It
+does not by itself carry an orb's saved position, size or group, which are keyed
+by folder and title (`SessionManager.PositionKeyFor`), not by id; hidden state
+*is* keyed by id and is pruned two minutes after the session leaves the status
+folder, so a session resumed after that comes back visible, while one resumed
+inside the two minutes still carries its hide (CB-361 architect's reading of
+`HiddenOrbs.DuePrunes`, not run).
 
 The resume token is what `ResumeSupport` looks for in `<binary> --help`, so an
 older Grok without it gets a plain refusal instead of a launch that errors in a

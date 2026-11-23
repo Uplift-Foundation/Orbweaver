@@ -257,6 +257,55 @@ public class NewChatSettingsTests
         Assert.Equal(new[] { "ClaudeCode" }, map.Select(p => p.Key));
     }
 
+    // CB-361: whether New chat was last left in Resume for each CLI.
+    [Fact]
+    public void WithNothingSavedNoCliIsInResumeMode()
+    {
+        FreshSettings();
+
+        foreach (var cli in Enum.GetValues<NewChatCli>())
+            Assert.False(OrbweaverSettings.NewChatResumeModeFor(cli));
+    }
+
+    [Fact]
+    public void EachClisResumeModeSurvivesAReloadAndCanBeClearedIndependently()
+    {
+        FreshSettings();
+        var dir = Environment.GetEnvironmentVariable("ORBWEAVER_SETTINGS_DIR")!;
+
+        OrbweaverSettings.SetNewChatResumeMode(NewChatCli.ClaudeCode, true);
+        OrbweaverSettings.SetNewChatResumeMode(NewChatCli.Grok, true);
+        OrbweaverSettings.SetNewChatResumeMode(NewChatCli.Grok, false);
+
+        Environment.SetEnvironmentVariable("ORBWEAVER_SETTINGS_DIR", dir);
+        OrbweaverSettings.ReloadForTests();
+
+        Assert.True(OrbweaverSettings.NewChatResumeModeFor(NewChatCli.ClaudeCode));
+        Assert.False(OrbweaverSettings.NewChatResumeModeFor(NewChatCli.Grok));
+        Assert.False(OrbweaverSettings.NewChatResumeModeFor(NewChatCli.Codex));
+    }
+
+    [Fact]
+    public void ResumeModesFromAHandEditedFileKeepOnlyRealCliNamesWithAValue()
+    {
+        FreshSettings();
+        var dir = Environment.GetEnvironmentVariable("ORBWEAVER_SETTINGS_DIR")!;
+        File.WriteAllText(Path.Combine(dir, "settings.json"),
+            "{ \"newChatResumeModes\": { \"Codex\": \"resume\", \"codex\": \"resume\", "
+            + "\"OpenClaw\": \"resume\", \"Grok\": \" \", \"ClaudeCode\": 5 } }");
+
+        OrbweaverSettings.ReloadForTests();
+        OrbweaverSettings.SetNewChatLastCli("Codex"); // forces a save
+
+        Assert.True(OrbweaverSettings.NewChatResumeModeFor(NewChatCli.Codex));
+        Assert.False(OrbweaverSettings.NewChatResumeModeFor(NewChatCli.Grok));
+        Assert.False(OrbweaverSettings.NewChatResumeModeFor(NewChatCli.ClaudeCode));
+
+        var map = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(dir, "settings.json")))!
+            ["newChatResumeModes"]!.AsObject();
+        Assert.Equal(new[] { "Codex" }, map.Select(p => p.Key));
+    }
+
     // Choosing Default for Claude Code clears both the map entry and the
     // legacy key, so the legacy key cannot resurrect the old pick on reload.
     [Fact]
