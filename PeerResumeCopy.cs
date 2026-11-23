@@ -24,7 +24,7 @@ namespace Orbweaver
 
         // Codex fires no hook until the first prompt of a resumed session.
         internal static string ResumedCodex(string machine) =>
-            "Resumed on " + machine + " — the orb appears when its first message is sent.";
+            "Resumed. The orb appears when you send your first message.";
 
         internal static string AlreadyRunning(string machine) => "Already running on " + machine + ".";
 
