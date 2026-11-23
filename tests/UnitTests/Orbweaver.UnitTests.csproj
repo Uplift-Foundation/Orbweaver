@@ -31,6 +31,7 @@
     <Content Include="Fixtures\update\*" CopyToOutputDirectory="PreserveNewest" />
     <!-- CB-404: run-controls parser fixtures, captured 2026-11-21. -->
     <Content Include="Fixtures\run\*" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures\paperclip\**\*" Link="PaperclipFixtures\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <!-- CB-314: the phone relay's contract vectors, copied from Orbweaver-Mobile contracts/ (see Fixtures/relay/SOURCE.md). -->
     <Content Include="Fixtures\relay\*.json" CopyToOutputDirectory="PreserveNewest" />
     <!-- CB-313: real terminal captures, shared with tools/screen-read-probe. -->
