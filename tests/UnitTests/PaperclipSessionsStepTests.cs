@@ -356,6 +356,16 @@ public class PaperclipSessionsStepTests
     }
 
     [Fact]
+    public void ANewClientIsBuilt_OnlyWhenThereIsNone_OrTheKeyOrAddressMoved()
+    {
+        var cfg = Cfg();
+        Assert.True(NeedsNewClient(false, "KEY", PaperclipFx.Base, cfg));
+        Assert.False(NeedsNewClient(true, "KEY", PaperclipFx.Base, cfg));
+        Assert.True(NeedsNewClient(true, "OLD", PaperclipFx.Base, cfg));
+        Assert.True(NeedsNewClient(true, "KEY", "http://elsewhere:1", cfg));
+    }
+
+    [Fact]
     public void HostOf_FallsBackToTheRawString() =>
         Assert.Equal("nonsense", HostOf("nonsense"));
 

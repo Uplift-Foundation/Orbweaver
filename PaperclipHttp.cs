@@ -30,7 +30,7 @@ namespace Orbweaver
     // The real thing. Bound to one base URL and, optionally, one board key; the
     // Authorization header is sent only when there is a key, so the unauthenticated
     // health and challenge calls carry nothing.
-    internal sealed class PaperclipHttp : IPaperclipApi
+    internal sealed class PaperclipHttp : IPaperclipApi, IDisposable
     {
         // What the app logs through: status, size and time, never a body, a key or a query.
         internal static readonly Action<string> DefaultLog = line => Console.Error.WriteLine("paperclip: " + line);
@@ -56,6 +56,10 @@ namespace Orbweaver
 
         [ExcludeFromCodeCoverage] // real handler construction; the tests inject their own
         private static HttpClient NewClient() => new();
+
+        // A client replaced on a key or URL change is disposed, not left to the
+        // finaliser holding its connections.
+        public void Dispose() => _http.Dispose();
 
         public Task<PaperclipResponse> GetAsync(string path, CancellationToken ct) =>
             SendAsync(HttpMethod.Get, path, null, ct);

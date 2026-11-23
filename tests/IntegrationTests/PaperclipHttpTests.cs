@@ -148,6 +148,17 @@ public sealed class PaperclipHttpTests : IDisposable
     }
 
     [Fact]
+    public async Task ADisposedClient_CanNoLongerSend()
+    {
+        _handler = (_, r) => Reply(r, 200, "[]");
+        var api = new PaperclipHttp(_root, "k");
+        Assert.True((await api.GetAsync("/x", default)).IsOk);
+        api.Dispose();
+        var after = await api.GetAsync("/x", default);
+        Assert.False(after.IsOk);   // reported as a failure, never thrown
+    }
+
+    [Fact]
     public async Task CallerCancellation_Propagates()
     {
         _handler = async (_, r) => { await Task.Delay(3000); r.StatusCode = 200; };

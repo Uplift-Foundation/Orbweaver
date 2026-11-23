@@ -308,6 +308,11 @@ namespace Orbweaver
         internal static string HostOf(string baseUrl) =>
             Uri.TryCreate(baseUrl, UriKind.Absolute, out var u) ? u.Authority : baseUrl;
 
+        // The loop's one decision about its transport, pure so it is a test: a
+        // client is built when there is none, or the key or the address moved.
+        internal static bool NeedsNewClient(bool haveClient, string lastKey, string lastUrl, PaperclipConfig cfg) =>
+            !haveClient || cfg.Key != lastKey || cfg.BaseUrl != lastUrl;
+
         // ---- the loop -------------------------------------------------------
 
         // Excluded from coverage: a `while` around StepAsync and a delay.
@@ -320,8 +325,9 @@ namespace Orbweaver
             while (!ct.IsCancellationRequested)
             {
                 var cfg = ConfigSource();
-                if (api == null || cfg.Key != lastKey || cfg.BaseUrl != lastUrl)
+                if (NeedsNewClient(api != null, lastKey, lastUrl, cfg))
                 {
+                    (api as IDisposable)?.Dispose();
                     api = new PaperclipHttp(cfg.BaseUrl, cfg.Key, log: PaperclipHttp.DefaultLog);
                     lastKey = cfg.Key; lastUrl = cfg.BaseUrl;
                 }
