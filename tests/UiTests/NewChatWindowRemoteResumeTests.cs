@@ -300,7 +300,10 @@ public class NewChatWindowRemoteResumeTests : IDisposable
     [InlineData("Unsupported", "Update Claude Code on mini.", "Update Claude Code on mini.")]
     [InlineData("NeedsUpdate", null, "mini needs an Orbweaver update before it can list or resume sessions.")]
     [InlineData("Unreachable", "timed out", "Couldn't reach mini for its sessions (timed out).")]
-    [InlineData("Failed", null, "Couldn't resume that session on mini.")]
+    [InlineData("Failed", null, "Couldn't resume that session on mini. Try again.")]
+    // launch_failed on the far desk (its probe could not read the CLI's help) is a
+    // Failed carrying its own sentence, never the "too old" one.
+    [InlineData("Failed", "mini could not start it (the CLI help could not be read).", "mini could not start it (the CLI help could not be read).")]
     [InlineData("Failed", "No terminal.", "No terminal.")]
     public void EveryRefusalHasItsOwnStatusAndReEnablesTheForm(string outcomeName, string? message, string expected)
     {

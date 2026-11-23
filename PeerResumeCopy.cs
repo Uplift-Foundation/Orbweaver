@@ -34,6 +34,6 @@ namespace Orbweaver
             "The " + cli + " on " + machine + " is too old to resume sessions.";
 
         internal static string Failed(string machine, string? message) =>
-            string.IsNullOrWhiteSpace(message) ? "Couldn't resume that session on " + machine + "." : message!;
+            string.IsNullOrWhiteSpace(message) ? "Couldn't resume that session on " + machine + ". Try again." : message!;
     }
 }
