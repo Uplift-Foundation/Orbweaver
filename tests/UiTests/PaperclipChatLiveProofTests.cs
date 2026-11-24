@@ -11,20 +11,24 @@ namespace Orbweaver.Tests;
 
 // CB-443 section 8.4 of the plan, run by itself against a REAL Paperclip, headless: nobody opens the panel by hand.
 //
-// Off unless ORBWEAVER_PAPERCLIP_LIVE=1 (a developer's machine, and CI, skip it with the reason). Everything it needs comes
-// from the environment, never from a file in the repo, and nothing it prints contains a key:
+// Off unless ORBWEAVER_PAPERCLIP_LIVE names a settings file (a developer's machine, and CI, skip it with the reason). One
+// variable and not nine, so BrandEnv's list of override variables grows by one name; and a file, so the two keys sit in
+// something that can be mode 0600 outside the repository and never in a shell's environment or history. Nothing the test
+// prints contains a key. The file is JSON:
 //
-//   ORBWEAVER_PAPERCLIP_LIVE=1
-//   ORBWEAVER_PAPERCLIP_LIVE_URL           e.g. http://127.0.0.1:3100   (no trailing path)
-//   ORBWEAVER_PAPERCLIP_LIVE_COMPANY       the company id
-//   ORBWEAVER_PAPERCLIP_LIVE_AGENT         the agent's id (the uuid, without "paperclip:")
-//   ORBWEAVER_PAPERCLIP_LIVE_KEY           a board key from the app's connect flow
-//   ORBWEAVER_PAPERCLIP_LIVE_REVOKED_KEY  a key that has been revoked (the control)
-//   ORBWEAVER_PAPERCLIP_LIVE_TASK_ID      the identifier of the agent's task, e.g. ORB-121 (the task line must name it)
-//   ORBWEAVER_PAPERCLIP_LIVE_TASK_TITLE   that task's title (the task line must name it too)
-//   ORBWEAVER_PAPERCLIP_LIVE_TRANSCRIPT   optional: where the transcript is written
-//                                          (default: TestResults/paperclip-live-transcript.txt in the repo root)
+//   {
+//     "url":        "http://127.0.0.1:3100",   no trailing path
+//     "company":    the company id
+//     "agent":      the agent's id (the uuid, without "paperclip:")
+//     "key":        a board key from the app's connect flow
+//     "revokedKey": a key that has been revoked (the control)
+//     "taskId":     the identifier of the agent's task, e.g. ORB-121 (the task line must name it)
+//     "taskTitle":  that task's title (the task line must name it too)
+//     "transcript": optional: where the transcript is written
+//                   (default: TestResults/paperclip-live-transcript.txt in the repo root)
+//   }
 //
+//   ORBWEAVER_PAPERCLIP_LIVE=/path/to/live.json \
 //   dotnet test tests/UiTests -c Release -- --filter-class Orbweaver.Tests.PaperclipChatLiveProofTests
 //
 // WHERE IT STARTS. The real poll (PaperclipSessions.Restart, over PaperclipHttp, reading the company) fills the snapshot; a
@@ -41,12 +45,22 @@ namespace Orbweaver.Tests;
 [Collection("Settings")]
 public class PaperclipChatLiveProofTests : IDisposable
 {
-    private const string Prefix = "ORBWEAVER_PAPERCLIP_LIVE";
-    private static string? Env(string suffix) => Environment.GetEnvironmentVariable(Prefix + suffix) is { Length: > 0 } v ? v : null;
+    // The settings file's values, read once when the test starts; empty while it is skipped.
+    private IReadOnlyDictionary<string, string> _live = new Dictionary<string, string>();
+    private string? Live(string name) => _live.TryGetValue(name, out var v) && v.Length > 0 ? v : null;
+    private string Need(string name) => Live(name) ?? throw new InvalidOperationException($"\"{name}\" is not set in the live settings file");
+
+    private static IReadOnlyDictionary<string, string> ReadLive(string path)
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path));
+        return doc.RootElement.EnumerateObject()
+            .Where(p => p.Value.ValueKind == System.Text.Json.JsonValueKind.String)
+            .ToDictionary(p => p.Name, p => p.Value.GetString() ?? "");
+    }
 
     // AvaloniaFactAttribute is sealed, so the gate is a dynamic skip at the top of the test.
     private static readonly string SkipReason =
-        $"a live proof against a real Paperclip; set {Prefix}=1 and the {Prefix}_URL, _COMPANY, _AGENT, _KEY and _REVOKED_KEY variables";
+        $"a live proof against a real Paperclip; set {BrandEnv.Name(BrandEnv.PaperclipLive)} to a settings file (see the comment at the top of this file)";
 
     private const string Pineapple = "Reply with the single word pineapple.";
 
@@ -105,14 +119,16 @@ public class PaperclipChatLiveProofTests : IDisposable
     [AvaloniaFact]
     public async Task OpenSendAndReply_ThenARevokedKeyIsRefusedAndTheTextStays_ThenClosingStopsTheReads()
     {
-        Assert.SkipUnless(Env("") == "1", SkipReason);
-        var url = Env("_URL") ?? throw new InvalidOperationException(Prefix + "_URL is not set");
-        var company = Env("_COMPANY") ?? throw new InvalidOperationException(Prefix + "_COMPANY is not set");
-        var agent = Env("_AGENT") ?? throw new InvalidOperationException(Prefix + "_AGENT is not set");
-        var key = Env("_KEY") ?? throw new InvalidOperationException(Prefix + "_KEY is not set");
-        var revoked = Env("_REVOKED_KEY") ?? throw new InvalidOperationException(Prefix + "_REVOKED_KEY is not set");
-        var taskId = Env("_TASK_ID") ?? throw new InvalidOperationException(Prefix + "_TASK_ID is not set");
-        var taskTitle = Env("_TASK_TITLE") ?? throw new InvalidOperationException(Prefix + "_TASK_TITLE is not set");
+        var settings = BrandEnv.Get(BrandEnv.PaperclipLive);
+        Assert.SkipUnless(settings is not null, SkipReason);
+        _live = ReadLive(settings!);
+        var url = Need("url");
+        var company = Need("company");
+        var agent = Need("agent");
+        var key = Need("key");
+        var revoked = Need("revokedKey");
+        var taskId = Need("taskId");
+        var taskTitle = Need("taskTitle");
         var sessionId = PaperclipScan.KeyFor(agent);
         _panelId = sessionId;
 
@@ -218,7 +234,7 @@ public class PaperclipChatLiveProofTests : IDisposable
 
     private void Flush()
     {
-        var path = Env("_TRANSCRIPT") ?? Path.Combine(ScreenshotRoot(), "TestResults", "paperclip-live-transcript.txt");
+        var path = Live("transcript") ?? Path.Combine(ScreenshotRoot(), "TestResults", "paperclip-live-transcript.txt");
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         lock (_transcript) File.WriteAllLines(path, _transcript, Encoding.UTF8);
     }
