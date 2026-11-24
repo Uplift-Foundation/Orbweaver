@@ -265,7 +265,8 @@ namespace Orbweaver
                 n++;
                 var type = Str(e, "eventType");
                 var order = e.TryGetProperty("seq", out _) ? Num(e, "seq") : n;
-                if (!e.TryGetProperty("payload", out var pl) || !pl.TryGetProperty("prpEvent", out var prp)
+                if (!e.TryGetProperty("payload", out var pl) || pl.ValueKind != JsonValueKind.Object
+                    || !pl.TryGetProperty("prpEvent", out var prp)
                     || prp.ValueKind != JsonValueKind.Object) continue;
                 var itemId = Str(prp, "itemId");
                 var inner = prp.TryGetProperty("payload", out var ip) && ip.ValueKind == JsonValueKind.Object ? ip : default;

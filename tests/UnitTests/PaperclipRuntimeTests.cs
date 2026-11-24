@@ -246,4 +246,41 @@ public class PaperclipRuntimeTests
         var s3 = await PaperclipSessions.StepAsync(api, Cfg, s2.Next, t0.AddSeconds(10), default);
         Assert.Empty(s3.Next.RuntimeByRun!);
     }
+
+    // The mini, 2026-11-23: the first tick with a running run read its events before any request existed, and the
+    // body held a lifecycle event whose payload is null. The parser threw, StepAsync with it, and the loop's catch
+    // backed off for 30 s on every tick. These are the real bodies (reduced, scrubbed) through the whole step.
+    [Fact]
+    public async Task The_live_bodies_from_the_mini_go_through_a_whole_step_and_the_pending_request_shows()
+    {
+        var api = new FakePaperclip();
+        api.Gets["/api/companies"] = FakePaperclip.Ok("[{\"id\":\"company-1\",\"name\":\"C\",\"issuePrefix\":\"ORB\"}]");
+        api.Gets["/api/companies/co/agents"] = FakePaperclip.Ok("[{\"id\":\"agent-1\",\"name\":\"Test Agent\",\"status\":\"running\"}]");
+        api.Gets["/api/companies/co/live-runs"] = FakePaperclip.Ok(PaperclipFx.Read("native/runtime/live-pending-live-runs.json"));
+        api.Gets["/api/companies/co/issues?status=in_progress"] = FakePaperclip.Ok(PaperclipFx.Read("native/runtime/live-pending-issues.json"));
+        api.Gets["/api/heartbeat-runs/run-1/events?limit=500"] = FakePaperclip.Ok(PaperclipFx.Read("native/runtime/live-pending-events.json"));
+        var step = await PaperclipSessions.StepAsync(api, Cfg, PaperclipSessions.PollState.Initial, DateTime.UtcNow, default);
+        var need = Assert.Single(Assert.Single(step.Next.Published!).Needs);
+        Assert.Equal(("runtime", "Bash: Create empty directory and verify", "Task: CB-442 proof A"), (need.Kind, need.Title, need.Summary));
+    }
+
+    [Fact]
+    public void An_event_whose_payload_is_null_or_not_an_object_is_skipped_not_thrown_on()
+    {
+        var json = "[{\"seq\":1,\"eventType\":\"lifecycle\",\"payload\":null},{\"seq\":2,\"eventType\":\"x\",\"payload\":\"text\"}," +
+                   "{\"seq\":3,\"eventType\":\"y\"},{\"seq\":4,\"eventType\":\"z\",\"payload\":{\"prpEvent\":null}}]";
+        Assert.Empty(PaperclipApi.ParseRuntimeRequests("run", json));
+    }
+
+    [Fact]
+    public void A_throwing_step_is_logged_once_per_distinct_message_and_again_after_a_good_step()
+    {
+        string? last = null;
+        var boom = new InvalidOperationException("wrong type");
+        Assert.Equal("poll step failed InvalidOperationException: wrong type", PaperclipSessions.StepFailureLine(boom, ref last));
+        Assert.Null(PaperclipSessions.StepFailureLine(new InvalidOperationException("wrong type"), ref last));
+        Assert.StartsWith("poll step failed ArgumentException: other", PaperclipSessions.StepFailureLine(new ArgumentException("other"), ref last));
+        var cut = PaperclipSessions.StepFailureLine(new Exception(new string('x', 500)), ref last)!;
+        Assert.Equal("poll step failed Exception: ".Length + 200, cut.Length);
+    }
 }

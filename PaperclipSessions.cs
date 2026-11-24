@@ -599,6 +599,17 @@ namespace Orbweaver
         internal static bool NeedsNewClient(bool haveClient, string lastKey, string lastUrl, PaperclipConfig cfg) =>
             !haveClient || cfg.Key != lastKey || cfg.BaseUrl != lastUrl;
 
+        // CB-442: a step that throws backs the loop off for 30 s, and used to say nothing, which hid a parser
+        // fault on the mini for the length of a proof. One line per distinct message: the exception's type and
+        // message, cut, never a body, key or address from this code (a message is the framework's own words).
+        internal static string? StepFailureLine(Exception ex, ref string? lastMessage)
+        {
+            var message = ex.Message.Length <= 200 ? ex.Message : ex.Message[..200];
+            if (message == lastMessage) return null;
+            lastMessage = message;
+            return $"poll step failed {ex.GetType().Name}: {message}";
+        }
+
         // ---- the loop -------------------------------------------------------
 
         // Excluded from coverage: a `while` around StepAsync and a delay.
@@ -607,6 +618,7 @@ namespace Orbweaver
         {
             var state = PollState.Initial;
             string lastKey = "", lastUrl = "";
+            string? lastFailure = null;
             IPaperclipApi? api = null;
             while (!ct.IsCancellationRequested)
             {
@@ -622,12 +634,14 @@ namespace Orbweaver
                 {
                     var step = await StepAsync(api, cfg, state, DateTime.UtcNow, ct).ConfigureAwait(false);
                     state = step.Next; wait = step.Wait;
+                    lastFailure = null;
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
                 catch (Exception ex)
                 {
                     state = state with { Status = ex.Message };
                     wait = Backoff[^1];
+                    if (StepFailureLine(ex, ref lastFailure) is { } line) PaperclipHttp.DefaultLog(line);
                 }
                 PublishStep(state, cfg, remembered, RosterStore, DateTime.UtcNow);
                 if (state.Published != null) remembered = Array.Empty<PaperclipAgent>();   // never used once live

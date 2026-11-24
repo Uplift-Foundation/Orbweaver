@@ -1,0 +1,168 @@
+[
+ {
+  "id": 5467,
+  "companyId": "company-1",
+  "runId": "run-1",
+  "agentId": "agent-1",
+  "seq": 2,
+  "eventType": "lifecycle",
+  "stream": "system",
+  "level": "info",
+  "color": null,
+  "message": "run started",
+  "payload": null,
+  "sourceInstanceId": null,
+  "sourceEventId": null,
+  "sourceSeq": null,
+  "sourcePayloadSha256": null,
+  "protocolSchemaVersion": null,
+  "createdAt": "2026-11-24T00:56:34.829Z"
+ },
+ {
+  "id": 5513,
+  "companyId": "company-1",
+  "runId": "run-1",
+  "agentId": "agent-1",
+  "seq": 48,
+  "eventType": "tool.execution.started",
+  "stream": "system",
+  "level": "info",
+  "color": null,
+  "message": null,
+  "payload": {
+   "prpEvent": {
+    "runId": "run-1",
+    "itemId": "item-run-1",
+    "schema": "paperclip.prp.event.v1",
+    "turnId": "turn-1",
+    "payload": {
+     "name": "Bash",
+     "output": "null",
+     "schema": "paperclip.tool.execution.v1",
+     "status": "running",
+     "target": null,
+     "exitCode": null,
+     "progress": "Terminal (pending)",
+     "readOnly": false,
+     "namespace": null,
+     "operation": "execute",
+     "transport": "builtin",
+     "durationMs": null,
+     "executionId": "toolu-1",
+     "outputBytes": 4,
+     "inputUpdated": true,
+     "outputDigest": "sha256:digest-1",
+     "outputTruncated": false
+    },
+    "priority": 1,
+    "emittedAt": "2026-11-24T00:56:40.391Z",
+    "eventType": "tool.execution.started",
+    "sourceSeq": 11,
+    "sourceKind": "runner",
+    "schemaVersion": 1,
+    "sourceEventId": "uuid-1:run-1:11",
+    "sourceInstanceId": "uuid-1",
+    "normalizedSessionId": "uuid-2"
+   }
+  },
+  "sourceInstanceId": "uuid-1",
+  "sourceEventId": "uuid-1:run-1:11",
+  "sourceSeq": 11,
+  "sourcePayloadSha256": "cb574c93cc027b5c91654bf3d6d724fc97f699ef35ba4d859148ef9109c92af0",
+  "protocolSchemaVersion": 1,
+  "createdAt": "2026-11-24T00:56:40.441Z"
+ },
+ {
+  "id": 5520,
+  "companyId": "company-1",
+  "runId": "run-1",
+  "agentId": "agent-1",
+  "seq": 55,
+  "eventType": "runtime_request.created",
+  "stream": "system",
+  "level": "info",
+  "color": null,
+  "message": null,
+  "payload": {
+   "prpEvent": {
+    "runId": "run-1",
+    "itemId": "item-run-1",
+    "schema": "paperclip.prp.event.v1",
+    "turnId": "turn-1",
+    "payload": {
+     "request": {
+      "type": "permission",
+      "itemId": "item-run-1",
+      "method": "session/request_permission",
+      "origin": {
+       "method": "session/request_permission",
+       "adapter": "acpx-runtime-sidecar",
+       "provider": "claude"
+      },
+      "prompt": "Create empty directory and verify",
+      "schema": "paperclip.runtime_request.v2",
+      "status": "pending",
+      "turnId": "turn-1",
+      "choices": [
+       {
+        "key": "accept",
+        "label": "Allow once"
+       },
+       {
+        "key": "decline",
+        "label": "Deny"
+       },
+       {
+        "key": "cancel",
+        "label": "Cancel"
+       }
+      ],
+      "details": {
+       "itemId": "item-run-1",
+       "origin": {
+        "method": "session/request_permission",
+        "adapter": "acpx-runtime-sidecar",
+        "provider": "claude"
+       },
+       "reason": "Create empty directory and verify",
+       "turnId": "turn-1",
+       "choices": [
+        {
+         "key": "accept",
+         "label": "Allow once"
+        },
+        {
+         "key": "decline",
+         "label": "Deny"
+        },
+        {
+         "key": "cancel",
+         "label": "Cancel"
+        }
+       ],
+       "threadId": "thread-1",
+       "toolCallId": "toolu-1"
+      },
+      "requestId": "request-1",
+      "requestKind": "permission_approval"
+     }
+    },
+    "priority": 1,
+    "emittedAt": "2026-11-24T00:56:40.863Z",
+    "eventType": "runtime_request.created",
+    "sourceSeq": 16,
+    "sourceKind": "runner",
+    "schemaVersion": 1,
+    "sourceEventId": "uuid-1:run-1:16",
+    "sourceInstanceId": "uuid-1",
+    "normalizedSessionId": "uuid-2"
+   }
+  },
+  "sourceInstanceId": "uuid-1",
+  "sourceEventId": "uuid-1:run-1:16",
+  "sourceSeq": 16,
+  "sourcePayloadSha256": "57a31cec4f4fe020206c5a0aabaa192fc282ddf0dfc1ab0ecfff0da4bb124f81",
+  "protocolSchemaVersion": 1,
+  "createdAt": "2026-11-24T00:56:40.880Z"
+ }
+]
