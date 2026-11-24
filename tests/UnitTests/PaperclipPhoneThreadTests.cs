@@ -24,8 +24,9 @@ public class PaperclipPhoneThreadTests : IDisposable
     private sealed class Actions : IPaperclipActions
     {
         public PaperclipSent Reply = new(new(PaperclipActionResult.Done), null, null);
-        public Task<PaperclipSent> CommentAsync(string issueId, string text, CancellationToken ct) => Task.FromResult(Reply);
-        public Task<PaperclipSent> OpenTaskAsync(string agentId, string text, CancellationToken ct) => Task.FromResult(Reply);
+        public readonly List<string> Sent = new();
+        public Task<PaperclipSent> CommentAsync(string issueId, string text, CancellationToken ct) { Sent.Add("comment:" + issueId); return Task.FromResult(Reply); }
+        public Task<PaperclipSent> OpenTaskAsync(string agentId, string text, CancellationToken ct) { Sent.Add("open:" + agentId); return Task.FromResult(Reply); }
         public Task<PaperclipOutcome> DecideAsync(PaperclipNeed need, bool approve, CancellationToken ct) => throw new NotSupportedException();
         public Task<PaperclipOutcome> WakeAsync(string agentId, CancellationToken ct) => throw new NotSupportedException();
         public Task<PaperclipOutcome> PauseAsync(string agentId, CancellationToken ct) => throw new NotSupportedException();
@@ -41,9 +42,19 @@ public class PaperclipPhoneThreadTests : IDisposable
     private PaperclipAgent[] _roster = [];
     private readonly Actions _actions = new();
 
-    private PaperclipPhoneThreads Host() => new(() => true, _ => _feed, () => _actions, () => _roster, () => _view, () => _link,
-        async (_, ct) => { _assignedReads++; await Task.Yield(); if (_assignedThrows) throw new InvalidOperationException("boom"); return _assigned; },
-        () => T0);
+    // A gate the assigned read waits at, when a test wants it to land late.
+    private TaskCompletionSource? _assignedGate;
+
+    private PaperclipPhoneThreads Host(TimeSpan? assignedWait = null) => new(() => true, _ => _feed, () => _actions, () => _roster, () => _view, () => _link,
+        async (_, ct) =>
+        {
+            _assignedReads++;
+            await Task.Yield();
+            if (_assignedGate is { } gate) await gate.Task.WaitAsync(ct);
+            if (_assignedThrows) throw new InvalidOperationException("boom");
+            return _assigned;
+        },
+        () => T0, assignedWait);
 
     private static ChatSnapshot Snap(string? task, bool refused = false, params PaperclipChat.Comment[] cs) =>
         new(task is null ? null : new PaperclipChat.TaskRef(task, "CB-1", "t", "todo"), cs, null, refused);
@@ -229,4 +240,59 @@ public class PaperclipPhoneThreadTests : IDisposable
         }
         finally { PaperclipSessions.ConfigSource = before; }
     }
+
+    // QA batch 1, item 1: an agent whose only task is one the poll holds no run for (a done one) has no task
+    // until the once-per-hold assigned read lands. A message sent before that must not open a second task.
+    [Fact]
+    public async Task A_message_sent_before_the_assigned_read_lands_is_a_comment_on_that_task_not_a_new_task()
+    {
+        _assigned = [new(new PaperclipChat.TaskRef("i7", "CB-7", "Done earlier", "done"), T0, false)];
+        _assignedGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var t = Host().Acquire(Agent, "Atlas")!;
+
+        var send = t.SendAsync("one more thing");
+        await Task.Delay(50);
+        Assert.False(send.IsCompleted);                    // waiting on the read, not deciding on no task
+        Assert.Empty(_actions.Sent);
+
+        _assignedGate.SetResult();
+        Assert.Equal(PaperclipSendResult.Sent, (await send).Result);
+        Assert.Equal(["comment:i7"], _actions.Sent);       // a comment on the task the read found, and nothing opened
+    }
+
+    [Fact]
+    public async Task A_message_sent_before_the_assigned_read_lands_opens_a_task_only_when_the_read_found_none_or_outlasted_its_bound()
+    {
+        // The read lands with no assigned issue: the agent really has no task, so the message opens one.
+        _assigned = [];
+        _assignedGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var none = Host().Acquire(Agent, "Atlas")!;
+        var first = none.SendAsync("hello");
+        await Task.Delay(30);
+        _assignedGate.SetResult();
+        Assert.Equal(PaperclipSendResult.Sent, (await first).Result);
+        Assert.Equal([$"open:{Agent}"], _actions.Sent);
+
+        // The read never lands: the wait is a bound, not a hang, and past it the message opens a task.
+        _actions.Sent.Clear();
+        _assignedGate = new TaskCompletionSource();
+        var slow = Host(TimeSpan.FromMilliseconds(60)).Acquire(Agent + "-b", "Atlas")!;
+        var started = DateTime.UtcNow;
+        Assert.Equal(PaperclipSendResult.Sent, (await slow.SendAsync("hello")).Result);
+        Assert.True(DateTime.UtcNow - started < TimeSpan.FromSeconds(2));
+        Assert.Equal([$"open:{Agent}-b"], _actions.Sent);
+        slow.Release();                                    // cancels the gated read
+    }
+
+    [Fact]
+    public async Task A_message_to_an_agent_the_poll_already_knows_the_task_of_does_not_wait_for_the_read()
+    {
+        _view = new([new PaperclipApi.RawLiveRun("r1", Agent, "running", T0, "i1", null, null)], [], []);
+        _assignedGate = new TaskCompletionSource();
+        var t = Host().Acquire(Agent, "Atlas")!;
+        Assert.Equal(PaperclipSendResult.Sent, (await t.SendAsync("go")).Result);
+        Assert.Equal(["comment:i1"], _actions.Sent);
+        t.Release();
+    }
 }
+

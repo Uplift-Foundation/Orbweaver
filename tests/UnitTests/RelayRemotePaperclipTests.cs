@@ -419,4 +419,42 @@ public class RelayRemotePaperclipTests : IDisposable
         Assert.True(why.Length <= 140);
         Assert.StartsWith("Reconnect to Paperclip to message NNN", why);
     }
+
+    // QA batch 1, item 3: the caps name is what promises send_failed, and it drops when the link leaves Connected.
+    // The intent, pinned: a watch that is already up STAYS (a thread that was working is not torn down by a blip, and
+    // the roster still lists the agent, dimmed); it just stops being served new windows by a frozen feed, and a
+    // message typed meanwhile is frames-v15's untypeable, the answer of a desk without the cap, until the cap returns.
+    [Fact]
+    public async Task A_watch_already_up_stays_when_the_cap_drops_and_input_is_untypeable_until_it_returns()
+    {
+        var w = new World();
+        await w.Remote.HandleAsync("ph", [], new WatchRequest("r1", Agent, null));
+        w.OnlyFeed.Push(Snap("i1", C("1", "hi", sec: 1)));
+        w.Tick();
+        w.Sent.Replies.Clear();
+        w.Sent.Windows.Clear();
+
+        w.Available = false;                                                     // the link left Connected: the name drops
+        Assert.True(w.Remote.IsWatching("ph", Agent));                           // the watch stays...
+        Assert.Equal(1, w.Remote.WatchCount);
+        Assert.Equal(0, w.OnlyFeed.Closes);                                      // ...and keeps its share of the feed
+        w.Tick();
+        Assert.Empty(w.Sent.Windows);                                            // a frozen thread sends nothing
+
+        await w.Remote.HandleAsync("ph", [], new InputRequest("r2", Agent, "hello"));
+        var refusal = w.Sent.Replies.Single();
+        Assert.Equal("untypeable", refusal.Body.GetProperty("code").GetString());   // not send_failed: that code needs the cap
+        Assert.False(refusal.Body.TryGetProperty("why", out _));
+        Assert.Empty(w.Actions.Sent);
+
+        // The cap comes back: the same watch carries on, a tail reaches the phone, and input works again.
+        w.Available = true;
+        w.OnlyFeed.Push(Snap("i1", C("1", "hi", sec: 1), C("2", "back", agent: true, sec: 5)));
+        w.Tick();
+        Assert.Equal(1, Assert.Single(w.Sent.Windows).Body.GetProperty("lines").GetArrayLength());
+        w.Sent.Replies.Clear();
+        await w.Remote.HandleAsync("ph", [], new InputRequest("r3", Agent, "hello again"));
+        Assert.Equal("typed", Code(w, 0));
+    }
 }
+

@@ -324,6 +324,10 @@ namespace Orbweaver
 
         internal static bool PaperclipChatAvailable => PaperclipChatAvailableSource();
 
+        // The caps frame this desk advertises right now: paperclip_chat while Paperclip is available. Re-sent every
+        // scan; the link drops an unchanged one, so the name flips with the condition.
+        internal static string CapsFrame() => BrowseFrames.CapsFor(PaperclipChatAvailable);
+
         internal static void OnScanned(IReadOnlyList<(string SessionId, SessionStatus Status)> snapshot)
         {
             var client = Client;
@@ -337,7 +341,7 @@ namespace Orbweaver
             try { client.OnAccounts(RelayAccounts.Frame(RelayAccounts.From(RelayAccounts.Choices))); }
             catch (Exception e) { MirrorLog.Say("relay", $"accounts frame not built: {e.GetType().Name}"); }
             // CB-339: what this desk can do (the folder picker), after accounts.
-            client.OnCaps(BrowseFrames.CapsFor(PaperclipChatAvailable));
+            client.OnCaps(CapsFrame());
             // CB-315: and the prompt watcher, off this thread — it captures panes.
             _ = client.OnStatuses(snapshot);
         }
