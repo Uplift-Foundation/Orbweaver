@@ -18,17 +18,26 @@ honest state of what has been run.
 The personas are ones the triage org does not use, so no agent draws two orbs.
 Their pictures live in `.profiles-assets/`, which is not checked in.
 
-## Status: imported once, never run
+## Status: set up on the mini, 2026-11-24; first pilot run next
 
-**Imported into the existing company "Orbweaver Bug Fix" on the mini, by QA
-(Ines), 2026-11-24, and nothing has run since.** Measured: four agents, the
-`cb-bugfix` skill, the project "Orbweaver develop" and the routine were created
-and the company was reported `unchanged`; setup step 8's command worked exactly
-as written and the read-back showed `isolated_workspace`, `git_worktree`,
-`origin/develop` and `bugfix/pc-{{slug}}`. **Still unrun:** a worktree actually
-realised for a run on this project, and any agent run at all, because the agents
-cannot run until the AI connection exists (step 3). Every row of plan appendix
-A.7 not named here is still to be measured in phase 0.
+**Every host step below is done on the mini, and each was read back.**
+
+- **Rulesets:** the three in `host/rulesets` are `active`.
+- **GitHub App:** `orbweaver-bugfix` is owned by Uplift-Foundation and installed on Orbweaver only, with exactly the six permissions in plan section 2. `host/create_app.py` refuses any other set.
+- **Warden:** running under launchd every five minutes from a detached `develop` checkout outside `~/.paperclip`, where no agent can write. It writes the company's `GITHUB_TOKEN`.
+- **Claude connection:** "Claude (W Thompson)", shared with all four agents. All four passed Paperclip's verification and are `ready`.
+- **Jira:** six read actions for every agent. Comment and transition are for the lead only, behind two `block` policies created before the actions were enabled.
+- **Build env:** set for both engineers.
+
+The routine and its trigger stay off until a pilot run has carried one ticket through.
+
+**The App's lane, measured with its own installation token:**
+
+- The token lists only `Uplift-Foundation/Orbweaver`.
+- Creating and deleting `bugfix/pc-fixture-proof` were both accepted.
+- Pushing `feature/pc-fixture-refused` and the tag `pc-fixture-refused` were both refused with GH013.
+
+**Still unrun:** a worktree realised for a real run, `git`, `gh` and `dotnet` inside one, a stress dispatch from a spool request, and the lead's merge and ticket moves. The pilot run measures each of these.
 
 **Deviation from the plan:** appendix A.4 lists `tools/check-pr-body.sh`, the
 body rules lifted out of `tools/require-team-sdlc.sh` and called by both. It was
@@ -149,6 +158,14 @@ Then, none of which a package can carry:
    `lifecycleState: verifying` (measured), and verification needs the
    connection. An assignment to a verifying agent queues a run that never
    starts, so cancel it rather than waiting.
+   **Check each agent's harness after binding.** An import made while the
+   company had no Claude connection gives every agent
+   `adapterConfig.provider: codex`. Verification then fails with
+   `harness_test_failed` even with the connection bound, and pauses itself after
+   three tries (measured 2026-11-24). Set
+   `PATCH /api/agents/<id>` `{"adapterConfig": {"provider": "acpx", "acpxAgent": "claude"}}`
+   (a merge; it keeps the env bindings), then `POST /api/agents/<id>/lifecycle/retry`.
+   All four reached `ready` within a minute.
 4. **Jira, block first.** Add a tool policy of type `block` naming
    `addCommentToJiraIssue` and `transitionJiraIssue` and the three non-lead
    agents, at a priority ahead of the others. Only then finish the connector
