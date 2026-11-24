@@ -60,7 +60,8 @@ namespace Orbweaver
         // among its choices is the only kind this build answers; Answerable says so.
         internal sealed record RawRuntimeRequest(
             string RunId, string RequestId, string? TurnId, string? Prompt, string? ToolName,
-            string? RequestKind, bool CanAccept, bool CanDecline, DateTime? CreatedAt = null, string? AgentId = null, string? IssueId = null, string? Subject = null)
+            string? RequestKind, bool CanAccept, bool CanDecline, DateTime? CreatedAt = null, string? AgentId = null, string? IssueId = null, string? Subject = null,
+            long Seq = 0)   // CB-450: the seq of the created event, so a later read can start just before it; 0 when the row had none
         {
             internal bool Answerable => RequestKind == "permission_approval" && CanAccept && CanDecline && !string.IsNullOrEmpty(TurnId);
         }
@@ -336,7 +337,7 @@ namespace Orbweaver
                         ? NonEmpty(Str(det, "toolCallId")) : null;
                     latest[id] = (order, new RawRuntimeRequest(runId, id, NonEmpty(Str(prp, "turnId")),
                         Limit(NonEmpty(Str(req, "prompt")), PreviewLimit), null, NonEmpty(Str(req, "requestKind")),
-                        keys.Contains("accept"), keys.Contains("decline"), Time(Str(e, "createdAt"))), toolCallId);
+                        keys.Contains("accept"), keys.Contains("decline"), Time(Str(e, "createdAt")), Seq: hasSeq ? order : 0), toolCallId);
                 }
                 return rows.Count;
             }
@@ -359,6 +360,32 @@ namespace Orbweaver
                         Subject = exec != null && subjects.TryGetValue(exec, out var sj) ? Limit(sj.Subject, PreviewLimit) : null,
                     };
                 }).ToList();
+        }
+
+        // CB-450: how a request ended, read off events from a later read: the latest resolved / cancelled /
+        // expired event for the request by seq (else file order), as its type and, for a resolved one, the
+        // action ("accept" / "decline") Paperclip recorded. Null when none of them is there, which is
+        // "still pending as far as this read can tell".
+        internal static (string Type, string? Action)? RuntimeResolution(string? eventsJson, string requestId)
+        {
+            (long Order, string Type, string? Action)? best = null;
+            long n = 0;
+            foreach (var e in EventRows(eventsJson))
+            {
+                n++;
+                var type = Str(e, "eventType");
+                if (type is not ("runtime_request.resolved" or "runtime_request.cancelled" or "runtime_request.expired")) continue;
+                if (!e.TryGetProperty("payload", out var pl) || pl.ValueKind != JsonValueKind.Object
+                    || !pl.TryGetProperty("prpEvent", out var prp) || prp.ValueKind != JsonValueKind.Object) continue;
+                var inner = prp.TryGetProperty("payload", out var ip) && ip.ValueKind == JsonValueKind.Object ? ip : default;
+                var req = inner.ValueKind == JsonValueKind.Object && inner.TryGetProperty("request", out var q) && q.ValueKind == JsonValueKind.Object ? q : default;
+                var id = NonEmpty(Str(req, "requestId")) ?? NonEmpty(Str(inner, "requestId")) ?? NonEmpty(Str(pl, "requestId"));
+                if (id != requestId) continue;
+                var order = e.TryGetProperty("seq", out _) ? Num(e, "seq") : n;
+                if (best is { } b && b.Order > order) continue;
+                best = (order, type!["runtime_request.".Length..], NonEmpty(Str(inner, "action")));
+            }
+            return best is { } r ? (r.Type, r.Action) : null;
         }
 
         private static IReadOnlyList<JsonElement> EventRows(string? json)
@@ -509,7 +536,8 @@ namespace Orbweaver
                         string.Join("\n", new[] { more, r.IssueId != null && c.TaskTitles.TryGetValue(r.IssueId, out var task) ? "Task: " + task : null }
                             .Where(x => x != null)) is { Length: > 0 } summary ? summary : null,
                         r.CreatedAt, Tool: r.ToolName ?? "Permission",
-                        RunId: r.Answerable ? r.RunId : null, TurnId: r.Answerable ? r.TurnId : null));
+                        RunId: r.Answerable ? r.RunId : null, TurnId: r.Answerable ? r.TurnId : null,
+                        Seq: r.Seq > 0 ? r.Seq : null));
             }
             foreach (var i in c.BlockedIssues)
             {
