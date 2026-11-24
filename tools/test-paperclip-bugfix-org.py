@@ -18,8 +18,12 @@ anything would fail here instead of looking healthy. What this does NOT show is
 that Paperclip imports the package or that the profile denies the real lock
 path under the real service; the README labels those.
 """
+import json
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -245,6 +249,16 @@ class BrakeTests(unittest.TestCase):
 
 
 class InstructionTests(unittest.TestCase):
+    def test_release_and_merge_leave_a_status_the_host_can_read(self):
+        lead = read("agents", "marisol-vandenberg", "AGENTS.md")
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        self.assertIn('{"status": "cancelled"}', lead)
+        self.assertIn('{"status": "done"}', lead)
+        self.assertIn("`cancelled` when the ticket was released", skill)
+        # Control: the engineers are never told to settle a ticket.
+        for slug in ("hana-moriyama", "rafaela-quintero"):
+            self.assertNotIn("cancelled", read("agents", slug, "AGENTS.md"))
+
     def test_lead_carries_the_run_limits_and_the_bug_only_rule(self):
         lead = read("agents", "marisol-vandenberg", "AGENTS.md")
         for needle in ("at most\n   **two** tickets", "**two** rounds", "ninety minutes",
@@ -276,45 +290,65 @@ class InstructionTests(unittest.TestCase):
             self.assertIn("never install anything on a machine", read("agents", slug, "AGENTS.md"))
 
 
-def pr_body_problems(body):
-    """The same four rules tools/require-team-sdlc.sh applies to a body."""
-    missing = []
-    if not re.search(r"CB-[0-9]+", body):
-        missing.append("key")
-    if not re.search(r"^#+ *verified", body, re.I | re.M):
-        missing.append("verified")
-    if not re.search(r"^#+ *not verified", body, re.I | re.M):
-        missing.append("not verified")
-    if not re.search(r"installed on", body, re.I):
-        missing.append("installed on")
-    return missing
+def find_bash():
+    # Git Bash on Windows, not WSL's System32 bash; same lookup as
+    # tools/test-require-team-sdlc.py.
+    if os.name == "nt":
+        for candidate in (r"C:\Program Files\Git\bin\bash.exe",
+                          r"C:\Program Files\Git\usr\bin\bash.exe"):
+            if os.path.exists(candidate):
+                return candidate
+        return None
+    return shutil.which("bash")
 
 
+BASH = find_bash()
+HOOK = os.path.join(HERE, "require-team-sdlc.sh")
+
+
+def hook_decision(body):
+    """Run the real PreToolUse hook on a `gh pr create` carrying this body in a
+    --body-file, and return 'deny' or 'allow'. The body goes in a file because
+    that is the form the hook reads from disk."""
+    fd, path = tempfile.mkstemp(suffix=".md")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(body)
+        # Forward slashes: Git Bash cannot read a backslashed Windows path.
+        cmd = ("gh pr create --repo Uplift-Foundation/Orbweaver --base develop --head h "
+               "--title t --body-file " + path.replace("\\", "/"))
+        payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}})
+        out = subprocess.run([BASH, HOOK], input=payload, capture_output=True,
+                             text=True, timeout=60).stdout
+        return "deny" if '"permissionDecision":"deny"' in out.replace(" ", "") else "allow"
+    finally:
+        os.unlink(path)
+
+
+@unittest.skipIf(BASH is None or shutil.which("jq") is None,
+                 "bash and jq are required (the hook fails open without jq)")
 class PrBodyShapeTests(unittest.TestCase):
     def shape(self):
         m = re.search(r"```\n(CB-<number>.*?)```", read("skills", "cb-bugfix", "SKILL.md"), re.S)
         self.assertIsNotNone(m, "PR body template not found in the skill")
         return m.group(1).replace("CB-<number>", "CB-123")
 
-    def test_template_in_the_skill_passes_the_hooks_rules(self):
-        self.assertEqual(pr_body_problems(self.shape()), [])
+    def test_template_in_the_skill_is_allowed_by_the_real_hook(self):
+        self.assertEqual(hook_decision(self.shape()), "allow")
 
     def test_template_says_installed_on_none(self):
         self.assertRegex(self.shape(), r"(?m)^Installed on: none\.")
 
-    def test_each_rule_fails_when_its_part_is_removed(self):
+    def test_hook_denies_the_template_with_each_part_removed(self):
+        # Negative controls against the same hook, so a hook that allowed
+        # everything (or the jq-less fail-open path) cannot pass the test above.
         body = self.shape()
         for label, cut in [("key", ("CB-123", "")), ("verified", ("## Verified", "## V")),
                            ("not verified", ("## Not verified", "## N")),
                            ("installed on", ("Installed on:", "Where:"))]:
             with self.subTest(label):
-                self.assertIn(label, pr_body_problems(body.replace(*cut)))
-
-    def test_hook_itself_still_has_the_same_four_rules(self):
-        with open(os.path.join(HERE, "require-team-sdlc.sh"), encoding="utf-8") as f:
-            hook = f.read()
-        for needle in ("CB-[0-9]+", "verified", "not verified", "installed on"):
-            self.assertIn(needle, hook)
+                self.assertNotEqual(body.replace(*cut), body)
+                self.assertEqual(hook_decision(body.replace(*cut)), "deny")
 
 
 class SandboxProfileTests(unittest.TestCase):

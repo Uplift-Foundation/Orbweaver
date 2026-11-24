@@ -18,12 +18,28 @@ honest state of what has been run.
 The personas are ones the triage org does not use, so no agent draws two orbs.
 Their pictures live in `.profiles-assets/`, which is not checked in.
 
-## Status: not run
+## Status: dry-run clean, never imported
 
 **Nothing in this package has been imported into a live Paperclip.** What exists
 is the package, `tools/test-paperclip-bugfix-org.py` (run by CI), and the
 profile change below. Every row of plan appendix A.7 is still to be measured in
 phase 0.
+
+**Import dry run, measured 2026-11-24 on the Mac mini** against the live
+instance (Paperclip 2026.1117.0), `paperclipai company import paperclip/bugfix-org
+--target new --include company,agents,projects,issues,tasks,skills --dry-run --yes --json`:
+exit 0, `errors: []`, `warnings: []`, nothing written. The preview plans one
+company, four agents, one project and one routine, all `create`. Read back from
+its manifest, every field survived: each agent's role, title, `reportsTo` (the
+three non-leads to marisol-vandenberg), model, `approve-all`, `timeoutSec: 3600`,
+the three `env` bindings, `maxConcurrentRuns: 1` and the per-agent
+`maxDailyRuns`; the `cb-bugfix` skill on each; the project's `git_repo`
+workspace on `develop` and its `git_worktree` policy with `baseRef`
+`origin/develop` and `branchTemplate` `bugfix/pc-{{slug}}`; the routine as
+`coalesce_if_active`, `skip_missed` and a `0 10 * * 1-5` Pacific trigger, imported
+**enabled** (hence setup step 1). Nothing was dropped or misread, so no field
+needed changing. This says the package parses; it does not say a real import,
+a worktree or a run works.
 
 ## Measured, assumed, and read from source
 
@@ -31,18 +47,30 @@ phase 0.
 | --- | --- |
 | The YAML has no anchors, no trailing comments and no unquoted colon strings, by a reader of this repo's own | **measured** (the test), not run through Paperclip's reader |
 | `heartbeat.maxConcurrentRuns` and `maxDailyRuns` are fields Paperclip's agent policy reads; `adapter.config.env` takes `{type: plain, value}` bindings; a project's `executionWorkspacePolicy.workspaceStrategy` takes `git_worktree`, `baseRef`, `branchTemplate` | **read from source** (Paperclip 2026.1117.0), not run on an import |
-| `maxDailyRuns` counts assignment wakes | **assumed** |
+| `maxDailyRuns` caps only timer heartbeats, not assignment or routine wakes | **reported from source** by Ines on this ticket, who read `services/heartbeat/timer-policy`; I did not read it myself, and nobody ran it. The agents here have the timer off and wake on assignment, so treat the field as no brake at all. The real daily brake is the warden's own count of runs per day |
 | The lead's `claude-opus-5-5` model id is accepted by the connection | **assumed**; the id appears in Paperclip's source, nobody ran it here |
 | `defaultMode: isolated_workspace` with the strategy realises one worktree per issue under the sandbox profile | **assumed** (A.7 row 2) |
 | `git`, `gh` and `dotnet` run unprompted under `approve-all` with the opt-out variables set | **assumed** for a real run; `dotnet build` and four test classes passed in a shell under the profile (plan A.2, **measured**) |
 | The profile's new deny stops a process under the profile creating the lock | **measured** on the MacBook, 2026-11-24: a copy of the rule with the lock's name swapped for a scratch name refused `touch` (`Operation not permitted`) while `touch` of another name in `/private/tmp` succeeded. The live lock path was deliberately not touched, and the live service profile has not been re-rendered, so this says nothing about the running service |
 | The PR body shape in the skill passes `tools/require-team-sdlc.sh` | **measured**: the real hook allowed it, and denied it with the `Installed on` line removed |
 
+## How "released" and "merged" show up in Paperclip
+
+The host decides a ticket was released from Paperclip's API, not from what an
+agent wrote. At the end of a ticket the lead sets the **engineer's Paperclip
+issue** (the one titled with the change words, in the project "Orbweaver
+develop") to `done` when the PR merged to `develop`, or to `cancelled` when it
+released the ticket, with `PATCH /api/issues/<id>` through `call_api`. The
+Jira comment `[bugfix-org] released` accompanies it for people. No label is
+used. Until a ticket ends, that issue is `todo`, `in_progress` or `in_review`.
+The status values are Paperclip's own (`ISSUE_STATUSES`, read from source); the
+lead actually making that PATCH has not been run.
+
 ## The brakes (plan section 6)
 
 Two tickets per run; routine `coalesce_if_active`; `maxConcurrentRuns: 1`,
 `timeoutSec: 3600` and `maxDailyRuns` (3 for the lead, 6 for each other agent,
-chosen not measured) per agent; two fix rounds and ninety minutes per ticket,
+chosen not measured, and probably inert: see the table above) per agent; two fix rounds and ninety minutes per ticket,
 then release. The warden (host side, not in this package) pauses the company on
 the conditions in plan section 6. `budgetMonthlyCents` is set but is not a
 brake: on a subscription connection spend reads 0.

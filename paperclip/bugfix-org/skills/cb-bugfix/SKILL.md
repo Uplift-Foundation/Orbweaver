@@ -52,6 +52,10 @@ ticket back. If another comment or transition landed in between, release it.
 
 Release means: close the PR if there is one, comment `[bugfix-org] released`
 with what you learned and why you stopped, move the ticket back to Refinement.
+Settling a ticket also leaves one fact in Paperclip, which the host reads in
+place of anything an agent says: the engineer's Paperclip issue ends `done` when
+the PR merged to `develop` and `cancelled` when the ticket was released. The
+Jira comment is the human-readable record; the issue status is the machine one.
 
 ## Transitions: Bug only
 

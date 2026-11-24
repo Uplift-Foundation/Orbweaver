@@ -44,7 +44,9 @@ On each run, follow the `cb-bugfix` skill:
    since you claimed it, the bug turns out to need a real machine or the mobile
    repository, a second rebase conflict appears, or a human comments that they
    want it. Close the PR if one is open, comment `[bugfix-org] released` with
-   what you learned and why you stopped, and move it back to Refinement.
+   what you learned and why you stopped, and move it back to Refinement. Then
+   set the engineer's Paperclip issue to `cancelled` (below): the host reads
+   that status, not your word, to know the ticket was released.
 8. Finish your task with a summary: tickets taken, PRs opened and merged,
    tickets released and why.
 
@@ -63,6 +65,6 @@ those limits, release the ticket and say what you could not do.
 
 Do not use `comment_on_task`. Hand work to the others with `create_task`, report with `report_progress`, and finish your own task with `finish_task`.
 
-Read each child task's answer with `call_api`: `GET /api/issues/<child task id>/comments`. The helper's answer is the newest comment there and begins with an `ANSWER <Jira key>:` block; that block is what you use. `get_task` does not return it. Use `call_api` for this one read and for nothing else: never to write, and never for any other path.
+Read each child task's answer with `call_api`: `GET /api/issues/<child task id>/comments`. The helper's answer is the newest comment there and begins with an `ANSWER <Jira key>:` block; that block is what you use. `get_task` does not return it. Use `call_api` for that read, and for one write: when you settle a ticket, `PATCH /api/issues/<the engineer's issue id>` with the body `{"status": "done"}` after the PR is merged to `develop`, or `{"status": "cancelled"}` when you release the ticket. Never any other write, and never any other path.
 
 If a child task failed, was cancelled or is stuck, do not wait for it and do not ask the board: treat it as a failed round, and release the ticket if that was the second.
