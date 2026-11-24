@@ -655,6 +655,19 @@ class World(unittest.TestCase):
         gh.dispatch_stress("bugfix/pc-x", "A.B", 3, "unit")
         args = json.loads([l for l in open(self.gh_log) if "dispatches" in l][0])
         self.assertEqual(args[1:4], ["-X", "POST", f"repos/{REPO}/actions/workflows/stress.yml/dispatches"])
+        # CB-465: the newest ci.yml run at a sha, never another workflow's, and the rerun POST.
+        self.fx[f"repos/{REPO}/actions/runs"] = {"workflow_runs": [
+            {"id": 5, "name": "CI", "path": ".github/workflows/ci.yml", "head_sha": "m1", "created_at": "2026-01-01T00:00:00Z"},
+            {"id": 6, "name": "CI", "path": ".github/workflows/ci.yml", "head_sha": "m1", "created_at": "2026-01-02T00:00:00Z"},
+            {"id": 7, "name": "Stress", "path": ".github/workflows/stress.yml", "head_sha": "m1", "created_at": "2026-01-03T00:00:00Z"}]}
+        self.write_fx()
+        self.assertEqual(gh.latest_ci_run("m1")["id"], 6)
+        gh.rerun_failed(6)
+        args = json.loads([l for l in open(self.gh_log) if "rerun-failed-jobs" in l][0])
+        self.assertEqual(args[1:4], ["-X", "POST", f"repos/{REPO}/actions/runs/6/rerun-failed-jobs"])
+        self.fx[f"repos/{REPO}/actions/runs"] = {"workflow_runs": []}
+        self.write_fx()
+        self.assertIsNone(gh.latest_ci_run("m1"))
 
     # ---- AppMinter ----
 
