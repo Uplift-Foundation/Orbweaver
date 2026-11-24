@@ -31,7 +31,9 @@ namespace Orbweaver
         string? Tool = null,
         // CB-442: a runtime permission request is answered on its run, with the turn it was raised in.
         string? RunId = null,
-        string? TurnId = null);
+        string? TurnId = null,
+        // CB-450: the seq of a runtime request's created event, where a confirming read of its run starts.
+        long? Seq = null);
 
     internal sealed record PaperclipAgent(
         string Id, string Name, string Role, string Title,
@@ -45,8 +47,10 @@ namespace Orbweaver
         DateTime LastActivity, string Url,
         bool Sleeping,
         int? RunPid = null, string? RunSessionId = null,
-        long BudgetCapCents = 0, long SpentCents = 0,
-        DateTime? LastRunFinished = null);   // the newest finished run's own finishedAt, for "last run … ago"   // the hover's "$0.26 of $50.00"
+        long BudgetCapCents = 0, long SpentCents = 0,   // the hover's "$0.26 of $50.00"
+        DateTime? LastRunFinished = null,   // the newest finished run's own finishedAt, for "last run … ago"
+        string? AvatarUrl = null,           // Paperclip's path to the picture (CB-445), a cache key
+        string? AvatarFile = null);         // the cached picture, once fetched; null draws initials
 
     // The poll loop (plan 2.5), shaped after ClaudeCloudSessions: a volatile
     // snapshot replaced whole, a pure StepAsync that takes its transport and
@@ -102,7 +106,7 @@ namespace Orbweaver
                   .Append('|').Append(a.State).Append('|').Append(a.Mark).Append('|').Append(a.MarkReason)
                   .Append('|').Append(a.BudgetPercent).Append('|').Append(a.SpentCents).Append('|').Append(a.Sleeping)
                   .Append('|').Append(a.Task).Append('|').Append(a.Activity).Append('|').Append(a.LastResult)
-                  .Append('|').Append(a.Url);
+                  .Append('|').Append(a.Url).Append('|').Append(a.AvatarFile);
                 foreach (var n in a.Needs) sb.Append('|').Append(n.Kind).Append(':').Append(n.Id).Append(':').Append(n.Title).Append(':').Append(n.Url);
             }
             return sb.ToString();
@@ -421,12 +425,20 @@ namespace Orbweaver
             // CB-442: per running run, what its events said last time and whether that reading is already a tick old.
             IReadOnlyDictionary<string, (IReadOnlyList<PaperclipApi.RawRuntimeRequest> Requests, bool Stale)>? RuntimeByRun = null,
             // The last message a per-run events fault logged, so one odd body is one line, not one per tick.
-            string? RuntimeFault = null)
+            string? RuntimeFault = null,
+            // CB-446: per running run, the folded state of its events so far, so a read asks only for what came after
+            // the last seq seen. Forgotten with the run.
+            IReadOnlyDictionary<string, PaperclipApi.RuntimeFold>? RuntimeFolds = null)
         {
             internal static readonly PollState Initial = new();
         }
 
         internal sealed record StepResult(PollState Next, TimeSpan Wait);
+
+        // CB-446: the events route's page, and a ceiling on pages per run per tick so one enormous run cannot hold a
+        // tick; what is not reached resumes from the last seq next tick.
+        internal const int EventPageSize = 500;
+        internal const int MaxEventPages = 200;
 
         private static string CompanyPath(PollState st, string tail) => $"/api/companies/{st.CompanyId}/{tail}";
 
@@ -438,7 +450,7 @@ namespace Orbweaver
         // for a transport failure.
         internal static async Task<StepResult> StepAsync(
             IPaperclipApi api, PaperclipConfig cfg, PollState st, DateTime now, CancellationToken ct,
-            Action<string>? log = null)
+            Action<string>? log = null, PaperclipPictureCache? pictures = null, int maxEventPages = MaxEventPages)
         {
             if (!cfg.Enabled)
                 return new StepResult(PollState.Initial with { Link = PaperclipLink.Off, Status = "Paperclip is switched off." }, FastEvery);
@@ -559,35 +571,63 @@ namespace Orbweaver
             // are read on the slow tick. A failed read keeps that run's last answer for one tick; a second miss drops it.
             var runtime = st.RuntimeByRun;
             var fault = st.RuntimeFault;
+            var folds = st.RuntimeFolds;
             if (slow && firstFailure == null && live != null)
             {
                 var seen = new Dictionary<string, (IReadOnlyList<PaperclipApi.RawRuntimeRequest>, bool)>();
+                var nextFolds = new Dictionary<string, PaperclipApi.RuntimeFold>();
                 foreach (var run in live.Where(x => x.Status == "running").DistinctBy(x => x.Id))
                 {
                     // Read and parse are one unit: a run whose body throws is treated as a failed read for that run
-                    // only, so one odd body never takes the company's poll down with it.
+                    // only, so one odd body never takes the company's poll down with it. The pages fold into a delta
+                    // that is merged into the run's state only when every page read.
                     IReadOnlyList<PaperclipApi.RawRuntimeRequest>? read = null;
+                    PaperclipApi.RuntimeFold? held = null;
                     try
                     {
-                        var ev = await api.GetAsync($"/api/heartbeat-runs/{Uri.EscapeDataString(run.Id)}/events?limit=500", ct).ConfigureAwait(false);
-                        if (ev.IsOk)
-                            read = PaperclipApi.ParseRuntimeRequests(run.Id, ev.Body)
-                                .Select(r => r with { AgentId = run.AgentId, IssueId = run.IssueId }).ToList();
+                        st.RuntimeFolds?.TryGetValue(run.Id, out held);
+                        // A prior state that never saw a seq cannot be paged from, so it is started afresh.
+                        if (held is not { LastSeq: not null }) held = new PaperclipApi.RuntimeFold();
+                        // The pages fold into a small delta, merged into the run's state only when every page read.
+                        var delta = new PaperclipApi.RuntimeFold();
+                        var ok = true;
+                        var ended = false;
+                        for (var page = 0; page < maxEventPages; page++)
+                        {
+                            var before = delta.LastSeq ?? held.LastSeq;
+                            var query = before is { } s0 ? $"?afterSeq={s0}&limit={EventPageSize}" : $"?limit={EventPageSize}";
+                            var ev = await api.GetAsync($"/api/heartbeat-runs/{Uri.EscapeDataString(run.Id)}/events{query}", ct).ConfigureAwait(false);
+                            if (!ev.IsOk) { ok = false; break; }
+                            var rows = delta.Apply(run.Id, ev.Body);
+                            // A short page is the end; so is a page that moved nothing (no seq to page on).
+                            if (rows < EventPageSize || (delta.LastSeq ?? held.LastSeq) == before) { ended = true; break; }
+                        }
+                        if (ok)
+                        {
+                            held.Merge(delta);
+                            // Out of pages with more to read: what was read stands, and the next tick resumes from its cursor.
+                            if (!ended) log?.Invoke($"runtime events for run {run.Id} paused after {maxEventPages} pages at seq {held.LastSeq}; resuming next tick");
+                            read = held.Pending(run.Id).Select(r => r with { AgentId = run.AgentId, IssueId = run.IssueId }).ToList();
+                        }
                     }
                     catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
                     {
                         if (StepFailureLine(ex, ref fault, "runtime events read failed") is { } line) log?.Invoke(line);
                     }
-                    if (read != null) seen[run.Id] = (read, false);
+                    if (read != null) { seen[run.Id] = (read, false); nextFolds[run.Id] = held!; }
                     else if (runtime != null && runtime.TryGetValue(run.Id, out var prior) && !prior.Stale)
+                    {
                         seen[run.Id] = (prior.Requests, true);
+                        if (st.RuntimeFolds != null && st.RuntimeFolds.TryGetValue(run.Id, out var keep)) nextFolds[run.Id] = keep;
+                    }
                 }
+                folds = nextFolds;
                 runtime = seen;
             }
 
             var stamped = st with
             {
-                RuntimeByRun = runtime, RuntimeFault = fault,
+                RuntimeByRun = runtime, RuntimeFault = fault, RuntimeFolds = folds,
                 LastFast = fast ? now : st.LastFast,
                 LastSlow = slow ? now : st.LastSlow,
                 Agents = agents, LiveRuns = live, Runs = runs, Approvals = approvals,
@@ -604,6 +644,14 @@ namespace Orbweaver
                     approvals ?? Array.Empty<PaperclipApi.RawApproval>(), actions ?? Array.Empty<PaperclipApi.RawActionRequest>(),
                     blocked ?? Array.Empty<PaperclipApi.RawIssue>(), tasks, cfg.BaseUrl, st.IssuePrefix, now,
                     runtime?.Values.SelectMany(v => v.Requests).ToList()));
+            // CB-445: the agents' pictures, fetched with the same key. A fetch that fails is initials, and says
+            // nothing to the link: it is not one of the reads that decide Connected.
+            if (agents != null)
+            {
+                var cache = pictures ?? PaperclipPictureCache.Shared;
+                await cache.SyncAsync(agents.Select(a => a.AvatarUrl), api, ct, log).ConfigureAwait(false);
+                composed = composed.Select(a => a with { AvatarFile = cache.FileFor(a.AvatarUrl) }).ToList();
+            }
             var (stamps, _) = PaperclipApi.TrackAwake(st.AwakeStamps ?? new Dictionary<string, DateTime>(), composed, now);
 
             return new StepResult(stamped with

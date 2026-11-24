@@ -33,7 +33,7 @@ namespace Orbweaver
             string Id, string Name, string Role, string Title, string Status,
             string? ReportsTo, string AdapterType,
             long BudgetCents, long SpentCents,
-            string? PauseReason, string? ErrorReason, DateTime? LastHeartbeatAt);
+            string? PauseReason, string? ErrorReason, DateTime? LastHeartbeatAt, string? AvatarUrl = null);
 
         internal sealed record RawLiveRun(
             string Id, string AgentId, string Status, DateTime? StartedAt,
@@ -60,7 +60,8 @@ namespace Orbweaver
         // among its choices is the only kind this build answers; Answerable says so.
         internal sealed record RawRuntimeRequest(
             string RunId, string RequestId, string? TurnId, string? Prompt, string? ToolName,
-            string? RequestKind, bool CanAccept, bool CanDecline, DateTime? CreatedAt = null, string? AgentId = null, string? IssueId = null, string? Subject = null)
+            string? RequestKind, bool CanAccept, bool CanDecline, DateTime? CreatedAt = null, string? AgentId = null, string? IssueId = null, string? Subject = null,
+            long Seq = 0)   // CB-450: the seq of the created event, so a later read can start just before it; 0 when the row had none
         {
             internal bool Answerable => RequestKind == "permission_approval" && CanAccept && CanDecline && !string.IsNullOrEmpty(TurnId);
         }
@@ -155,7 +156,7 @@ namespace Orbweaver
                     Str(r, "status") ?? "", NonEmpty(Str(r, "reportsTo")), Str(r, "adapterType") ?? "",
                     Num(r, "budgetMonthlyCents"), Num(r, "spentMonthlyCents"),
                     NonEmpty(Str(r, "pauseReason")), NonEmpty(Str(r, "errorReason")),
-                    Time(Str(r, "lastHeartbeatAt")));
+                    Time(Str(r, "lastHeartbeatAt")), NonEmpty(Str(r, "avatarUrl")));
             }).Where(a => a != null).Select(a => a!).ToList();
 
         internal static IReadOnlyList<RawLiveRun> ParseLiveRuns(string? json) =>
@@ -250,75 +251,141 @@ namespace Orbweaver
             return i < 0 ? name : NonEmpty(name[(i + 1)..]);
         }
 
-        // The requests of one run still waiting: for each requestId the latest event (by seq, else file order)
-        // among created / resolved / cancelled / expired, kept when that is `created`. The `status` inside a
-        // created event is not current state (plan: CB-442). The tool's name is not on the request: it is
-        // on the tool.execution.started event sharing the prpEvent itemId.
+        // The requests of one run still waiting, read off a whole body. The incremental form is RuntimeFold, which
+        // this is a one-shot wrapper over: the poll folds each page of new events into the run's prior state.
         internal static IReadOnlyList<RawRuntimeRequest> ParseRuntimeRequests(string runId, string? eventsJson)
         {
-            var rows = EventRows(eventsJson);
+            var fold = new RuntimeFold();
+            fold.Apply(runId, eventsJson);
+            return fold.Pending(runId);
+        }
+
+        // CB-446: one run's runtime-request state, folded forward a page of events at a time. The events route
+        // returns the OLDEST rows for `limit` and pages forward with `afterSeq` (measured), so a long run can only be
+        // followed from the last seq already seen; everything the answer depends on therefore lives here and not in
+        // the body: for each requestId the latest event (by seq, else file order) among created / resolved /
+        // cancelled / expired, kept when that is `created` (the `status` inside a created event is not current
+        // state, plan CB-442); the started tools; and the newest `subject` per execution.
+        internal sealed class RuntimeFold
+        {
             // Every tool event in a run shares one itemId (measured), so the tool is joined by the tool call id:
             // request.details.toolCallId equals the tool event's payload.executionId. The command is the newest
             // `subject` a progressed event carried for that execution. With no match, the newest tool that
             // started before the request stands in for the tool (and its subject).
-            var started = new List<(long Order, string Name, string? ExecutionId)>();
-            var subjects = new Dictionary<string, (long Order, string Subject)>(StringComparer.Ordinal);
-            var latest = new Dictionary<string, (long Order, RawRuntimeRequest? Open, string? ToolCallId)>(StringComparer.Ordinal);
+            private readonly List<(long Order, string Name, string? ExecutionId)> started = new();
+            private readonly Dictionary<string, (long Order, string Subject)> subjects = new(StringComparer.Ordinal);
+            private readonly Dictionary<string, (long Order, RawRuntimeRequest? Open, string? ToolCallId)> latest = new(StringComparer.Ordinal);
+            private long n;
+
+            // The highest seq seen, which is what afterSeq asks for next. Null when no row carried one, and the
+            // caller then cannot page and starts that run's state afresh each read.
+            internal long? LastSeq { get; private set; }
+
+            // Folds a delta (a fresh fold that read this tick's pages) into this one. Merging is what lets a read
+            // that fails halfway leave the committed state untouched without copying all of it every tick: the
+            // pages go into the small delta, and only a read that completed is merged. The guards are the ones
+            // Apply uses, so merging a delta equals folding its rows in order.
+            internal void Merge(RuntimeFold delta)
+            {
+                started.AddRange(delta.started);
+                foreach (var kv in delta.subjects)
+                    if (!subjects.TryGetValue(kv.Key, out var old) || old.Order <= kv.Value.Order) subjects[kv.Key] = kv.Value;
+                foreach (var kv in delta.latest)
+                    if (!(latest.TryGetValue(kv.Key, out var prev) && prev.Order > kv.Value.Order)) latest[kv.Key] = kv.Value;
+                n += delta.n;
+                if (delta.LastSeq is { } d && (LastSeq == null || d > LastSeq)) LastSeq = d;
+            }
+
+            // Folds one body in and returns how many rows it held (a short page ends a paged read).
+            internal int Apply(string runId, string? eventsJson)
+            {
+                var rows = EventRows(eventsJson);
+                foreach (var e in rows)
+                {
+                    n++;
+                    var type = Str(e, "eventType");
+                    var hasSeq = e.TryGetProperty("seq", out _);
+                    var order = hasSeq ? Num(e, "seq") : n;
+                    if (hasSeq && (LastSeq == null || order > LastSeq)) LastSeq = order;
+                    if (!e.TryGetProperty("payload", out var pl) || pl.ValueKind != JsonValueKind.Object
+                        || !pl.TryGetProperty("prpEvent", out var prp)
+                        || prp.ValueKind != JsonValueKind.Object) continue;
+                    var inner = prp.TryGetProperty("payload", out var ip) && ip.ValueKind == JsonValueKind.Object ? ip : default;
+                    if (type == "tool.execution.started")
+                    {
+                        if (NonEmpty(Str(inner, "name")) is { } name) started.Add((order, name, NonEmpty(Str(inner, "executionId"))));
+                        continue;
+                    }
+                    if (type == "tool.execution.progressed")
+                    {
+                        if (NonEmpty(Str(inner, "executionId")) is { } exec && NonEmpty(Str(inner, "subject")) is { } subject
+                            && (!subjects.TryGetValue(exec, out var old) || old.Order <= order))
+                            subjects[exec] = (order, subject);
+                        continue;
+                    }
+                    if (type is not ("runtime_request.created" or "runtime_request.resolved" or "runtime_request.cancelled" or "runtime_request.expired"))
+                        continue;
+                    var req = inner.ValueKind == JsonValueKind.Object && inner.TryGetProperty("request", out var q) && q.ValueKind == JsonValueKind.Object ? q : default;
+                    var id = NonEmpty(Str(req, "requestId")) ?? NonEmpty(Str(inner, "requestId")) ?? NonEmpty(Str(pl, "requestId"));
+                    if (id == null) continue;
+                    if (latest.TryGetValue(id, out var prev) && prev.Order > order) continue;
+                    if (type != "runtime_request.created") { latest[id] = (order, null, null); continue; }
+                    var keys = new HashSet<string>();
+                    if (req.ValueKind == JsonValueKind.Object && req.TryGetProperty("choices", out var ch) && ch.ValueKind == JsonValueKind.Array)
+                        foreach (var c in ch.EnumerateArray()) if (Str(c, "key") is { } k) keys.Add(k);
+                    string? toolCallId = req.ValueKind == JsonValueKind.Object && req.TryGetProperty("details", out var det) && det.ValueKind == JsonValueKind.Object
+                        ? NonEmpty(Str(det, "toolCallId")) : null;
+                    latest[id] = (order, new RawRuntimeRequest(runId, id, NonEmpty(Str(prp, "turnId")),
+                        Limit(NonEmpty(Str(req, "prompt")), PreviewLimit), null, NonEmpty(Str(req, "requestKind")),
+                        keys.Contains("accept"), keys.Contains("decline"), Time(Str(e, "createdAt")), Seq: hasSeq ? order : 0), toolCallId);
+                }
+                return rows.Count;
+            }
+
+            internal IReadOnlyList<RawRuntimeRequest> Pending(string runId) =>
+                latest.Values.Where(v => v.Open != null).Select(v =>
+                {
+                    var open = v.Open!;
+                    var created = v.Order;
+                    (long Order, string Name, string? ExecutionId)? tool = null;
+                    if (v.ToolCallId != null)
+                        foreach (var t in started) if (t.ExecutionId == v.ToolCallId) tool = t;
+                    if (tool == null)
+                        foreach (var t in started) if (t.Order < created && (tool == null || t.Order >= tool.Value.Order)) tool = t;
+                    if (tool == null) return open;
+                    var exec = tool.Value.ExecutionId;
+                    return open with
+                    {
+                        ToolName = tool.Value.Name,
+                        Subject = exec != null && subjects.TryGetValue(exec, out var sj) ? Limit(sj.Subject, PreviewLimit) : null,
+                    };
+                }).ToList();
+        }
+
+        // CB-450: how a request ended, read off events from a later read: the latest resolved / cancelled /
+        // expired event for the request by seq (else file order), as its type and, for a resolved one, the
+        // action ("accept" / "decline") Paperclip recorded. Null when none of them is there, which is
+        // "still pending as far as this read can tell".
+        internal static (string Type, string? Action)? RuntimeResolution(string? eventsJson, string requestId)
+        {
+            (long Order, string Type, string? Action)? best = null;
             long n = 0;
-            foreach (var e in rows)
+            foreach (var e in EventRows(eventsJson))
             {
                 n++;
                 var type = Str(e, "eventType");
-                var order = e.TryGetProperty("seq", out _) ? Num(e, "seq") : n;
+                if (type is not ("runtime_request.resolved" or "runtime_request.cancelled" or "runtime_request.expired")) continue;
                 if (!e.TryGetProperty("payload", out var pl) || pl.ValueKind != JsonValueKind.Object
-                    || !pl.TryGetProperty("prpEvent", out var prp)
-                    || prp.ValueKind != JsonValueKind.Object) continue;
+                    || !pl.TryGetProperty("prpEvent", out var prp) || prp.ValueKind != JsonValueKind.Object) continue;
                 var inner = prp.TryGetProperty("payload", out var ip) && ip.ValueKind == JsonValueKind.Object ? ip : default;
-                if (type == "tool.execution.started")
-                {
-                    if (NonEmpty(Str(inner, "name")) is { } name) started.Add((order, name, NonEmpty(Str(inner, "executionId"))));
-                    continue;
-                }
-                if (type == "tool.execution.progressed")
-                {
-                    if (NonEmpty(Str(inner, "executionId")) is { } exec && NonEmpty(Str(inner, "subject")) is { } subject
-                        && (!subjects.TryGetValue(exec, out var old) || old.Order <= order))
-                        subjects[exec] = (order, subject);
-                    continue;
-                }
-                if (type is not ("runtime_request.created" or "runtime_request.resolved" or "runtime_request.cancelled" or "runtime_request.expired"))
-                    continue;
                 var req = inner.ValueKind == JsonValueKind.Object && inner.TryGetProperty("request", out var q) && q.ValueKind == JsonValueKind.Object ? q : default;
                 var id = NonEmpty(Str(req, "requestId")) ?? NonEmpty(Str(inner, "requestId")) ?? NonEmpty(Str(pl, "requestId"));
-                if (id == null) continue;
-                if (latest.TryGetValue(id, out var prev) && prev.Order > order) continue;
-                if (type != "runtime_request.created") { latest[id] = (order, null, null); continue; }
-                var keys = new HashSet<string>();
-                if (req.ValueKind == JsonValueKind.Object && req.TryGetProperty("choices", out var ch) && ch.ValueKind == JsonValueKind.Array)
-                    foreach (var c in ch.EnumerateArray()) if (Str(c, "key") is { } k) keys.Add(k);
-                string? toolCallId = req.ValueKind == JsonValueKind.Object && req.TryGetProperty("details", out var det) && det.ValueKind == JsonValueKind.Object
-                    ? NonEmpty(Str(det, "toolCallId")) : null;
-                latest[id] = (order, new RawRuntimeRequest(runId, id, NonEmpty(Str(prp, "turnId")),
-                    Limit(NonEmpty(Str(req, "prompt")), PreviewLimit), null, NonEmpty(Str(req, "requestKind")),
-                    keys.Contains("accept"), keys.Contains("decline"), Time(Str(e, "createdAt"))), toolCallId);
+                if (id != requestId) continue;
+                var order = e.TryGetProperty("seq", out _) ? Num(e, "seq") : n;
+                if (best is { } b && b.Order > order) continue;
+                best = (order, type!["runtime_request.".Length..], NonEmpty(Str(inner, "action")));
             }
-            return latest.Values.Where(v => v.Open != null).Select(v =>
-            {
-                var open = v.Open!;
-                var created = v.Order;
-                (long Order, string Name, string? ExecutionId)? tool = null;
-                if (v.ToolCallId != null)
-                    foreach (var t in started) if (t.ExecutionId == v.ToolCallId) tool = t;
-                if (tool == null)
-                    foreach (var t in started) if (t.Order < created && (tool == null || t.Order >= tool.Value.Order)) tool = t;
-                if (tool == null) return open;
-                var exec = tool.Value.ExecutionId;
-                return open with
-                {
-                    ToolName = tool.Value.Name,
-                    Subject = exec != null && subjects.TryGetValue(exec, out var sj) ? Limit(sj.Subject, PreviewLimit) : null,
-                };
-            }).ToList();
+            return best is { } r ? (r.Type, r.Action) : null;
         }
 
         private static IReadOnlyList<JsonElement> EventRows(string? json)
@@ -469,7 +536,8 @@ namespace Orbweaver
                         string.Join("\n", new[] { more, r.IssueId != null && c.TaskTitles.TryGetValue(r.IssueId, out var task) ? "Task: " + task : null }
                             .Where(x => x != null)) is { Length: > 0 } summary ? summary : null,
                         r.CreatedAt, Tool: r.ToolName ?? "Permission",
-                        RunId: r.Answerable ? r.RunId : null, TurnId: r.Answerable ? r.TurnId : null));
+                        RunId: r.Answerable ? r.RunId : null, TurnId: r.Answerable ? r.TurnId : null,
+                        Seq: r.Seq > 0 ? r.Seq : null));
             }
             foreach (var i in c.BlockedIssues)
             {
@@ -536,7 +604,8 @@ namespace Orbweaver
                     last == null ? null : ResultWording(last.Status),
                     RingPercent(a.BudgetCents, a.SpentCents), lastActivity,
                     AgentUrl(c.BaseUrl, c.IssuePrefix, a.Id), sleeping,
-                    last?.ProcessPid, last?.SessionIdAfter, a.BudgetCents, a.SpentCents, last?.FinishedAt));
+                    last?.ProcessPid, last?.SessionIdAfter, a.BudgetCents, a.SpentCents, last?.FinishedAt,
+                    AvatarUrl: a.AvatarUrl));
             }
             return result;
         }

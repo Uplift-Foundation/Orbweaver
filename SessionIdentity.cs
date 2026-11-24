@@ -128,6 +128,16 @@ namespace Orbweaver
                     Gateway: false);
             }
 
+            // CB-445: a Paperclip agent's face is the picture Paperclip holds for it, found through the
+            // published snapshot by its session key. No picture, or an agent not published: Unknown,
+            // so the header borrows the orb's letters as it did before.
+            if (sessionId.StartsWith(PaperclipScan.KeyPrefix, StringComparison.Ordinal))
+            {
+                var agent = PaperclipSessions.Snapshot().FirstOrDefault(a => PaperclipScan.KeyFor(a.Id) == sessionId);
+                var avatar = PaperclipAvatars.For(agent?.AvatarFile);
+                return avatar is null ? Unknown : new Face(agent!.Name, null, avatar, Gateway: false);
+            }
+
             var localPersona = LocalPersonas.For(sessionId);
             if (localPersona is null) return Unknown;
 

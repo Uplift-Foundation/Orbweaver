@@ -42,6 +42,9 @@ namespace Orbweaver
             internal required string Tool;
             internal required string Command;
             internal required long Seq;   // mint order, which a ULID minted in the same millisecond cannot give
+            // CB-450: the last answer whose POST was not known to have failed (which phone, which choice). It lives
+            // and dies with this prompt, and is dropped when a different phone's or a different choice's answer is accepted.
+            internal (string PhoneId, bool Approve)? Unconfirmed;
         }
 
         private readonly IPromptSender _send;
@@ -137,6 +140,11 @@ namespace Orbweaver
                     Remove(key);
                     if (live.Pending.Answered) continue;
                     var by = !listed && rows.Contains(live.Pending.SessionId) ? "desk" : "gone";
+                    // CB-450: an answer of ours that timed out may have been applied late. If the item is decided the way that
+                    // phone chose, and no other answer was accepted since, it is that phone's; anything else stays by desk.
+                    if (by == "desk" && live.Unconfirmed is { } u && _actions() is IPaperclipConfirm confirm
+                        && await confirm.DecidedTheWayAsync(live.Need, u.Approve, CancellationToken.None).ConfigureAwait(false))
+                        by = "phone:" + u.PhoneId;
                     _send.Resolved(live.Pending.RequestId, live.Pending.SessionId, by,
                         PromptFrames.ResolvedPush(live.Pending.RequestId, live.Pending.SessionId, by, live.Label));
                     _log($"paperclip resolved {live.Pending.RequestId} {by}");
@@ -270,7 +278,11 @@ namespace Orbweaver
                 }
 
                 // Rule 8: marked before the call, so a second answer decided meanwhile cannot repeat it.
+                // The gate is held across the POST, so another prompt's answer waits behind this one: at most the
+                // POST's 20 s action timeout plus DecideAsync's 5 s confirming read, about 25 s (20 s before CB-450).
                 live!.Pending.Answered = true;
+                var approving = d.Key == ApproveKey;
+                if (live.Unconfirmed is { } was && (was.PhoneId != phoneId || was.Approve != approving)) live.Unconfirmed = null;
                 PaperclipOutcome outcome;
                 try
                 {
@@ -300,6 +312,7 @@ namespace Orbweaver
                 // Paperclip leaves it for the next poll to resolve by desk, since that poll will no
                 // longer list the item.
                 live.Pending.Answered = false;
+                if (outcome.Result == PaperclipActionResult.Unreachable) live.Unconfirmed = (phoneId, approving);
                 Refuse(phoneId, answer, outcome.Result == PaperclipActionResult.AlreadyDecided ? AnswerGate.NotPending : AnswerGate.StalePrompt);
             }
             catch (Exception ex) { _log($"warning paperclip-answer-failed {answer.RequestId} {ex.GetType().Name}"); }

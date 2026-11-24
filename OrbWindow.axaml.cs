@@ -1447,6 +1447,10 @@ namespace Orbweaver
                     : OpenClawAvatars.For(PeerPersonas.AvatarKey(SessionId), persona.Avatar);
             }
 
+            // CB-445: a Paperclip agent wears the picture Paperclip holds for it, once fetched.
+            if (status.Source == SessionSource.Paperclip)
+                return PaperclipAvatars.For(status.PaperclipAvatarFile);
+
             if (!status.IsLocalCli) return null;
 
             var localPersona = LocalPersonas.For(SessionId);
