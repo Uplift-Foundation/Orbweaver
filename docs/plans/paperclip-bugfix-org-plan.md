@@ -44,7 +44,7 @@ Why this and not the alternatives:
 **What the rulesets must gain.** Measured today: the ruleset on `main` and `develop` requires a PR and the two build checks with zero approvals, and only admins bypass it. That already binds the App on `develop`. Three gaps remain for any non-admin writer, so the CB-455 team adds, with the admin token and no browser:
 
 1. `main`: restrict updates to admins. Today a non-admin could merge a green PR into `main`.
-2. Every branch except `bugfix/pc-*`, `develop` and `main`: restrict creation, update and deletion to admins, with the Dependabot and GitHub Actions apps as bypass actors so `dependabot/*` and the `screenshots` branch keep working. This is what stops the App deleting a human team's branch or creating `e2e/*` or `release/*`.
+2. Every branch except `bugfix/pc-*`, `develop` and `main`: restrict creation, update and deletion to admins, with the Dependabot app as a bypass actor so `dependabot/*` keeps working, and `screenshots` excluded so the screenshot publisher keeps working (GitHub refuses GitHub Actions as a bypass actor on a repository ruleset: HTTP 422, measured when the rulesets were applied). This is what stops the App deleting a human team's branch or creating `e2e/*` or `release/*`.
 3. All tags: restrict creation to admins (`v*` already is).
 
 Every other writer on the repository is an admin (measured: three admins, the rest read), so these rules cost the human teams nothing. Each is proved with a refused push from the App's token next to an accepted one (§7, phase 0). The `bugfix/pc-` prefix names the owner, not an issue number; the rest of the name is the change, per the branching rule.
