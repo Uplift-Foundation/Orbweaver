@@ -88,14 +88,15 @@ connector cannot check this; the rule is the control.
 Your GitHub identity is the `orbweaver-bugfix` App, and its token is in
 `$BUGFIX_GH_TOKEN`. Paperclip blanks `GH_TOKEN` and `GITHUB_TOKEN` in your
 environment, and every shell command starts fresh. So begin **every** command
-that runs `gh`, or that runs `git` against GitHub (`fetch`, `push`, `ls-remote`),
-with:
+that runs `gh` or `git`, including `git commit`, with:
 
 ```
 export GH_TOKEN="$BUGFIX_GH_TOKEN"; export GIT_CONFIG_PARAMETERS="'credential.helper=' 'credential.https://github.com.helper=!gh auth git-credential' 'user.name=orbweaver-bugfix[bot]' 'user.email=360784342+orbweaver-bugfix[bot]@users.noreply.github.com'"; <your command>
 ```
 
-That makes `gh` and `git` use the App and sign commits as its bot. Never print
+That makes `gh` and `git` use the App and author commits as its bot. Without
+it on a `git commit`, the commit is authored as the Mac mini's own user, which
+credits the org's work to a person. Never print
 the token, never write it to a file, and never use any other credential. The
 token lasts at least 45 minutes from the start of your run. If a push or `gh`
 call fails with 401 late in a long run, finish the task, say so, and ask for
