@@ -128,4 +128,38 @@ public class PaperclipOrbScreenshots
         }
         finally { OrbweaverSettings.OrbSize = before; }
     }
+
+    // CB-445: an agent's own picture on its orb, next to one without a picture.
+    [AvaloniaFact]
+    public void AnAgentWithAPictureWearsItNextToOneWithInitials()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "cb445-shot-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var file = Path.Combine(dir, "face.png");
+            using (var bmp = new SkiaSharp.SKBitmap(128, 128))
+            {
+                using var canvas = new SkiaSharp.SKCanvas(bmp);
+                canvas.Clear(new SkiaSharp.SKColor(0x2E, 0x8B, 0x57));
+                using var paint = new SkiaSharp.SKPaint { Color = new SkiaSharp.SKColor(0xFF, 0xD7, 0x00), IsAntialias = true };
+                canvas.DrawCircle(64, 52, 26, paint);
+                canvas.DrawRect(30, 90, 68, 38, paint);
+                using var img = SkiaSharp.SKImage.FromBitmap(bmp);
+                using var data = img.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100);
+                File.WriteAllBytes(file, data.ToArray());
+            }
+
+            var pictured = Agent("Atlas", "generating");
+            pictured.PaperclipAvatarFile = file;
+            var orbs = new[] { Orb(pictured), Orb(Agent("Beacon", "idle", lead: "paperclip:atlas")) };
+            Assert.False(orbs[0].Glyph.IsVisible);
+            Assert.True(orbs[0].AvatarImage.IsVisible && orbs[0].AvatarImage.Source is not null);
+            Assert.True(orbs[1].Glyph.IsVisible);
+            Assert.False(orbs[1].AvatarImage.IsVisible);
+
+            ScreenshotHelper.SideBySide(orbs, "paperclip-orb-picture.png");
+        }
+        finally { Directory.Delete(dir, true); }
+    }
 }

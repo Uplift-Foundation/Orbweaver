@@ -33,7 +33,7 @@ namespace Orbweaver
             string Id, string Name, string Role, string Title, string Status,
             string? ReportsTo, string AdapterType,
             long BudgetCents, long SpentCents,
-            string? PauseReason, string? ErrorReason, DateTime? LastHeartbeatAt);
+            string? PauseReason, string? ErrorReason, DateTime? LastHeartbeatAt, string? AvatarUrl = null);
 
         internal sealed record RawLiveRun(
             string Id, string AgentId, string Status, DateTime? StartedAt,
@@ -155,7 +155,7 @@ namespace Orbweaver
                     Str(r, "status") ?? "", NonEmpty(Str(r, "reportsTo")), Str(r, "adapterType") ?? "",
                     Num(r, "budgetMonthlyCents"), Num(r, "spentMonthlyCents"),
                     NonEmpty(Str(r, "pauseReason")), NonEmpty(Str(r, "errorReason")),
-                    Time(Str(r, "lastHeartbeatAt")));
+                    Time(Str(r, "lastHeartbeatAt")), NonEmpty(Str(r, "avatarUrl")));
             }).Where(a => a != null).Select(a => a!).ToList();
 
         internal static IReadOnlyList<RawLiveRun> ParseLiveRuns(string? json) =>
@@ -576,7 +576,8 @@ namespace Orbweaver
                     last == null ? null : ResultWording(last.Status),
                     RingPercent(a.BudgetCents, a.SpentCents), lastActivity,
                     AgentUrl(c.BaseUrl, c.IssuePrefix, a.Id), sleeping,
-                    last?.ProcessPid, last?.SessionIdAfter, a.BudgetCents, a.SpentCents, last?.FinishedAt));
+                    last?.ProcessPid, last?.SessionIdAfter, a.BudgetCents, a.SpentCents, last?.FinishedAt,
+                    AvatarUrl: a.AvatarUrl));
             }
             return result;
         }

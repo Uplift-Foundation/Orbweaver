@@ -23,7 +23,7 @@ public class PaperclipOrbTests : IDisposable
     private static SessionStatus Agent(
         string state = "idle", OrbPresence presence = OrbPresence.Present, PaperclipMark mark = PaperclipMark.None,
         int? budget = null, int folded = 0, string? foldedNames = null, string[]? hover = null,
-        string url = "http://127.0.0.1:3100/CB/agents/a") => new()
+        string url = "http://127.0.0.1:3100/CB/agents/a", string? avatarFile = null) => new()
     {
         Source = SessionSource.Paperclip,
         State = state,
@@ -36,6 +36,7 @@ public class PaperclipOrbTests : IDisposable
         FoldedNames = foldedNames,
         HoverLines = hover ?? [],
         Url = url,
+        PaperclipAvatarFile = avatarFile,
     };
 
     private static OrbWindow Orb(SessionStatus status)
@@ -370,5 +371,126 @@ public class PaperclipOrbTests : IDisposable
         Assert.False(reset.IsEnabled);
         Assert.Equal("Paperclip controls this agent's state", reset.Header);
         Assert.False(orb.FindControl<MenuItem>("NewChatHereItem")!.IsVisible);
+    }
+
+    // ---- CB-445: the agent's own picture ----------------------------------------
+
+    private static readonly byte[] Portrait = Convert.FromBase64String(
+        "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAEklEQVR4nGP438DwHx9mGBkKAFPWn4ETg8N3AAAAAElFTkSuQmCC");
+
+    private static string PictureFile()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "cb445-orb-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        var file = Path.Combine(dir, "face.png");
+        File.WriteAllBytes(file, Portrait);
+        return file;
+    }
+
+    [AvaloniaFact]
+    public void An_agent_with_a_cached_picture_wears_it_and_loses_its_letters()
+    {
+        var file = PictureFile();
+        try
+        {
+            var orb = Orb(Agent(avatarFile: file));
+            Assert.False(orb.Glyph.IsVisible, "the letters give way to the picture");
+            Assert.True(orb.AvatarImage.IsVisible && orb.AvatarImage.Source is not null);
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(file)!, true); }
+    }
+
+    [AvaloniaFact]
+    public void An_agent_with_no_picture_keeps_its_initials()
+    {
+        var orb = Orb(Agent());
+        Assert.True(orb.Glyph.IsVisible);
+        Assert.False(orb.AvatarImage.IsVisible);
+    }
+
+    [AvaloniaFact]
+    public void A_picture_that_cannot_be_read_is_initials_never_a_broken_image()
+    {
+        var orb = Orb(Agent(avatarFile: Path.Combine(Path.GetTempPath(), "cb445-missing-" + Guid.NewGuid() + ".png")));
+        Assert.True(orb.Glyph.IsVisible);
+        Assert.False(orb.AvatarImage.IsVisible);
+    }
+
+    [AvaloniaFact]
+    public void A_picture_that_arrives_later_replaces_the_letters_and_one_that_goes_brings_them_back()
+    {
+        var file = PictureFile();
+        try
+        {
+            var orb = Orb(Agent());
+            Assert.True(orb.Glyph.IsVisible);
+            orb.UpdateFrom(Agent(avatarFile: file));
+            Assert.False(orb.Glyph.IsVisible);
+            Assert.True(orb.AvatarImage.IsVisible);
+            orb.UpdateFrom(Agent());
+            Assert.True(orb.Glyph.IsVisible);
+            Assert.False(orb.AvatarImage.IsVisible);
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(file)!, true); }
+    }
+
+    [AvaloniaFact]
+    public void The_picture_decodes_from_its_file_and_the_panel_header_finds_it_by_session_key()
+    {
+        var file = PictureFile();
+        var id = Guid.NewGuid().ToString();
+        try
+        {
+            Assert.NotNull(PaperclipAvatars.For(file));
+            PaperclipSessions.SetSnapshotForTests([new PaperclipAgent(id, "Atlas", "r", "t", "idle", null, "x", "idle",
+                PaperclipMark.None, null, [], null, null, null, null, null, DateTime.UtcNow, "u", false, AvatarFile: file)]);
+            var face = SessionIdentity.For(PaperclipScan.KeyFor(id));
+            Assert.NotNull(face.Avatar);
+            Assert.Equal("Atlas", face.Name);
+            Assert.True(face.DrawsItsOwnCircle);
+        }
+        finally
+        {
+            PaperclipSessions.SetSnapshotForTests([]);
+            Directory.Delete(Path.GetDirectoryName(file)!, true);
+        }
+    }
+
+    [AvaloniaFact]
+    public void A_picture_that_was_unreadable_once_is_drawn_when_the_file_is_there_the_next_time()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "cb445-late-" + Guid.NewGuid());
+        var file = Path.Combine(dir, "face.png");
+        try
+        {
+            Assert.Null(PaperclipAvatars.For(file));              // absent: no picture, and not remembered as none
+            Directory.CreateDirectory(dir);
+            File.WriteAllBytes(file, Portrait);
+            Assert.NotNull(PaperclipAvatars.For(file));            // present now: it is drawn
+        }
+        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+    }
+
+    [AvaloniaFact]
+    public void A_truncated_png_and_a_huge_declared_one_that_reach_the_orb_are_initials_without_an_exception()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "cb445-bad-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var truncated = Path.Combine(dir, "cut.png");
+            File.WriteAllBytes(truncated, Portrait.Take(40).ToArray());
+            var orb = Orb(Agent(avatarFile: truncated));
+            Assert.True(orb.Glyph.IsVisible);
+            Assert.False(orb.AvatarImage.IsVisible);
+
+            var huge = (byte[])Portrait.Clone();
+            huge[16] = 0xFF; huge[17] = 0xFF; huge[18] = 0xFF; huge[19] = 0xFF;
+            var hugeFile = Path.Combine(dir, "huge.png");
+            File.WriteAllBytes(hugeFile, huge);
+            var orb2 = Orb(Agent(avatarFile: hugeFile));
+            Assert.True(orb2.Glyph.IsVisible);
+        }
+        finally { Directory.Delete(dir, true); }
     }
 }

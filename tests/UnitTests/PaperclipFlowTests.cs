@@ -22,6 +22,17 @@ internal sealed class FakePaperclip : IPaperclipApi
         return Task.FromResult(Gets.GetValueOrDefault(path) ?? Status(PaperclipHttpKind.NotFound, 404));
     }
 
+    // CB-445: binary answers, by path. An unlisted path is a 404, like a deleted asset.
+    internal readonly Dictionary<string, PaperclipBytes> Pictures = new();
+    internal readonly List<string> PictureCalls = [];
+
+    public Task<PaperclipBytes> GetBytesAsync(string path, CancellationToken ct)
+    {
+        PictureCalls.Add(path);
+        return Task.FromResult(Pictures.GetValueOrDefault(path)
+            ?? new PaperclipBytes(PaperclipHttpKind.NotFound, 404, Array.Empty<byte>(), null));
+    }
+
     public Task<PaperclipResponse> PostAsync(string path, string jsonBody, CancellationToken ct)
     {
         Calls.Add("POST " + path);
