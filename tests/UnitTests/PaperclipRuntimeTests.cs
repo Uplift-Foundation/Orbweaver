@@ -237,7 +237,9 @@ public class PaperclipRuntimeTests
         var api = Api();
         var t0 = DateTime.UtcNow;
         var s1 = await PaperclipSessions.StepAsync(api, Cfg, PaperclipSessions.PollState.Initial, t0, default);
-        api.Gets[EventsPath] = FakePaperclip.Ok(Events.Replace("]\n", ",{\"seq\":20,\"eventType\":\"runtime_request.resolved\",\"payload\":{\"prpEvent\":{\"payload\":{\"request\":{\"requestId\":\"r-open\"}}}}}]\n"));
+        // Appended after the closing bracket, found by trimming: a Windows checkout turns the file's "\n" into "\r\n".
+        api.Gets[EventsPath] = FakePaperclip.Ok(Events.TrimEnd().TrimEnd(']') +
+            ",{\"seq\":20,\"eventType\":\"runtime_request.resolved\",\"payload\":{\"prpEvent\":{\"payload\":{\"request\":{\"requestId\":\"r-open\"}}}}}]");
         var s2 = await PaperclipSessions.StepAsync(api, Cfg, s1.Next, t0.AddSeconds(5), default);
         Assert.DoesNotContain(s2.Next.Published!.Single().Needs, n => n.Id == "r-open");
         api.Gets["/api/companies/co/live-runs"] = FakePaperclip.Ok("[]");
