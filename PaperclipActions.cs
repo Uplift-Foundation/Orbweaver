@@ -53,11 +53,13 @@ namespace Orbweaver
         private readonly IPaperclipApi _api;
         private readonly string _companyId;
         private readonly Action _pollNow;
+        private readonly TimeSpan _verifyBudget;
 
         // pollNow is what runs after a settled call so the orb leaves amber at
         // once: the live one is PaperclipSessions.PollNow, a test passes a counter.
-        internal PaperclipActions(IPaperclipApi api, string companyId, Action? pollNow = null)
+        internal PaperclipActions(IPaperclipApi api, string companyId, Action? pollNow = null, TimeSpan? verifyBudget = null)
         {
+            _verifyBudget = verifyBudget ?? VerifyBudget;
             _api = api;
             _companyId = companyId;
             _pollNow = pollNow ?? PaperclipSessions.PollNow;
@@ -151,12 +153,21 @@ namespace Orbweaver
         // request's own seq starts it, so one page is the normal case.
         internal const int VerifyPages = 4;
 
+        // The whole confirming read, every page together. The actions client carries the 20 s action timeout, so
+        // without this a slow Paperclip could hold the phone's answer for another 20 s per page on top of the
+        // POST's own; with it the phone waits at most the POST's 20 s plus this.
+        internal static readonly TimeSpan VerifyBudget = TimeSpan.FromSeconds(5);
+
         // What Paperclip says of the item now, for an answer whose POST outcome is unknown: Done when it was
         // decided the way this answer decided it, AlreadyDecided when it was decided some other way or the
         // way cannot be told, null when it is still pending or this read failed too. Never throws for a
         // transport or parse failure; one read per item (a run's events: a few pages at most), no retry.
-        private async Task<PaperclipOutcome?> VerifyAsync(PaperclipNeed need, bool approve, CancellationToken ct)
+        private async Task<PaperclipOutcome?> VerifyAsync(PaperclipNeed need, bool approve, CancellationToken callerCt)
         {
+            var ct = callerCt;
+            using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            budget.CancelAfter(_verifyBudget);
+            ct = budget.Token;
             try
             {
                 PaperclipOutcome Decided(bool sameWay) => sameWay ? new(PaperclipActionResult.Done) : new(PaperclipActionResult.AlreadyDecided, AlreadyDecidedWhy);
@@ -194,6 +205,8 @@ namespace Orbweaver
                     default: return null;
                 }
             }
+            // Out of budget is "could not tell"; the caller's own cancellation is not swallowed.
+            catch (OperationCanceledException) when (budget.IsCancellationRequested && !callerCt.IsCancellationRequested) { return null; }
             catch (Exception ex) when (ex is not OperationCanceledException) { return null; }
         }
 

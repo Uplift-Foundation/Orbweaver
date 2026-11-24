@@ -589,12 +589,14 @@ public class PaperclipPromptsTests
         public PaperclipResponse PostResult = FakePaperclip.Status(PaperclipHttpKind.Timeout, 0, "Timed out");
         public TaskCompletionSource? HoldPost;
         public Exception? ThrowOnGet;
+        public bool HangGetsUntilCancelled;
         public int Posts => Calls.Count(c => c.StartsWith("POST"));
-        public Task<PaperclipResponse> GetAsync(string path, CancellationToken ct)
+        public async Task<PaperclipResponse> GetAsync(string path, CancellationToken ct)
         {
             Calls.Add("GET " + path);
             if (ThrowOnGet is not null) throw ThrowOnGet;
-            return Task.FromResult(Gets.GetValueOrDefault(path) ?? FakePaperclip.Status(PaperclipHttpKind.Timeout, 0, "Timed out"));
+            if (HangGetsUntilCancelled) await Task.Delay(Timeout.Infinite, ct);
+            return Gets.GetValueOrDefault(path) ?? FakePaperclip.Status(PaperclipHttpKind.Timeout, 0, "Timed out");
         }
         public async Task<PaperclipResponse> PostAsync(string path, string jsonBody, CancellationToken ct)
         {
@@ -609,10 +611,10 @@ public class PaperclipPromptsTests
     private static string Filler(long from, long to) =>
         string.Join(",", Enumerable.Range((int)from, (int)(to - from + 1)).Select(q => $"{{\"seq\":{q},\"eventType\":\"log\",\"payload\":{{}}}}"));
 
-    private SlowApi RealActions()
+    private SlowApi RealActions(TimeSpan? budget = null)
     {
         var api = new SlowApi();
-        _actions = new PaperclipActions(api, "co", () => { });
+        _actions = new PaperclipActions(api, "co", () => { }, budget);
         return api;
     }
 
@@ -764,6 +766,58 @@ public class PaperclipPromptsTests
         Assert.Equal(1, api.Posts);                                // the second never started a POST
         Assert.Equal("phone:" + PhoneId, Assert.Single(_sent.Resolved.Where(r => r.Push is not null)).By);
         Assert.Equal("not_pending", Assert.Single(_sent.Refusals).Code);
+    }
+
+    [Fact]
+    public async Task A_confirming_read_that_hangs_is_cut_off_at_its_budget_and_the_phone_is_refused_not_kept_waiting()
+    {
+        var api = RealActions(TimeSpan.FromMilliseconds(150));
+        api.HangGetsUntilCancelled = true;
+        await Poll(Agent(needs: Runtime() with { Seq = 40 }));
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        await Answer(AnswerTo(action: "approve"));
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(3));
+        Assert.Equal("stale_prompt", Assert.Single(_sent.Refusals).Code);
+        Assert.True(_p.HasPending(Sid));
+        Assert.Equal(1, api.Posts);
+    }
+
+    [Fact]
+    public async Task A_slow_paperclip_that_applies_the_first_post_after_the_confirming_read_ends_with_not_pending_and_never_a_second_action()
+    {
+        var api = RealActions();
+        api.Gets[EventsFrom40] = FakePaperclip.Ok("[" + Filler(40, 43) + "]");        // the read says: not applied yet
+        await Poll(Agent(needs: Runtime() with { Seq = 40 }));
+        await Answer(AnswerTo(action: "approve"));                                    // tap one: POST timed out, still pending
+        Assert.Equal("stale_prompt", Assert.Single(_sent.Refusals).Code);
+        // Paperclip applies the first POST after all; the person taps again and the second POST is a 409.
+        api.PostResult = FakePaperclip.Status(PaperclipHttpKind.Other, 409);
+        await Answer(AnswerTo(action: "approve"));
+        Assert.Equal(["stale_prompt", "not_pending"], _sent.Refusals.Select(r => r.Code).ToArray());
+        Assert.Empty(_sent.Resolved);                                                 // nothing resolved by the phone
+        Assert.Equal(2, api.Posts);                                                   // two POSTs, the second refused: one action applied in total
+        await Poll(Agent());                                                          // the request has left the run: the poll clears it
+        Assert.Equal("desk", Assert.Single(_sent.Resolved).By);
+        Assert.False(_p.HasPending(Sid));
+    }
+
+    [Fact]
+    public async Task A_second_answer_from_a_different_phone_while_the_first_post_is_in_flight_also_waits_and_is_refused_not_pending()
+    {
+        var api = RealActions();
+        api.HoldPost = new TaskCompletionSource();
+        api.Gets[EventsFrom40] = FakePaperclip.Ok("[" + Resolved(44, "rq-1", "accept") + "]");
+        await Poll(Agent(needs: Runtime() with { Seq = 40 }));
+        var first = Answer(AnswerTo(action: "approve"));
+        for (var i = 0; i < 200 && api.Posts == 0; i++) await Task.Delay(5);
+        var second = _p.OnAnswerAsync("ph_0f0f0f0f0f0f0f0f", Other.Public, AnswerTo(action: "approve", signer: Other));
+        await Task.Delay(50);
+        Assert.Equal(1, api.Posts);
+        api.HoldPost.SetResult();
+        await Task.WhenAll(first, second);
+        Assert.Equal(1, api.Posts);
+        Assert.Equal(("ph_0f0f0f0f0f0f0f0f", "not_pending"), (_sent.Refusals.Single().Phone, _sent.Refusals.Single().Code));
+        Assert.Equal("phone:" + PhoneId, Assert.Single(_sent.Resolved.Where(r => r.Push is not null)).By);
     }
 }
 
