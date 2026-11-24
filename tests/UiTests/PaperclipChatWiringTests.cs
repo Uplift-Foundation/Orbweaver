@@ -191,4 +191,28 @@ public class PaperclipChatWiringTests : IDisposable
             Assert.True(orb.OpenPaperclipVisible, state + " " + presence);
         }
     }
+
+    // Coverage: the actions seam the manager hands a session is PaperclipSessions.Actions, read at send
+    // time (not captured at build), so a send through the manager's own session reaches whatever the
+    // seam holds now.
+    [AvaloniaFact]
+    public void AManagerBuiltSessionSendsThroughTheCurrentActionsSeam()
+    {
+        var fake = new PaperclipChatPanelTests.FakeActions();
+        try
+        {
+            SessionManager.PaperclipFeedFactory = _ => new PaperclipChatPanelTests.FakeFeed();
+            OrbweaverSettings.PaperclipEnabled = true;
+            PaperclipSessions.SetLinkForTests(PaperclipLink.Connected, "Connected");
+            PaperclipSessions.SetSnapshotForTests([A("a1")]);
+            var m = Manager();
+            m.ScanAndUpdate();
+            var session = m.RemoteChatFor("paperclip:a1")!;
+
+            PaperclipSessions.Actions = fake;
+            Assert.Equal(ChatSendOutcome.Sent, session.SendAsync("hello").Result);
+            Assert.Equal(new[] { "open:a1:hello" }, fake.Sent);   // no task yet, so the message opens one
+        }
+        finally { PaperclipSessions.Actions = null; }
+    }
 }

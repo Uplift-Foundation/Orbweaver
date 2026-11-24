@@ -595,4 +595,34 @@ public class PaperclipChatSessionTests : IDisposable
         Assert.True(s.IsReadOnly);
         Assert.Equal(new[] { "opened", "closed", "opened" }, f.Calls);
     }
+
+    // Coverage: the two catch arms of the assigned-issues read. A read that is cancelled while out
+    // (the panel closed) and one that fails with anything else both leave "no task" and say nothing.
+    [Fact]
+    public async Task AReadCancelledByClosingThePanelEndsQuietly()
+    {
+        var started = new TaskCompletionSource();
+        var f = new Feed();
+        var s = new PaperclipChatSession("ag1", "Nova", null, () => f, () => null,
+            readAssigned: async ct => { started.SetResult(); await Task.Delay(Timeout.Infinite, ct); return null; });
+        s.PanelOpened();
+        await started.Task;
+        s.PanelClosed();            // cancels the token: the read throws OperationCanceledException
+        await Task.Delay(50);
+        Assert.DoesNotContain("nudge", f.Calls);
+        Assert.Null(s.Target().Task);
+    }
+
+    [Fact]
+    public async Task AReadThatFailsAfterAwaitingIsSwallowedAndLeavesNoTask()
+    {
+        var f = new Feed();
+        var s = new PaperclipChatSession("ag1", "Nova", null, () => f, () => null,
+            readAssigned: async _ => { await Task.Yield(); throw new InvalidOperationException("boom"); });
+        s.PanelOpened();
+        await Task.Delay(50);
+        Assert.DoesNotContain("nudge", f.Calls);
+        Assert.Null(s.Target().Task);
+        Assert.Equal("Message Nova. This opens a new task.", s.ComposerHint);
+    }
 }
