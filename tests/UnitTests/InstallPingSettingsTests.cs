@@ -103,6 +103,19 @@ public class InstallPingSettingsTests : IDisposable
     }
 
     [Fact]
+    public void AHandEditedOptOutClearsTheIdAndStampOnLoad()
+    {
+        Write("{ \"installPingEnabled\": false, \"installId\": \"abc\", \"lastInstallPingUtc\": \"2026-11-24T00:00:00.0000000Z\" }");
+        Assert.False(OrbweaverSettings.InstallPingEnabled);
+        Assert.Null(OrbweaverSettings.InstallId);
+        Assert.Null(OrbweaverSettings.LastInstallPingUtc);
+
+        // And an opted-in file keeps what it has.
+        Write("{ \"installPingEnabled\": true, \"installId\": \"abc\" }");
+        Assert.Equal("abc", OrbweaverSettings.InstallId);
+    }
+
+    [Fact]
     public void TurningItOnKeepsAnExistingId()
     {
         Write("{}");

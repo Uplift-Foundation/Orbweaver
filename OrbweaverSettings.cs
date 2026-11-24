@@ -3340,6 +3340,14 @@ namespace Orbweaver
                         _unknownKeys[key] = node?.DeepClone();
                     }
 
+                    // CB-466: opted out means no ID kept, however the key got to false
+                    // (a hand edit as much as the toggle, which clears them itself).
+                    if (!model.InstallPingEnabled)
+                    {
+                        model.InstallId = null;
+                        model.LastInstallPingUtc = null;
+                    }
+
                     _model = model;
                 }
                 catch (Exception ex)

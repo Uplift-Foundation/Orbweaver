@@ -221,6 +221,7 @@ namespace Orbweaver
                 if (InstallPing.Accepted(status, body))
                 {
                     if (_settings.Enabled) _settings.LastPing = now;
+                    else _settings.InstallId = null; // opted out mid-flight: keep no ID either
                 }
                 else
                     _log($"install ping not accepted (HTTP {status}); will try again at the next check.");

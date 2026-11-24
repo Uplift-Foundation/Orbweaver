@@ -390,6 +390,7 @@ public class InstallPingTests
         await send;
 
         Assert.Null(s.LastPing);
+        Assert.Null(s.InstallId);
     }
 
     // ---- UpdateChecker's afterCheck hook -------------------------------------
