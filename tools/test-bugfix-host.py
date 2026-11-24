@@ -724,6 +724,67 @@ class ReleaseTickTests(unittest.TestCase):
         self.assertFalse(tick(pc=pc, state={})[1], "the first look seeds history without reading it")
 
 
+REAL_LOG = {"runId": "r1", "store": "local_file", "logRef": "x/r1.ndjson",
+            "content": '{"ts":"2026-11-24T10:00:00Z","stream":"stdout","chunk":"pushing\\n"}\n'
+                       '{"ts":"2026-11-24T10:00:01Z","stream":"stderr","chunk":"remote: error: GH0"}\n'
+                       '{"ts":"2026-11-24T10:00:01Z","stream":"stderr","chunk":"13: Repository rule violations found\\n"}\n'}
+
+
+class RunLogTests(unittest.TestCase):
+    def test_parses_the_measured_shape_and_joins_chunks(self):
+        text = warden.run_log_text(REAL_LOG)
+        self.assertIn("pushing", text)
+        self.assertTrue(warden.log_shows_refusal(text), "GH013 split across chunks must still be found")
+
+    def test_clean_log_has_no_refusal(self):
+        clean = dict(REAL_LOG, content='{"ts":"t","stream":"stdout","chunk":"all good"}')
+        self.assertFalse(warden.log_shows_refusal(warden.run_log_text(clean)))
+
+    def test_odd_lines_are_kept_not_dropped(self):
+        odd = dict(REAL_LOG, content='not json GH013 here\n{"chunk": 5}\n[1]')
+        self.assertTrue(warden.log_shows_refusal(warden.run_log_text(odd)))
+
+    def test_wrong_shapes_read_as_no_log(self):
+        for resp in (None, [], {}, {"content": None}, {"content": 5}):
+            self.assertEqual(warden.run_log_text(resp), "")
+
+    def _pc(self, error):
+        pc = warden.PaperclipHttp.__new__(warden.PaperclipHttp)
+
+        def call(method, path, body=None):
+            if error:
+                raise error
+            return REAL_LOG
+        pc.call = call
+        return pc
+
+    def test_404_for_a_run_that_never_started_is_no_log(self):
+        err = urllib.error.HTTPError("u", 404, "Heartbeat run not found", {}, None)
+        self.assertEqual(self._pc(err).run_log("r"), "")
+
+    def test_other_http_errors_propagate_and_200_parses(self):
+        with self.assertRaises(urllib.error.HTTPError):
+            self._pc(urllib.error.HTTPError("u", 500, "boom", {}, None)).run_log("r")
+        self.assertIn("GH013", self._pc(None).run_log("r"))
+
+    def test_tick_survives_an_unreadable_log_and_retries_it(self):
+        class Boom(FakePC):
+            def run_log(self, run_id):
+                raise OSError("500")
+        state = {}
+        pc = Boom(logs={"run-33333333": ""})
+        _, paused, logs = tick(pc=pc, state=state)
+        self.assertFalse(paused)
+        self.assertTrue(any("unreadable" in l for l in logs))
+        self.assertNotIn("run-33333333", state.get("scanned_runs", []), "retried next tick")
+
+    def test_a_run_with_no_log_is_scanned_once_without_pausing(self):
+        state = {}
+        pc = FakePC(logs={"run-44444444": ""})
+        self.assertFalse(tick(pc=pc, state=state)[1])
+        self.assertIn("run-44444444", state["scanned_runs"])
+
+
 class CheckHostTests(unittest.TestCase):
     GOOD = {"enableIsolatedWorkspaces": True, "enableWorktreeRunExecution": True,
             "enableIsolatedWorkspacesByDefault": False}

@@ -42,12 +42,25 @@ write to directly:
 
 | Trigger | Source | Notes |
 | --- | --- | --- |
-| Two releases in a row | Newly `cancelled` engineer issues in the fix company (description starts `Ticket: CB-NNN`), read from Paperclip each tick | The lead sets the engineer's issue to `cancelled` on release and `done` on merge (its instructions; the PATCH has not been run). A cancelled issue without that first line (a QA or helper child task) is not a release; each release is logged with its CB key. A newly cancelled row that has no `description` field is read in full with `GET /api/issues/<id>`; if even that has none, the warden logs `release signal unreadable` and pauses, rather than skipping it or counting it blindly. The first tick only records what is already cancelled. A merge resets the count. The spool's `released` is a second, separate counter; the two are not added. |
+| Two releases in a row | Newly `cancelled` engineer issues in the fix company (description starts `Ticket: CB-NNN`), read from Paperclip each tick | The lead sets the engineer's issue to `cancelled` on release and `done` on merge (its instructions; the PATCH has not been run). A cancelled issue without that first line (a QA or helper child task) is not a release; each release is logged with its CB key. Measured by QA: cancelled rows in the listing do carry `description`, so the next line is the rare path. A newly cancelled row that has no `description` field is read in full with `GET /api/issues/<id>`; if even that has none, the warden logs `release signal unreadable` and pauses, rather than skipping it or counting it blindly. The first tick only records what is already cancelled. A merge resets the count. The spool's `released` is a second, separate counter; the two are not added. |
 | Bot merge with no QA comment, red CI on a bot merge | GitHub | Known limit: the bot and the QA agent comment as the same GitHub identity, so "a QA comment" means any comment or review before the merge naming both rids. The warden cannot tell QA's comment from the lead's. |
 | Run cap, token ceiling | Paperclip runs and costs APIs | Off until set in `warden.json`. |
 | GitHub refused a push | The text `GH013` (GitHub's ruleset-refusal error) in a run's log, each run read once. The spool's `push_refused` is an extra signal. | **Not fully observable.** A refusal that never reaches a run log (a push the agent ran quietly, or the log truncated at 200 KB) is not seen. The idea of comparing a `bugfix/pc-*` branch's remote head against a "push attempt" in the issue was not built: Paperclip records no structured push attempt to compare against. |
 
 Only the Paperclip and GitHub reads above were checked against Paperclip's source; the
 instance-settings read was also run live (read-only) and matches `check_host.py`'s shape.
-The other Paperclip calls, the run-log response shape and the `?status=` issue filter were
-not run.
+QA has since read the issues listing and the run-log shape live (read-only); the cancel route, the pause PATCH, `blocked` and the secret calls have not been run.
+
+## Deletes
+
+Paperclip refuses `DELETE` on issues, agents and projects with 409 once they are referenced
+(measured by QA). The warden never deletes anything; it cancels runs, blocks issues and
+pauses the company, and that is all it writes besides the `GITHUB_TOKEN` secret.
+
+## Run logs
+
+`GET /api/heartbeat-runs/<id>/log` returns `{runId, store, logRef, content}`, `content` being
+NDJSON of `{ts, stream, chunk}`; the warden joins the chunks before searching for `GH013`. A
+run that never started (cancelled by a cap) answers 404 and is read as "no log", never as a
+fault. Any other error reading a log is logged and the run is retried next tick; it neither
+pauses nor stops the tick.

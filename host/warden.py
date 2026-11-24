@@ -186,6 +186,24 @@ def classify_release(row, fetch):
     return ("release", m.group(1)) if m else ("other", None)
 
 
+def run_log_text(resp):
+    """The text of a run log from GET /api/heartbeat-runs/<id>/log. Measured
+    shape: {runId, store, logRef, content}, `content` an NDJSON string of
+    {ts, stream, chunk}. Lines that do not parse are kept as raw text, so an
+    odd line cannot hide a refusal."""
+    if not isinstance(resp, dict) or not isinstance(resp.get("content"), str):
+        return ""
+    out = []
+    for line in resp["content"].splitlines():
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            out.append(line)
+            continue
+        out.append(str(rec.get("chunk", "")) if isinstance(rec, dict) else line)
+    return "".join(out)
+
+
 def log_shows_refusal(text):
     return REFUSAL_MARKER in (text or "")
 
@@ -270,8 +288,13 @@ class Warden:
         for run_id in self.pc.recent_run_ids():
             if run_id in scanned:
                 continue
+            try:
+                text = self.pc.run_log(run_id)
+            except Exception as e:  # not seen, not paused: retried next tick
+                self.log(f"run log for {run_id[:8]} unreadable: {type(e).__name__}")
+                continue
             scanned.add(run_id)
-            if log_shows_refusal(self.pc.run_log(run_id)):
+            if log_shows_refusal(text):
                 self.pause(f"run {run_id[:8]} log shows GitHub refusing a push (GH013)")
         self.state["scanned_runs"] = sorted(scanned)[-500:]
 
@@ -460,7 +483,15 @@ class PaperclipHttp:
         return [r["id"] for r in self._runs()][:30]
 
     def run_log(self, run_id):
-        return json.dumps(self.call("GET", f"/api/heartbeat-runs/{run_id}/log?limitBytes=200000"))
+        """Log text, or "" for a run that has none: a run that never started
+        (cancelled by a cap) answers 404 "Heartbeat run not found"."""
+        try:
+            resp = self.call("GET", f"/api/heartbeat-runs/{run_id}/log?limitBytes=200000")
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return ""
+            raise
+        return run_log_text(resp)
 
     def tokens_today(self):
         day = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT00:00:00Z")
