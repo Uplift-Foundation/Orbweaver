@@ -31,7 +31,9 @@ namespace Orbweaver
         string? Tool = null,
         // CB-442: a runtime permission request is answered on its run, with the turn it was raised in.
         string? RunId = null,
-        string? TurnId = null);
+        string? TurnId = null,
+        // CB-450: the seq of a runtime request's created event, where a confirming read of its run starts.
+        long? Seq = null);
 
     internal sealed record PaperclipAgent(
         string Id, string Name, string Role, string Title,

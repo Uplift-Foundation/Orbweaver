@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -138,7 +139,62 @@ namespace Orbweaver
                 if (now.IsOk && StatusOf(now.Body) is { } status && status != "pending")
                     outcome = new(PaperclipActionResult.AlreadyDecided, AlreadyDecidedWhy);
             }
+
+            // CB-450: a POST that timed out or never connected is not known to have failed, and under load Paperclip
+            // has been measured applying one that the app gave up on. Ask once before calling it unreachable.
+            if (outcome.Result == PaperclipActionResult.Unreachable && await VerifyAsync(need, approve, ct).ConfigureAwait(false) is { } known)
+                outcome = known;
             return Settle(outcome);
+        }
+
+        // How many pages of a run's events one confirming read follows. Each is a 5 s read at worst, and the
+        // request's own seq starts it, so one page is the normal case.
+        internal const int VerifyPages = 4;
+
+        // What Paperclip says of the item now, for an answer whose POST outcome is unknown: Done when it was
+        // decided the way this answer decided it, AlreadyDecided when it was decided some other way or the
+        // way cannot be told, null when it is still pending or this read failed too. Never throws for a
+        // transport or parse failure; one read per item (a run's events: a few pages at most), no retry.
+        private async Task<PaperclipOutcome?> VerifyAsync(PaperclipNeed need, bool approve, CancellationToken ct)
+        {
+            try
+            {
+                PaperclipOutcome Decided(bool sameWay) => sameWay ? new(PaperclipActionResult.Done) : new(PaperclipActionResult.AlreadyDecided, AlreadyDecidedWhy);
+                switch (need.Kind)
+                {
+                    case "approval":
+                    {
+                        var r = await _api.GetAsync($"/api/approvals/{Uri.EscapeDataString(need.Id)}", ct).ConfigureAwait(false);
+                        if (!r.IsOk || StatusOf(r.Body) is not { } status || status == "pending") return null;
+                        return Decided(status == (approve ? "approved" : "rejected"));
+                    }
+                    case "action":
+                    {
+                        // Only pending ones are listed, so an item that has left the list was decided, and which way is
+                        // not on it.
+                        var r = await _api.GetAsync($"/api/companies/{Uri.EscapeDataString(_companyId)}/tools/action-requests", ct).ConfigureAwait(false);
+                        if (!r.IsOk) return null;
+                        return PaperclipApi.ParseActionRequests(r.Body).Any(a => a.Id == need.Id) ? null : Decided(false);
+                    }
+                    case "runtime" when !string.IsNullOrEmpty(need.RunId):
+                    {
+                        var after = need.Seq is > 0 ? need.Seq.Value - 1 : 0;
+                        for (var page = 0; page < VerifyPages; page++)
+                        {
+                            var r = await _api.GetAsync($"/api/heartbeat-runs/{Uri.EscapeDataString(need.RunId)}/events?afterSeq={after}&limit=500", ct).ConfigureAwait(false);
+                            if (!r.IsOk) return null;
+                            if (PaperclipApi.RuntimeResolution(r.Body, need.Id) is { } res)
+                                return Decided(res.Type == "resolved" && res.Action == (approve ? "accept" : "decline"));
+                            var next = PaperclipApi.LastSeqOf(r.Body);
+                            if (next == null || next <= after || PaperclipApi.RowCountOf(r.Body) < 500) return null;
+                            after = next.Value;
+                        }
+                        return null;
+                    }
+                    default: return null;
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException) { return null; }
         }
 
         public Task<PaperclipOutcome> WakeAsync(string agentId, CancellationToken ct)

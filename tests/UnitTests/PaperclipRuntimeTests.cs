@@ -130,7 +130,8 @@ public class PaperclipRuntimeTests
         var o = await new PaperclipActions(api, "co", () => polled++).DecideAsync(Need(), true, default);
         Assert.Equal((result, why), (o.Result.ToString(), o.Why));
         Assert.Equal(code is 200 or 202 or 409 ? 1 : 0, polled);
-        Assert.DoesNotContain(api.Calls, c => c.StartsWith("GET"));
+        // CB-450: only an outcome of unknown effect is confirmed with a read; a 5xx is one, every other status here is not.
+        Assert.Equal(code == 500 ? 1 : 0, api.Calls.Count(c => c.StartsWith("GET")));
     }
 
     [Fact]
