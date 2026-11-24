@@ -25,6 +25,16 @@ public class PaperclipRuntimeTests
         Assert.True(open.Answerable);
     }
 
+    // The real run (scrubbed): created at seq 49, then resolved by a decline at seq 51, whose requestId is at prpEvent.payload.requestId.
+    [Fact]
+    public void The_real_run_is_pending_until_its_resolved_event_and_the_tool_joins_through_the_item_id()
+    {
+        var pending = Assert.Single(PaperclipApi.ParseRuntimeRequests("run-1", PaperclipFx.Read("native/runtime/events-real-pending.json")));
+        Assert.Equal(("request-1", "turn-1", "Create probe directory", "Bash", "permission_approval", true),
+            (pending.RequestId, pending.TurnId, pending.Prompt, pending.ToolName, pending.RequestKind, pending.Answerable));
+        Assert.Empty(PaperclipApi.ParseRuntimeRequests("run-1", PaperclipFx.Read("native/runtime/events-real-resolved.json")));
+    }
+
     [Fact]
     public void A_request_of_another_kind_or_without_a_deny_choice_shows_but_is_not_answerable()
     {

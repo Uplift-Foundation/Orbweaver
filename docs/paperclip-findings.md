@@ -191,12 +191,12 @@ Measured 2026-11-24 on the mini's Paperclip 2026.1117.0, one run of an agent in 
 - `GET /api/heartbeat-runs/{id}/events?limit=500` took 8 to 34 ms for 46 to 92 events.
 - A created event: top-level `eventType`, `seq`, and `payload.prpEvent = { turnId, itemId, payload: { request: { requestId, requestKind: "permission_approval", type: "permission", prompt, choices: [accept "Allow once", decline "Deny", cancel "Cancel"], details: { toolCallId } } } }`. The tool's name is on the `tool.execution.started` event sharing `prpEvent.itemId` (`payload.name`); the command text is not on it.
 - Resolve body: `{"resolution":{"action":"accept"|"decline"},"requestKind":"permission_approval","turnId":"<turnId>"}`.
+- The events endpoint returns a bare JSON array (107 events on that run). The `resolved` event (seq 51, after the created at seq 49) carries `requestId`, `requestKind`, `turnId`, `itemId` and `action` ("decline") directly under `prpEvent.payload`. The tool's started event shared the request's `itemId`. Scrubbed excerpts are in `tests/UnitTests/Fixtures/paperclip/native/runtime/events-real-*.json`.
 - Not every call prompts: a read-only shell command ran with no request; `mkdir` raised one.
 
 **Assumed (not measured)**
 
-- Where a `resolved` / `cancelled` / `expired` event carries its `requestId`: the parser looks under `prpEvent.payload.request`, `prpEvent.payload`, then `payload`. Only a `resolved` event was seen.
+- Whether `cancelled` and `expired` events carry their `requestId` where `resolved` does; the parser looks under `prpEvent.payload.request`, `prpEvent.payload`, then `payload`.
 - Polling cost over a LAN or on a long run; 403 as the answer to a key that was valid a minute ago (mapped to "reconnect", not seen).
-- Whether `cancelled` and `expired` events are shaped like `resolved`.
 
 **What Orbweaver does:** on the 4 s tick it reads the events of each `running` live run, keeps requests whose latest event is `created`, and shows one per agent as a `runtime` need ("Bash: Create probe directory"), answerable with "Allow once" / "Deny" in the flyout and on the phone (same option keys, different labels). Only `permission_approval` with accept and decline choices is answerable; anything else links to Paperclip. A failed events read keeps that run's last answer for one tick.
