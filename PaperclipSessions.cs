@@ -377,12 +377,20 @@ namespace Orbweaver
             // CB-442: per running run, what its events said last time and whether that reading is already a tick old.
             IReadOnlyDictionary<string, (IReadOnlyList<PaperclipApi.RawRuntimeRequest> Requests, bool Stale)>? RuntimeByRun = null,
             // The last message a per-run events fault logged, so one odd body is one line, not one per tick.
-            string? RuntimeFault = null)
+            string? RuntimeFault = null,
+            // CB-446: per running run, the folded state of its events so far, so a read asks only for what came after
+            // the last seq seen. Forgotten with the run.
+            IReadOnlyDictionary<string, PaperclipApi.RuntimeFold>? RuntimeFolds = null)
         {
             internal static readonly PollState Initial = new();
         }
 
         internal sealed record StepResult(PollState Next, TimeSpan Wait);
+
+        // CB-446: the events route's page, and a ceiling on pages per run per tick so one enormous run cannot hold a
+        // tick; what is not reached resumes from the last seq next tick.
+        internal const int EventPageSize = 500;
+        internal const int MaxEventPages = 200;
 
         private static string CompanyPath(PollState st, string tail) => $"/api/companies/{st.CompanyId}/{tail}";
 
@@ -515,35 +523,56 @@ namespace Orbweaver
             // are read on the slow tick. A failed read keeps that run's last answer for one tick; a second miss drops it.
             var runtime = st.RuntimeByRun;
             var fault = st.RuntimeFault;
+            var folds = st.RuntimeFolds;
             if (slow && firstFailure == null && live != null)
             {
                 var seen = new Dictionary<string, (IReadOnlyList<PaperclipApi.RawRuntimeRequest>, bool)>();
+                var nextFolds = new Dictionary<string, PaperclipApi.RuntimeFold>();
                 foreach (var run in live.Where(x => x.Status == "running").DistinctBy(x => x.Id))
                 {
                     // Read and parse are one unit: a run whose body throws is treated as a failed read for that run
-                    // only, so one odd body never takes the company's poll down with it.
+                    // only, so one odd body never takes the company's poll down with it. The pages fold into a copy
+                    // of the run's state, which is committed only when every page read.
                     IReadOnlyList<PaperclipApi.RawRuntimeRequest>? read = null;
+                    PaperclipApi.RuntimeFold? work = null;
                     try
                     {
-                        var ev = await api.GetAsync($"/api/heartbeat-runs/{Uri.EscapeDataString(run.Id)}/events?limit=500", ct).ConfigureAwait(false);
-                        if (ev.IsOk)
-                            read = PaperclipApi.ParseRuntimeRequests(run.Id, ev.Body)
-                                .Select(r => r with { AgentId = run.AgentId, IssueId = run.IssueId }).ToList();
+                        PaperclipApi.RuntimeFold? held = null;
+                        st.RuntimeFolds?.TryGetValue(run.Id, out held);
+                        // A prior state that never saw a seq cannot be paged from, so it is started afresh.
+                        work = held is { LastSeq: not null } ? held.Clone() : new PaperclipApi.RuntimeFold();
+                        var ok = true;
+                        for (var page = 0; page < MaxEventPages; page++)
+                        {
+                            var before = work.LastSeq;
+                            var query = before is { } s0 ? $"?afterSeq={s0}&limit={EventPageSize}" : $"?limit={EventPageSize}";
+                            var ev = await api.GetAsync($"/api/heartbeat-runs/{Uri.EscapeDataString(run.Id)}/events{query}", ct).ConfigureAwait(false);
+                            if (!ev.IsOk) { ok = false; break; }
+                            var rows = work.Apply(run.Id, ev.Body);
+                            // A short page is the end; so is a page that moved nothing (no seq to page on).
+                            if (rows < EventPageSize || work.LastSeq == before) break;
+                        }
+                        if (ok)
+                            read = work.Pending(run.Id).Select(r => r with { AgentId = run.AgentId, IssueId = run.IssueId }).ToList();
                     }
                     catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
                     {
                         if (StepFailureLine(ex, ref fault, "runtime events read failed") is { } line) log?.Invoke(line);
                     }
-                    if (read != null) seen[run.Id] = (read, false);
+                    if (read != null) { seen[run.Id] = (read, false); nextFolds[run.Id] = work!; }
                     else if (runtime != null && runtime.TryGetValue(run.Id, out var prior) && !prior.Stale)
+                    {
                         seen[run.Id] = (prior.Requests, true);
+                        if (st.RuntimeFolds != null && st.RuntimeFolds.TryGetValue(run.Id, out var keep)) nextFolds[run.Id] = keep;
+                    }
                 }
+                folds = nextFolds;
                 runtime = seen;
             }
 
             var stamped = st with
             {
-                RuntimeByRun = runtime, RuntimeFault = fault,
+                RuntimeByRun = runtime, RuntimeFault = fault, RuntimeFolds = folds,
                 LastFast = fast ? now : st.LastFast,
                 LastSlow = slow ? now : st.LastSlow,
                 Agents = agents, LiveRuns = live, Runs = runs, Approvals = approvals,
