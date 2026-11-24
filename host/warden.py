@@ -210,8 +210,10 @@ def log_shows_refusal(text):
 
 
 def runs_problem(count, cap):
-    """Daily run brake. Paperclip's heartbeat.maxDailyRuns sits in the timer
-    policy and does not bound assignment wakes (phase 0), so the warden counts."""
+    """Daily run brake. Paperclip's heartbeat.maxDailyRuns does gate assignment
+    wakes (measured in phase 0), but it defers them rather than dropping them:
+    they all fire when the cap resets at UTC midnight. So the warden counts runs
+    itself and pauses the company, which is what stops that backlog burst."""
     if cap is None:
         return None
     return f"{count} runs started today, cap {cap}" if count > cap else None
