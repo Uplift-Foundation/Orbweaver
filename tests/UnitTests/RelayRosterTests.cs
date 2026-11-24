@@ -313,6 +313,7 @@ public class RosterFixtureTests
     [InlineData("windows_roster")]
     [InlineData("empty_roster")]
     [InlineData("paperclip_roster")]
+    [InlineData("paperclip_roster_personas")]
     public void Each_roster_is_exactly_what_RelayRoster_writes(string name)
     {
         var r = F.GetProperty(name);

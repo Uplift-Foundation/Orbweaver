@@ -7,7 +7,7 @@ namespace Orbweaver.Tests;
 // after that phone said paperclip_personas true, and flipping the key re-sends a whole roster in either direction.
 public partial class RelayLinkTests
 {
-    private static readonly RelayPersona AtlasPersona = new("Atlas", "AT", null, "c1334a1a8c0660d2", new string('a', 64));
+    private static readonly RelayPersona AtlasPersona = new("Atlas", "At", null, "c1334a1a8c0660d2", new string('a', 64));
 
     private static RelaySession AtlasRow() =>
         new("paperclip:3f2a9c4e-6b1d-4e87-a5c3-9d0e7b2f1a64", "paperclip", "Atlas", "", "idle", null, AtlasPersona);
@@ -33,7 +33,7 @@ public partial class RelayLinkTests
         var withKey = RosterIn(phone, onFrames);
         Assert.NotNull(withKey);
         var persona = RowOf(withKey!.Value, AtlasRow().SessionId).GetProperty("persona");
-        Assert.Equal(("Atlas", "AT", "c1334a1a8c0660d2", new string('a', 64)),
+        Assert.Equal(("Atlas", "At", "c1334a1a8c0660d2", new string('a', 64)),
             (persona.GetProperty("name").GetString(), persona.GetProperty("initials").GetString(),
              persona.GetProperty("id").GetString(), persona.GetProperty("image_hash").GetString()));
         Assert.False(persona.TryGetProperty("color", out _));

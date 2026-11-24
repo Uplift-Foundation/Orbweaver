@@ -9,7 +9,7 @@ namespace Orbweaver.Tests;
 public class RelayPaperclipPersonaTests : IDisposable
 {
     private const string Agent = "3f2a9c4e-6b1d-4e87-a5c3-9d0e7b2f1a64";
-    private static readonly RelayPersona Atlas = new("Atlas", "AT", null, "c1334a1a8c0660d2", new string('a', 64));
+    private static readonly RelayPersona Atlas = new("Atlas", "At", null, "c1334a1a8c0660d2", new string('a', 64));
 
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "cb447-persona-" + Guid.NewGuid());
     public RelayPaperclipPersonaTests() => Directory.CreateDirectory(_dir);
@@ -35,7 +35,7 @@ public class RelayPaperclipPersonaTests : IDisposable
         string? Offer(string path) { asked.Add(path); return new string('b', 64); }
 
         var with = RelayPersonaRows.ForPaperclip("paperclip:" + Agent, "Atlas", "/cache/atlas.png", Offer)!;
-        Assert.Equal(("Atlas", "AT", null, "c1334a1a8c0660d2", new string('b', 64)), (with.Name, with.Initials, with.Color, with.Id, with.ImageHash));
+        Assert.Equal(("Atlas", "At", null, "c1334a1a8c0660d2", new string('b', 64)), (with.Name, with.Initials, with.Color, with.Id, with.ImageHash));
         Assert.Equal(["/cache/atlas.png"], asked);
 
         // No cached picture: initials, and the store is not asked. A picture the store cannot offer yet: the same.

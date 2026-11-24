@@ -201,7 +201,9 @@ namespace Orbweaver
             if (string.IsNullOrWhiteSpace(name)) return null;
             var agentId = sessionId.StartsWith("paperclip:", StringComparison.Ordinal) ? sessionId["paperclip:".Length..] : sessionId;
             var hash = string.IsNullOrEmpty(pictureFile) ? null : offer(pictureFile);
-            return new RelayPersona(name, OrbGlyph.Initials(name), null, PersonaFrames.PaperclipPersonaId(agentId), hash);
+            // The orb's own two letters ("At" for Atlas), which is what frames-v18 says: not OrbGlyph.Initials, whose
+            // capitals are the persona header's and would read "AT".
+            return new RelayPersona(name, OrbGlyph.For(name, twoLetter: true), null, PersonaFrames.PaperclipPersonaId(agentId), hash);
         }
 
         // The personas frame's rows: every persona a live session wears, once,
