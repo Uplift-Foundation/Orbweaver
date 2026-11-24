@@ -813,8 +813,20 @@ class RunLogTests(unittest.TestCase):
         self.assertFalse(warden.log_shows_refusal(warden.run_log_text(clean)))
 
     def test_odd_lines_are_kept_not_dropped(self):
-        odd = dict(REAL_LOG, content='not json GH013 here\n{"chunk": 5}\n[1]')
+        odd = dict(REAL_LOG, content='not json remote: error: GH013: Repository rule violations found\n{"chunk": 5}\n[1]')
         self.assertTrue(warden.log_shows_refusal(warden.run_log_text(odd)))
+
+    def test_the_push_summary_form_is_a_refusal(self):
+        self.assertTrue(warden.log_shows_refusal(
+            " ! [remote rejected] HEAD -> feature/x (push declined due to repository rule violations)"))
+
+    def test_the_bare_code_in_instructions_or_quoted_text_is_not_a_refusal(self):
+        # The two texts that paused the org on 2026-11-24 with no push refused (CB-462).
+        lead_instructions = ("## Stop and report instead if\nThe fix would need a real machine, the "
+                             "mobile repo, or a change under `.github/workflows/`; or a push is refused (GH013).")
+        probe_description = 'git push "$R" x 2>&1 | grep -o "GH013[^.]*" | head -1'
+        for text in (lead_instructions, probe_description, "GH013", "see GH013 in the skill"):
+            self.assertFalse(warden.log_shows_refusal(text), text)
 
     def test_wrong_shapes_read_as_no_log(self):
         for resp in (None, [], {}, {"content": None}, {"content": 5}):

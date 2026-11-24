@@ -104,6 +104,20 @@ another round: the next run gets a fresh token. A push the rulesets refuse
 (GH013) means you left your lane, which is `bugfix/pc-*` branches and PRs into
 `develop`. Stop there, and say so in your answer.
 
+## Long commands
+
+A shell command gets ten minutes; a longer one is moved to the background, and
+a run that ends its turn without reporting is recorded as failed ("no semantic
+result"). This happened on 2026-11-24. So:
+
+- Keep every command inside ten minutes. Run tests per class with the filter,
+  not a whole suite. Split a long build-and-test into separate commands.
+- Never end your turn while waiting on a background job. Either wait in the
+  foreground, or report progress and finish the task, saying what is still
+  running. The next wake picks it up.
+- The build lock is yours only while your command runs. Take it and release it
+  in the same command (`mkdir`, `trap 'rmdir …' EXIT`).
+
 ## Branch, commits, PR
 
 - Branch `bugfix/pc-<change>`, from `origin/develop`. Named for the change, not
