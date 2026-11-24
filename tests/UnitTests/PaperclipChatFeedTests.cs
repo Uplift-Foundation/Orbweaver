@@ -12,11 +12,11 @@ public class PaperclipChatFeedTests
     private const string Cm = "[{\"id\":\"c1\",\"body\":\"hi\",\"authorUserId\":\"u\",\"createdAt\":\"2026-11-24T03:00:00Z\"}]";
     private const string Ev1 = "[{\"seq\":3,\"eventType\":\"run.result.proposed\",\"createdAt\":\"2026-11-24T03:00:00Z\",\"payload\":{\"prpEvent\":{\"itemId\":\"i\",\"payload\":{\"summary\":\"done\"}}}}]";
 
-    private static (PaperclipChatFeed Feed, FakePaperclip Api, List<ChatSnapshot> Got, Action<ChatTarget> Set) Rig(ChatTarget first)
+    private static (PaperclipChatFeed Feed, FakePaperclip Api, List<ChatSnapshot> Got, Action<ChatTarget> Set) Rig(ChatTarget first, TimeSpan? commentsEvery = null)
     {
         var api = new FakePaperclip(); var got = new List<ChatSnapshot>();
         var target = first;
-        var feed = new PaperclipChatFeed(api, "co", () => target);
+        var feed = new PaperclipChatFeed(api, "co", () => target, commentsEvery: commentsEvery);
         feed.Updated += got.Add;
         return (feed, api, got, t => target = t);
     }
@@ -246,27 +246,97 @@ public class PaperclipChatFeedTests
         Assert.DoesNotContain(api.Calls, c => c.EndsWith("/api/issues/is-1", StringComparison.Ordinal));
     }
 
+    private static int IssueReads(FakePaperclip api, string id) =>
+        api.Calls.Count(c => c.EndsWith("/api/issues/" + id, StringComparison.Ordinal));
+
+    // A failed, unreadable or other-issue answer is tried again, at the comments cadence (zero here, so each tick).
     [Fact]
-    public async Task A_failed_or_unreadable_issue_read_leaves_the_id_only_task_and_is_tried_again_next_tick()
+    public async Task A_failed_or_unreadable_issue_read_leaves_the_id_only_task_and_is_tried_again_at_the_comments_cadence()
     {
-        var (feed, api, got, _) = Rig(new ChatTarget("a", IdOnly, null, false));
+        var (feed, api, got, _) = Rig(new ChatTarget("a", IdOnly, null, false), TimeSpan.Zero);
         api.Gets["/api/issues/is-9/comments"] = FakePaperclip.Ok("[]");
         api.Gets["/api/issues/is-9"] = FakePaperclip.Status(PaperclipHttpKind.ServerError, 500);
         await feed.TickAsync(true, default);
         Assert.Equal("", Assert.Single(got).Task!.Title);
 
-        api.Gets["/api/issues/is-9"] = FakePaperclip.Ok("not json");                 // unreadable
+        api.Gets["/api/issues/is-9"] = FakePaperclip.Ok("not json");                                          // unreadable
         await feed.TickAsync(true, default);
         api.Gets["/api/issues/is-9"] = FakePaperclip.Ok("{\"id\":\"someone-else\",\"title\":\"x\"}");   // another issue's body
         await feed.TickAsync(true, default);
-        api.Gets["/api/issues/is-9"] = FakePaperclip.Ok("{\"id\":\"is-9\"}");        // no title and no identifier: nothing to show
-        await feed.TickAsync(true, default);
         Assert.Single(got);
+        Assert.Equal(3, IssueReads(api, "is-9"));
 
-        api.Gets["/api/issues/is-9"] = FakePaperclip.Ok(Issue9);                      // Paperclip answers: the line is filled
+        api.Gets["/api/issues/is-9"] = FakePaperclip.Ok(Issue9);                                             // Paperclip answers
         await feed.TickAsync(true, default);
         Assert.Equal("ORB-121", got[^1].Task!.Identifier);
-        Assert.Equal(5, api.Calls.Count(c => c.EndsWith("/api/issues/is-9", StringComparison.Ordinal)));   // one read per tick until it answered
+    }
+
+    // QA CB-453 finding 2: a read that keeps failing is not made every tick.
+    [Fact]
+    public async Task A_failing_issue_read_is_not_repeated_inside_the_comments_cadence_and_a_404_or_an_empty_answer_is_read_once()
+    {
+        var (feed, api, _, _) = Rig(new ChatTarget("a", IdOnly, null, false));                               // the default 4 s cadence
+        api.Gets["/api/issues/is-9/comments"] = FakePaperclip.Ok("[]");
+        api.Gets["/api/issues/is-9"] = FakePaperclip.Status(PaperclipHttpKind.ServerError, 500);
+        for (var i = 0; i < 4; i++) await feed.TickAsync(true, default);
+        Assert.Equal(1, IssueReads(api, "is-9"));
+
+        var (gone, api2, _, _) = Rig(new ChatTarget("a", IdOnly, null, false), TimeSpan.Zero);
+        api2.Gets["/api/issues/is-9/comments"] = FakePaperclip.Ok("[]");
+        api2.Gets["/api/issues/is-9"] = FakePaperclip.Status(PaperclipHttpKind.Other, 404);                  // the task was deleted
+        for (var i = 0; i < 4; i++) await gone.TickAsync(true, default);
+        Assert.Equal(1, IssueReads(api2, "is-9"));
+
+        var (empty, api3, _, _) = Rig(new ChatTarget("a", IdOnly, null, false), TimeSpan.Zero);
+        api3.Gets["/api/issues/is-9/comments"] = FakePaperclip.Ok("[]");
+        api3.Gets["/api/issues/is-9"] = FakePaperclip.Ok("{\"id\":\"is-9\"}");                            // answered, with nothing to show
+        for (var i = 0; i < 4; i++) await empty.TickAsync(true, default);
+        Assert.Equal(1, IssueReads(api3, "is-9"));
+    }
+
+    // QA CB-453 finding 1: the status moves with the run (a done task a message reopens, one that finishes), so the
+    // fields are read again when the target's run or its liveness changes, and a failure then keeps the last good line.
+    [Fact]
+    public async Task The_status_in_the_line_follows_the_task_as_its_run_changes_and_a_failed_refresh_keeps_the_last_good_one()
+    {
+        var (feed, api, got, set) = Rig(new ChatTarget("a", IdOnly, null, false), TimeSpan.Zero);
+        api.Gets["/api/issues/is-9/comments"] = FakePaperclip.Ok("[]");
+        api.Gets["/api/heartbeat-runs/run-1/events?afterSeq=0&limit=500"] = FakePaperclip.Ok("[]");
+        api.Gets["/api/issues/is-9"] = FakePaperclip.Ok(Issue9.Replace("done", "in_progress"));
+        await feed.TickAsync(true, default);
+        Assert.Equal("in_progress", got[^1].Task!.Status);
+
+        await feed.TickAsync(true, default);                                                                // nothing moved: no new read
+        Assert.Equal(1, IssueReads(api, "is-9"));
+
+        set(new ChatTarget("a", IdOnly, "run-1", true));                                                    // a run starts
+        api.Gets["/api/issues/is-9"] = FakePaperclip.Ok(Issue9.Replace("done", "in_review"));
+        await feed.TickAsync(true, default);
+        Assert.Equal("in_review", got[^1].Task!.Status);
+
+        set(new ChatTarget("a", IdOnly, "run-1", false));                                                   // it ends, and the task is done
+        api.Gets["/api/issues/is-9"] = FakePaperclip.Ok(Issue9);
+        await feed.TickAsync(true, default);
+        Assert.Equal("ORB-121 CB-443 live proof fixture · done", PaperclipChat.TaskLine(got[^1].Task!));
+
+        set(new ChatTarget("a", IdOnly, "run-2", true));                                                    // a message reopens it; the read fails
+        api.Gets["/api/issues/is-9"] = FakePaperclip.Status(PaperclipHttpKind.ServerError, 500);
+        await feed.TickAsync(true, default);
+        Assert.Equal("done", got[^1].Task!.Status);                                                          // the last good one stands
+    }
+
+    // QA CB-453 finding 3: a read in flight when the panel closed keeps nothing.
+    [Fact]
+    public async Task An_issue_read_that_finished_after_the_panel_closed_is_not_kept()
+    {
+        var (feed, api, _, _) = Rig(new ChatTarget("a", IdOnly, null, false));
+        api.Gets["/api/issues/is-9/comments"] = FakePaperclip.Ok("[]");
+        api.Gets["/api/issues/is-9"] = FakePaperclip.Ok(Issue9);
+        using var closed = new CancellationTokenSource();
+        closed.Cancel();
+        await feed.TickAsync(true, closed.Token);                                                           // a tick that outlived its panel
+        await feed.TickAsync(true, default);
+        Assert.Equal(2, IssueReads(api, "is-9"));                                                           // so the next open reads it afresh
     }
 
     [Fact]

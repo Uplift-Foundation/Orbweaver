@@ -127,7 +127,7 @@ namespace Orbweaver
             var task = t.Task;
             if (task is { } named && string.IsNullOrWhiteSpace(named.Title))
             {
-                var (filled, refused) = await FilledAsync(named, ct).ConfigureAwait(false);
+                var (filled, refused) = await FilledAsync(named, t.RunId, t.RunLive, ct).ConfigureAwait(false);
                 task = filled;
                 if (refused && !reconnect) { reconnect = true; changed = true; }
             }
@@ -189,20 +189,45 @@ namespace Orbweaver
             if (raise != null && !ct.IsCancellationRequested) Updated?.Invoke(raise);
         }
 
-        private readonly Dictionary<string, PaperclipChat.TaskRef> _details = new();
+        // What was read of one task, and when to look again. Final: nothing more to learn (a 404, or an answer with no
+        // title), so no further reads while the panel stays open. RetryAt: a read that failed, tried again at the
+        // comments cadence, not every tick. RunId and Live: the run state the fields were read at, because the status
+        // moves with the run (a done task a message reopens, one that finishes) while the title and identifier do not.
+        private sealed record Detail(PaperclipChat.TaskRef Task, string? RunId, bool Live, bool Final, DateTime? RetryAt);
+
+        private readonly Dictionary<string, Detail> _details = new();
         private PaperclipChat.TaskRef? _shownTask;
 
-        // One issue's own fields (`GET /api/issues/{id}`), cached per task. A failed or unreadable read keeps the
-        // id-only task and is tried again next tick (not cached); a 401 or 403 says reconnect.
-        private async Task<(PaperclipChat.TaskRef Task, bool Refused)> FilledAsync(PaperclipChat.TaskRef named, CancellationToken ct)
+        // One issue's own fields (`GET /api/issues/{id}`), kept per task and read again when the target's run or its
+        // liveness changes, so the line's status follows the task. A 401 or 403 says reconnect.
+        private async Task<(PaperclipChat.TaskRef Task, bool Refused)> FilledAsync(
+            PaperclipChat.TaskRef named, string? runId, bool live, CancellationToken ct)
         {
-            lock (_gate) if (_details.TryGetValue(named.Id, out var known)) return (known, false);
+            Detail? known;
+            lock (_gate) _details.TryGetValue(named.Id, out known);
+            if (known is not null)
+            {
+                if (known.Final) return (known.Task, false);
+                if (known.RetryAt is { } at && DateTime.UtcNow < at) return (known.Task, false);
+                if (known.RetryAt is null && known.RunId == runId && known.Live == live) return (known.Task, false);
+            }
+
             var res = await _api.GetAsync($"/api/issues/{Uri.EscapeDataString(named.Id)}", ct).ConfigureAwait(false);
-            if (Refused(res)) return (named, true);
-            if (!res.IsOk || PaperclipChat.ParseTask(res.Body) is not { } read || read.Id != named.Id
-                || (read.Title.Length == 0 && read.Identifier.Length == 0)) return (named, false);
-            lock (_gate) _details[named.Id] = read;
-            return (read, false);
+            if (Refused(res)) return (known?.Task ?? named, true);
+
+            Detail next;
+            if (res.StatusCode == 404)
+                next = new Detail(known?.Task ?? named, runId, live, Final: true, null);
+            else if (!res.IsOk || PaperclipChat.ParseTask(res.Body) is not { } read || read.Id != named.Id)
+                next = new Detail(known?.Task ?? named, runId, live, Final: false, DateTime.UtcNow + _commentsEvery);
+            else if (read.Title.Length == 0 && read.Identifier.Length == 0)
+                next = new Detail(known?.Task ?? named, runId, live, Final: true, null);
+            else
+                next = new Detail(read, runId, live, Final: false, null);
+
+            // Like every other write in a tick: nothing is kept by a read that was in flight when the panel closed.
+            lock (_gate) if (!ct.IsCancellationRequested) _details[named.Id] = next;
+            return (next.Task, false);
         }
 
         // The rows of issues?assigneeAgentId=<agent>, for the task rung that is read once on open (plan 2.2).
