@@ -2728,7 +2728,7 @@ namespace Orbweaver
             // Dictated at a gateway orb with no panel up: open one and put the
             // words in it. Still unsent — the panel is what makes "review before
             // Enter" possible for a session that has no terminal to review in.
-            if (_lastStatus?.Source == SessionSource.OpenClaw)
+            if (ClickRouting.DictationOpensPanel(_lastStatus))
             {
                 var chat = SessionManager.Instance?.RemoteChatFor(SessionId);
                 if (chat is not null)

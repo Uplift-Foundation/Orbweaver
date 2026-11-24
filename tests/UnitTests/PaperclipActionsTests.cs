@@ -216,6 +216,8 @@ public class PaperclipActionsTests
         public Task<PaperclipOutcome> WakeAsync(string agentId, CancellationToken ct) => Task.FromResult(default(PaperclipOutcome));
         public Task<PaperclipOutcome> PauseAsync(string agentId, CancellationToken ct) => Task.FromResult(default(PaperclipOutcome));
         public Task<PaperclipOutcome> ResumeAsync(string agentId, CancellationToken ct) => Task.FromResult(default(PaperclipOutcome));
+        public Task<PaperclipSent> CommentAsync(string issueId, string text, CancellationToken ct) => throw new NotSupportedException();
+        public Task<PaperclipSent> OpenTaskAsync(string agentId, string text, CancellationToken ct) => throw new NotSupportedException();
     }
 
     // ---- tool actions, from the captured fixtures (plan 13.1 row 12) ------------------

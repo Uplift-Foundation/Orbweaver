@@ -143,9 +143,53 @@ namespace Orbweaver
         // key or an unreachable host at the first poll after a launch dims the company
         // instead of drawing nothing. Once a live snapshot exists the remembered ones
         // are never used again.
+        // The poll's own live runs, newest finished runs and blocked tasks, as the chat panel
+        // needs them to choose which task's thread to show (plan 2.2, rungs 1 to 3). A snapshot
+        // replaced whole by PublishStep; nothing reads it back out of the poll's state.
+        internal sealed record ChatView(
+            IReadOnlyList<PaperclipApi.RawLiveRun> Live,
+            IReadOnlyList<PaperclipApi.RawRun> Runs,
+            IReadOnlyList<PaperclipApi.RawIssue> Blocked);
+
+        private static volatile ChatView _chatView = new(
+            Array.Empty<PaperclipApi.RawLiveRun>(), Array.Empty<PaperclipApi.RawRun>(), Array.Empty<PaperclipApi.RawIssue>());
+
+        internal static ChatView CurrentChatView => _chatView;
+
+        internal static void SetChatViewForTests(ChatView view) => _chatView = view;
+
+        private static readonly object ChatGate = new();
+        private static PaperclipHttp? _chatHttp;
+        private static string _chatKey = "", _chatUrl = "", _chatCompany = "";
+
+        // The client the open chat panel's feed reads with, and the company it reads in. One per
+        // config, rebuilt when the key, address or company moves; null while Paperclip is off.
+        // A client of its own rather than the actions' one: the feed reads every few seconds and
+        // the actions' client logs every success, which would be a line per read.
+        internal static (IPaperclipApi Api, string CompanyId)? LiveChatApi()
+        {
+            var cfg = ConfigSource();
+            if (!cfg.Enabled || string.IsNullOrEmpty(cfg.CompanyId)) return null;
+            lock (ChatGate)
+            {
+                if (_chatHttp == null || cfg.Key != _chatKey || cfg.BaseUrl != _chatUrl || cfg.CompanyId != _chatCompany)
+                {
+                    _chatHttp?.Dispose();
+                    _chatHttp = new PaperclipHttp(cfg.BaseUrl, cfg.Key, log: PaperclipHttp.DefaultLog, logSuccess: false);
+                    _chatKey = cfg.Key; _chatUrl = cfg.BaseUrl; _chatCompany = cfg.CompanyId;
+                }
+                return (_chatHttp, cfg.CompanyId);
+            }
+        }
+
         internal static void PublishStep(PollState st, PaperclipConfig cfg,
             IReadOnlyList<PaperclipAgent> remembered, IRosterStore store, DateTime now)
         {
+            // CB-443: what an open chat panel reads to pick its task, read-only and replaced whole.
+            _chatView = new ChatView(
+                st.LiveRuns ?? Array.Empty<PaperclipApi.RawLiveRun>(),
+                st.Runs ?? Array.Empty<PaperclipApi.RawRun>(),
+                st.Blocked ?? Array.Empty<PaperclipApi.RawIssue>());
             if (st.Published is { } live)
             {
                 Publish(live, st.Link, st.Status);

@@ -43,6 +43,8 @@ public class PaperclipActTests : IDisposable
         public Task<PaperclipOutcome> WakeAsync(string a, CancellationToken ct) => Do("wake " + a);
         public Task<PaperclipOutcome> PauseAsync(string a, CancellationToken ct) => Do("pause " + a);
         public Task<PaperclipOutcome> ResumeAsync(string a, CancellationToken ct) => Do("resume " + a);
+        public async Task<PaperclipSent> CommentAsync(string i, string t, CancellationToken ct) => new(await Do("comment " + i));
+        public async Task<PaperclipSent> OpenTaskAsync(string a, string t, CancellationToken ct) => new(await Do("open " + a));
     }
 
     private static readonly PaperclipNeed Hire = new("approval", "ap1", "Hire: QA engineer", "http://p/CB/approvals/ap1");

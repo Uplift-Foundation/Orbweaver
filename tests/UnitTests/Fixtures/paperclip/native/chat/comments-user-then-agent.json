@@ -1,0 +1,38 @@
+[
+ {
+  "id": "comment-1",
+  "issueId": "issue-1",
+  "authorAgentId": "agent-1",
+  "authorUserId": null,
+  "authorType": "agent",
+  "createdByRunId": "run-1",
+  "body": "17 times 3 is 51.",
+  "deletedAt": null,
+  "createdAt": "2026-11-24T03:49:26.513Z",
+  "updatedAt": "2026-11-24T03:49:26.513Z"
+ },
+ {
+  "id": "comment-2",
+  "issueId": "issue-1",
+  "authorAgentId": null,
+  "authorUserId": "user-1",
+  "authorType": "user",
+  "createdByRunId": null,
+  "body": "One more thing: what is 17 times 3? Answer in one line.",
+  "deletedAt": null,
+  "createdAt": "2026-11-24T03:49:15.417Z",
+  "updatedAt": "2026-11-24T03:49:15.417Z"
+ },
+ {
+  "id": "comment-3",
+  "issueId": "issue-1",
+  "authorAgentId": "agent-1",
+  "authorUserId": null,
+  "authorType": "agent",
+  "createdByRunId": "run-2",
+  "body": "Hello! Ines here, happy to help whenever you've got a bug for me.",
+  "deletedAt": null,
+  "createdAt": "2026-11-24T03:49:15.261Z",
+  "updatedAt": "2026-11-24T03:49:15.261Z"
+ }
+]

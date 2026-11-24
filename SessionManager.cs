@@ -3544,6 +3544,7 @@ namespace Orbweaver
                 // transcript that will never grow again, and a FileSystemWatcher
                 // per dead session is a handle leak measured in days.
                 if (_chats.Remove(id, out var chat)) chat.Dispose();
+                if (_paperclipChats.Remove(id, out var gonePaperclip)) gonePaperclip.PanelClosed();
 
                 // A cloud panel is kept (see _cloudChats), but it hears that its
                 // row has gone — the orb can go for reasons of its own, so the
@@ -3885,9 +3886,12 @@ namespace Orbweaver
                 return OpenClawSessions.RoomChatFor(sessionId, status.Title, members);
             }
 
-            // A Paperclip agent has no conversation to open: talking to one is
-            // commenting on a task, which is Paperclip's page, not a chat panel.
-            if (status.Source == SessionSource.Paperclip) return null;
+            // CB-443: a Paperclip agent's panel is its current task's thread, and a message
+            // is a comment on that task. Cached like a cloud panel (the thread and the
+            // "Waking…" state belong to the session, not to one opening of the window),
+            // and never null: an orb that answered a click with nothing would fall through
+            // to TerminalFocuser and hunt a pane for an agent that has no terminal.
+            if (status.Source == SessionSource.Paperclip) return PaperclipChatFor(sessionId, status);
 
             if (status.Source == SessionSource.OpenClaw)
                 return OpenClawSessions.ChatFor(sessionId, status.Title);
@@ -4025,6 +4029,38 @@ namespace Orbweaver
         // Cloud chat sessions, kept for the same reason the remote ones above
         // are: the transcript came over the network and there is nothing on this
         // disk to read it back from.
+        private readonly Dictionary<string, PaperclipChatSession> _paperclipChats = new();
+
+        // The live feed for one agent's panel, replaced by a fake in the UI suite. It is handed the
+        // session's own task chooser, which is what the feed reads on every tick.
+        internal static Func<Func<ChatTarget>, IPaperclipChatFeed> PaperclipFeedFactory { get; set; } = target =>
+        {
+            var live = PaperclipSessions.LiveChatApi();
+            return live is { } l
+                ? new LiveChatFeed(new PaperclipChatFeed(l.Api, l.CompanyId, target))
+                : new IdleChatFeed();
+        };
+
+        internal IRemoteChatSession PaperclipChatFor(string sessionId, SessionStatus status)
+        {
+            if (_paperclipChats.TryGetValue(sessionId, out var existing)) return existing;
+            var agentId = sessionId.StartsWith(PaperclipScan.KeyPrefix, StringComparison.Ordinal)
+                ? sessionId[PaperclipScan.KeyPrefix.Length..] : sessionId;
+            PaperclipChatSession? chat = null;
+            chat = new PaperclipChatSession(
+                agentId, status.Title, status.Url, () => PaperclipFeedFactory(() => chat!.Target()),
+                () => PaperclipSessions.Actions,
+                readAssigned: async ct =>
+                {
+                    var live = PaperclipSessions.LiveChatApi();
+                    return live is { } l
+                        ? await PaperclipChatFeed.ReadAssignedAsync(l.Api, l.CompanyId, agentId, ct).ConfigureAwait(false)
+                        : null;
+                });
+            _paperclipChats[sessionId] = chat;
+            return chat;
+        }
+
         private readonly Dictionary<string, ClaudeCloudChatSession> _cloudChats =
             new(StringComparer.Ordinal);
 
