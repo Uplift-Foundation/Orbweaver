@@ -166,7 +166,14 @@ def cost_problem(tokens, ceiling):
     return f"daily tokens {tokens} passed ceiling {ceiling}" if tokens > ceiling else None
 
 
-REFUSAL_MARKER = "GH013"  # "remote: error: GH013: Repository rule violations found"
+# git's own refusal output, not the bare code. The lead's instructions say
+# "stop if a push is refused (GH013)", so the string GH013 is in nearly every
+# engineer run's log; matching it alone paused the org on 2026-11-24 with no
+# push refused at all (CB-462). These are the two forms git prints for a
+# ruleset refusal: the remote's error line and the push summary.
+REFUSAL_RE = re.compile(
+    r"remote: error: GH013: Repository rule violations"
+    r"|\(push declined due to repository rule violations\)")
 
 
 def new_releases(cancelled_ids, state):
@@ -223,7 +230,7 @@ def run_log_text(resp):
 
 
 def log_shows_refusal(text):
-    return REFUSAL_MARKER in (text or "")
+    return bool(REFUSAL_RE.search(text or ""))
 
 
 def runs_problem(count, cap):
