@@ -2,6 +2,16 @@
 
 # Orbweaver
 
+**Know which agent needs you.** A small glowing orb for every AI coding session, floating on top of the work you are already doing. The one that needs you turns amber. Agent teams are drawn as teams: a lead, and its members linked to it by arrows.
+
+**[Website](https://orbweaver.uplifttech.org/?utm_source=github&utm_medium=readme&utm_campaign=readme-hero)** · **[Download](https://github.com/Uplift-Foundation/Orbweaver/releases/latest)** · Windows 10/11 and macOS (Apple silicon and Intel)
+
+<p align="center"><img src="docs/brand/readme/readme-hero.png" width="860" alt="Illustration of Orbweaver on a desktop: four orbs float over an editor and a browser, one amber because that session needs the user, the rest violet or slate."></p>
+
+<p align="center"><img src="docs/brand/readme/readme-team.png" width="420" alt="Illustration of an agent team: a lead orb named Planner with three smaller member orbs, MenuUX, Narrative and Tests, each joined to the lead by a dashed arrow."></p>
+
+<p align="center"><sub>Illustrations from <a href="https://orbweaver.uplifttech.org/?utm_source=github&utm_medium=readme&utm_campaign=readme-hero">the website</a>, drawn to illustrate the app. They are not screenshots of the running app.</sub></p>
+
 *Formerly Claude Buddy.* If you are looking for Claude Buddy, this is it: same app, new name.
 
 One tiny always-on-top orb per running Claude Code session, stacked in the
