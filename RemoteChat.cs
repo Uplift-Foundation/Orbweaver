@@ -534,6 +534,24 @@ namespace Orbweaver
         event Action? ReadOnlyChanged;
     }
 
+    // The panel was opened on this session, or closed. CB-443: lifted out of two
+    // type tests for ClaudeCloudChatSession so a second session whose reads should
+    // run only while somebody is looking (a Paperclip agent's feed) needs no third.
+    // Both are idempotent and are called on the UI thread.
+    public interface IRemoteChatPanelLifetime
+    {
+        void PanelOpened();
+        void PanelClosed();
+    }
+
+    // What the link above the box (or in the read-only box) is called, for a
+    // session whose destination is not "your browser" in general but a named
+    // place. Optional; a session without it keeps "Open in your browser".
+    public interface IRemoteChatReplyLabel
+    {
+        string ReplyLabel { get; }
+    }
+
     // A session whose reply in flight this app can actually stop.
     //
     // Optional, and separate from IRemoteChatSession.Cancel, which every

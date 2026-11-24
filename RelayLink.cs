@@ -77,6 +77,13 @@ namespace Orbweaver
             }
         }
 
+        // CB-428: the envelope ids of broke pushes in flight, so a bad_envelope answer can be told from any
+        // other. Bounded; see BrokeFor.
+        private readonly HashSet<string> _brokeIds = new(StringComparer.Ordinal);
+        private readonly Queue<string> _brokeOrder = new();
+        private bool _relayKnowsBroke = true;
+        private bool _rebaseline;
+
         private readonly RelayIdentity _identity;
         private readonly RelaySessionBook _book;
         private readonly Func<DateTimeOffset> _now;
@@ -292,6 +299,11 @@ namespace Orbweaver
                     var gone = Str(f, "peer_id") ?? Str(f, "message");
                     if (gone is not null) DropPhone(gone, byPhone: true);
                     return [];
+                case "err" when Str(f, "code") == "bad_envelope" && Str(f, "ref") is { } brokeRef && _brokeIds.Remove(brokeRef):
+                    // An older relay does not know push broke: no more until the next welcome.
+                    _relayKnowsBroke = false;
+                    Note("relay does not know push broke; no more broke pushes on this connection");
+                    return [];
                 case "err":
                     Note($"relay err ref={Safe(Str(f, "ref"))} code={Safe(Str(f, "code"))}");
                     return [];
@@ -337,6 +349,12 @@ namespace Orbweaver
         private IReadOnlyList<string> OnWelcome()
         {
             Welcomed = true;
+            // CB-428: a new connection may be to a relay that has since been upgraded, and the first scan
+            // after it only sets the baseline for breaks.
+            _relayKnowsBroke = true;
+            _rebaseline = true;
+            _brokeIds.Clear();
+            _brokeOrder.Clear();
             var phones = _identity.Phones;
             var keep = new HashSet<string>(StringComparer.Ordinal);
             foreach (var phone in phones) keep.Add(phone.PhoneId);
@@ -468,10 +486,13 @@ namespace Orbweaver
         {
             var parsed = AlertPrefs.Parse(body);
             var ok = parsed is not null;
+            // CB-447: a phone whose paperclip_personas flipped is sent a fresh whole roster (frames-v18).
+            var personasFlipped = false;
             if (parsed is { } prefs)
             {
+                personasFlipped = c.Alerts.PaperclipPersonas != prefs.PaperclipPersonas;
                 c.Alerts = prefs;
-                Note($"prefs from {Safe(from)} done_alerts={prefs.DoneAlerts} amber_members={prefs.AmberMembers}");
+                Note($"prefs from {Safe(from)} done_alerts={prefs.DoneAlerts} amber_members={prefs.AmberMembers} broke_alerts={prefs.BrokeAlerts} paperclip_personas={prefs.PaperclipPersonas} paperclip_unreachable={prefs.PaperclipUnreachable}");
                 // Still prefs.ok when the write fails: the choice is in force
                 // now, and the phone has nothing better to do with a refusal.
                 if (!_identity.SaveAlerts(c.Phone.PhoneId, prefs))
@@ -481,7 +502,9 @@ namespace Orbweaver
             var reply = ok
                 ? new CanonicalJson().Str("t", "prefs.ok").Str("ref", envelopeId)
                 : new CanonicalJson().Str("t", "prefs.err").Str("ref", envelopeId).Str("code", "malformed");
-            return Collect(SealTo(c, "pair", "", Encoding.UTF8.GetBytes(reply.ToString())));
+            var frames = new List<string>(Collect(SealTo(c, "pair", "", Encoding.UTF8.GetBytes(reply.ToString()))));
+            if (personasFlipped && c.Online && Welcomed) frames.AddRange(Collect(RosterFor(c)));
+            return frames;
         }
 
         private byte[]? OpenFromPhone(Channel c, string cls, string ct)
@@ -675,6 +698,9 @@ namespace Orbweaver
         internal IReadOnlyList<string> OnScan(IReadOnlyList<RelaySession> rows)
         {
             var update = _book.Update(rows, _now());
+            // CB-428: the first scan after a welcome, changed or not, is the baseline breaks are judged from.
+            var rebaseline = Welcomed && _rebaseline;
+            if (Welcomed) _rebaseline = false;
             if (update.IsEmpty || !Welcomed) return [];
 
             // Once per finished session, whoever is paired: the client turns it into
@@ -685,7 +711,8 @@ namespace Orbweaver
             // sends a done push sends a changed snapshot at once, so the relay's
             // counts on that alert already include it; any other scan is
             // debounced.
-            var pushes = _channels.Count > 0 && update.Deltas.Any(d => d.Finished);
+            var sentBroke = new HashSet<(string, string)>();
+            var pushes = _channels.Count > 0 && update.Deltas.Any(d => d.Finished || d.Broke);
             var frames = ActivityFrames(pushes ? RelayActivity.Reason.Push : RelayActivity.Reason.Scan);
             foreach (var c in _channels.Values)
             {
@@ -696,6 +723,14 @@ namespace Orbweaver
                 // otherwise swallow the transition.
                 foreach (var d in update.Deltas.Where(d => d.Finished))
                     frames.AddRange(Collect(FinishedFor(c, d)));
+                // CB-428 (frames-v16): a Paperclip row that broke rides its own delta with push broke,
+                // to every paired phone for the same reason: the push is what reaches a backgrounded one.
+                foreach (var d in update.Deltas.Where(d => d.Broke))
+                    if (BrokeFor(c, d, rebaseline) is { } pushed)
+                    {
+                        frames.AddRange(Collect(pushed));
+                        sentBroke.Add((c.Phone.PhoneId, d.SessionId));
+                    }
                 if (!c.Online) continue;
                 if (update.NeedsRoster)
                 {
@@ -704,7 +739,7 @@ namespace Orbweaver
                 }
                 // An online phone has always been sent a roster (presence,
                 // Allow and resync all send one), so its stream is numbered.
-                foreach (var d in update.Deltas.Where(d => !d.Finished))
+                foreach (var d in update.Deltas.Where(d => !d.Finished && !sentBroke.Contains((c.Phone.PhoneId, d.SessionId))))
                     if (SealTo(c, "state", RelayCrypto.Ck(c.CkKey, d.SessionId), c.Stream.Delta(d)!) is { } frame)
                         frames.Add(frame);
             }
@@ -729,6 +764,37 @@ namespace Orbweaver
             var e = PushE(c, "done", persona, p => DoneE(d.SessionId, row.Title, Machine, p, membersSince));
             return SealTo(c, "state", RelayCrypto.Ck(c.CkKey, d.SessionId), c.Stream.DeltaForPush(d), push: "done", e: e);
         }
+
+        // CB-428 (frames-v16 broke_push): the delta itself, push broke, and an e naming the agent
+        // the done way plus why it broke. The push goes only where the pin says: to a phone whose
+        // stored prefs ask for it, not on the first scan after a (re)connect (which only sets the
+        // baseline), not for an agent whose Wake was pressed on this desktop in the last 30 s, and
+        // not once the relay has answered bad_envelope to one (an older relay that does not know the
+        // value) until the next welcome. Otherwise the delta goes as an ordinary one: null here, and
+        // the caller sends it the way every other delta goes. A refused push costs the phone the
+        // alert, and its gap resync recovers the delta.
+        private string? BrokeFor(Channel c, RelayDelta d, bool baseline)
+        {
+            if (baseline || !_relayKnowsBroke || !RelayAlertRules.PushBroke(c.Alerts) || OwnWake(d.SessionId, _now())) return null;
+            var row = _book.Find(d.SessionId)!;
+            var ck = RelayCrypto.Ck(c.CkKey, d.SessionId);
+            var e = PushE(c, "broke", null, _ => BrokeE(d.SessionId, row.Title, Machine, d.BrokeWhy!));
+            var id = Ulid(_now());
+            var frame = SealTo(c, "state", ck, c.Stream.DeltaForPush(d), id: id, push: "broke", e: e);
+            if (frame is null) return null;
+            _brokeIds.Add(id);
+            _brokeOrder.Enqueue(id);
+            while (_brokeOrder.Count > 64) _brokeIds.Remove(_brokeOrder.Dequeue());
+            return frame;
+        }
+
+        // CB-428: set by the desktop to say that Wake was pressed on this desktop for this agent in
+        // the last 30 seconds, so the break that follows is the user's own doing and not news.
+        internal Func<string, DateTimeOffset, bool> OwnWake { get; set; } = (_, _) => false;
+
+        internal static string BrokeE(string sessionId, string title, string machine, string why) =>
+            new CanonicalJson().Num("v", 1).Str("t", "broke").Str("session_id", sessionId)
+                .Str("label", DoneLabel(title, machine)).Str("title", title).Str("why", why).ToString();
 
         // CB-358: a finished session to one phone under its alert choice. A
         // member under "leads" (or "off") still rides the delta, numbered and
@@ -798,6 +864,9 @@ namespace Orbweaver
         // CB-321 addendum 2: the persona a session's amber speaks as — its
         // roster row's, as last projected. Null for a session the book does not
         // hold or one with no persona.
+        // CB-428: whether the phones hold a row for this session (a Paperclip prompt is minted only for one).
+        internal bool HasRow(string sessionId) => _book.Find(sessionId) is not null;
+
         internal PushPersona? PersonaFor(string sessionId) => PushPersona.Of(_book.Find(sessionId)?.Persona);
 
         internal static string DoneLabel(string title, string machine) =>
@@ -949,7 +1018,7 @@ namespace Orbweaver
         // Always the whole book, unconditionally — a resync asks for the book,
         // not the diff — and it restarts the phone's numbering at 1.
         private string? RosterFor(Channel c) =>
-            SealTo(c, "state", "", c.Stream.Roster(_book.Snapshot()));
+            SealTo(c, "state", "", c.Stream.Roster(RelayRoster.ForPhone(_book.Snapshot(), c.Alerts.PaperclipPersonas)));
 
         // CB-316: a phone coming online (or just paired) gets its roster, then
         // the latest usage frame (frames-v4: "sent on connect, after the
@@ -1055,10 +1124,17 @@ namespace Orbweaver
             return WithActivity(frames);
         }
 
+        // frames-v18: paperclip_unreachable only for a phone whose stored prefs say so, else stale_prompt.
+        internal static string RefusalFor(string code, bool phoneAsked) =>
+            code == PaperclipPrompts.UnreachableCode && !phoneAsked ? AnswerGate.StalePrompt : code;
+
         // A refusal goes only to the phone that answered.
         internal IReadOnlyList<string> SendRefusal(string phoneId, string requestId, string sessionId, string code)
         {
             if (!Welcomed || !_channels.TryGetValue(phoneId, out var c)) return [];
+            // CB-447 (frames-v18): the new code only for a phone that asked for it; every other phone is told what
+            // it always was (the same outcome, worded stale_prompt), so an older build never meets a code it does not know.
+            code = RefusalFor(code, c.Alerts.PaperclipUnreachable);
             return Collect(SealTo(c, "action", RelayCrypto.Ck(c.CkKey, sessionId),
                 System.Text.Encoding.UTF8.GetBytes(PromptFrames.Refusal(requestId, sessionId, code))));
         }

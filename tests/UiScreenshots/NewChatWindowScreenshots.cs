@@ -373,6 +373,46 @@ public class NewChatWindowScreenshots : IDisposable
         Assert.Equal(3, window.ExistingList.ItemCount);
     }
 
+    // CB-361: Resume mode — a running session, a recent one, and one whose
+    // folder is gone (greyed), the first chosen so the selection colour is on
+    // the capture too.
+    [AvaloniaFact]
+    public void NewChatResumePicker()
+    {
+        var folder = Path.GetTempPath().TrimEnd('/', '\\');
+        PastSession Row(string id, string title, double hoursAgo, int messages, bool missing = false) =>
+            new(NewChatCli.ClaudeCode, id, missing ? "/no/such/project" : folder, title,
+                new DateTimeOffset(Now.AddHours(-hoursAgo), TimeSpan.Zero), messages, "/t/" + id + ".jsonl", missing);
+
+        NewChatAvailability.CurrentForTests = () => new[]
+        {
+            Enabled(NewChatCli.ClaudeCode), Enabled(NewChatCli.Codex), Enabled(NewChatCli.Grok)
+        };
+        NewChatWindow.OpenClawAvailabilityForTests = () => OpenClawNewChatAvailability.Ready;
+        NewChatWindow.KnownAgentsForTests = () => new[] { ("aurora", "Aurora") };
+        NewChatWindow.NowForTests = () => Now;
+        NewChatWindow.ResumeLoadInlineForTests = true;
+        NewChatWindow.CurrentStatusesForTests = () => new Dictionary<string, SessionStatus>
+        {
+            ["live-1"] = new SessionStatus { Source = SessionSource.ClaudeCode, Cwd = folder }
+        };
+        PastSessionIndex.LoadForTests = (_, _, _, _) => new[]
+        {
+            Row("live-1", "Wire up the hook installer", 0.2, 42),
+            Row("b", "Why does the arrangement overlap?", 5, 118),
+            Row("gone", "Old prototype", 72, 9, missing: true)
+        };
+
+        var window = NewWindow();
+        window.LocalResumeRadio.IsChecked = true;
+        window.ResumeList.SelectedIndex = 1;
+
+        ScreenshotHelper.Capture(window, "new-chat-window-resume.png");
+
+        Assert.True(window.ResumePane.IsVisible);
+        Assert.Equal(3, window.ResumeList.ItemCount);
+    }
+
     // Before the first poll has completed: "Loading conversations…", not
     // "No conversations".
     [AvaloniaFact]
@@ -494,6 +534,63 @@ public class NewChatWindowScreenshots : IDisposable
                     [new PeerDirItem("warren", "/Users/warren", null, true), new PeerDirItem("Source", "/Users/warren/Source")]))
                 : new PeerDirResult(true, "ok", new PeerDirListing(path, "/Users/warren", false,
                     [new PeerDirItem("ledger"), new PeerDirItem("ledger-web"), new PeerDirItem("orbweaver"), new PeerDirItem("scratch")])));
+    }
+
+    // CB-434: a launcher that can also list a far machine's past sessions.
+    private sealed class FakePeersWithSessions : IPeerLauncher, IRemotePastSessions
+    {
+        private readonly FakePeers _inner = new();
+        public IReadOnlyList<PastSessionRow> Rows = Array.Empty<PastSessionRow>();
+        public IReadOnlyList<PeerMachine> Machines() => _inner.Machines();
+        public async Task<PeerLaunchInfo?> InfoAsync(string machine, CancellationToken ct) =>
+            (await _inner.InfoAsync(machine, ct))! with { Resume = 1 };
+        public Task<PeerLaunchResult> LaunchAsync(string machine, PeerLaunchSpec spec, CancellationToken ct) => _inner.LaunchAsync(machine, spec, ct);
+        public Task<PeerDirResult> ListDirAsync(string machine, string path, CancellationToken ct) => _inner.ListDirAsync(machine, path, ct);
+        public Task<RemoteListResult> ListAsync(string machine, NewChatCli cli, string profile, bool showOlder, CancellationToken ct) =>
+            Task.FromResult(new RemoteListResult(RemoteListOutcome.Ok, Rows, null));
+        public Task<RemoteResumeResult> ResumeAsync(string machine, NewChatCli cli, string sessionId, string cwd, string profile, CancellationToken ct) =>
+            Task.FromResult(new RemoteResumeResult(RemoteResumeOutcome.Launched, null, false));
+    }
+
+    // CB-434: Resume with a remote machine selected — its own sessions, one
+    // running there, one whose folder is gone, the first chosen.
+    [AvaloniaFact]
+    public void NewChatResumePickerOnARemoteMachine()
+    {
+        PastSessionRow Row(string id, string title, double hoursAgo, int messages, bool live = false, bool missing = false) =>
+            new(new PastSession(NewChatCli.ClaudeCode, id, missing ? "/Users/warren/Source/old-proto" : "/Users/warren/Source/ledger",
+                title, new DateTimeOffset(Now.AddHours(-hoursAgo), TimeSpan.Zero), messages, "", missing), live);
+
+        var peers = new FakePeersWithSessions
+        {
+            Rows = new[]
+            {
+                Row("live-1", "Reconcile the March ledger", 0.3, 64, live: true),
+                Row("b", "Why is the export off by a cent?", 6, 31),
+                Row("gone", "Old prototype", 72, 9, missing: true)
+            }
+        };
+        NewChatWindow.NowForTests = () => Now;
+        NewChatWindow.ResumeLoadInlineForTests = true;
+        NewChatWindow.PeerLauncherForTests = peers;
+        NewChatWindow.RemotePastForTests = peers;
+        NewChatWindow.PeerLinkOnForTests = true;
+        NewChatAvailability.CurrentForTests = () => new[]
+        {
+            Enabled(NewChatCli.ClaudeCode), Enabled(NewChatCli.Codex), Enabled(NewChatCli.Grok)
+        };
+        NewChatWindow.OpenClawAvailabilityForTests = () => OpenClawNewChatAvailability.NoGateway;
+        NewChatWindow.CurrentStatusesForTests = () => new Dictionary<string, SessionStatus>();
+
+        var window = NewWindow();
+        window.MachineCombo.SelectedIndex = 1;
+        window.LocalResumeRadio.IsChecked = true;
+        window.ResumeList.SelectedIndex = 1;
+
+        ScreenshotHelper.Capture(window, "new-chat-window-resume-remote.png");
+
+        Assert.True(window.ResumePane.IsVisible);
+        Assert.Equal(3, window.ResumeList.ItemCount);
     }
 
     private static NewChatWindow PeerWindow(FakePeers peers)
@@ -684,6 +781,9 @@ public class NewChatWindowScreenshots : IDisposable
         NewChatWindow.NowForTests = null;
         NewChatWindow.LastConnectFailureForTests = null;
         NewChatWindow.PeerLauncherForTests = null;
+        NewChatWindow.RemotePastForTests = null;
         NewChatWindow.PeerLinkOnForTests = null;
+        NewChatWindow.ResumeLoadInlineForTests = false;
+        PastSessionIndex.LoadForTests = null;
     }
 }

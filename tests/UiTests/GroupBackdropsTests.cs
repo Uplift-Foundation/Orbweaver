@@ -170,6 +170,85 @@ public class GroupBackdropsTests : IDisposable
         Assert.Equal(BackdropStyle.StrokeDip, sa.StrokeWidth);
     }
 
+    // ---- CB-409: random group colours ----------------------------------------
+
+    private static string RealGroup() => OrbweaverSettings.CreateOrbGroup().Id;
+
+    [AvaloniaFact]
+    public void RandomModeRecoloursABackdropAndAGroupWithAnOverrideIsUnchanged()
+    {
+        var wasRandom = OrbweaverSettings.GroupColourRandom;
+        var (a, b) = TwoGroups();
+        var ga = RealGroup();
+        var gb = RealGroup();
+        try
+        {
+            OrbweaverSettings.GroupColourRandom = false;
+            var over = new GroupStyle("#FF0000", null, null, null);
+            GroupBackdrops.Update(new[] { Spec(ga, "heart", a), Spec(gb, "circle", b, over) });
+            var plainBefore = GroupBackdrops.StateOf(ga)!.Value;
+            var overBefore = GroupBackdrops.StateOf(gb)!.Value;
+            Assert.Equal(Color.FromArgb(89, 255, 255, 255), plainBefore.Stroke);   // the control: today's global
+
+            OrbweaverSettings.GroupColourRandom = true;
+            GroupBackdrops.Update(new[] { Spec(ga, "heart", a), Spec(gb, "circle", b, over) });
+            var plainAfter = GroupBackdrops.StateOf(ga)!.Value;
+            var overAfter = GroupBackdrops.StateOf(gb)!.Value;
+
+            var hue = Color.Parse(OrbweaverSettings.RandomColourFor(OrbweaverSettings.OrbGroupFor(ga))!);
+            Assert.Equal(Color.FromArgb(89, hue.R, hue.G, hue.B), plainAfter.Stroke);
+            Assert.Equal(Color.FromArgb(15, hue.R, hue.G, hue.B), plainAfter.Fill);
+            Assert.Equal(overBefore.Stroke, overAfter.Stroke);                      // own colour wins
+            // The field the override leaves null follows its own random hue, not the global.
+            var overHue = Color.Parse(OrbweaverSettings.RandomColourFor(OrbweaverSettings.OrbGroupFor(gb))!);
+            Assert.Equal(Color.FromArgb(15, overHue.R, overHue.G, overHue.B), overAfter.Fill);
+        }
+        finally
+        {
+            OrbweaverSettings.GroupColourRandom = wasRandom;
+            OrbweaverSettings.DeleteOrbGroup(ga);
+            OrbweaverSettings.DeleteOrbGroup(gb);
+        }
+    }
+
+    [AvaloniaFact]
+    public void ShuffleAndARerollChangeABackdropsColour()
+    {
+        var wasRandom = OrbweaverSettings.GroupColourRandom;
+        var (a, _) = TwoGroups();
+        var ga = RealGroup();
+        try
+        {
+            OrbweaverSettings.GroupColourRandom = true;
+            GroupBackdrops.Update(new[] { Spec(ga, "heart", a) });
+            var start = GroupBackdrops.StateOf(ga)!.Value.Stroke;
+
+            var shuffled = false;
+            for (var i = 0; i < 8 && !shuffled; i++)
+            {
+                OrbweaverSettings.ShuffleGroupColours();
+                GroupBackdrops.Update(new[] { Spec(ga, "heart", a) });
+                shuffled = GroupBackdrops.StateOf(ga)!.Value.Stroke != start;
+            }
+            Assert.True(shuffled, "eight shuffles never moved the colour");
+
+            var before = GroupBackdrops.StateOf(ga)!.Value.Stroke;
+            var rerolled = false;
+            for (var i = 0; i < 8 && !rerolled; i++)
+            {
+                OrbweaverSettings.RerollOrbGroupColour(ga);
+                GroupBackdrops.Update(new[] { Spec(ga, "heart", a) });
+                rerolled = GroupBackdrops.StateOf(ga)!.Value.Stroke != before;
+            }
+            Assert.True(rerolled, "eight re-rolls never moved the colour");
+        }
+        finally
+        {
+            OrbweaverSettings.GroupColourRandom = wasRandom;
+            OrbweaverSettings.DeleteOrbGroup(ga);
+        }
+    }
+
     [AvaloniaFact]
     public void ChangingTheStyleOnTheNextUpdateRestylesTheSameWindow()
     {

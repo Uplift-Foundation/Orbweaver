@@ -1,0 +1,149 @@
+[
+ {
+  "id": 5402,
+  "companyId": "company-1",
+  "runId": "run-1",
+  "agentId": "agent-1",
+  "seq": 44,
+  "eventType": "tool.execution.started",
+  "stream": "system",
+  "level": "info",
+  "color": null,
+  "message": null,
+  "payload": {
+   "prpEvent": {
+    "runId": "run-1",
+    "itemId": "item-run-1",
+    "schema": "paperclip.prp.event.v1",
+    "turnId": "turn-1",
+    "payload": {
+     "name": "Bash",
+     "output": "null",
+     "schema": "paperclip.tool.execution.v1",
+     "status": "running",
+     "target": null,
+     "exitCode": null,
+     "progress": "Terminal (pending)",
+     "readOnly": false,
+     "namespace": null,
+     "operation": "execute",
+     "transport": "builtin",
+     "durationMs": null,
+     "executionId": "toolu-1",
+     "outputBytes": 4,
+     "inputUpdated": true,
+     "outputDigest": "sha256:digest-1",
+     "outputTruncated": false
+    },
+    "priority": 1,
+    "emittedAt": "2026-11-24T00:21:51.469Z",
+    "eventType": "tool.execution.started",
+    "sourceSeq": 11,
+    "sourceKind": "runner",
+    "schemaVersion": 1,
+    "sourceEventId": "source-1:run-1:11",
+    "sourceInstanceId": "source-1",
+    "normalizedSessionId": "session-1"
+   }
+  },
+  "sourceInstanceId": "source-1",
+  "sourceEventId": "source-1:run-1:11",
+  "sourceSeq": 11,
+  "sourcePayloadSha256": "scrubbed",
+  "protocolSchemaVersion": 1,
+  "createdAt": "2026-11-24T00:21:51.498Z"
+ },
+ {
+  "id": 5407,
+  "companyId": "company-1",
+  "runId": "run-1",
+  "agentId": "agent-1",
+  "seq": 49,
+  "eventType": "runtime_request.created",
+  "stream": "system",
+  "level": "info",
+  "color": null,
+  "message": null,
+  "payload": {
+   "prpEvent": {
+    "runId": "run-1",
+    "itemId": "item-run-1",
+    "schema": "paperclip.prp.event.v1",
+    "turnId": "turn-1",
+    "payload": {
+     "request": {
+      "type": "permission",
+      "itemId": "item-run-1",
+      "method": "session/request_permission",
+      "origin": {
+       "method": "session/request_permission",
+       "adapter": "acpx-runtime-sidecar",
+       "provider": "claude"
+      },
+      "prompt": "Create probe directory",
+      "schema": "paperclip.runtime_request.v2",
+      "status": "pending",
+      "turnId": "turn-1",
+      "choices": [
+       {
+        "key": "accept",
+        "label": "Allow once"
+       },
+       {
+        "key": "decline",
+        "label": "Deny"
+       },
+       {
+        "key": "cancel",
+        "label": "Cancel"
+       }
+      ],
+      "details": {
+       "itemId": "item-run-1",
+       "origin": {
+        "method": "session/request_permission",
+        "adapter": "acpx-runtime-sidecar",
+        "provider": "claude"
+       },
+       "reason": "Create probe directory",
+       "turnId": "turn-1",
+       "choices": [
+        {
+         "key": "accept",
+         "label": "Allow once"
+        },
+        {
+         "key": "decline",
+         "label": "Deny"
+        },
+        {
+         "key": "cancel",
+         "label": "Cancel"
+        }
+       ],
+       "threadId": "thread-1",
+       "toolCallId": "toolu-1"
+      },
+      "requestId": "request-1",
+      "requestKind": "permission_approval"
+     }
+    },
+    "priority": 1,
+    "emittedAt": "2026-11-24T00:21:51.870Z",
+    "eventType": "runtime_request.created",
+    "sourceSeq": 14,
+    "sourceKind": "runner",
+    "schemaVersion": 1,
+    "sourceEventId": "source-1:run-1:14",
+    "sourceInstanceId": "source-1",
+    "normalizedSessionId": "session-1"
+   }
+  },
+  "sourceInstanceId": "source-1",
+  "sourceEventId": "source-1:run-1:14",
+  "sourceSeq": 14,
+  "sourcePayloadSha256": "scrubbed",
+  "protocolSchemaVersion": 1,
+  "createdAt": "2026-11-24T00:21:51.882Z"
+ }
+]

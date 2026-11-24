@@ -1,0 +1,32 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Orbweaver.PaperclipNeedsPanel"
+        Width="340"
+        SizeToContent="Height"
+        WindowDecorations="None"
+        TransparencyLevelHint="Transparent"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        CanResize="False"
+        ShowActivated="True"
+        RequestedThemeVariant="Dark"
+        WindowStartupLocation="Manual">
+
+    <!-- The amber Paperclip orb's answer panel (CB-427): each thing Paperclip is
+         waiting on, with Approve and Decline, in the shape of the chat panel's
+         permission prompt (a card, the question in bold, the answers as buttons,
+         an escape hatch below). A window of its own because a Paperclip agent
+         has no conversation to hang a prompt on. It closes when it loses focus
+         and when the last need is gone. -->
+    <Border x:Name="Root" Padding="12" CornerRadius="10"
+            Background="#F0202024" BorderBrush="#B8860B" BorderThickness="1.5">
+        <StackPanel Spacing="8">
+            <TextBlock x:Name="Heading" FontSize="12" FontWeight="SemiBold"
+                       Foreground="#FFE8B84A" TextWrapping="Wrap"/>
+            <StackPanel x:Name="Rows" Spacing="10"/>
+            <TextBlock x:Name="Footer" FontSize="10.5" Foreground="#99FFFFFF"
+                       TextWrapping="Wrap" IsVisible="False"/>
+        </StackPanel>
+    </Border>
+</Window>

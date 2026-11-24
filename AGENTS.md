@@ -45,7 +45,7 @@ Then it writes a plan, and **plans on a stronger model than the one that impleme
 
 Those are the `model:` values the Agent and Workflow tools accept; `effort:` is the other dial and moves the same way — high while planning, lower for mechanical stages.
 
-**If the PM isn't confident the requirement and plan support autonomous implementation, it asks a human before spending a team.** Ask on GitHub with a link to the CB ticket, and — the Jira site needs its own login separate from GitHub's — enough of the requirement inline that the question stands alone for someone who can't open the link. Repo admins are the escalation point (`wtvamp`, `lunarjuice` at time of writing; `gh api repos/Uplift-Foundation/Orbweaver/collaborators` is the live list). If it *is* confident, it hands straight to the architects and engineers and no human is in the loop.
+**If the PM isn't confident the requirement and plan support autonomous implementation, it asks once, with a recommendation, and proceeds on the recommended branch.** The question is for a decision that is genuinely a person's (a scope fork, money, a release to users), never a click or a check, and work does not wait on it. Ask in the terminal if someone is driving, otherwise on GitHub with a link to the CB ticket, and — the Jira site needs its own login separate from GitHub's — enough of the requirement inline that the question stands alone for someone who can't open the link. Repo admins are the escalation point (`wtvamp`, `lunarjuice` at time of writing; `gh api repos/Uplift-Foundation/Orbweaver/collaborators` is the live list). If it *is* confident, it hands straight to the architects and engineers and no human is in the loop.
 
 ### Speed: the clock is part of done
 
@@ -70,6 +70,8 @@ Engineers and architects build, QA tests, back and forth until it stops coming b
 
 **A feature works on Windows and macOS or it is not a feature.** CI enforces the shape: `macos-latest`/`osx-arm64` and `windows-latest`/`win-x64`, every suite on both legs. Parity is more than a green build, though — a feature no install path wires up is equally unfinished, so check `tools/build-macos-dmg.sh`, `tools/build-macos-app.sh`'s Resources copy, `tools/Orbweaver.iss`, `tools/install-hooks.sh`/`.ps1` and the README install section, and confirm any platform gate is real (WSL) rather than accidental.
 
+**It also works on a remote machine and on the phone, or it is not done — features and bug fixes alike (CB-435).** The three paths are the local desktop, a remote machine over the peer link (New Chat's machine row; `PeerLaunchContract.cs`, `IPeerLauncher`), and the phone over the relay and `Uplift-Foundation/Orbweaver-Mobile` (`RelayLaunch.cs`, `LaunchGate`). Anything a user can do or see locally must work from the other two, and a bug fix is checked on all three. CB-361 shipped resume local-only with the phone filed as a follow-up (CB-434); that is no longer done. Refinement names remote and mobile behaviour in the requirement, and the only exception is a surface that cannot exist there, stated in the ticket with the reason. The ticket stays out of Done until all three work. A peer or relay contract change is expected: staff an architect and an `Orbweaver-Mobile` engineer from the start and open a paired PR there. The real-machine proof includes one remote and one phone observation, and the PR body says which paths were exercised.
+
 ### PR, screenshots, and the call on done
 
 The feature goes up as a PR against `develop`, per **Pull requests** below.
@@ -84,7 +86,7 @@ GitHub refuses an approving review on a PR the same account opened, which is the
 
 Approving is not the same as landing it — the ticket moves to Done when the change is actually on `develop`, so an approved-but-unmerged PR stays in Testing.
 
-Only where it genuinely cannot approve does it ask a human to pull, install and approve by hand: **in the terminal** if someone is driving the feature in Claude Code, **on the PR** if nobody is watching. Either way name the specific thing the screenshots could not settle — "can't tell whether the mic button is enabled on Windows" is actionable in a minute; "needs manual approval" is not.
+**There is no human in the loop for testing: where it cannot approve, it builds the proof it is missing and never asks a person to click, check, install or approve by hand** (Warren's ruling, 2026-11-24, after CB-443 sat in Testing waiting on him). "Needs a click on a real screen" names a missing test seam: drive the real window code headlessly against the real backend behind an environment variable (`tests/UiTests/PaperclipChatLiveProofTests.cs`, with a paired negative control), stand in for the device (`tools/relay-probe --answer-phone`, `ORBWEAVER_RELAY_TEST_HOOKS=1`), install and launch on all three machines yourself and read the result back off the machine. `## Not verified` names a limit as a fact plus the harness that would close it, never as a request, and no ticket is held open until its owner has looked. Only a decision that is genuinely a person's (scope, money, a release to users) is asked: once, in plain words, with a recommendation, while work continues on the recommended branch.
 
 ## Branching: gitflow
 

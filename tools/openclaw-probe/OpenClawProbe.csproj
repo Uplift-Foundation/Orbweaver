@@ -58,6 +58,8 @@
     <Compile Include="../../OpenClawNativeText.cs" />
     <Compile Include="../../OrbGroupTable.cs" />
     <Compile Include="../../OrbGroups.cs" />
+    <!-- CB-409: OrbweaverSettings.RandomColourFor calls GroupColour.For. Pure. -->
+    <Compile Include="../../GroupColour.cs" />
     <!-- CB-281: OrbGroupTable and OrbweaverSettings name the auto-group enum, ids and wire format. -->
     <Compile Include="../../OrbAutoGroupIds.cs" />
     <Compile Include="../../AccountOrbOverride.cs" />

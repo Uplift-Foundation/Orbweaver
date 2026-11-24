@@ -103,6 +103,12 @@ namespace Orbweaver
         // short. No older spelling ever existed.
         internal const string HookLookupTimeoutDs = "HOOK_LOOKUP_TIMEOUT_DS";
 
+        // CB-443: opt-in gate on the one test that drives the chat panel against
+        // a real Paperclip (PaperclipChatLiveProofTests). Its value is the path
+        // of a settings file holding the address, ids and two keys, so the keys
+        // never sit in an environment. CI must never set it.
+        internal const string PaperclipLive = "PAPERCLIP_LIVE";
+
         internal static readonly IReadOnlyList<string> All =
         [
             SettingsDir, LogDir, StatusRoot, BundleRoot, ProfileRoot,
@@ -112,7 +118,7 @@ namespace Orbweaver
             Personas, TeamBuiltinRoles, TeamLiveNames, TeamWindowsUsers,
             ProbeScopes, ProbeCaps, ProbeAllowResolve,
             UpdateFeedUrl, UpdateCurrentVersion, NetworkTests, KeychainTests, RelayUrl, RelayTestHooks, ActivityLog,
-            HookLookupTimeoutDs,
+            HookLookupTimeoutDs, PaperclipLive,
         ];
 
         // Pure: the environment is a parameter, so the precedence is a test

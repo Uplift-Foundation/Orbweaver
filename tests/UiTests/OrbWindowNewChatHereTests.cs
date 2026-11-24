@@ -109,4 +109,107 @@ public class OrbWindowNewChatHereTests
         // Still here — the assertion is that nothing happened.
         Assert.NotNull(orb);
     }
+
+    // --- CB-361: "Resume a session here…" ---
+
+    [AvaloniaTheory]
+    [InlineData(SessionSource.ClaudeCode)]
+    [InlineData(SessionSource.Codex)]
+    [InlineData(SessionSource.Grok)]
+    public void TheResumeItemIsVisibleForEveryLocalCli(SessionSource source)
+    {
+        var orb = new OrbWindow(Guid.NewGuid().ToString());
+        orb.UpdateFrom(Status(source));
+
+        Assert.True(orb.ResumeHereItem.IsVisible);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(SessionSource.OpenClaw)]
+    [InlineData(SessionSource.RemoteControl)]
+    public void TheResumeItemIsHiddenWhereThereIsNoLocalCli(SessionSource source)
+    {
+        var orb = new OrbWindow(Guid.NewGuid().ToString());
+        orb.UpdateFrom(Status(source));
+
+        Assert.False(orb.ResumeHereItem.IsVisible);
+    }
+
+    [AvaloniaFact]
+    public void ResumePrefillNamesTheCliFolderAndAccount()
+    {
+        var status = Status(SessionSource.ClaudeCode, "/repo/mine");
+        status.TranscriptPath = "/home/w/.claude-board/projects/-repo-mine/abc.jsonl";
+
+        var prefill = OrbWindow.ResumePrefillFor(status);
+
+        Assert.Equal(NewChatCli.ClaudeCode, prefill!.Value.Cli);
+        Assert.Equal("/repo/mine", prefill.Value.Cwd);
+        Assert.Equal("/home/w/.claude-board", prefill.Value.ProfileDir);
+    }
+
+    [AvaloniaFact]
+    public void ResumePrefillHasNoAccountWhenTheTranscriptIsUnknown()
+    {
+        Assert.Null(OrbWindow.ResumePrefillFor(Status(SessionSource.Codex))!.Value.ProfileDir);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(SessionSource.OpenClaw)]
+    [InlineData(SessionSource.RemoteControl)]
+    public void ResumePrefillIsNullWithoutALocalCli(SessionSource source)
+    {
+        Assert.Null(OrbWindow.ResumePrefillFor(Status(source)));
+        Assert.Null(OrbWindow.ResumePrefillFor(null));
+    }
+
+    [AvaloniaFact]
+    public void ResumeClickWithNoSessionBoundIsANoOp()
+    {
+        var orb = new OrbWindow(Guid.NewGuid().ToString());
+
+        orb.ResumeHere_Click(null, new Avalonia.Interactivity.RoutedEventArgs());
+
+        Assert.Null(NewChatWindow.OpenForTests);
+    }
+
+    [AvaloniaFact]
+    public void ResumeClickOpensTheDialogOnResumeAndASecondClickReusesIt()
+    {
+        var presented = new List<NewChatWindow>();
+        var raised = 0;
+        NewChatWindow.PresentForTests = presented.Add;
+        NewChatWindow.BringForwardForTests = _ => raised++;
+        NewChatWindow.OpenForTests = null;
+        NewChatAvailability.CurrentForTests = () => new[]
+        {
+            new NewChatOption(NewChatCli.Codex, Enabled: true, Reason: null, Warning: null)
+        };
+        PastSessionIndex.LoadForTests = (_, _, _, _) => Array.Empty<PastSession>();
+        NewChatWindow.ResumeLoadInlineForTests = true;
+        try
+        {
+            var orb = new OrbWindow(Guid.NewGuid().ToString());
+            orb.UpdateFrom(Status(SessionSource.Codex, "/repo/mine"));
+
+            orb.ResumeHere_Click(null, new Avalonia.Interactivity.RoutedEventArgs());
+            var window = Assert.Single(presented);
+            Assert.True(window.LocalResumeRadio.IsChecked);
+
+            window.LocalNewRadio.IsChecked = true;
+            orb.ResumeHere_Click(null, new Avalonia.Interactivity.RoutedEventArgs());
+            Assert.Single(presented);
+            Assert.Equal(1, raised);
+            Assert.True(window.LocalResumeRadio.IsChecked);
+        }
+        finally
+        {
+            NewChatWindow.PresentForTests = null;
+            NewChatWindow.BringForwardForTests = null;
+            NewChatWindow.OpenForTests = null;
+            NewChatAvailability.CurrentForTests = null;
+            PastSessionIndex.LoadForTests = null;
+            NewChatWindow.ResumeLoadInlineForTests = false;
+        }
+    }
 }

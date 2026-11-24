@@ -62,9 +62,14 @@ public class RunControlsProbeThreadTests
 
         for (var i = 0; i < 20; i++)
         {
+            // LastProbe is only the newest probe, so a's is taken before b's
+            // replaces it. Waiting on b's alone let the assert run while a's
+            // Task.Run was still queued on a busy pool (CI, release 1.0.11:
+            // only "bridge-b" had been probed).
             host.Options(a);
+            var probeA = host.LastProbe;
             host.Options(b);
-            await host.LastProbe;
+            await Task.WhenAll(probeA, host.LastProbe);
         }
 
         Assert.Equal(new[] { "bridge-a", "bridge-b" }, probes.Order());

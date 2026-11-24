@@ -150,7 +150,8 @@ namespace Orbweaver
 
         // Whether "take me to this session" means opening a browser.
         //
-        // True for a cloud session and nothing else. The address itself is not
+        // True for a cloud session and nothing else (CB-443: a Paperclip orb opens its panel;
+        // "Open in Paperclip" is on the panel and in the orb menu). The address itself is not
         // consulted, deliberately: a cloud session whose URL never arrived
         // should open nothing and stop there rather than fall through to a
         // terminal focus, which would send the click hunting a pane for a
@@ -164,6 +165,16 @@ namespace Orbweaver
         // rule no test can reach.
         internal static bool OpensInABrowser(SessionStatus? status) =>
             status?.Source == SessionSource.ClaudeCloud;
+
+        // Whether words dictated at an orb with no panel up should open the panel and land in its box.
+        //
+        // A gateway agent and (CB-443) a Paperclip agent: neither has a terminal, and the panel is the
+        // only place their words can be reviewed before they are sent. A Paperclip orb used to reach
+        // this as "opens in a browser", which kept the dictation out of TerminalFocuser.SendText; now
+        // that its click opens a panel it would fall through to that and type into whichever pane
+        // matched, so it is named here.
+        internal static bool DictationOpensPanel(SessionStatus? status) =>
+            status?.Source is SessionSource.OpenClaw or SessionSource.Paperclip;
 
         // Whether "take me to this session" means bringing Claude Desktop forward.
         //

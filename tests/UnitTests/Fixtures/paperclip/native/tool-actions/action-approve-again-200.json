@@ -1,0 +1,30 @@
+{
+  "id": "00000000-0000-4000-8000-000000000007",
+  "companyId": "00000000-0000-4000-8000-000000000002",
+  "invocationId": "00000000-0000-4000-8000-000000000008",
+  "issueId": null,
+  "interactionId": null,
+  "approvalId": null,
+  "status": "failed",
+  "canonicalArgumentsHash": "b260b27bd1692d9b7a7f307f09dcfab2a5e3a5a8fdad0dd09efc7a7599918cac",
+  "canonicalArgumentsSummary": {
+    "sha256": "b260b27bd1692d9b7a7f307f09dcfab2a5e3a5a8fdad0dd09efc7a7599918cac",
+    "summary": "{\"title\":\"Orbweaver measurement 1\"}",
+    "sizeBytes": 35,
+    "redactedFields": []
+  },
+  "previewMarkdown": "create_item \u00b7 **Title:** Orbweaver measurement 1",
+  "requestedByAgentId": null,
+  "requestedByUserId": "user-1",
+  "resolvedByAgentId": null,
+  "resolvedByUserId": "user-1",
+  "decidedByAgentId": null,
+  "decidedByUserId": "user-1",
+  "decidedAt": "2026-11-23T18:58:58.713Z",
+  "expiresAt": "2026-11-23T19:58:40.628Z",
+  "resolvedAt": "2026-11-23T18:58:59.152Z",
+  "createdAt": "2026-11-23T18:58:40.264Z",
+  "updatedAt": "2026-11-23T18:58:59.152Z",
+  "resultSummary": null,
+  "error": "Local stdio template does not define an executable command"
+}

@@ -478,7 +478,7 @@ namespace Orbweaver
     // same bubble.
     internal sealed class ClaudeCloudChatSession : IRemoteChatSession, IRemoteChatComposer,
         IRemoteChatReadOnly, IRemoteChatMachine, IRemoteChatInterrupt,
-        IRemoteChatSlashCommands, IRemoteChatSlashRunner, IRemoteChatRunOptions
+        IRemoteChatSlashCommands, IRemoteChatSlashRunner, IRemoteChatRunOptions, IRemoteChatPanelLifetime
     {
         // How much of a long transcript the panel is given. The interface's own
         // contract is that history arrives already bounded and ordered oldest to
@@ -1247,7 +1247,7 @@ namespace Orbweaver
         // should never cancel work someone asked for, which is what Cancel's
         // own comment on the interface says. Opening onto a turn already running
         // starts watching it.
-        internal void PanelOpened()
+        public void PanelOpened()
         {
             _panelOpen = true;
 
@@ -1267,7 +1267,7 @@ namespace Orbweaver
         // "started afterwards".
         internal bool PanelOpen => _panelOpen;
 
-        internal void PanelClosed()
+        public void PanelClosed()
         {
             _panelOpen = false;
             _live?.Cancel();

@@ -1,0 +1,732 @@
+{
+  "_source": "make_v16_vectors.py; recomputed independently by check_v16_vectors.py",
+  "inputs": {
+    "desktop_id": "dsk_5f3c9a0e1b7d2468",
+    "phone_id": "ph_a1b2c3d4e5f60718",
+    "machine": "MacBook Pro",
+    "ck_session": "_APVA4tadxC7cR0g6HWoxg",
+    "agent_session_id": "paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77",
+    "phone_agreement": {
+      "private": "a8a840c28d24ee5bbdd7fe4f9785b81ba783503d5c340b43fa6e713c9e6c9ba9",
+      "public": "0436803edfd90f4b9e79bafcbb9c9739aa11cbef2287b6bbf1602128067f48db883f8ee2f9a1058e0cc88519e7542b2d0e20f85f25a7e851cfc13df4eee6e92c40"
+    },
+    "phone_identity": {
+      "private": "ca3c8fc5af18a5dc945ba77acaa4d8e121d51687692055f7e5c5c1e5468dac65",
+      "public": "04a783cd7f5c5754502ffd1353b63194b09e9668333d22755839d742190b8ac84beb552a0b3df06e14a90aa8c657420c8c27ea8d0974fc36bc5989584230fe782c"
+    }
+  },
+  "broke": {
+    "delta_frame": {
+      "class": "state",
+      "push": "broke",
+      "ck": "_APVA4tadxC7cR0g6HWoxg",
+      "envelope_id": "01JCB0BROKE0000000000000AB1",
+      "plaintext": "{\"t\":\"delta\",\"seq\":9,\"session_id\":\"paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77\",\"state\":\"idle\",\"since\":1794111900}",
+      "e": "AQSYiI8nK-NyQXFsDVjOhL9mnr11x1QmmrHm8uzz-yV8Ix_B97gsroRdiu1hKB75c6kqiWo0FX4SrLxU0RV5lFxIebs7L1fE6I36nCl5ApfbuRbZ-E6JCZ_TfsK2YTmc7YudNWN1v1bn-oNNmdF0oJOMU0XOeOcCsCPACGPUGhJdcyOar89Lpp-Z9vRVRgUEnZKbJ2ZHcwPEzj7e0-DMeWpPhC0jbyluPATlCarthjArqCrIL_8C74F5jc-qBMyTlS0GrTzH_BrDHCEomCafF2JV5HF1UxgZ3mP5xrP2m8i-j7MLojj5oT_qj10Ln8haRD0S1dj_EZ_dPWo"
+    },
+    "e": {
+      "run_failed": {
+        "eph": {
+          "private": "7ca0f82094e01a845684e69fda79b03031f10b230e6b2ea3bcb4ad48ae9c0490",
+          "public": "0498888f272be37241716c0d58ce84bf669ebd75c754269ab1e6f2ecf3fb257c231fc1f7b82cae845d8aed61281ef973a92a896a34157e12acbc54d11579945c48"
+        },
+        "shared_secret": "257508fb2b79dd0a2de421f7fed5fbe93f247a44879341041076c29327347ee7",
+        "key": "4546c2beba3503666bdcf17f430873b9511d8b682fa71e37b8e578f6606c3c55",
+        "nonce": "79bb3b2f57c4e88dfa9c2979",
+        "plaintext": "{\"v\":1,\"t\":\"broke\",\"session_id\":\"paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77\",\"label\":\"Ledger bot on MacBook Pro\",\"title\":\"Ledger bot\",\"why\":\"run_failed\"}",
+        "e": "AQSYiI8nK-NyQXFsDVjOhL9mnr11x1QmmrHm8uzz-yV8Ix_B97gsroRdiu1hKB75c6kqiWo0FX4SrLxU0RV5lFxIebs7L1fE6I36nCl5ApfbuRbZ-E6JCZ_TfsK2YTmc7YudNWN1v1bn-oNNmdF0oJOMU0XOeOcCsCPACGPUGhJdcyOar89Lpp-Z9vRVRgUEnZKbJ2ZHcwPEzj7e0-DMeWpPhC0jbyluPATlCarthjArqCrIL_8C74F5jc-qBMyTlS0GrTzH_BrDHCEomCafF2JV5HF1UxgZ3mP5xrP2m8i-j7MLojj5oT_qj10Ln8haRD0S1dj_EZ_dPWo",
+        "e_length": 335
+      },
+      "timed_out": {
+        "eph": {
+          "private": "31bd6c26fb02c12f7da7f827496fdabf35cc18fec3d6ed6399618824088269ba",
+          "public": "04ed3adedb5e5a404b3b866837d0727973dde22ef718ba2829353a2375f29644114fa14db080a7ce968110520f0e77dd01751d7c4d5a268a50c99a83e6a91ed47e"
+        },
+        "shared_secret": "abe87cc6d21faac38284cd4c37f4d90945a4312764428b81b8c62b17fe0a4188",
+        "key": "1ab76fc19c383715ccc18ff155a571581f411229e4c3b3089b48bd28d9258f4c",
+        "nonce": "4b44e0f9c408f708ccda5096",
+        "plaintext": "{\"v\":1,\"t\":\"broke\",\"session_id\":\"paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77\",\"label\":\"Ledger bot on MacBook Pro\",\"title\":\"Ledger bot\",\"why\":\"timed_out\"}",
+        "e": "AQTtOt7bXlpASzuGaDfQcnlz3eIu9xi6KCk1OiN18pZEEU-hTbCAp86WgRBSDw533QF1HXxNWiaKUMmag-apHtR-S0Tg-cQI9wjM2lCWGV_wbHoWPdATzmShB6XO5ATLVyQbq_mERDhQ2Sbj8Z1OXaLiXwkoN2YIZLjTFFmMhkgNYHJ2yCvdqjBzd1FSoGqKul1enq-_TVT2ThBjB_65WlDgJm-enLw4HJlkyQWR48tuTLPKnYWZRAA9QdPC64z2y_UYHunFzxJx7idzmbhgpjnxbso9f7KbVINjchzR9h9nDuimA3mzCjM_g0jdnuu_abRtNyfqady2QQ",
+        "e_length": 334
+      },
+      "error": {
+        "eph": {
+          "private": "df23903a658af7bdd8a18d28b43d3aa667cfeb69a6df28b0e9a0b619c5cead9f",
+          "public": "04be483a55f60a462f239561347995c8dd8dae7a3aa82f661440ee954f4b5f190400dae59de8182da565f2d383dd5dbecb589eb5c86e2b2ae36a61aae656adbdd1"
+        },
+        "shared_secret": "eab9a5337f41d9a232aa90d7a40f3e89aba9d36f215a5a04826cb51ae8be769b",
+        "key": "54d0e4ca16d957971ce0ef662f104cbface5cda3421633b09e9b38728d3d2bab",
+        "nonce": "4fbe0eba5bb9ab325e06d238",
+        "plaintext": "{\"v\":1,\"t\":\"broke\",\"session_id\":\"paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77\",\"label\":\"Ledger bot on MacBook Pro\",\"title\":\"Ledger bot\",\"why\":\"error\"}",
+        "e": "AQS-SDpV9gpGLyOVYTR5lcjdja56OqgvZhRA7pVPS18ZBADa5Z3oGC2lZfLTg91dvstYnrXIbisq42phquZWrb3RT74Oulu5qzJeBtI4yVHpBym_osN3e3Z1SDxtM9GfXhKrrY3cIvNqbqa98_Rrfe8oLtkUIS019kx8c9bskoDBGIMGdt2CUWfyliaUl84fuNQOZrQNBAcxewsRwp5nYbRNild6awFxg5W4cLO_OmWFAQwOecT7LU5RWXQuv10CxNkyF5ZGulmsIfYdGwhfSyn8X2WLidE82Fo8WANHbFCBbDc734QYvfGKSwSt9Kv7jTt8e2rb",
+        "e_length": 328
+      }
+    },
+    "apns_body": {
+      "aps": {
+        "alert": {
+          "title": "Orbweaver",
+          "body": "An agent stopped working"
+        },
+        "mutable-content": 1,
+        "interruption-level": "active",
+        "thread-id": "dsk_5f3c9a0e1b7d2468:_APVA4tadxC7cR0g6HWoxg"
+      },
+      "push": "broke",
+      "from": "dsk_5f3c9a0e1b7d2468",
+      "to": "ph_a1b2c3d4e5f60718",
+      "id": "01JCB0BROKE0000000000000AB1",
+      "e": "AQSYiI8nK-NyQXFsDVjOhL9mnr11x1QmmrHm8uzz-yV8Ix_B97gsroRdiu1hKB75c6kqiWo0FX4SrLxU0RV5lFxIebs7L1fE6I36nCl5ApfbuRbZ-E6JCZ_TfsK2YTmc7YudNWN1v1bn-oNNmdF0oJOMU0XOeOcCsCPACGPUGhJdcyOar89Lpp-Z9vRVRgUEnZKbJ2ZHcwPEzj7e0-DMeWpPhC0jbyluPATlCarthjArqCrIL_8C74F5jc-qBMyTlS0GrTzH_BrDHCEomCafF2JV5HF1UxgZ3mP5xrP2m8i-j7MLojj5oT_qj10Ln8haRD0S1dj_EZ_dPWo"
+    },
+    "why_from_mark_reason": [
+      {
+        "mark_reason": "Last run failed",
+        "why": "run_failed"
+      },
+      {
+        "mark_reason": "Last run failed: process_lost",
+        "why": "run_failed"
+      },
+      {
+        "mark_reason": "Last run timed out",
+        "why": "timed_out"
+      },
+      {
+        "mark_reason": "Error",
+        "why": "error"
+      },
+      {
+        "mark_reason": "adapter exploded at /Users/x/secret",
+        "why": "error"
+      },
+      {
+        "mark_reason": null,
+        "why": "error"
+      }
+    ],
+    "phone_rewrite": {
+      "title": "Orbweaver · Ledger bot on MacBook Pro",
+      "body": {
+        "run_failed": "Last run failed",
+        "timed_out": "Last run timed out",
+        "error": "Is in an error state",
+        "<anything else>": "Needs attention"
+      }
+    },
+    "transitions": [
+      {
+        "name": "baseline-already-broke",
+        "polls": [
+          {
+            "mark": "Broke",
+            "roster": true,
+            "reset": false
+          }
+        ],
+        "fires": []
+      },
+      {
+        "name": "none-to-broke",
+        "polls": [
+          {
+            "mark": "None",
+            "roster": true,
+            "reset": false
+          },
+          {
+            "mark": "Broke",
+            "roster": true,
+            "reset": false
+          }
+        ],
+        "fires": [
+          1
+        ]
+      },
+      {
+        "name": "stays-broke-sends-nothing-more",
+        "polls": [
+          {
+            "mark": "None",
+            "roster": true,
+            "reset": false
+          },
+          {
+            "mark": "Broke",
+            "roster": true,
+            "reset": false
+          },
+          {
+            "mark": "Broke",
+            "roster": true,
+            "reset": false
+          },
+          {
+            "mark": "Broke",
+            "roster": true,
+            "reset": false
+          }
+        ],
+        "fires": [
+          1
+        ]
+      },
+      {
+        "name": "recovers-and-breaks-again",
+        "polls": [
+          {
+            "mark": "None",
+            "roster": true,
+            "reset": false
+          },
+          {
+            "mark": "Broke",
+            "roster": true,
+            "reset": false
+          },
+          {
+            "mark": "None",
+            "roster": true,
+            "reset": false
+          },
+          {
+            "mark": "Broke",
+            "roster": true,
+            "reset": false
+          }
+        ],
+        "fires": [
+          1,
+          3
+        ]
+      },
+      {
+        "name": "paused-to-broke",
+        "polls": [
+          {
+            "mark": "Paused",
+            "roster": true,
+            "reset": false
+          },
+          {
+            "mark": "Broke",
+            "roster": true,
+            "reset": false
+          }
+        ],
+        "fires": [
+          1
+        ]
+      },
+      {
+        "name": "over-budget-to-broke",
+        "polls": [
+          {
+            "mark": "OverBudget",
+            "roster": true,
+            "reset": false
+          },
+          {
+            "mark": "Broke",
+            "roster": true,
+            "reset": false
+          }
+        ],
+        "fires": [
+          1
+        ]
+      },
+      {
+        "name": "not-a-roster-row-at-the-transition",
+        "polls": [
+          {
+            "mark": "None",
+            "roster": true,
+            "reset": false
+          },
+          {
+            "mark": "Broke",
+            "roster": false,
+            "reset": false
+          },
+          {
+            "mark": "Broke",
+            "roster": true,
+            "reset": false
+          }
+        ],
+        "fires": []
+      },
+      {
+        "name": "a-reconnect-sets-a-new-baseline",
+        "polls": [
+          {
+            "mark": "None",
+            "roster": true,
+            "reset": false
+          },
+          {
+            "mark": "Broke",
+            "roster": true,
+            "reset": true
+          }
+        ],
+        "fires": []
+      },
+      {
+        "name": "armed-again-after-a-reconnect-baseline",
+        "polls": [
+          {
+            "mark": "None",
+            "roster": true,
+            "reset": false
+          },
+          {
+            "mark": "Broke",
+            "roster": true,
+            "reset": true
+          },
+          {
+            "mark": "None",
+            "roster": true,
+            "reset": false
+          },
+          {
+            "mark": "Broke",
+            "roster": true,
+            "reset": false
+          }
+        ],
+        "fires": [
+          3
+        ]
+      },
+      {
+        "name": "absent-then-broke-is-no-transition",
+        "polls": [
+          {
+            "mark": "None",
+            "roster": true,
+            "reset": false
+          },
+          {
+            "mark": null,
+            "roster": true,
+            "reset": false
+          },
+          {
+            "mark": "Broke",
+            "roster": true,
+            "reset": false
+          }
+        ],
+        "fires": []
+      }
+    ],
+    "prefs": {
+      "frames": [
+        {
+          "name": "with-broke",
+          "plaintext": "{\"t\":\"prefs\",\"done_alerts\":\"all\",\"amber_members\":true,\"broke_alerts\":true}",
+          "broke_alerts": true
+        },
+        {
+          "name": "broke-off",
+          "plaintext": "{\"t\":\"prefs\",\"done_alerts\":\"all\",\"amber_members\":true,\"broke_alerts\":false}",
+          "broke_alerts": false
+        },
+        {
+          "name": "without-the-key",
+          "plaintext": "{\"t\":\"prefs\",\"done_alerts\":\"leads\",\"amber_members\":false}",
+          "broke_alerts": false
+        },
+        {
+          "name": "a-non-boolean-is-off",
+          "plaintext": "{\"t\":\"prefs\",\"done_alerts\":\"all\",\"broke_alerts\":\"yes\"}",
+          "broke_alerts": false
+        }
+      ],
+      "never_sent_prefs": {
+        "broke_alerts": false
+      }
+    },
+    "push_mute": {
+      "refused_bad_hello": [
+        [
+          "broke"
+        ],
+        [
+          "done",
+          "broke"
+        ],
+        [
+          "limit",
+          "broke",
+          "done"
+        ]
+      ]
+    },
+    "envelope_accepted": [
+      {
+        "push": "broke",
+        "class": "state",
+        "from": "desktop",
+        "to": "phone"
+      }
+    ],
+    "envelope_refused_bad_envelope": [
+      {
+        "push": "broke",
+        "class": "action",
+        "from": "desktop",
+        "to": "phone"
+      },
+      {
+        "push": "broke",
+        "class": "chat",
+        "from": "desktop",
+        "to": "phone"
+      },
+      {
+        "push": "broke",
+        "class": "state",
+        "from": "phone",
+        "to": "desktop"
+      },
+      {
+        "push": "broke",
+        "class": "state",
+        "from": "desktop",
+        "to": "desktop"
+      }
+    ],
+    "relay_replies": [
+      "pushed",
+      "push_throttled",
+      "push_no_token"
+    ],
+    "old_relay": {
+      "answer": "err bad_envelope",
+      "message": "push must be none, amber, resolve, done or limit"
+    }
+  },
+  "prompt": {
+    "minted_at": 1794111900,
+    "positives": [
+      {
+        "name": "board-approval",
+        "item": {
+          "kind": "approval",
+          "id": "b6c1d0e2-9f31-4a7b-8c55-2e0d4f6a8b10"
+        },
+        "frame": {
+          "t": "prompt",
+          "request_id": "01JCB0PROMPT00000000000AB1",
+          "session_id": "paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77",
+          "kind": "permission",
+          "cli": "paperclip",
+          "tool": "Approval",
+          "preview": "Approve the Q4 plan\nCEO asks the board to approve the Q4 strategy",
+          "options": [
+            {
+              "key": "approve",
+              "label": "Approve",
+              "kind": "approve"
+            },
+            {
+              "key": "decline",
+              "label": "Decline",
+              "kind": "deny"
+            }
+          ],
+          "screen_hash": "WyFIZba8Ix25WWDtd-D-g70C6UN0fhEq2jeYdF9jFbk",
+          "expires_at": 1794198300
+        }
+      },
+      {
+        "name": "hire",
+        "item": {
+          "kind": "approval",
+          "id": "a1f0c9d2-0b3e-4f55-8d6a-9e7c1b2a3d44"
+        },
+        "frame": {
+          "t": "prompt",
+          "request_id": "01JCB0PROMPT00000000000AB2",
+          "session_id": "paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77",
+          "kind": "permission",
+          "cli": "paperclip",
+          "tool": "Hire",
+          "preview": "Hire a research agent\nResearcher, 40 USD per month",
+          "options": [
+            {
+              "key": "approve",
+              "label": "Approve",
+              "kind": "approve"
+            },
+            {
+              "key": "decline",
+              "label": "Decline",
+              "kind": "deny"
+            }
+          ],
+          "screen_hash": "5tCS8NNdeXaE3TrRVSIQVId0dDPEyd8ocSA-r83lGec",
+          "expires_at": 1794198300
+        }
+      },
+      {
+        "name": "tool-action",
+        "item": {
+          "kind": "action",
+          "id": "7c4e2b90-5d1a-4a6f-b3c8-0f9e8d7c6b5a"
+        },
+        "frame": {
+          "t": "prompt",
+          "request_id": "01JCB0PROMPT00000000000AB3",
+          "session_id": "paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77",
+          "kind": "permission",
+          "cli": "paperclip",
+          "tool": "Tool action",
+          "preview": "Send email\nLedger bot wants to email the accountant",
+          "options": [
+            {
+              "key": "approve",
+              "label": "Approve",
+              "kind": "approve"
+            },
+            {
+              "key": "decline",
+              "label": "Decline",
+              "kind": "deny"
+            }
+          ],
+          "screen_hash": "HTsLdUHakLhKhYT3OU8XuZHaVxtPA2PlBCb69TRk1Lk",
+          "expires_at": 1794198300
+        }
+      },
+      {
+        "name": "long-summary-cut",
+        "item": {
+          "kind": "approval",
+          "id": "0d9e8f7a-6b5c-4d3e-a2f1-1a2b3c4d5e6f"
+        },
+        "frame": {
+          "t": "prompt",
+          "request_id": "01JCB0PROMPT00000000000AB4",
+          "session_id": "paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77",
+          "kind": "permission",
+          "cli": "paperclip",
+          "tool": "Strategy",
+          "preview": "Q4 plan\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…",
+          "options": [
+            {
+              "key": "approve",
+              "label": "Approve",
+              "kind": "approve"
+            },
+            {
+              "key": "decline",
+              "label": "Decline",
+              "kind": "deny"
+            }
+          ],
+          "screen_hash": "PZ24669E3E889Tgw8RYq4c2YmulzO-kNBD8Fv1PWir4",
+          "expires_at": 1794198300
+        }
+      }
+    ],
+    "same_item_same_hash": {
+      "a": "approval",
+      "b": "approval",
+      "id": "a1f0c9d2-0b3e-4f55-8d6a-9e7c1b2a3d44"
+    },
+    "answers": [
+      {
+        "action": "approve",
+        "nonce": "AQEBAQEBAQEBAQEBAQEBAQ",
+        "body": "{\"request_id\":\"01JCB0PROMPT00000000000AB1\",\"session_id\":\"paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77\",\"action\":\"approve\",\"scope\":\"\",\"nonce\":\"AQEBAQEBAQEBAQEBAQEBAQ\",\"expires_at\":1794198300}",
+        "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a43423050524f4d50543030303030303030303030414231222c2273657373696f6e5f6964223a227061706572636c69703a33663262386331652d376134342d346430652d396236312d356332643865306631613737222c22616374696f6e223a22617070726f7665222c2273636f7065223a22222c226e6f6e6365223a2241514542415145424151454241514542415145424151222c22657870697265735f6174223a313739343139383330307d",
+        "sig": "swjxQA5owaUVftWKrN4wtelDYAh9SVr6ltu81aFI1HWyDhNisJb1i9rcsTOV5QWh8uHmoj9_bQRo5AjHk1bGOw",
+        "answer_frame": {
+          "t": "answer",
+          "request_id": "01JCB0PROMPT00000000000AB1",
+          "session_id": "paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77",
+          "action": "approve",
+          "scope": "",
+          "note": "",
+          "nonce": "AQEBAQEBAQEBAQEBAQEBAQ",
+          "expires_at": 1794198300,
+          "screen_hash": "WyFIZba8Ix25WWDtd-D-g70C6UN0fhEq2jeYdF9jFbk",
+          "sig": "swjxQA5owaUVftWKrN4wtelDYAh9SVr6ltu81aFI1HWyDhNisJb1i9rcsTOV5QWh8uHmoj9_bQRo5AjHk1bGOw"
+        },
+        "name": "board-approval-approve",
+        "prompt": "board-approval"
+      },
+      {
+        "action": "deny",
+        "nonce": "AgICAgICAgICAgICAgICAg",
+        "body": "{\"request_id\":\"01JCB0PROMPT00000000000AB1\",\"session_id\":\"paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77\",\"action\":\"deny\",\"scope\":\"\",\"nonce\":\"AgICAgICAgICAgICAgICAg\",\"expires_at\":1794198300}",
+        "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a43423050524f4d50543030303030303030303030414231222c2273657373696f6e5f6964223a227061706572636c69703a33663262386331652d376134342d346430652d396236312d356332643865306631613737222c22616374696f6e223a2264656e79222c2273636f7065223a22222c226e6f6e6365223a2241674943416749434167494341674943416749434167222c22657870697265735f6174223a313739343139383330307d",
+        "sig": "_UfwxyEIZAr-CeFm79JGDgNvWV9Ms_6BjFZoM30V1wGvb_-dFMop0AE_Hw6UKApuDjDNaWcV43-JG7D_CLhhBA",
+        "answer_frame": {
+          "t": "answer",
+          "request_id": "01JCB0PROMPT00000000000AB1",
+          "session_id": "paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77",
+          "action": "deny",
+          "scope": "",
+          "note": "",
+          "nonce": "AgICAgICAgICAgICAgICAg",
+          "expires_at": 1794198300,
+          "screen_hash": "WyFIZba8Ix25WWDtd-D-g70C6UN0fhEq2jeYdF9jFbk",
+          "sig": "_UfwxyEIZAr-CeFm79JGDgNvWV9Ms_6BjFZoM30V1wGvb_-dFMop0AE_Hw6UKApuDjDNaWcV43-JG7D_CLhhBA"
+        },
+        "name": "board-approval-deny",
+        "prompt": "board-approval"
+      },
+      {
+        "action": "approve",
+        "nonce": "AwMDAwMDAwMDAwMDAwMDAw",
+        "body": "{\"request_id\":\"01JCB0PROMPT00000000000AB2\",\"session_id\":\"paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77\",\"action\":\"approve\",\"scope\":\"\",\"nonce\":\"AwMDAwMDAwMDAwMDAwMDAw\",\"expires_at\":1794198300}",
+        "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a43423050524f4d50543030303030303030303030414232222c2273657373696f6e5f6964223a227061706572636c69703a33663262386331652d376134342d346430652d396236312d356332643865306631613737222c22616374696f6e223a22617070726f7665222c2273636f7065223a22222c226e6f6e6365223a2241774d4441774d4441774d4441774d4441774d444177222c22657870697265735f6174223a313739343139383330307d",
+        "sig": "woWpjOXFMCFqjVi3Hy4UvnLm1NG2u2RpYmJpE0kE7cias1xdB1fRsgVb3-fcC1Y7T6vNoCk4qW_JpXPWxZ7Miw",
+        "answer_frame": {
+          "t": "answer",
+          "request_id": "01JCB0PROMPT00000000000AB2",
+          "session_id": "paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77",
+          "action": "approve",
+          "scope": "",
+          "note": "",
+          "nonce": "AwMDAwMDAwMDAwMDAwMDAw",
+          "expires_at": 1794198300,
+          "screen_hash": "5tCS8NNdeXaE3TrRVSIQVId0dDPEyd8ocSA-r83lGec",
+          "sig": "woWpjOXFMCFqjVi3Hy4UvnLm1NG2u2RpYmJpE0kE7cias1xdB1fRsgVb3-fcC1Y7T6vNoCk4qW_JpXPWxZ7Miw"
+        },
+        "name": "hire-approve",
+        "prompt": "hire"
+      },
+      {
+        "action": "deny",
+        "nonce": "BAQEBAQEBAQEBAQEBAQEBA",
+        "body": "{\"request_id\":\"01JCB0PROMPT00000000000AB2\",\"session_id\":\"paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77\",\"action\":\"deny\",\"scope\":\"\",\"nonce\":\"BAQEBAQEBAQEBAQEBAQEBA\",\"expires_at\":1794198300}",
+        "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a43423050524f4d50543030303030303030303030414232222c2273657373696f6e5f6964223a227061706572636c69703a33663262386331652d376134342d346430652d396236312d356332643865306631613737222c22616374696f6e223a2264656e79222c2273636f7065223a22222c226e6f6e6365223a2242415145424151454241514542415145424151454241222c22657870697265735f6174223a313739343139383330307d",
+        "sig": "UhXheeJh4V3PWe1cVx-FNCtK7cFRTBWWYPLqx6ct95FbCbkpb954p8Ls537FgPG7JabNa-g1VGfbyG9oVD-WWQ",
+        "answer_frame": {
+          "t": "answer",
+          "request_id": "01JCB0PROMPT00000000000AB2",
+          "session_id": "paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77",
+          "action": "deny",
+          "scope": "",
+          "note": "",
+          "nonce": "BAQEBAQEBAQEBAQEBAQEBA",
+          "expires_at": 1794198300,
+          "screen_hash": "5tCS8NNdeXaE3TrRVSIQVId0dDPEyd8ocSA-r83lGec",
+          "sig": "UhXheeJh4V3PWe1cVx-FNCtK7cFRTBWWYPLqx6ct95FbCbkpb954p8Ls537FgPG7JabNa-g1VGfbyG9oVD-WWQ"
+        },
+        "name": "hire-deny",
+        "prompt": "hire"
+      },
+      {
+        "action": "approve",
+        "nonce": "BQUFBQUFBQUFBQUFBQUFBQ",
+        "body": "{\"request_id\":\"01JCB0PROMPT00000000000AB3\",\"session_id\":\"paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77\",\"action\":\"approve\",\"scope\":\"\",\"nonce\":\"BQUFBQUFBQUFBQUFBQUFBQ\",\"expires_at\":1794198300}",
+        "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a43423050524f4d50543030303030303030303030414233222c2273657373696f6e5f6964223a227061706572636c69703a33663262386331652d376134342d346430652d396236312d356332643865306631613737222c22616374696f6e223a22617070726f7665222c2273636f7065223a22222c226e6f6e6365223a2242515546425155464251554642515546425155464251222c22657870697265735f6174223a313739343139383330307d",
+        "sig": "7TKEIbFZtjie2BbAW9bydrrt27GRz3TKZOLUgBDHpYo5kqLsQTV3Ll9MkpE4BlQ-bWMsuoTSwRS7H7_4lLgtAQ",
+        "answer_frame": {
+          "t": "answer",
+          "request_id": "01JCB0PROMPT00000000000AB3",
+          "session_id": "paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77",
+          "action": "approve",
+          "scope": "",
+          "note": "",
+          "nonce": "BQUFBQUFBQUFBQUFBQUFBQ",
+          "expires_at": 1794198300,
+          "screen_hash": "HTsLdUHakLhKhYT3OU8XuZHaVxtPA2PlBCb69TRk1Lk",
+          "sig": "7TKEIbFZtjie2BbAW9bydrrt27GRz3TKZOLUgBDHpYo5kqLsQTV3Ll9MkpE4BlQ-bWMsuoTSwRS7H7_4lLgtAQ"
+        },
+        "name": "tool-action-approve",
+        "prompt": "tool-action"
+      },
+      {
+        "action": "deny",
+        "nonce": "BgYGBgYGBgYGBgYGBgYGBg",
+        "body": "{\"request_id\":\"01JCB0PROMPT00000000000AB3\",\"session_id\":\"paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77\",\"action\":\"deny\",\"scope\":\"\",\"nonce\":\"BgYGBgYGBgYGBgYGBgYGBg\",\"expires_at\":1794198300}",
+        "message": "6f72627765617665722d616e737765722d76317b22726571756573745f6964223a2230314a43423050524f4d50543030303030303030303030414233222c2273657373696f6e5f6964223a227061706572636c69703a33663262386331652d376134342d346430652d396236312d356332643865306631613737222c22616374696f6e223a2264656e79222c2273636f7065223a22222c226e6f6e6365223a2242675947426759474267594742675947426759474267222c22657870697265735f6174223a313739343139383330307d",
+        "sig": "PTKX8e-4atdeHvPUIRW5IpWfSsaEKy_zcfw1DyE_Pfb623rpOk4-uoqvLniNKV0auA5nKoMxkkq3hE9r07OuLw",
+        "answer_frame": {
+          "t": "answer",
+          "request_id": "01JCB0PROMPT00000000000AB3",
+          "session_id": "paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77",
+          "action": "deny",
+          "scope": "",
+          "note": "",
+          "nonce": "BgYGBgYGBgYGBgYGBgYGBg",
+          "expires_at": 1794198300,
+          "screen_hash": "HTsLdUHakLhKhYT3OU8XuZHaVxtPA2PlBCb69TRk1Lk",
+          "sig": "PTKX8e-4atdeHvPUIRW5IpWfSsaEKy_zcfw1DyE_Pfb623rpOk4-uoqvLniNKV0auA5nKoMxkkq3hE9r07OuLw"
+        },
+        "name": "tool-action-deny",
+        "prompt": "tool-action"
+      }
+    ],
+    "resolved": [
+      {
+        "by": "phone:ph_a1b2c3d4e5f60718",
+        "plaintext": "{\"t\":\"resolved\",\"request_id\":\"01JCB0PROMPT00000000000AB1\",\"session_id\":\"paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77\",\"by\":\"phone:ph_a1b2c3d4e5f60718\"}"
+      },
+      {
+        "by": "desk",
+        "plaintext": "{\"t\":\"resolved\",\"request_id\":\"01JCB0PROMPT00000000000AB1\",\"session_id\":\"paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77\",\"by\":\"desk\"}"
+      },
+      {
+        "by": "gone",
+        "plaintext": "{\"t\":\"resolved\",\"request_id\":\"01JCB0PROMPT00000000000AB1\",\"session_id\":\"paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77\",\"by\":\"gone\"}"
+      }
+    ],
+    "refusals": [
+      {
+        "code": "not_pending",
+        "plaintext": "{\"t\":\"err\",\"request_id\":\"01JCB0PROMPT00000000000AB1\",\"session_id\":\"paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77\",\"code\":\"not_pending\"}"
+      },
+      {
+        "code": "stale_prompt",
+        "plaintext": "{\"t\":\"err\",\"request_id\":\"01JCB0PROMPT00000000000AB1\",\"session_id\":\"paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77\",\"code\":\"stale_prompt\"}"
+      },
+      {
+        "code": "forbidden_option",
+        "plaintext": "{\"t\":\"err\",\"request_id\":\"01JCB0PROMPT00000000000AB1\",\"session_id\":\"paperclip:3f2b8c1e-7a44-4d0e-9b61-5c2d8e0f1a77\",\"code\":\"forbidden_option\"}"
+      }
+    ],
+    "one_at_a_time": {
+      "needs": [
+        {
+          "kind": "approval",
+          "id": "b6c1d0e2-9f31-4a7b-8c55-2e0d4f6a8b10"
+        },
+        {
+          "kind": "action",
+          "id": "7c4e2b90-5d1a-4a6f-b3c8-0f9e8d7c6b5a"
+        }
+      ],
+      "order": "oldest first, by createdAt then id",
+      "sent": [
+        "approval:b6c1d0e2-9f31-4a7b-8c55-2e0d4f6a8b10"
+      ],
+      "after_it_resolves": [
+        "action:7c4e2b90-5d1a-4a6f-b3c8-0f9e8d7c6b5a"
+      ]
+    },
+    "mints_none": [
+      {
+        "need": "blocked task"
+      },
+      {
+        "need": "the synthetic pending need"
+      },
+      {
+        "need": "an agent that is not a row in the roster"
+      }
+    ],
+    "other_actions": {
+      "anything but approve and deny": "err forbidden_option"
+    }
+  }
+}

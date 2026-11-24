@@ -26,7 +26,7 @@ namespace Orbweaver
     // Changes apply immediately. There is no OK/Cancel: this is a preferences
     // window for a menu-bar app, and a settings file that only commits on a
     // button is one more state to get wrong.
-    internal sealed class SettingsWindow : Window
+    internal sealed partial class SettingsWindow : Window
     {
         private static SettingsWindow? _open;
 
@@ -81,6 +81,7 @@ namespace Orbweaver
             _open.Show();
             _open.Activate();
             _open.StartStatusTicker();
+            _ = _open.DiscoverPaperclipAsync();
         }
 
         private SettingsWindow()
@@ -743,6 +744,10 @@ namespace Orbweaver
             // them living beside the gateway.
             root.Children.Add(Group("claude-cloud", "Claude Code in the cloud", Card(ClaudeCloudRows())));
 
+            // After the gateway and the cloud: a company of agents in a Paperclip
+            // you run, drawn as orbs (CB-421). Release 1 is view-only.
+            root.Children.Add(Group("paperclip", "Paperclip agents", Card(PaperclipRows())));
+
             // Beside the cloud section and not inside it (CB-306's
             // product-readiness round): it is on by default and governs
             // sessions on this machine, so it must not hide behind "Show cloud
@@ -1080,40 +1085,93 @@ namespace Orbweaver
         // goes through the S1 properties, which defer their write with SaveSoon
         // for the colour and opacity ones, and then tells the manager so a
         // backdrop already on screen repaints.
-        internal Control[] GroupOutlineRows() => new[]
+        internal Control[] GroupOutlineRows()
         {
-            Row("Auto-group orbs by", AutoGroupPicker(), SettingsFilter.AutoGroupHelp),
-            Row("Outline groups", Switch(OrbweaverSettings.GroupOutlinesEnabled, on =>
-                {
-                    OrbweaverSettings.GroupOutlinesEnabled = on;
-                    SessionManager.Instance?.ReapplyGroupStyles();
-                }),
-                "Draw each group's shape behind its orbs. Groups can still be grabbed by the "
-                + "empty space inside them when this is off."),
-            ColorRow("Stroke colour",
+            var strokeRow = ColorRow("Stroke colour",
                 () => GroupStyleControls.ColorOf(OrbweaverSettings.GroupOutlineStroke),
                 color => { OrbweaverSettings.GroupOutlineStroke = OrbColors.ToHex(color); SessionManager.Instance?.ReapplyGroupStyles(); },
-                "The line around a group. A group can override this from its own right-click menu."),
-            Row("Stroke opacity", GroupStyleControls.OpacityControl(
-                    OrbweaverSettings.GroupOutlineStrokeOpacity,
-                    v => { OrbweaverSettings.GroupOutlineStrokeOpacity = v; SessionManager.Instance?.ReapplyGroupStyles(); }),
-                "0% hides the line, 100% draws it solid."),
-            ColorRow("Fill colour",
+                "The line around a group. A group can override this from its own right-click menu.");
+            var fillRow = ColorRow("Fill colour",
                 () => GroupStyleControls.ColorOf(OrbweaverSettings.GroupOutlineFill),
                 color => { OrbweaverSettings.GroupOutlineFill = OrbColors.ToHex(color); SessionManager.Instance?.ReapplyGroupStyles(); },
-                "The tint inside a group's shape."),
-            Row("Fill opacity", GroupStyleControls.OpacityControl(
-                    OrbweaverSettings.GroupOutlineFillOpacity,
-                    v => { OrbweaverSettings.GroupOutlineFillOpacity = v; SessionManager.Instance?.ReapplyGroupStyles(); }),
-                "Keep this low to read the orbs through it."),
-            Row("Show group names", Switch(OrbweaverSettings.GroupNamesVisible, on =>
-                {
-                    OrbweaverSettings.GroupNamesVisible = on;
-                    SessionManager.Instance?.ReapplyGroupStyles();
-                }),
-                "Write each group's name in a small caption above its outline, in the outline's "
-                + "colour. Rename a group from its Group menu.")
-        };
+                "The tint inside a group's shape.");
+
+            // CB-409: in random mode the two global colours apply to nothing, so
+            // they are greyed out rather than left to look live. The opacity
+            // rows keep their meaning and stay enabled.
+            var shuffle = new Button { Content = "Shuffle", Name = "ShuffleGroupColoursButton" };
+            shuffle.Click += (_, _) => OnShuffleGroupColours();
+            var colourRows = new Control[] { strokeRow, fillRow };
+            void Sync(bool random)
+            {
+                shuffle.IsEnabled = random;
+                foreach (var row in colourRows) row.IsEnabled = !random;
+            }
+            Sync(OrbweaverSettings.GroupColourRandom);
+
+            return new[]
+            {
+                Row("Auto-group orbs by", AutoGroupPicker(), SettingsFilter.AutoGroupHelp),
+                Row("Outline groups", Switch(OrbweaverSettings.GroupOutlinesEnabled, on =>
+                    {
+                        OrbweaverSettings.GroupOutlinesEnabled = on;
+                        SessionManager.Instance?.ReapplyGroupStyles();
+                    }),
+                    "Draw each group's shape behind its orbs. Groups can still be grabbed by the "
+                    + "empty space inside them when this is off."),
+                Row("Group colours", GroupColourModePicker(Sync),
+                    "Random gives each group its own colour, kept across restarts. "
+                    + "Groups with their own style keep it."),
+                Row("Shuffle colours", shuffle, "Deal every group a new random colour."),
+                strokeRow,
+                Row("Stroke opacity", GroupStyleControls.OpacityControl(
+                        OrbweaverSettings.GroupOutlineStrokeOpacity,
+                        v => { OrbweaverSettings.GroupOutlineStrokeOpacity = v; SessionManager.Instance?.ReapplyGroupStyles(); }),
+                    "0% hides the line, 100% draws it solid."),
+                fillRow,
+                Row("Fill opacity", GroupStyleControls.OpacityControl(
+                        OrbweaverSettings.GroupOutlineFillOpacity,
+                        v => { OrbweaverSettings.GroupOutlineFillOpacity = v; SessionManager.Instance?.ReapplyGroupStyles(); }),
+                    "Keep this low to read the orbs through it."),
+                Row("Show group names", Switch(OrbweaverSettings.GroupNamesVisible, on =>
+                    {
+                        OrbweaverSettings.GroupNamesVisible = on;
+                        SessionManager.Instance?.ReapplyGroupStyles();
+                    }),
+                    "Write each group's name in a small caption above its outline, in the outline's "
+                    + "colour. Rename a group from its Group menu.")
+            };
+        }
+
+        // CB-409's mode row: a two-choice combo like AutoGroupPicker. `sync` tells
+        // the card what to enable once the mode has changed.
+        internal Control GroupColourModePicker(Action<bool> sync)
+        {
+            var choices = new[] { "Same for all", "Random per group" };
+            var combo = new ComboBox
+            {
+                ItemsSource = choices,
+                SelectedIndex = OrbweaverSettings.GroupColourRandom ? 1 : 0,
+                MinWidth = 132,
+                Name = "GroupColourModePicker"
+            };
+            combo.SelectionChanged += (_, _) =>
+            {
+                if (combo.SelectedIndex < 0) return;
+                var random = combo.SelectedIndex == 1;
+                if (random == OrbweaverSettings.GroupColourRandom) return;
+                OrbweaverSettings.GroupColourRandom = random;
+                sync(random);
+                SessionManager.Instance?.ReapplyGroupStyles();
+            };
+            return combo;
+        }
+
+        internal static void OnShuffleGroupColours()
+        {
+            OrbweaverSettings.ShuffleGroupColours();
+            SessionManager.Instance?.ReapplyGroupStyles();
+        }
 
         // internal for the same reason the rows above are: a test drives the
         // slider directly rather than hunting for it through whichever theme
@@ -2235,6 +2293,8 @@ namespace Orbweaver
             // CB-276: independent of which sections are expanded, because a
             // collapsed group still has to be right when it is opened.
             if (HiddenOrbsKey() != _hiddenOrbsKey) Rebuild();
+
+            TickPaperclip();
 
             if (_openClawStatus is not null)
             {

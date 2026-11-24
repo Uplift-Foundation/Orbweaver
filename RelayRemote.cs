@@ -77,9 +77,21 @@ namespace Orbweaver
             // forbidden_path for a list_dir, as a desk with nothing to share would.
             internal BrowseSeams? Browse { get; init; }
 
+            // CB-434: resume. Null means this desk cannot resume (resume_unsupported)
+            // and, with Past null too, does not advertise the cap.
+            internal LaunchRunner.ResumeSeams? Resume { get; init; }
+
+            // CB-434: the past-sessions page list_sessions answers from.
+            internal PastSessionsRemote? Past { get; init; }
+
             // CB-404: the run controls a set_run drives and a run frame reports.
             // Null means none: no run frames, and every set_run is unavailable.
             internal IRunControls? RunControls { get; init; }
+
+            // CB-447 (frames-v18): what a phone's watch and input on a Paperclip row are served from. Null, or
+            // not Available, answers a Paperclip row exactly as frames-v15 did (watch is ok with total 0 and
+            // no window, input is untypeable) and the desk does not advertise paperclip_chat.
+            internal IPaperclipPhoneHost? Paperclip { get; init; }
         }
 
         // The filesystem a list_dir reads, the settings it reads them under (resolved on each
@@ -99,6 +111,9 @@ namespace Orbweaver
         private readonly NonceWindow _nonces;
         private readonly object _gate = new();
         private readonly Dictionary<(string Phone, string Session), TranscriptWatcher> _watches = new();
+        // CB-447: a phone's watch on a Paperclip row. Held apart from the transcript watches, which read a file;
+        // each holds a share of the agent's thread, released when the watch ends.
+        private readonly Dictionary<(string Phone, string Session), PaperclipPhoneWatcher> _paperclipWatches = new();
         private IReadOnlyList<(string SessionId, SessionStatus Status)> _snapshot = [];
 
         // CB-404: the run frame each watch was last sent, so one goes only when
@@ -124,11 +139,11 @@ namespace Orbweaver
             _nonces = nonces;
         }
 
-        internal int WatchCount { get { lock (_gate) return _watches.Count; } }
+        internal int WatchCount { get { lock (_gate) return _watches.Count + _paperclipWatches.Count; } }
 
         internal bool IsWatching(string phoneId, string sessionId)
         {
-            lock (_gate) return _watches.ContainsKey((phoneId, sessionId));
+            lock (_gate) return _watches.ContainsKey((phoneId, sessionId)) || _paperclipWatches.ContainsKey((phoneId, sessionId));
         }
 
         // ---- the desk's sessions -----------------------------------------------
@@ -138,11 +153,16 @@ namespace Orbweaver
         // window is sent.
         internal void OnStatuses(IReadOnlyList<(string SessionId, SessionStatus Status)> snapshot)
         {
+            List<PaperclipPhoneWatcher> gone;
             lock (_gate)
             {
                 _snapshot = snapshot;
                 foreach (var key in _watches.Keys.Where(k => Local(k.Session) is null).ToList()) Drop(key);
+                // A Paperclip agent that left the roster ends its watch, as a local session does: the roster
+                // removal is the phone's signal, so no final window is sent.
+                gone = _paperclipWatches.Keys.Where(k => !Listed(k.Session)).Select(TakePaperclip).ToList();
             }
+            foreach (var w in gone) w.Release();
         }
 
         // A local CLI session this desktop's book holds — never an OpenClaw
@@ -153,6 +173,18 @@ namespace Orbweaver
                 foreach (var (sid, status) in _snapshot)
                     if (sid == sessionId && status.IsLocalCli) return status;
             return null;
+        }
+
+        // CB-422 (frames-v15): a Paperclip agent this desk is drawing. It is a
+        // row the phone can see, so a request naming it is answered rather than
+        // told the session is gone, but it has no transcript, terminal or run
+        // controls, which is why Local() does not and must not include it.
+        internal bool Listed(string sessionId)
+        {
+            lock (_gate)
+                foreach (var (sid, status) in _snapshot)
+                    if (sid == sessionId && status.Source == SessionSource.Paperclip) return true;
+            return false;
         }
 
         private IReadOnlyList<(string SessionId, SessionStatus Status)> Snapshot()
@@ -197,11 +229,23 @@ namespace Orbweaver
 
         internal void PhoneOffline(string phoneId)
         {
+            List<PaperclipPhoneWatcher> gone;
             lock (_gate)
             {
                 foreach (var key in _watches.Keys.Where(k => k.Phone == phoneId).ToList()) Drop(key);
+                gone = _paperclipWatches.Keys.Where(k => k.Phone == phoneId).Select(TakePaperclip).ToList();
                 AbandonImages(phoneId);
             }
+            foreach (var w in gone) w.Release();
+        }
+
+        // Under _gate: the watch leaves the table; the caller releases it after the lock, since releasing the
+        // last share closes a feed.
+        private PaperclipPhoneWatcher TakePaperclip((string Phone, string Session) key)
+        {
+            var watcher = _paperclipWatches[key];
+            _paperclipWatches.Remove(key);
+            return watcher;
         }
 
         // Under _gate.
@@ -229,19 +273,31 @@ namespace Orbweaver
         // reconnect (frames-v4 watch.rules).
         internal void Disconnected()
         {
+            List<PaperclipPhoneWatcher> gone;
             lock (_gate)
             {
                 _watches.Clear();
+                gone = _paperclipWatches.Values.ToList();
+                _paperclipWatches.Clear();
                 _runSent.Clear();
                 foreach (var phone in _imageQueues.Keys.ToList()) AbandonImages(phone);
             }
+            foreach (var w in gone) w.Release();
         }
 
         // One tick of every watch: what each owes its phone.
         internal void Tick(DateTimeOffset now)
         {
             List<TranscriptWatcher> watchers;
-            lock (_gate) watchers = _watches.Values.ToList();
+            List<PaperclipPhoneWatcher> paperclip;
+            lock (_gate)
+            {
+                watchers = _watches.Values.ToList();
+                paperclip = _paperclipWatches.Values.ToList();
+            }
+            // CB-447: a Paperclip thread is in memory, so each tick is a version compare and a diff.
+            foreach (var w in paperclip)
+                foreach (var window in w.Poll()) _send.Window(w.PhoneId, w.SessionId, window);
             foreach (var w in watchers)
             {
                 IReadOnlyList<string> windows;
@@ -313,6 +369,8 @@ namespace Orbweaver
             PersonaImageRequest p => Task.Run(() => ImageAsync(phoneId, p)),
             // CB-339: a folder listing, built off the pump with its own clock on the read.
             ListDirRequest d => ListDirAsync(phoneId, d),
+            // CB-434: a past-sessions page, off the pump: it reads transcript heads.
+            ListSessionsRequest s => Task.Run(() => ListSessions(phoneId, s)),
             // CB-404: a run change, off the pump — a control request waits on the CLI's answer.
             SetRunRequest r => Task.Run(() => SetRunAsync(phoneId, r)),
             // The only other kind RelayRequests makes.
@@ -367,6 +425,48 @@ namespace Orbweaver
             foreach (var frame in frames) _send.Reply(phoneId, null, frame);
         }
 
+        // CB-434 (frames-v17 list_sessions): list_dir's rate limit first, then
+        // the shape, then the page, kept to the browse scope (amendment 2). A
+        // desk with no Past seams answers unreadable. Logged as the ref, the
+        // code and a count, never a title, a folder or an id.
+        private void ListSessions(string phoneId, ListSessionsRequest r)
+        {
+            if (!_browseRate.TryAccept(phoneId, _seams.Now().ToUnixTimeMilliseconds()))
+            {
+                Err(phoneId, r.Ref, RelayReplies.RateLimited);
+                return;
+            }
+            if (r.Query is not { } query)
+            {
+                Err(phoneId, r.Ref, RelayReplies.BadFrame);
+                return;
+            }
+            if (_seams.Past is not { } past)
+            {
+                Err(phoneId, r.Ref, RelayReplies.Unreadable);
+                return;
+            }
+
+            var page = past.Page(query, PhoneScope());
+            if (!page.Ok)
+            {
+                Err(phoneId, r.Ref, page.Code);
+                return;
+            }
+            _seams.Log($"list_sessions {RelayLink.Safe(r.Ref)} {page.Rows.Count}/{page.Total}");
+            foreach (var frame in SessionFrames.Sessions(r.Ref, query.Cli, page)) _send.Reply(phoneId, null, frame);
+        }
+
+        // The phone's browse scope, read on each request as list_dir's is. With
+        // no browse seams nothing is in scope, as a desk with nothing to share
+        // answers forbidden_path to every list_dir.
+        private Func<string?, bool> PhoneScope()
+        {
+            if (_seams.Browse is not { } browse) return _ => false;
+            var settings = browse.Settings();
+            return cwd => BrowseRules.PhoneMaySee(cwd, settings, browse.Fs);
+        }
+
         // frames-v13 set_run, after the parser's bad_frame: unknown_session, then
         // the field's state (unavailable when it is off or the host is running
         // another change to the session,
@@ -375,6 +475,11 @@ namespace Orbweaver
         // ran, not that it took: the confirming run frame says that.
         private async Task SetRunAsync(string phoneId, SetRunRequest r)
         {
+            if (Listed(r.SessionId))
+            {
+                RunErr(phoneId, r, RunFrames.Unavailable, NoRunControlsWhy);
+                return;
+            }
             if (Local(r.SessionId) is not { } status)
             {
                 RunErr(phoneId, r, RelayReplies.UnknownSession);
@@ -417,7 +522,7 @@ namespace Orbweaver
         private void Err(string phoneId, string reference, string code, string? sessionId = null, string? why = null)
         {
             _seams.Log($"err {RelayLink.Safe(reference)} {code}");
-            _send.Reply(phoneId, sessionId is not null && Local(sessionId) is not null ? sessionId : null,
+            _send.Reply(phoneId, sessionId is not null && (Local(sessionId) is not null || Listed(sessionId)) ? sessionId : null,
                 RelayReplies.Err(reference, code, sessionId, why));
         }
 
@@ -429,6 +534,11 @@ namespace Orbweaver
 
         private void Watch(string phoneId, WatchRequest w)
         {
+            if (Listed(w.SessionId))
+            {
+                WatchPaperclip(phoneId, w);
+                return;
+            }
             if (Local(w.SessionId) is null)
             {
                 Err(phoneId, w.Ref, RelayReplies.UnknownSession, w.SessionId);
@@ -456,6 +566,55 @@ namespace Orbweaver
             foreach (var window in windows) _send.Window(phoneId, w.SessionId, window);
         }
 
+        // CB-447 (frames-v18). With the cap, a Paperclip row has a thread: `ok watching` with its row count, the
+        // backfill, then tails as it changes. Without it (a desk not connected to Paperclip) it is frames-v15's
+        // answer: watching succeeds with nothing in it, no window, no run frame and no subscription, so a phone
+        // that opens one shows an empty conversation instead of "That session is gone from the desk."
+        private void WatchPaperclip(string phoneId, WatchRequest w)
+        {
+            var key = (phoneId, w.SessionId);
+            if (_seams.Paperclip is not { Available: true } host)
+            {
+                Ok(phoneId, w.Ref, RelayReplies.Watching, w.SessionId, 0);
+                return;
+            }
+            if (w.Before is not null)
+            {
+                // There is nothing older than the thread's 200 rows: the same total, and no window.
+                PaperclipPhoneWatcher? held;
+                lock (_gate) _paperclipWatches.TryGetValue(key, out held);
+                Ok(phoneId, w.Ref, RelayReplies.Watching, w.SessionId, held?.Total ?? 0);
+                return;
+            }
+            var thread = host.Acquire(w.SessionId, TitleOf(w.SessionId));
+            if (thread is null)
+            {
+                Ok(phoneId, w.Ref, RelayReplies.Watching, w.SessionId, 0);
+                return;
+            }
+            // Idempotent, with a fresh backfill, as a phone that re-watches after a reconnect expects.
+            var watcher = new PaperclipPhoneWatcher(phoneId, w.SessionId, thread);
+            PaperclipPhoneWatcher? replaced;
+            lock (_gate)
+            {
+                _paperclipWatches.TryGetValue(key, out replaced);
+                _paperclipWatches[key] = watcher;
+            }
+            replaced?.Release();
+            var (total, windows) = watcher.Start();
+            Ok(phoneId, w.Ref, RelayReplies.Watching, w.SessionId, total);
+            foreach (var window in windows) _send.Window(phoneId, w.SessionId, window);
+        }
+
+        private string TitleOf(string sessionId)
+        {
+            lock (_gate)
+                foreach (var (sid, status) in _snapshot)
+                    if (sid == sessionId)
+                        return TrayController.DisplayName(new TrayController.SessionEntry(sid, status));
+            return sessionId;
+        }
+
         // The watcher reads the session's latest status every time it looks,
         // so a transcript path the hook names later — or a rotated one — is
         // picked up without re-watching.
@@ -470,6 +629,15 @@ namespace Orbweaver
 
         private void Unwatch(string phoneId, UnwatchRequest u)
         {
+            if (Listed(u.SessionId))
+            {
+                PaperclipPhoneWatcher? ended = null;
+                lock (_gate)
+                    if (_paperclipWatches.ContainsKey((phoneId, u.SessionId))) ended = TakePaperclip((phoneId, u.SessionId));
+                ended?.Release();
+                Ok(phoneId, u.Ref, RelayReplies.Unwatched, u.SessionId);
+                return;
+            }
             if (Local(u.SessionId) is null)
             {
                 Err(phoneId, u.Ref, RelayReplies.UnknownSession, u.SessionId);
@@ -481,6 +649,11 @@ namespace Orbweaver
 
         private async Task InputAsync(string phoneId, InputRequest i)
         {
+            if (Listed(i.SessionId))
+            {
+                await InputPaperclipAsync(phoneId, i).ConfigureAwait(false);
+                return;
+            }
             if (Local(i.SessionId) is not { } status)
             {
                 Err(phoneId, i.Ref, RelayReplies.UnknownSession, i.SessionId);
@@ -489,6 +662,52 @@ namespace Orbweaver
             var outcome = await _seams.Input.TypeAsync(status, i.Text).ConfigureAwait(false);
             if (outcome.Typed) Ok(phoneId, i.Ref, RelayReplies.Typed, i.SessionId);
             else Err(phoneId, i.Ref, outcome.Code!, i.SessionId, outcome.Why);
+        }
+
+        // CB-447 (frames-v18). With the cap the text is a comment on the agent's current task, or opens a task when
+        // it has none: `ok typed` on Paperclip's 2xx, and the line then arrives in the next tail window as a user
+        // line. A post that did not go through is `send_failed` with the desk's sentence. frames-v4's "a waiting
+        // session is not at a prompt" does not apply: a blocked agent is the one a person most wants to tell
+        // something. Without the cap it is frames-v15's untypeable, which carries no `why`, so the phone's own
+        // copy says it.
+        private async Task InputPaperclipAsync(string phoneId, InputRequest i)
+        {
+            if (_seams.Paperclip is not { Available: true } host)
+            {
+                Err(phoneId, i.Ref, RelayReplies.Untypeable, i.SessionId);
+                return;
+            }
+            // A phone typing into a row it is watching uses that watch's share of the thread; one that is not
+            // takes a share for the length of the send.
+            PaperclipPhoneWatcher? watching;
+            lock (_gate) _paperclipWatches.TryGetValue((phoneId, i.SessionId), out watching);
+            var thread = watching?.Thread ?? host.Acquire(i.SessionId, TitleOf(i.SessionId));
+            if (thread is null)
+            {
+                Err(phoneId, i.Ref, RelayReplies.SendFailed, i.SessionId, PaperclipChatSession.NotConnectedText);
+                return;
+            }
+            try
+            {
+                var (result, why) = await thread.SendAsync(i.Text).ConfigureAwait(false);
+                if (result == PaperclipSendResult.Sent) Ok(phoneId, i.Ref, RelayReplies.Typed, i.SessionId);
+                else Err(phoneId, i.Ref, RelayReplies.SendFailed, i.SessionId, Clip(why));
+            }
+            finally
+            {
+                if (watching is null) thread.Release();
+            }
+        }
+
+        // send_failed's `why` is at most 140 characters; a long agent name in "Reconnect to Paperclip to message
+        // <name>." is what could pass it. Cut on a scalar boundary, with the ellipsis the other cuts use.
+        internal static string Clip(string? why)
+        {
+            why ??= "";
+            if (why.Length <= RelayReplies.SendFailedWhyLimit) return why;
+            var cut = RelayReplies.SendFailedWhyLimit - 1;
+            if (char.IsHighSurrogate(why[cut - 1])) cut--;
+            return why[..cut] + "…";
         }
 
         // ---- persona pictures (CB-321) ---------------------------------------------
@@ -579,14 +798,27 @@ namespace Orbweaver
                 return;
             }
 
+            // CB-434 (amendment 2): a phone's Codex resume must carry a first
+            // message. Without one Codex fires no hook, so the phone would wait
+            // on a session that never appears in its roster.
+            if (f.ResumeSessionId.Length > 0 && LaunchGate.CliFor(f.Cli) == NewChatCli.Codex && f.FirstMessage.Length == 0)
+            {
+                Err(phoneId, r.Ref, RelayReplies.BadInput);
+                return;
+            }
+
             var outcome = await runner.RunAsync(f, LaunchRunner.TrustPolicy.Report).ConfigureAwait(false);
             if (outcome.SessionId is not { } sessionId)
             {
                 Err(phoneId, r.Ref, outcome.Code, why: outcome.Why);
                 return;
             }
-            Ok(phoneId, r.Ref, RelayReplies.Launched, sessionId);
-            if (f.FirstMessage.Length == 0) return;
+            // launched, or CB-434's already_running and resume_started, each with the id.
+            Ok(phoneId, r.Ref, outcome.Code, sessionId);
+            // Already running: nothing was started, so nothing is typed into
+            // somebody's live session on the strength of a resume request. The
+            // phone opens that chat and the person types there.
+            if (f.FirstMessage.Length == 0 || outcome.Code == RelayReplies.AlreadyRunning) return;
 
             // Codex and Grok were handed the message as their launch prompt, so
             // it is delivered the moment the session exists: `typed` here means
@@ -603,7 +835,10 @@ namespace Orbweaver
         }
 
         private LaunchRunner Runner() =>
-            new(new LaunchRunner.Seams(_seams.Launch, _seams.Accounts, Snapshot, _seams.Now, _seams.Delay));
+            new(new LaunchRunner.Seams(_seams.Launch, _seams.Accounts, Snapshot, _seams.Now, _seams.Delay)
+            {
+                Resume = _seams.Resume is { } resume ? resume with { InScope = cwd => PhoneScope()(cwd) } : null,
+            });
 
         // Kept where RelayRemote's callers already look for it.
         internal static bool SameFolder(string? a, string b, bool isWindows) => LaunchRunner.SameFolder(a, b, isWindows);

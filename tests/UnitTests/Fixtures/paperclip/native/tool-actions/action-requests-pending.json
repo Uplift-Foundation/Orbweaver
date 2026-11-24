@@ -1,0 +1,78 @@
+{
+  "actionRequests": [
+    {
+      "request": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "companyId": "00000000-0000-4000-8000-000000000002",
+        "invocationId": "00000000-0000-4000-8000-000000000003",
+        "issueId": null,
+        "interactionId": null,
+        "approvalId": null,
+        "status": "pending",
+        "canonicalArgumentsHash": "822148c3f493203786865d12e093866ccce0ee65337ed8fae402a902a11eebe6",
+        "canonicalArgumentsSummary": {
+          "sha256": "822148c3f493203786865d12e093866ccce0ee65337ed8fae402a902a11eebe6",
+          "summary": "{\"title\":\"Orbweaver measurement 3\"}",
+          "sizeBytes": 35,
+          "redactedFields": []
+        },
+        "previewMarkdown": "create_item \u00b7 **Title:** Orbweaver measurement 3",
+        "requestedByAgentId": null,
+        "requestedByUserId": "user-1",
+        "resolvedByAgentId": null,
+        "resolvedByUserId": null,
+        "decidedByAgentId": null,
+        "decidedByUserId": null,
+        "decidedAt": null,
+        "expiresAt": "2026-11-23T19:58:44.041Z",
+        "resolvedAt": null,
+        "createdAt": "2026-11-23T18:58:43.830Z",
+        "updatedAt": "2026-11-23T18:58:44.041Z"
+      },
+      "toolName": "mcp.paperclip-examples-safe-read-only-todo-kv-00000001:create-item",
+      "toolTitle": null,
+      "connectionId": "00000000-0000-4000-8000-000000000004",
+      "connectionName": "Paperclip example: Safe read-only Todo / KV",
+      "applicationName": "Paperclip example: Safe read-only Todo / KV",
+      "riskLevel": "write",
+      "requestedByAgentId": null
+    },
+    {
+      "request": {
+        "id": "00000000-0000-4000-8000-000000000005",
+        "companyId": "00000000-0000-4000-8000-000000000002",
+        "invocationId": "00000000-0000-4000-8000-000000000006",
+        "issueId": null,
+        "interactionId": null,
+        "approvalId": null,
+        "status": "pending",
+        "canonicalArgumentsHash": "2406e8d7ea4e0f781fb482b4eec39379907034c9ffa0dac732ffe7c55ba0c082",
+        "canonicalArgumentsSummary": {
+          "sha256": "2406e8d7ea4e0f781fb482b4eec39379907034c9ffa0dac732ffe7c55ba0c082",
+          "summary": "{\"title\":\"Orbweaver ask-first probe 1\"}",
+          "sizeBytes": 39,
+          "redactedFields": []
+        },
+        "previewMarkdown": "create_item \u00b7 **Title:** Orbweaver ask-first probe 1",
+        "requestedByAgentId": null,
+        "requestedByUserId": "user-1",
+        "resolvedByAgentId": null,
+        "resolvedByUserId": null,
+        "decidedByAgentId": null,
+        "decidedByUserId": null,
+        "decidedAt": null,
+        "expiresAt": "2026-11-23T19:54:53.196Z",
+        "resolvedAt": null,
+        "createdAt": "2026-11-23T18:54:53.005Z",
+        "updatedAt": "2026-11-23T18:54:53.196Z"
+      },
+      "toolName": "mcp.paperclip-examples-safe-read-only-todo-kv-00000001:create-item",
+      "toolTitle": null,
+      "connectionId": "00000000-0000-4000-8000-000000000004",
+      "connectionName": "Paperclip example: Safe read-only Todo / KV",
+      "applicationName": "Paperclip example: Safe read-only Todo / KV",
+      "riskLevel": "write",
+      "requestedByAgentId": null
+    }
+  ]
+}

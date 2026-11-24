@@ -45,10 +45,20 @@ namespace Orbweaver
         // frame's own fields — so any other byte layout the phone signed fails
         // as bad_signature rather than being trusted.
         internal static string Body(LaunchFields f) =>
-            AccountField(new CanonicalJson().Str("cwd", f.Cwd).Str("cli", f.Cli).Str("persona", f.Persona).Str("model", f.Model), f)
-                .Str("parent_session_id", f.ParentSessionId)
+            ResumeField(AccountField(new CanonicalJson().Str("cwd", f.Cwd).Str("cli", f.Cli).Str("persona", f.Persona).Str("model", f.Model), f)
+                .Str("parent_session_id", f.ParentSessionId), f)
                 .Str("first_message_sha256", RelayCrypto.Hex(SHA256.HashData(Encoding.UTF8.GetBytes(f.FirstMessage))))
                 .Str("nonce", f.Nonce).Num("expires_at", f.ExpiresAt).ToString();
+
+        // CB-434 (frames-v17): resume_session_id is signed only when non-empty,
+        // after parent_session_id, by the same rule as account. A sender that
+        // never resumes signs exactly the bytes it always did, and a receiver
+        // that predates the field rebuilds the body without it and answers
+        // bad_signature — so it can never be talked into starting a fresh
+        // session from a resume request.
+        private static CanonicalJson ResumeField(CanonicalJson body, LaunchFields f) =>
+            f.ResumeSessionId.Length > 0 ? body.Str("resume_session_id", f.ResumeSessionId) : body;
+
 
         // account is signed only when the phone named one, between model and
         // parent_session_id, so a phone that never sends it (the iPhone app)
@@ -127,7 +137,12 @@ namespace Orbweaver
             bool IsWindows,
             Func<string, bool> CliInstalled,
             Func<string, bool> DirectoryExists,
-            Func<string, bool> InRoster);
+            Func<string, bool> InRoster,
+            // CB-422 (frames-v15): a parent that is a Paperclip row. InRoster is
+            // about local CLI sessions, so without this a Paperclip parent would
+            // read as unknown_parent, which tells the phone the session is gone
+            // when it is a row on screen that simply cannot lead a team.
+            Func<string, bool>? IsPaperclip = null);
 
         // The first failing check's code, or null when the launch may go ahead.
         // The nonce is recorded once the signature and expiry pass, as the
@@ -160,11 +175,23 @@ namespace Orbweaver
             if (f.Persona.Length > 0) return RelayReplies.UnsupportedPersona;
             if (f.ParentSessionId.Length > 0)
             {
-                if (!env.InRoster(f.ParentSessionId)) return RelayReplies.UnknownParent;
+                if (!env.InRoster(f.ParentSessionId))
+                    return env.IsPaperclip?.Invoke(f.ParentSessionId) == true ? RelayReplies.UnsupportedParent : RelayReplies.UnknownParent;
                 if (f.Cli != "claude") return RelayReplies.UnsupportedParent;
             }
             if (!RelayText.Typeable(f.FirstMessage, allowEmpty: true)) return RelayReplies.BadInput;
             if (env.IsWindows && f.Cli is "codex" or "grok" && ExpandsOnWindows(f.FirstMessage)) return RelayReplies.BadInput;
+            // CB-434: a resume continues a conversation as it was, so it names
+            // no parent and no model. Whether it may carry a first message is
+            // the caller's rule, not the gate's (contract amendment 2): the
+            // phone's handler requires one for Codex, the peer server refuses
+            // any. The id's shape is the parsers' bad_frame; held again here
+            // for any caller that skips them.
+            if (f.ResumeSessionId.Length > 0)
+            {
+                if (!PastSessions.IsSafeId(f.ResumeSessionId)) return RelayReplies.BadFrame;
+                if (f.ParentSessionId.Length > 0 || f.Model.Length > 0) return RelayReplies.BadInput;
+            }
             return null;
         }
 

@@ -21,6 +21,7 @@ public class SettingsGroupOutlineRowTests : IDisposable
     private readonly double _strokeOpacity = OrbweaverSettings.GroupOutlineStrokeOpacity;
     private readonly string _fill = OrbweaverSettings.GroupOutlineFill;
     private readonly double _fillOpacity = OrbweaverSettings.GroupOutlineFillOpacity;
+    private readonly bool _random = OrbweaverSettings.GroupColourRandom;
 
     public void Dispose()
     {
@@ -30,6 +31,7 @@ public class SettingsGroupOutlineRowTests : IDisposable
         OrbweaverSettings.GroupOutlineStrokeOpacity = _strokeOpacity;
         OrbweaverSettings.GroupOutlineFill = _fill;
         OrbweaverSettings.GroupOutlineFillOpacity = _fillOpacity;
+        OrbweaverSettings.GroupColourRandom = _random;
     }
 
     private static SettingsWindow NewWindow() =>
@@ -63,11 +65,11 @@ public class SettingsGroupOutlineRowTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void TheCardHasSevenRowsEachWithHelp()
+    public void TheCardHasNineRowsEachWithHelp()
     {
         var rows = NewWindow().GroupOutlineRows();
 
-        Assert.Equal(7, rows.Length);
+        Assert.Equal(9, rows.Length);
         Assert.All(rows, row =>
             Assert.True(row.GetLogicalDescendants().OfType<TextBlock>().Count() >= 2, "label plus help"));
     }
@@ -98,10 +100,10 @@ public class SettingsGroupOutlineRowTests : IDisposable
         var rows = NewWindow().GroupOutlineRows();
 
         Assert.True(In<ToggleButton>(rows[1]).IsChecked);
-        Assert.Equal(Color.Parse("#102030"), In<ColorPicker>(rows[2]).Color);
-        Assert.Equal(0.4, In<Slider>(rows[3]).Value, 3);
-        Assert.Equal(Color.Parse("#A0B0C0"), In<ColorPicker>(rows[4]).Color);
-        Assert.Equal(0.2, In<Slider>(rows[5]).Value, 3);
+        Assert.Equal(Color.Parse("#102030"), In<ColorPicker>(rows[4]).Color);
+        Assert.Equal(0.4, In<Slider>(rows[5]).Value, 3);
+        Assert.Equal(Color.Parse("#A0B0C0"), In<ColorPicker>(rows[6]).Color);
+        Assert.Equal(0.2, In<Slider>(rows[7]).Value, 3);
     }
 
     [AvaloniaFact]
@@ -109,15 +111,15 @@ public class SettingsGroupOutlineRowTests : IDisposable
     {
         var rows = NewWindow().GroupOutlineRows();
 
-        var stroke = In<Slider>(rows[3]);
+        var stroke = In<Slider>(rows[5]);
         stroke.Value = 0.75;
         Assert.Equal(0.75, OrbweaverSettings.GroupOutlineStrokeOpacity, 3);
-        Assert.Contains(rows[3].GetLogicalDescendants().OfType<TextBlock>(), t => t.Text == "75%");
+        Assert.Contains(rows[5].GetLogicalDescendants().OfType<TextBlock>(), t => t.Text == "75%");
 
-        var fill = In<Slider>(rows[5]);
+        var fill = In<Slider>(rows[7]);
         fill.Value = 0.1;
         Assert.Equal(0.1, OrbweaverSettings.GroupOutlineFillOpacity, 3);
-        Assert.Contains(rows[5].GetLogicalDescendants().OfType<TextBlock>(), t => t.Text == "10%");
+        Assert.Contains(rows[7].GetLogicalDescendants().OfType<TextBlock>(), t => t.Text == "10%");
 
         Assert.Equal(0, stroke.Minimum);
         Assert.Equal(1, stroke.Maximum);
@@ -128,12 +130,12 @@ public class SettingsGroupOutlineRowTests : IDisposable
     {
         var rows = NewWindow().GroupOutlineRows();
 
-        var stroke = In<ColorPicker>(rows[2]);
+        var stroke = In<ColorPicker>(rows[4]);
         Arm(stroke);
         stroke.Color = Color.FromRgb(0x12, 0x34, 0x56);
         Assert.Equal("#123456", OrbweaverSettings.GroupOutlineStroke);
 
-        var fill = In<ColorPicker>(rows[4]);
+        var fill = In<ColorPicker>(rows[6]);
         Arm(fill);
         fill.Color = Color.FromRgb(0xAB, 0xCD, 0xEF);
         Assert.Equal("#ABCDEF", OrbweaverSettings.GroupOutlineFill);
@@ -143,7 +145,7 @@ public class SettingsGroupOutlineRowTests : IDisposable
     public void AColourTheTemplateChoosesIsNotWritten()
     {
         OrbweaverSettings.GroupOutlineStroke = "#102030";
-        var picker = In<ColorPicker>(NewWindow().GroupOutlineRows()[2]);
+        var picker = In<ColorPicker>(NewWindow().GroupOutlineRows()[4]);
 
         picker.Color = Color.FromRgb(0x2C, 0x27, 0x3C);
 
@@ -175,7 +177,7 @@ public class SettingsGroupOutlineRowTests : IDisposable
     public void TheShowGroupNamesSwitchIsOffByDefaultAndWritesItsSetting()
     {
         OrbweaverSettings.GroupNamesVisible = false;
-        var row = NewWindow().GroupOutlineRows()[6];
+        var row = NewWindow().GroupOutlineRows()[8];
         Assert.Contains(row.GetLogicalDescendants().OfType<TextBlock>(), t => t.Text == "Show group names");
         var toggle = In<ToggleButton>(row);
         Assert.False(toggle.IsChecked);
@@ -185,5 +187,95 @@ public class SettingsGroupOutlineRowTests : IDisposable
 
         toggle.IsChecked = false;
         Assert.False(OrbweaverSettings.GroupNamesVisible);
+    }
+
+    // ---- CB-409: group colours ----------------------------------------------
+
+    [AvaloniaFact]
+    public void TheModePickerWritesTheSetting()
+    {
+        OrbweaverSettings.GroupColourRandom = false;
+        var picker = In<ComboBox>(NewWindow().GroupOutlineRows()[2]);
+        Assert.Equal(0, picker.SelectedIndex);
+
+        picker.SelectedIndex = 1;
+        Assert.True(OrbweaverSettings.GroupColourRandom);
+
+        picker.SelectedIndex = 0;
+        Assert.False(OrbweaverSettings.GroupColourRandom);
+    }
+
+    [AvaloniaFact]
+    public void ThePickerOpensOnTheStoredMode()
+    {
+        OrbweaverSettings.GroupColourRandom = true;
+        Assert.Equal(1, In<ComboBox>(NewWindow().GroupOutlineRows()[2]).SelectedIndex);
+    }
+
+    [AvaloniaFact]
+    public void ShuffleChangesTheSeedAndIsDisabledInSameForAllMode()
+    {
+        OrbweaverSettings.GroupColourRandom = false;
+        var rows = NewWindow().GroupOutlineRows();
+        var shuffle = In<Button>(rows[3]);
+        Assert.False(shuffle.IsEnabled);
+
+        In<ComboBox>(rows[2]).SelectedIndex = 1;
+        Assert.True(shuffle.IsEnabled);
+
+        var group = OrbweaverSettings.OrbGroupFor("main");
+        var before = OrbweaverSettings.RandomColourFor(group);
+        var changed = false;
+        for (var i = 0; i < 6 && !changed; i++)
+        {
+            shuffle.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            changed = OrbweaverSettings.RandomColourFor(group) != before;
+        }
+        Assert.True(changed, "six shuffles never moved Main's colour");
+    }
+
+    [AvaloniaFact]
+    public void TheGlobalColourRowsAreDisabledInRandomModeAndTheOpacityRowsAreNot()
+    {
+        OrbweaverSettings.GroupColourRandom = false;
+        var rows = NewWindow().GroupOutlineRows();
+        Assert.True(rows[4].IsEnabled && rows[6].IsEnabled);
+
+        In<ComboBox>(rows[2]).SelectedIndex = 1;
+
+        Assert.False(rows[4].IsEnabled);
+        Assert.False(rows[6].IsEnabled);
+        Assert.True(rows[5].IsEnabled);
+        Assert.True(rows[7].IsEnabled);
+
+        In<ComboBox>(rows[2]).SelectedIndex = 0;
+        Assert.True(rows[4].IsEnabled && rows[6].IsEnabled);
+    }
+
+    [AvaloniaFact]
+    public void TheCardOpensWithTheColourRowsDisabledWhenAlreadyRandom()
+    {
+        OrbweaverSettings.GroupColourRandom = true;
+        var rows = NewWindow().GroupOutlineRows();
+
+        Assert.False(rows[4].IsEnabled);
+        Assert.True(In<Button>(rows[3]).IsEnabled);
+    }
+
+    [AvaloniaFact]
+    public void ReselectingTheSameModeOrClearingTheSelectionWritesNothing()
+    {
+        OrbweaverSettings.GroupColourRandom = false;
+        var picker = In<ComboBox>(NewWindow().GroupOutlineRows()[2]);
+
+        picker.SelectedIndex = -1;                 // cleared: ignored
+        Assert.False(OrbweaverSettings.GroupColourRandom);
+
+        picker.SelectedIndex = 0;                  // same mode as stored: no write, no resync
+        Assert.False(OrbweaverSettings.GroupColourRandom);
+
+        picker.SelectedIndex = 1;
+        picker.SelectedIndex = -1;
+        Assert.True(OrbweaverSettings.GroupColourRandom);
     }
 }

@@ -1,0 +1,14 @@
+{
+  "status": "ok",
+  "deploymentMode": "authenticated",
+  "deploymentExposure": "private",
+  "localAiLoginSupported": true,
+  "commit": "0000000000000000000000000000000000000000",
+  "bootstrapStatus": "ready",
+  "bootstrapInviteActive": false,
+  "databaseBackup": {
+    "enabled": true,
+    "status": "ok",
+    "warnings": []
+  }
+}

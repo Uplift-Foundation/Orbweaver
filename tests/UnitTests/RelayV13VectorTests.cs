@@ -165,7 +165,8 @@ public class RelayV13VectorTests
     {
         Assert.Equal(Str(In, "ck_caps"), Ck(CkKey, BrowseFrames.CapsCk));
         var sealedBoxes = V.GetProperty("sealed");
-        AssertBox(sealedBoxes.GetProperty("caps"), DesktopToPhone, BrowseFrames.Caps, Str(In, "ck_caps"));
+        // v13's bytes are a list_dir and run_options desk; CB-434's v17 caps add resume (RelayV17 tests).
+        AssertBox(sealedBoxes.GetProperty("caps"), DesktopToPhone, BrowseFrames.CapsFrame("list_dir", RunFrames.Cap), Str(In, "ck_caps"));
         AssertBox(sealedBoxes.GetProperty("caps_v11"), DesktopToPhone, BrowseFrames.CapsFrame("list_dir"), Str(In, "ck_caps"));
     }
 

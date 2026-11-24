@@ -18,9 +18,11 @@ public class GroupStyleWindowTests : IDisposable
     private readonly double _strokeOpacity = OrbweaverSettings.GroupOutlineStrokeOpacity;
     private readonly string _fill = OrbweaverSettings.GroupOutlineFill;
     private readonly double _fillOpacity = OrbweaverSettings.GroupOutlineFillOpacity;
+    private readonly bool _random = OrbweaverSettings.GroupColourRandom;
 
     public void Dispose()
     {
+        OrbweaverSettings.GroupColourRandom = _random;
         foreach (var id in _groups) OrbweaverSettings.DeleteOrbGroup(id);
         OrbweaverSettings.GroupOutlineStroke = _stroke;
         OrbweaverSettings.GroupOutlineStrokeOpacity = _strokeOpacity;
@@ -292,5 +294,39 @@ public class GroupStyleWindowTests : IDisposable
 
         // The in-memory style is current at once; the file write waits.
         Assert.Equal(0.12, StyleOf(group)!.StrokeOpacity!.Value, 2);
+    }
+
+    // ---- CB-409: the random colour as the inherited one ----------------------
+
+    [AvaloniaFact]
+    public void InRandomModeThePickersShowTheGroupsHueAndUntickingWritesItAsAnOverride()
+    {
+        var group = NewGroup();
+        OrbweaverSettings.GroupColourRandom = true;
+        var hue = Color.Parse(OrbweaverSettings.RandomColourFor(OrbweaverSettings.OrbGroupFor(group.Id))!);
+
+        var window = new GroupStyleWindow(group.Id, focusName: false);
+
+        Assert.Equal("Use default style (random colour)", window.UseDefaultBox.Content);
+        Assert.Equal(hue, window.StrokePicker!.Color);
+        Assert.Equal(hue, window.FillPicker!.Color);
+
+        window.UseDefaultBox.IsChecked = false;
+
+        var style = StyleOf(group)!;
+        Assert.Equal(OrbColors.ToHex(hue), style.Stroke);
+        Assert.Equal(OrbColors.ToHex(hue), style.Fill);
+    }
+
+    [AvaloniaFact]
+    public void InSameForAllModeTheLabelAndThePickersAreTheOldOnes()
+    {
+        var group = NewGroup();
+        OrbweaverSettings.GroupColourRandom = false;
+
+        var window = new GroupStyleWindow(group.Id, focusName: false);
+
+        Assert.Equal("Use default style", window.UseDefaultBox.Content);
+        Assert.Equal(Color.Parse(OrbweaverSettings.GroupOutlineStroke), window.StrokePicker!.Color);
     }
 }

@@ -35,7 +35,10 @@ namespace Orbweaver
             [property: JsonPropertyName("sig")] string Sig,
             [property: JsonPropertyName("cert")] string Cert,
             // CB-397: unsigned; only says this desk can show the trust question.
-            [property: JsonPropertyName("can_trust"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool CanTrust = false);
+            [property: JsonPropertyName("can_trust"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool CanTrust = false,
+            // CB-434: signed when non-empty (LaunchGate.Body). Omitted for a new
+            // chat, so a launch body is byte-identical to what an older desk reads.
+            [property: JsonPropertyName("resume_session_id"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ResumeSessionId = null);
 
         private sealed record ResultBody(
             [property: JsonPropertyName("ok")] bool Ok,
@@ -143,7 +146,8 @@ namespace Orbweaver
                 && Sane(request.Account, 256, true) && Sane(request.Nonce, 256, true)
                 && Sane(request.Sig, MaxText, true) && Sane(request.Cert, 32 * 1024, true)
                 && request.FirstMessage.Length <= 16 * 1024
-                && request.ExpiresAt > 0;
+                && request.ExpiresAt > 0
+                && (string.IsNullOrEmpty(request.ResumeSessionId) || PastSessions.IsSafeId(request.ResumeSessionId));
 
             return whole ? request : null;
         }

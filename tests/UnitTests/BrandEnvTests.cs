@@ -36,10 +36,11 @@ namespace Orbweaver.Tests
         // RELAY_TEST_HOOKS, the scripted pairing for an end-to-end harness.
         // CB-323 adds ACTIVITY_LOG, the hour gate's desktop activity log.
         // CB-394 adds HOOK_LOOKUP_TIMEOUT_DS, the status hook's lookup deadline.
+        // CB-443 adds PAPERCLIP_LIVE, the opt-in gate on the chat panel's live proof.
         [Fact]
-        public void TheListHoldsThirtyOneDistinctVariables()
+        public void TheListHoldsThirtyTwoDistinctVariables()
         {
-            Assert.Equal(31, BrandEnv.All.Count);
+            Assert.Equal(32, BrandEnv.All.Count);
             Assert.Equal(BrandEnv.All.Count, BrandEnv.All.Distinct().Count());
         }
 

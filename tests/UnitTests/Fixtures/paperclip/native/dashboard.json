@@ -1,0 +1,158 @@
+{
+  "companyId": "00000000-0000-4000-8000-000000000002",
+  "agents": {
+    "active": 3,
+    "running": 0,
+    "paused": 0,
+    "error": 1
+  },
+  "tasks": {
+    "open": 0,
+    "inProgress": 0,
+    "blocked": 0,
+    "done": 4
+  },
+  "costs": {
+    "monthSpendCents": 0,
+    "monthBudgetCents": 0,
+    "monthUtilizationPercent": 0
+  },
+  "pendingApprovals": 0,
+  "budgets": {
+    "activeIncidents": 0,
+    "pendingApprovals": 0,
+    "pausedAgents": 0,
+    "pausedProjects": 0
+  },
+  "runActivity": [
+    {
+      "date": "2026-11-10",
+      "succeeded": 0,
+      "failed": 0,
+      "recovered": 0,
+      "other": 0,
+      "total": 0,
+      "failedByErrorCode": {}
+    },
+    {
+      "date": "2026-11-11",
+      "succeeded": 0,
+      "failed": 0,
+      "recovered": 0,
+      "other": 0,
+      "total": 0,
+      "failedByErrorCode": {}
+    },
+    {
+      "date": "2026-11-12",
+      "succeeded": 0,
+      "failed": 0,
+      "recovered": 0,
+      "other": 0,
+      "total": 0,
+      "failedByErrorCode": {}
+    },
+    {
+      "date": "2026-11-13",
+      "succeeded": 0,
+      "failed": 0,
+      "recovered": 0,
+      "other": 0,
+      "total": 0,
+      "failedByErrorCode": {}
+    },
+    {
+      "date": "2026-11-14",
+      "succeeded": 0,
+      "failed": 0,
+      "recovered": 0,
+      "other": 0,
+      "total": 0,
+      "failedByErrorCode": {}
+    },
+    {
+      "date": "2026-11-15",
+      "succeeded": 0,
+      "failed": 0,
+      "recovered": 0,
+      "other": 0,
+      "total": 0,
+      "failedByErrorCode": {}
+    },
+    {
+      "date": "2026-11-16",
+      "succeeded": 0,
+      "failed": 0,
+      "recovered": 0,
+      "other": 0,
+      "total": 0,
+      "failedByErrorCode": {}
+    },
+    {
+      "date": "2026-11-17",
+      "succeeded": 0,
+      "failed": 0,
+      "recovered": 0,
+      "other": 0,
+      "total": 0,
+      "failedByErrorCode": {}
+    },
+    {
+      "date": "2026-11-18",
+      "succeeded": 0,
+      "failed": 0,
+      "recovered": 0,
+      "other": 0,
+      "total": 0,
+      "failedByErrorCode": {}
+    },
+    {
+      "date": "2026-11-19",
+      "succeeded": 0,
+      "failed": 0,
+      "recovered": 0,
+      "other": 0,
+      "total": 0,
+      "failedByErrorCode": {}
+    },
+    {
+      "date": "2026-11-20",
+      "succeeded": 0,
+      "failed": 0,
+      "recovered": 0,
+      "other": 0,
+      "total": 0,
+      "failedByErrorCode": {}
+    },
+    {
+      "date": "2026-11-21",
+      "succeeded": 0,
+      "failed": 0,
+      "recovered": 0,
+      "other": 0,
+      "total": 0,
+      "failedByErrorCode": {}
+    },
+    {
+      "date": "2026-11-22",
+      "succeeded": 0,
+      "failed": 0,
+      "recovered": 0,
+      "other": 0,
+      "total": 0,
+      "failedByErrorCode": {}
+    },
+    {
+      "date": "2026-11-23",
+      "succeeded": 11,
+      "failed": 3,
+      "recovered": 0,
+      "other": 1,
+      "total": 15,
+      "failedByErrorCode": {
+        "adapter_failed": 2,
+        "provider_session_open_rejected": 1
+      }
+    }
+  ]
+}

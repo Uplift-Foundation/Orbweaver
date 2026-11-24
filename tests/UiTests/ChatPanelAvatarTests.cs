@@ -295,4 +295,40 @@ public class ChatPanelAvatarTests : IDisposable
         var expected = OrbGlyph.For("Some Fallback Title", OrbweaverSettings.TwoLetterGlyphs);
         Assert.Equal(expected, panel.AvatarEmoji.Text);
     }
+
+    // --- a Paperclip agent (CB-445) ---
+
+    [AvaloniaFact]
+    public void APaperclipAgentWithACachedPictureShowsItInTheHeader_AndOneWithoutBorrowsTheOrbsLetters()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "cb445-head-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        var file = Path.Combine(dir, "face.png");
+        File.WriteAllBytes(file, Png());
+        var id = Guid.NewGuid().ToString();
+        PaperclipAgent Agent(string? f) => new(id, "Atlas", "r", "t", "idle", null, "x", "idle", PaperclipMark.None, null, [],
+            null, null, null, null, null, DateTime.UtcNow, "u", false, AvatarFile: f);
+        try
+        {
+            PaperclipSessions.SetSnapshotForTests([Agent(file)]);
+            ChatPanel.OpenFor(NewOrb(), NewFake(PaperclipScan.KeyFor(id), "Atlas"));
+            FlushRender();
+            var panel = ChatPanelTestAccess.Instance!;
+            Assert.True(panel.Avatar.IsVisible);
+            Assert.IsType<ImageBrush>(panel.Avatar.Fill);
+
+            // The picture's file goes missing: the header falls back to the borrowed letters.
+            File.Delete(file);
+            PaperclipSessions.SetSnapshotForTests([Agent(Path.Combine(dir, "gone.png"))]);
+            ChatPanel.HideFor(PaperclipScan.KeyFor(id));
+            ChatPanel.OpenFor(NewOrb(), NewFake(PaperclipScan.KeyFor(id), "Atlas"));
+            FlushRender();
+            Assert.IsNotType<ImageBrush>(ChatPanelTestAccess.Instance!.Avatar.Fill);
+        }
+        finally
+        {
+            PaperclipSessions.SetSnapshotForTests([]);
+            Directory.Delete(dir, true);
+        }
+    }
 }

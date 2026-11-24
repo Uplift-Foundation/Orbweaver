@@ -40,6 +40,14 @@ namespace Orbweaver
 
         internal sealed record Row(string Id, string Name, string Initials, bool Default, string? ImageHash);
 
+        // CB-447 (frames-v18): a Paperclip agent's persona id. The first 16 lowercase hex of SHA-256 over the
+        // UTF-8 bytes of "orbweaver-paperclip-persona-v1\n" followed by the agent's id (the lowercase UUID after
+        // "paperclip:"), so it is stable across restarts, does not depend on the display name and carries no
+        // path or URL.
+        internal static string PaperclipPersonaId(string agentId) =>
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("orbweaver-paperclip-persona-v1\n" + agentId)))[..16]
+                .ToLowerInvariant();
+
         // 64 lowercase hex: SHA-256 of the picture file's bytes.
         internal static bool IsHash(string? value) => IsLowerHex(value, 64);
 
@@ -185,6 +193,19 @@ namespace Orbweaver
             return RelayRoster.PersonaFrom(name, status, Origin(match), hash);
         }
 
+        // CB-447: a Paperclip row's persona, for a phone that asked for it: the agent's name (the row's title),
+        // the two letters its orb wears, no colour, the id above, and the picture's hash when the desk can offer
+        // it right now. Not the personas frame's business: Rows below skips every Paperclip row.
+        internal static RelayPersona? ForPaperclip(string sessionId, string? name, string? pictureFile, Func<string, string?> offer)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return null;
+            var agentId = sessionId.StartsWith("paperclip:", StringComparison.Ordinal) ? sessionId["paperclip:".Length..] : sessionId;
+            var hash = string.IsNullOrEmpty(pictureFile) ? null : offer(pictureFile);
+            // The orb's own two letters ("At" for Atlas), which is what frames-v18 says: not OrbGlyph.Initials, whose
+            // capitals are the persona header's and would read "AT".
+            return new RelayPersona(name, OrbGlyph.For(name, twoLetter: true), null, PersonaFrames.PaperclipPersonaId(agentId), hash);
+        }
+
         // The personas frame's rows: every persona a live session wears, once,
         // plus the default persona (the user config dirs' own), marked. A
         // default with no name is not a persona and adds nothing.
@@ -192,7 +213,7 @@ namespace Orbweaver
             IEnumerable<RelaySession> sessions, LocalPersona.Persona? defaultPersona, Func<string, string?> offer)
         {
             var byId = new Dictionary<string, PersonaFrames.Row>(StringComparer.Ordinal);
-            foreach (var p in sessions.Select(s => s.Persona).OfType<RelayPersona>())
+            foreach (var p in sessions.Where(s => s.Cli != "paperclip").Select(s => s.Persona).OfType<RelayPersona>())
                 if (p.Id is { } id && !byId.ContainsKey(id))
                     byId[id] = new PersonaFrames.Row(id, p.Name, p.Initials, false, p.ImageHash);
 

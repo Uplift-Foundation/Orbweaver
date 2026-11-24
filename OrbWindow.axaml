@@ -91,6 +91,12 @@
                           Header="New chat here"
                           IsVisible="False"
                           Click="NewChatHere_Click"/>
+                <!-- CB-361: opens New chat in Resume mode, filtered to this
+                     orb's CLI, account and folder. Local-CLI orbs only. -->
+                <MenuItem x:Name="ResumeHereItem"
+                          Header="Resume a session here…"
+                          IsVisible="False"
+                          Click="ResumeHere_Click"/>
                 <Separator/>
                 <!-- Only shown for an orb the user has dragged; see
                      OrbWindow.SetPinned. -->
@@ -182,6 +188,40 @@
                      StaysOpenOnClick so the endpoint's answer is written back
                      onto the row. Header, tooltip and IsEnabled are set in
                      code; see OrbWindow.RestoreCloudRows. -->
+                <!-- CB-421, release 1 of a Paperclip orb: view-only. Open and
+                     Review both go to Paperclip's own page (the orb's Url: the
+                     page that decides what is waiting when something is, else
+                     the agent's); Reconnect shows only while the key is gone.
+                     Wake, Pause and Resume (CB-427) show only where they apply. -->
+                <MenuItem x:Name="OpenPaperclipItem"
+                          Header="Open in Paperclip"
+                          IsVisible="False"
+                          Click="OpenPaperclip_Click"/>
+                <MenuItem x:Name="ReviewPaperclipItem"
+                          Header="Review in Paperclip"
+                          IsVisible="False"
+                          Click="OpenPaperclip_Click"/>
+                <MenuItem x:Name="WakePaperclipItem"
+                          Header="Wake now"
+                          IsVisible="False"
+                          Click="WakePaperclip_Click"/>
+                <MenuItem x:Name="PausePaperclipItem"
+                          Header="Pause"
+                          IsVisible="False"
+                          StaysOpenOnClick="True"
+                          Click="PausePaperclip_Click"/>
+                <MenuItem x:Name="ResumePaperclipItem"
+                          Header="Resume"
+                          IsVisible="False"
+                          StaysOpenOnClick="True"
+                          Click="ResumePaperclip_Click"/>
+                <MenuItem x:Name="PaperclipNoteItem"
+                          IsVisible="False"
+                          IsEnabled="False"/>
+                <MenuItem x:Name="ReconnectPaperclipItem"
+                          Header="Reconnect to Paperclip"
+                          IsVisible="False"
+                          Click="ReconnectPaperclip_Click"/>
                 <MenuItem x:Name="ArchiveCloudItem"
                           IsVisible="False"
                           StaysOpenOnClick="True"
@@ -428,8 +468,44 @@
                 HorizontalAlignment="Left" VerticalAlignment="Top"
                 Margin="4,4,0,0"
                 IsHitTestVisible="False">
-            <TextBlock x:Name="PresenceGlyph"
-                       FontSize="13"
+            <!-- A Panel so a Paperclip orb's drawn mark (broke, paused, over
+                 budget; CB-421) can share the corner with the typed "?" / check.
+                 The two are mutually exclusive: OrbWindow.ReconcilePresenceCorner
+                 picks one, and "?" wins when both apply, since amber is the one
+                 that asks something of you. -->
+            <Panel>
+                <TextBlock x:Name="PresenceGlyph"
+                           FontSize="13"
+                           Foreground="#F2FFFFFF"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                           IsHitTestVisible="False"/>
+                <Path x:Name="PresenceMark"
+                      Width="11" Height="11"
+                      IsVisible="False"
+                      Stretch="Uniform"
+                      Fill="#F2FFFFFF"
+                      HorizontalAlignment="Center" VerticalAlignment="Center"
+                      IsHitTestVisible="False"/>
+            </Panel>
+        </Border>
+
+        <!-- "+N": how many sleeping Paperclip agents are folded into this lead
+             (CB-421). Bottom-right, which is the kind badge's corner; a
+             Paperclip orb has no kind, so the two never meet. Its names ride
+             the orb's tooltip, not a tooltip of its own, because this is
+             hit-test invisible like every badge here. -->
+        <Border x:Name="FoldedPill"
+                MinWidth="22" Height="18"
+                IsVisible="False"
+                CornerRadius="9"
+                Background="#F2202024"
+                BorderBrush="#59FFFFFF" BorderThickness="1"
+                Padding="5,0"
+                HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                Margin="0,0,2,4"
+                IsHitTestVisible="False">
+            <TextBlock x:Name="FoldedPillText"
+                       FontSize="10.5" FontWeight="SemiBold"
                        Foreground="#F2FFFFFF"
                        HorizontalAlignment="Center" VerticalAlignment="Center"
                        IsHitTestVisible="False"/>

@@ -308,10 +308,25 @@ namespace Orbweaver
         {
             var dirs = UserConfigDirs();
             var rows = RelayRoster.Project(snapshot, (sessionId, status) =>
-                RelayPersonaRows.For(PersonaName(status, dirs), status, LocalPersonaFor(sessionId), OfferImage));
+                status.Source == SessionSource.Paperclip
+                    ? RelayPersonaRows.ForPaperclip(sessionId,
+                        TrayController.DisplayName(new TrayController.SessionEntry(sessionId, status)), status.PaperclipAvatarFile, OfferImage)
+                    : RelayPersonaRows.For(PersonaName(status, dirs), status, LocalPersonaFor(sessionId), OfferImage));
             var personaRows = RelayPersonaRows.Rows(rows, DefaultPersona(dirs), OfferImage);
             return (rows, PersonaFrames.Personas(personaRows), PushPersona.Of(personaRows.FirstOrDefault(r => r.Default)));
         }
+
+        // CB-447: whether this desk can show and message a Paperclip agent right now: connected, and an actions
+        // seam to send through. It is the caps name's condition and the phone watch's, so a phone is never told
+        // it can message an agent the desk would then refuse to reach.
+        internal static Func<bool> PaperclipChatAvailableSource { get; set; } = () =>
+            PaperclipSessions.Link == PaperclipLink.Connected && PaperclipSessions.Actions is not null;
+
+        internal static bool PaperclipChatAvailable => PaperclipChatAvailableSource();
+
+        // The caps frame this desk advertises right now: paperclip_chat while Paperclip is available. Re-sent every
+        // scan; the link drops an unchanged one, so the name flips with the condition.
+        internal static string CapsFrame() => BrowseFrames.CapsFor(PaperclipChatAvailable);
 
         internal static void OnScanned(IReadOnlyList<(string SessionId, SessionStatus Status)> snapshot)
         {
@@ -326,7 +341,7 @@ namespace Orbweaver
             try { client.OnAccounts(RelayAccounts.Frame(RelayAccounts.From(RelayAccounts.Choices))); }
             catch (Exception e) { MirrorLog.Say("relay", $"accounts frame not built: {e.GetType().Name}"); }
             // CB-339: what this desk can do (the folder picker), after accounts.
-            client.OnCaps(BrowseFrames.Caps);
+            client.OnCaps(CapsFrame());
             // CB-315: and the prompt watcher, off this thread — it captures panes.
             _ = client.OnStatuses(snapshot);
         }

@@ -18,7 +18,27 @@ namespace Orbweaver
             RelayRemote.AccountSeams? Accounts,
             Func<IReadOnlyList<(string SessionId, SessionStatus Status)>> Snapshot,
             Func<DateTimeOffset> Now,
-            Func<TimeSpan, Task> Delay);
+            Func<TimeSpan, Task> Delay)
+        {
+            // CB-434: what a resume needs beyond a launch. Null means this desk
+            // cannot resume, and a resume is refused as resume_unsupported.
+            internal ResumeSeams? Resume { get; init; }
+        }
+
+        // Find: the session in this desk's own index for that CLI and account
+        // (the account's resolved profile directory, null for the default),
+        // older included; null when it is not there. Support: whether the
+        // installed binary can resume by id (ResumeSupport.Probe, which may run
+        // the CLI's --help and --version: blocking).
+        internal sealed record ResumeSeams(
+            Func<NewChatCli, string?, string, PastSession?> Find,
+            Func<NewChatCli, string, ResumeCheck> Support)
+        {
+            // CB-434 (amendment 2): the phone's browse scope, null for a peer. A
+            // folder outside it is unknown_resume, the same answer as an id this
+            // desk does not have, before the index is consulted.
+            internal Func<string, bool>? InScope { get; init; }
+        }
 
         // Code is RelayReplies.Launched with the new session's id, or the
         // refusal's code with an optional sentence a person can act on.
@@ -54,7 +74,8 @@ namespace Orbweaver
             _seams.Launch.IsWindows,
             cli => _seams.Launch.Locate(cli) is not null,
             _seams.Launch.DirectoryExists,
-            sid => Local(sid) is not null);
+            sid => Local(sid) is not null,
+            sid => _seams.Snapshot().Any(e => e.SessionId == sid && e.Status.Source == SessionSource.Paperclip));
 
         internal SessionStatus? Local(string sessionId)
         {
@@ -68,10 +89,40 @@ namespace Orbweaver
         // never mistaken for the new one.
         internal async Task<Outcome> RunAsync(LaunchFields f, TrustPolicy policy = TrustPolicy.None)
         {
+            var resume = f.ResumeSessionId;
+
+            // CB-434 (amendment 3): the phone's browse scope comes first of all
+            // the resume checks, so a phone learns nothing about a session
+            // outside its roots, not even that it is running. unknown_resume
+            // is the same answer as an id this desk does not have.
+            if (resume.Length > 0 && _seams.Resume?.InScope is { } inScope && !inScope(f.Cwd))
+                return new(RelayReplies.UnknownResume, null, null);
+
+            // CB-434: already running, before anything else is looked at. A
+            // second process on one conversation would fight the first, so the
+            // caller is sent to the one that exists and nothing is started.
+            // Matched on CLI and id, not account (contract amendment 2, section
+            // 4): account roots can share a projects folder, so the same session
+            // is listed under each, and an account match would start a second
+            // process on a conversation live under another. A live id under
+            // another CLI is not this session and falls through.
+            if (resume.Length > 0 && Local(resume) is { } live && MirrorProtocol.CliFor(live.Source) == f.Cli)
+                return new(RelayReplies.AlreadyRunning, null, resume);
+
             if (!TryAccount(f, out var profileDir)) return new(RelayReplies.UnknownAccount, null, null);
+
+            if (resume.Length > 0 && ResumeRefusal(f, profileDir) is { } refused) return refused;
 
             var before = _seams.Snapshot().Select(s => s.SessionId).ToHashSet(StringComparer.Ordinal);
             if (Start(f, profileDir, out var pane) is { } failed) return new(failed.Code, failed.Why, null);
+
+            // Codex fires no hook until the first prompt of a resumed session
+            // (CB-361, measured on the mini), so with no message there is
+            // nothing to wait for: the caller says the orb appears when a
+            // message is sent. With one, its hook fires on that turn, and it
+            // waits like the others.
+            if (resume.Length > 0 && f.FirstMessage.Length == 0 && LaunchGate.CliFor(f.Cli) == NewChatCli.Codex)
+                return new(PeerLaunchCodes.ResumeStarted, null, resume);
 
             // Windows never reads: there is no seam that can read a console by
             // the pid StartWindows returns (CB-397 plan, point 6).
@@ -92,6 +143,32 @@ namespace Orbweaver
             return new(RelayReplies.LaunchFailed, prompt.Kind == TrustPrompt.Kind.Answerable
                 ? name + " is asking whether to trust that folder. Update this machine to answer from here."
                 : name + " is asking whether to trust that folder. Answer it once on that machine.", null);
+        }
+
+        // The session must be in this desk's own index for that CLI and account,
+        // recorded in the folder the frame names — the folder is signed, so
+        // what runs is what was asked for — and the installed CLI must be able
+        // to resume by id. A missing folder never gets here: it is the gate's
+        // unknown_cwd, so a conversation is never resumed somewhere else.
+        private Outcome? ResumeRefusal(LaunchFields f, string? profileDir)
+        {
+            var cli = LaunchGate.CliFor(f.Cli);
+            if (_seams.Resume is not { } resume)
+                return new(RelayReplies.ResumeUnsupported, "This machine can't resume sessions.", null);
+
+            if (resume.Find(cli, profileDir, f.ResumeSessionId) is not { } past
+                || !SameFolder(past.Cwd, f.Cwd, _seams.Launch.IsWindows))
+                return new(RelayReplies.UnknownResume, null, null);
+
+            // The gate checked the CLI is installed, but that was another look;
+            // one gone since is the same answer the gate gives.
+            if (_seams.Launch.Locate(f.Cli) is not { } binary) return new(RelayReplies.UnknownCli, null, null);
+
+            var support = resume.Support(cli, binary);
+            if (support.Supported) return null;
+            // A probe that could not read the help text is a failed attempt to
+            // retry, not a CLI to update.
+            return new(support.Checked ? RelayReplies.ResumeUnsupported : RelayReplies.LaunchFailed, support.Message, null);
         }
 
         // The physical spelling of a folder, once per use; a resolver that
@@ -201,7 +278,10 @@ namespace Orbweaver
             var launch = _seams.Launch;
             var cli = LaunchGate.CliFor(f.Cli);
             var binary = launch.Locate(f.Cli)!;
-            var args = NewChatCommand.LaunchArgs(cli, f.Model, f.ParentSessionId, f.FirstMessage);
+            // ResumeRefusal has already held the id to IsSafeId, so ResumeArgs is never null here.
+            var args = f.ResumeSessionId.Length > 0
+                ? NewChatCommand.ResumeArgs(cli, f.ResumeSessionId, f.FirstMessage)!
+                : NewChatCommand.LaunchArgs(cli, f.Model, f.ParentSessionId, f.FirstMessage);
             var name = NewChatLauncher.DisplayName(cli);
             if (launch.IsWindows)
             {
@@ -243,10 +323,7 @@ namespace Orbweaver
             for (var tick = 1; ; tick++)
             {
                 foreach (var (sid, status) in _seams.Snapshot())
-                    if (!before.Contains(sid) && status.IsLocalCli && MirrorProtocol.CliFor(status.Source) == f.Cli
-                        && (SameFolder(status.Cwd, f.Cwd, _seams.Launch.IsWindows)
-                            || SameFolder(status.Cwd, resolved, _seams.Launch.IsWindows)))
-                        return (sid, null);
+                    if (CheckedIn(f, before, resolved, sid, status)) return (sid, null);
 
                 if (pane is not null && tick >= 3 && tick % 2 == 1)
                 {
@@ -257,6 +334,18 @@ namespace Orbweaver
                 if (_seams.Now() >= deadline) return (null, null);
                 await _seams.Delay(RelayRemote.LaunchPoll).ConfigureAwait(false);
             }
+        }
+
+        // A launch is any new local session of that CLI in that folder. A resume
+        // is exactly the resumed id (CB-434): another session starting in the
+        // same folder meanwhile is somebody else's, never the one asked for.
+        private bool CheckedIn(LaunchFields f, IReadOnlySet<string> before, string resolved, string sid, SessionStatus status)
+        {
+            if (before.Contains(sid) || !status.IsLocalCli) return false;
+            if (f.ResumeSessionId.Length > 0) return sid == f.ResumeSessionId;
+            return MirrorProtocol.CliFor(status.Source) == f.Cli
+                && (SameFolder(status.Cwd, f.Cwd, _seams.Launch.IsWindows)
+                    || SameFolder(status.Cwd, resolved, _seams.Launch.IsWindows));
         }
 
         internal static bool SameFolder(string? a, string b, bool isWindows)
@@ -296,6 +385,20 @@ namespace Orbweaver
         // approval, close a pane. A status carrying only a pane id routes to
         // tmux on its default socket, which is what PlaceForPhone starts on.
         // Each looks TrustForTests up when it is called, like the start does.
+        // CB-434: this desk's own index and version gate. Older included: a
+        // session the caller saw in an "Older" listing must still be found.
+        // The recent window is read first, so the common case never pays for
+        // a walk of every transcript ever written.
+        [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
+        internal static ResumeSeams DefaultResumeSeams() => new(
+            (cli, profileDir, id) =>
+            {
+                var now = DateTimeOffset.UtcNow;
+                return PastSessionIndex.Load(cli, profileDir, false, now).FirstOrDefault(s => s.Id == id)
+                    ?? PastSessionIndex.Load(cli, profileDir, true, now).FirstOrDefault(s => s.Id == id);
+            },
+            ResumeSupport.Probe);
+
         [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
         internal static TrustSeams DefaultTrustSeams() => new(ReadPane, PressKey, ClosePane);
 

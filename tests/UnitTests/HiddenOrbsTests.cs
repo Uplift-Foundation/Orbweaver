@@ -101,6 +101,7 @@ public class HiddenOrbsTests
     [InlineData(SessionSource.Grok, "")]
     [InlineData(SessionSource.OpenClaw, "")]      // the lead field is the room
     [InlineData(SessionSource.ClaudeCloud, "")]
+    [InlineData(SessionSource.Paperclip, "")]     // CB-421: a company's reporting line is not a team to hide
     public void OnlyAgentTeamsPropagateAHide(SessionSource source, string expected)
     {
         Assert.Equal(expected, HiddenOrbs.PropagatingLead(source, "lead"));
@@ -110,7 +111,7 @@ public class HiddenOrbsTests
     public void EverySourceIsCoveredByThePropagationCases()
     {
         // Fails when a source is added without deciding whether it has teams.
-        Assert.Equal(6, Enum.GetValues<SessionSource>().Length);
+        Assert.Equal(7, Enum.GetValues<SessionSource>().Length);
     }
 
     [Fact]

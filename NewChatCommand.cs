@@ -23,7 +23,12 @@ namespace Orbweaver
     {
         Launched,
         NotFound,
-        SpawnFailed
+        SpawnFailed,
+
+        // CB-361: the CLI is installed but this launch can't be made — its
+        // version has no resume flag, the session's folder is gone, or the id
+        // is not one this app will put on a command line. Nothing was started.
+        Unsupported
     }
 
     // Outcome plus the message the dialog shows inline. Message is always
@@ -79,6 +84,37 @@ namespace Orbweaver
         // pinned For, which is how an assignment ended up after it.
         internal static string ExecLine(NewChatCli cli, string binaryPath, string? configDir = null) =>
             "exec " + For(cli, binaryPath, configDir);
+
+        // CB-361: the same line with arguments after the binary, each one
+        // shell-quoted — the CB-232 `env VAR=dir` form kept intact, so a resume
+        // under a named account is exactly a new chat's line plus its args.
+        internal static string ExecLine(NewChatCli cli, string binaryPath, string? configDir, IReadOnlyList<string> args) =>
+            ExecLine(cli, binaryPath, configDir) + string.Concat(args.Select(a => " " + TerminalScripts.ShellQuote(a)));
+
+        // CB-361: the arguments that resume one past session by id, in each
+        // CLI's own spelling, read off its --help: `claude --resume <id>`,
+        // `codex resume <SESSION_ID>` (a subcommand; with no id it opens a
+        // picker instead), `grok --resume <id>`. All three keep the id, so the
+        // orb that comes back is the one that was there before.
+        //
+        // Null for an id that is not plain letters, digits and dashes. Every
+        // id these CLIs write is a UUID; anything else came from somewhere it
+        // should not have, and would otherwise reach a shell or a cmd /k line.
+        internal static IReadOnlyList<string>? ResumeArgs(NewChatCli cli, string id, string firstMessage = "")
+        {
+            if (!PastSessions.IsSafeId(id)) return null;
+            List<string> args = cli == NewChatCli.Codex ? ["resume", id] : ["--resume", id];
+            // CB-434: a phone's first message on a resume. Codex and Grok take it
+            // as the prompt after `--` (frames-v4's rule, so a message starting
+            // with '-' is a prompt and never a flag); Claude's is typed after
+            // check-in, as a new chat's is.
+            if (firstMessage.Length > 0 && PromptAsArgument(cli))
+            {
+                args.Add("--");
+                args.Add(firstMessage);
+            }
+            return args;
+        }
 
         // The general Windows launch shape: wt.exe when it's installed
         // (`-d <cwd> cmd.exe /k <exe> [args...]`, which gives the CLI an
@@ -274,10 +310,14 @@ namespace Orbweaver
         // launch keeps exactly the same wt-first-then-cmd.exe preference an
         // unprofiled one already has — no separate routing decision was
         // needed here after all.
+        //
+        // extraArgs (CB-361) is the resume verb and id, handed to the general
+        // builder as separate argv words; null is a new chat, unchanged.
         internal static ProcessStartInfo? WindowsProcessStartInfo(
-            NewChatCli cli, string? binaryPath, string cwd, bool useWindowsTerminal, string? configDir = null)
+            NewChatCli cli, string? binaryPath, string cwd, bool useWindowsTerminal, string? configDir = null,
+            IReadOnlyList<string>? extraArgs = null)
         {
-            var start = GeneralWindowsStartInfo(binaryPath, cwd, extraArgs: null, useWindowsTerminal);
+            var start = GeneralWindowsStartInfo(binaryPath, cwd, extraArgs, useWindowsTerminal);
 
             if (start is not null && configDir is not null)
             {

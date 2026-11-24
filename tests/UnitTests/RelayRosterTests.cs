@@ -73,6 +73,68 @@ public class RelayRosterTests
         Assert.Null(RelayRoster.Project([S("p")])[0].Persona);   // no seam at all
     }
 
+    // ---- CB-422 (frames-v15): a Paperclip agent is a row ------------------------------
+
+    private static (string, SessionStatus) Agent(string id, string name, string state = "idle", string lead = "") =>
+        (id, new SessionStatus { Source = SessionSource.Paperclip, Title = name, State = state, Lead = lead, Cwd = "" });
+
+    [Fact]
+    public void A_paperclip_agent_is_projected_with_an_empty_cwd_the_persona_seam_and_a_parent_that_is_a_row()
+    {
+        var personaAsked = new List<string>();
+        var rows = RelayRoster.Project(
+            [S("8-claude", "idle", "proj"), Agent("paperclip:b", "Beacon", "waiting", lead: "paperclip:a"), Agent("paperclip:a", "Atlas", "generating")],
+            (id, _) => { personaAsked.Add(id); return new RelayPersona("P", "P", null); });
+
+        Assert.Equal(["8-claude", "paperclip:a", "paperclip:b"], rows.Select(r => r.SessionId));   // ordinal by id
+        var atlas = rows[1];
+        Assert.Equal(("paperclip", "Atlas", "", "generating", (string?)null),
+            (atlas.Cli, atlas.Title, atlas.Cwd, atlas.State, atlas.ParentSessionId));
+        Assert.Equal(("paperclip:a", "waiting"), (rows[2].ParentSessionId, rows[2].State));
+        // CB-447: a paperclip row's persona is the seam's too (ForPhone strips it for a phone that has not
+        // asked), and a seam that answers null leaves the row without one, as frames-v15 had it.
+        Assert.Equal(new RelayPersona("P", "P", null), atlas.Persona);
+        Assert.Equal(["8-claude", "paperclip:a", "paperclip:b"], personaAsked);
+        Assert.Null(RelayRoster.Project([Agent("paperclip:a", "Atlas")])[0].Persona);   // no seam at all
+    }
+
+    [Fact]
+    public void A_paperclip_parent_that_is_not_a_row_leaves_the_report_a_root()
+    {
+        // The lead folded away, or never drawn: naming it would leave the phone a dangling parent.
+        var rows = RelayRoster.Project([Agent("paperclip:b", "Beacon", lead: "paperclip:folded")], (Func<SessionStatus, RelayPersona?>)(_ => null));
+        Assert.Null(rows.Single().ParentSessionId);
+        // A claude row's lead is not looked up, as before, and a non-local, non-paperclip source is still not a row.
+        var mixed = RelayRoster.Project([S("c", lead: "lead-id"), S("oc", source: SessionSource.OpenClaw), S("cloud", source: SessionSource.ClaudeCloud)],
+            (Func<SessionStatus, RelayPersona?>)(_ => null));
+        Assert.Equal(["c"], mixed.Select(r => r.SessionId));
+        Assert.Equal("lead-id", mixed.Single().ParentSessionId);
+    }
+
+    [Fact]
+    public void A_paperclip_row_going_generating_to_idle_is_never_finished_but_a_claude_row_is()
+    {
+        var book = new RelaySessionBook();
+        var pc = RelayRoster.Project([Agent("paperclip:a", "Atlas", "generating"), S("c", "generating")], (Func<SessionStatus, RelayPersona?>)(_ => null));
+        book.Update(pc, T0);
+        var update = book.Update(RelayRoster.Project([Agent("paperclip:a", "Atlas"), S("c")], (Func<SessionStatus, RelayPersona?>)(_ => null)), T0.AddSeconds(30));
+
+        var byId = update.Deltas.ToDictionary(d => d.SessionId);
+        Assert.Equal("idle", byId["paperclip:a"].State);      // the delta still goes: the dot goes quiet
+        Assert.False(byId["paperclip:a"].Finished);           // but no `done` push, no summary
+        Assert.True(byId["c"].Finished);
+    }
+
+    // The peer roster (RemoteMirrorServer) offers a session only if IsLocalCli, and
+    // IsLocalCli is false for Paperclip, so CliFor's new arm cannot reach a peer.
+    [Fact]
+    public void The_paperclip_cli_name_is_stable_and_is_not_a_local_cli()
+    {
+        Assert.Equal("paperclip", MirrorProtocol.CliFor(SessionSource.Paperclip));
+        Assert.False(new SessionStatus { Source = SessionSource.Paperclip }.IsLocalCli);
+        Assert.True(new SessionStatus { Source = SessionSource.Codex }.IsLocalCli);
+    }
+
     [Fact]
     public void Roster_json_has_exactly_the_plan_fields()
     {
@@ -250,6 +312,8 @@ public class RosterFixtureTests
     [InlineData("macbook_roster")]
     [InlineData("windows_roster")]
     [InlineData("empty_roster")]
+    [InlineData("paperclip_roster")]
+    [InlineData("paperclip_roster_personas")]
     public void Each_roster_is_exactly_what_RelayRoster_writes(string name)
     {
         var r = F.GetProperty(name);
@@ -267,7 +331,9 @@ public class RosterFixtureTests
     [Fact]
     public void Each_delta_is_exactly_what_RelayRoster_writes()
     {
-        var all = F.GetProperty("macbook_deltas_after_roster").EnumerateArray().Append(F.GetProperty("gap_example").GetProperty("delta"));
+        var all = F.GetProperty("macbook_deltas_after_roster").EnumerateArray()
+            .Concat(F.GetProperty("paperclip_deltas_after_roster").EnumerateArray())
+            .Append(F.GetProperty("gap_example").GetProperty("delta"));
         foreach (var d in all)
         {
             var delta = new RelayDelta(d.GetProperty("session_id").GetString()!, Opt(d, "state"), Opt(d, "title"),

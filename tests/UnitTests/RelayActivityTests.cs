@@ -30,6 +30,32 @@ public class RelayActivityTests
         Assert.Equal(("MacBook Pro", 2, 1, 3), (s.Machine, s.Amber, s.Working, s.Idle));
     }
 
+    // CB-422 (frames-v15 activity): a company that runs on a schedule must not move the island.
+    [Fact]
+    public void A_paperclip_row_is_never_counted_working_idle_or_amber()
+    {
+        var pc = (string state) => new RelaySession("paperclip:" + state, "paperclip", "Atlas", "", state, null, null) { Since = T0 };
+        var s = RelayActivity.Snapshot([Row("a", "generating"), pc("waiting"), pc("generating"), pc("idle")], None, "MacBook Pro");
+        Assert.Equal(("MacBook Pro", 0, 1, 0), (s.Machine, s.Amber, s.Working, s.Idle));
+        Assert.Null(s.Oldest);
+        // The control: a claude row in the same states does count.
+        var claude = RelayActivity.Snapshot([Row("a", "generating"), Row("b", "waiting"), Row("c", "idle")], None, "MacBook Pro");
+        Assert.Equal((1, 1, 1), (claude.Amber, claude.Working, claude.Idle));
+    }
+
+    // CB-428: amber, and only amber, while a prompt for it is pending.
+    [Fact]
+    public void A_waiting_paperclip_row_counts_as_amber_only_while_a_prompt_for_it_is_pending()
+    {
+        var pc = (string id, string state) => new RelaySession("paperclip:" + id, "paperclip", "Atlas", "", state, null, null) { Since = T0 };
+        Func<string, ActivityPrompt?> pending = sid => sid == "paperclip:a" ? new ActivityPrompt("01JREQ", "Hire", "Hire a research agent") : null;
+        var s = RelayActivity.Snapshot([pc("a", "waiting"), pc("b", "waiting"), pc("a2", "generating"), pc("c", "idle")], pending, "MacBook Pro");
+        Assert.Equal((1, 0, 0), (s.Amber, s.Working, s.Idle));
+        Assert.Equal(("paperclip:a", "01JREQ", "Hire", "Hire a research agent"), (s.Oldest!.SessionId, s.Oldest.RequestId, s.Oldest.Tool, s.Oldest.Command));
+        // A pending prompt for a row that is no longer waiting counts nothing.
+        Assert.Equal(0, RelayActivity.Snapshot([pc("a", "idle")], pending, "m").Amber);
+    }
+
     [Fact]
     public void No_amber_means_no_oldest_and_the_frame_writes_null()
     {

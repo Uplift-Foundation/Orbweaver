@@ -484,6 +484,13 @@ namespace Orbweaver
         // Whether a canonical path is, or is inside, one of the system folders.
         internal static bool IsDenied(IBrowseFileSystem fs, string canonical) => Denied(fs, canonical);
 
+        // CB-434 (contract amendment 2): whether a phone may see or resume a
+        // session recorded in `cwd`: inside the browse scope, judged on the
+        // canonical path. A folder that no longer exists keeps its written form
+        // in Canonical, so it is judged lexically. No folder is out of scope.
+        internal static bool PhoneMaySee(string? cwd, BrowseSettings settings, IBrowseFileSystem fs) =>
+            cwd is not null && IsAbsolute(cwd, fs) && Canonical(fs, cwd) is { } canonical && InScope(settings, fs, canonical);
+
         // Equal under the filesystem's own case rule.
         internal static bool SamePath(string a, string b, IBrowseFileSystem fs) => Equal(a, b, fs);
 
@@ -552,7 +559,24 @@ namespace Orbweaver
         internal const string CapsCk = "caps";
 
         // CB-404: frames-v13 adds run_options; the names are byte-sorted.
-        internal static readonly string Caps = CapsFrame("list_dir", RunFrames.Cap);
+        // CB-434: frames-v17 adds resume (list_sessions and a resume launch), byte-sorted between them.
+        internal static readonly string Caps = CapsFor(paperclipChat: false);
+
+        // CB-447: frames-v18 adds paperclip_chat while Paperclip is connected, byte-sorted among the others
+        // ("list_dir" < "paperclip_chat" < SessionFrames.Cap < RunFrames.Cap). The caps frame is re-sent every
+        // scan and the link drops an unchanged one, so connecting or disconnecting Paperclip flips the name
+        // with nothing else to wire.
+        internal const string PaperclipChatCap = "paperclip_chat";
+
+        internal static string CapsFor(bool paperclipChat)
+        {
+            var names = new List<string> { "list_dir" };
+            if (paperclipChat) names.Add(PaperclipChatCap);
+            names.Add(SessionFrames.Cap);
+            names.Add(RunFrames.Cap);
+            names.Sort(StringComparer.Ordinal);
+            return CapsFrame(names.ToArray());
+        }
 
         internal static string CapsFrame(params string[] names) =>
             new CanonicalJson().Str("t", "caps").Array("caps", names.Select(CanonicalJson.Quote)).ToString();

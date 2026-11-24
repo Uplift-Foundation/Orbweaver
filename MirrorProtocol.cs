@@ -718,6 +718,7 @@ namespace Orbweaver
         public const string CliClaudeCode = "claude";
         public const string CliCodex = "codex";
         public const string CliGrok = "grok";
+        public const string CliPaperclip = "paperclip";
 
         private static readonly JsonSerializerOptions RosterJson = new()
         {
@@ -835,6 +836,7 @@ namespace Orbweaver
         {
             SessionSource.Codex => CliCodex,
             SessionSource.Grok => CliGrok,
+            SessionSource.Paperclip => CliPaperclip,
             _ => CliClaudeCode
         };
 
