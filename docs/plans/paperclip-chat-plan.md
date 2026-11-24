@@ -4,7 +4,7 @@ Architect: Felicity Marchetti. Lead: Jennifer Voss. Written against Orbweaver `o
 
 **The scope fork is not answered.** The owner was asked what "chat" means for an agent that sleeps between runs and has not replied. This plan is built on the lead's recommendation: **a message is a comment on the agent's current task**, shown as a chat, with "waking…" and then the reply; when the agent has no task, the message opens one. The other branch is costed in §9 so the owner can still choose it. If the owner picks it, §2 and §3 stand and §4 is redone.
 
-**Status words.** *Measured* means run against the real Paperclip (2026.1117.0, on the mini) by the lead or recorded in the findings file. *Read from source* means I read it in this repository or the mobile one and did not run it. *Assumed* means neither. §10 lists every assumption and the request that settles it; the batch is with the lead and none of it had come back when this was pushed.
+**Status words.** *Measured* means run against the real Paperclip (2026.1117.0, on the mini) by the lead or recorded in the findings file. *Read from source* means I read it in this repository or the mobile one and did not run it. *Assumed* means neither. §10 lists what the lead's batch of 2026-11-24 (about 03:50Z, loopback, a key from the app's own connect flow) measured, and what is still assumed. I read the returned bodies myself for the shapes in §2.4; the requests were the lead's.
 
 ## 1. Who it is for and what they see
 
@@ -29,7 +29,7 @@ The state shows in two places only: the orb the person already reads, and the wo
 | State | Thread | Message box says |
 | --- | --- | --- |
 | Asleep, has a task | the task's thread and the last run's activity | "Message <name>. It wakes to read it." |
-| Asleep, no task | "No task yet." and the last run's result when there is one | "Message <name>. This opens a new task." (or no box, see §4.4) |
+| Asleep, never had a task | "No task yet." | "Message <name>. This opens a new task." |
 | Working live | tool lines and speech appear as they happen | "<name> is working. It reads a message when this run ends." |
 | Just messaged | the person's bubble | "Waking <name>…" until a run shows, then the Working words |
 | Waiting on a sub-task | the thread; a muted line naming the task it waits on, when Paperclip says | the Asleep words |
@@ -42,7 +42,7 @@ The state shows in two places only: the orb the person already reads, and the wo
 
 1. The person types and sends. The comment is posted to the task in Paperclip.
 2. Their bubble appears only when Paperclip has accepted it. A refusal leaves the text in the box and says why in a red line.
-3. The box says "Waking <name>…". Measured: a comment by a board user woke the assigned agent within 10 s, three times.
+3. The box says "Waking <name>…". Measured with the app's key: the agent's run started 2.0 s after the comment and finished 12.2 s after it. Earlier, from a browser session: within 10 s, three times.
 4. The orb turns to working; tool lines and speech arrive in the thread.
 5. The run ends; the agent's answer is the last bubble. It is a real comment in Paperclip, so Paperclip's own page shows the same exchange.
 
@@ -90,7 +90,7 @@ First that exists:
 1. the live run's `issueId` (measured: live-runs rows carry it);
 2. the agent's blocked task that needs a person (already in the poll);
 3. the newest finished run's `issueId` (already parsed, `RawRun.IssueId`);
-4. the newest task assigned to the agent that is not done (**assumed**: needs an `assigneeAgentId` filter on the issues list, §10 E12);
+4. the agent's most recently active task that is not cancelled, from `issues?assigneeAgentId=<agent>`, read **once when the panel opens and only when rungs 1 to 3 gave nothing**. Measured: 200, but 49 rows and 169 KB in 79 ms for one agent, so it is never polled. A `done` task counts: a comment on a done task reopened it and woke the agent (measured, `wakeReason: issue_reopened_via_comment`). Whether `limit` and a sort shrink that read is declared for the route and not tried;
 5. none.
 
 The task can change while the panel is open (a run starts on another task). The thread is then replaced whole and the panel told through `HistoryReplaced`, which means the session also implements `IRemoteChatBacklog` with `HasMore` false. One event, no paging.
@@ -101,13 +101,13 @@ Only while a panel is open, or a phone is watching (slice 2). A closed panel cos
 
 | Read | When | Cost |
 | --- | --- | --- |
-| `GET /api/issues/{id}/comments` | on open, every 4 s while open, at once after a send, at once when the run ends | measured to exist and to carry `body`, `authorAgentId`, `authorUserId`, `authorType`, `createdByRunId`; size and time on a long thread **not measured** (C7) |
-| `GET /api/heartbeat-runs/{runId}/events?limit=500` for the newest run on the task | every 2 s while that run is live; once when it has finished, then kept | measured 8 to 34 ms for about 100 events on loopback; LAN **not measured** (F14) |
-| `GET /api/issues/{id}` or the list row, for the task line | on open and when the task changes | **assumed** to exist; falls back to the title the poll already holds |
+| `GET /api/issues/{id}/comments` | on open, every 4 s while open, at once after a send, at once when the run ends | measured: 5 to 6 ms for three comments, **newest first** (the parser sorts). The route declares no limit and no cursor, so a long thread is re-read whole; its cost is **not measured** |
+| `GET /api/heartbeat-runs/{runId}/events?afterSeq=<last seen>&limit=500` for the newest run on the task | every 2 s while that run is live; once when it has finished, then kept | measured: `afterSeq` returns only later rows, oldest first (`limit=5&afterSeq=20` gave 21 to 25). A full read of 87 events, 107 KB, took 10 ms on loopback; LAN **not measured** |
+| `GET /api/issues/{id}`, for the task line | on open and when the task changes | declared in Paperclip's OpenAPI document, **not called**; falls back to the title the poll already holds |
 
 Per open panel that is 15 reads a minute asleep and 45 a minute during a run, on top of the 105 a minute the connected app already makes (findings, Timing). The feed does not share the poll's own events read (CB-442 reads each running run every 4 s for permission prompts): two readers of one body would couple the prompt path to the panel, and the saving is one read in three.
 
-If Paperclip lets events be read after a `seq` (D9), the feed asks for the new ones only. If it does not, it re-reads the 500. **A run with more than 500 events is the open risk**: which 500 come back is not measured. Until D9 answers, a run whose read returns exactly 500 rows shows a muted line "Earlier activity is in Paperclip." and the link.
+The feed keeps the highest `seq` it has seen for the run and asks only for what came after, so a tick during a quiet moment returns `[]`. A read that returns a full 500 is followed at once by the next page, at most four pages a tick. That removes the long-run risk the first draft of this plan carried: `limit` returns the oldest rows, so a plain `limit=500` would have frozen on a long run's first 500 events. Because reads are incremental, the feed holds a small folded state per run (`PaperclipChat.Activity`, §2.4), not the bodies.
 
 A failed read keeps what is on screen and tries again at the next tick. A 401 or 403 is the existing reconnect state (`PaperclipLink.NeedsReconnect`); the feed stops and the box is replaced by the reconnect words.
 
@@ -122,26 +122,31 @@ internal static class PaperclipChat
     internal sealed record Row(string Key, ChatRole Role, string Text, DateTime At, bool Error = false);
 
     internal static IReadOnlyList<Comment> ParseComments(string? json);
-    internal static IReadOnlyList<Row> ParseActivity(string runId, string? eventsJson);
+    // Folded across incremental reads: the rows so far, the tool names by executionId, and the highest seq.
+    internal sealed record Activity(string RunId, long LastSeq, IReadOnlyList<Row> Rows /* + private join state */);
+    internal static Activity Fold(Activity soFar, string? eventsJson);   // never throws; a bad body returns soFar
     internal static TaskRef? CurrentTask(/* agent id, live runs, finished runs, blocked issues, assigned issues */);
     internal static IReadOnlyList<Row> Build(TaskRef? task, string agentId, IReadOnlyDictionary<string, string> agentNames,
-        IReadOnlyList<Comment> comments, IReadOnlyList<Row> activity);
+        IReadOnlyList<Comment> comments, Activity? activity);
     internal static IReadOnlyList<Row> Merge(IReadOnlyList<Row> shown, IReadOnlyList<Row> built);   // §2.5
     internal static string Hint(/* agent state, status, link, awaiting-wake since, now */);
 }
 ```
 
-`ParseActivity`, from one run's events:
+`Fold`, from one run's events. Every shape below was read out of the lead's real run body (87 events: one tool call, two deltas, one spoken message, one result); everything sits under `payload.prpEvent.payload`.
 
 | Event | Row | Status |
 | --- | --- | --- |
-| `tool.execution.progressed` with a `subject` | System, "<name>: <subject>", key by `executionId`. The name is on the `started` event with the same `executionId`. | shape measured (CB-442 uses exactly this join) |
-| `tool.execution.started` with no `progressed` yet | nothing yet; the line appears when the command is known, or at `completed` as "<name>" alone | decided, so a line's text never changes after it is shown |
-| `tool.execution.completed` | sets `Error` on that tool's row when `status` says it failed | `status` values **not read** (D8) |
-| `item.completed` | Assistant, the agent's spoken text, key by `itemId` | **shape not read** (D8). Until it is, this arm is written against the real body, not guessed |
-| `item.delta` | ignored | decided: no streaming |
-| `run.result.proposed` | Assistant, `payload.summary`, key `result`. Dropped when a comment carries this run's id in `createdByRunId` (measured: the answer is stored as a comment) | measured |
-| anything else, and `"payload": null` (measured to occur) | skipped | |
+| `tool.execution.started` | System, "<name>", key by `executionId` | measured: `name`, `executionId`, `namespace`, `status: "running"` |
+| `tool.execution.progressed` with a `subject` | the same row becomes "<name>: <subject>" | `subject` measured on a shell command (CB-442); the tool in this body, an MCP one, carried none, so the row stays "<name>" |
+| `tool.execution.completed` | sets `Error` on that row when `status` is not `"completed"` or `exitCode` is a non-zero number | measured for success only (`status: "completed"`, `exitCode: null`). **A failed tool has not been seen**; the rule is the cautious reading |
+| any tool event whose `namespace` is `"paperclip"` | no row | decided: the one measured is `paperclip_finish`, the runner's own bookkeeping, not something the agent did for the person |
+| `item.completed` with `kind: "agentMessage"` | Assistant, `text`, key by `itemId` | measured. The other kinds in the body (`thread_lineage`, `model`, `usage`) are skipped: seven of the nine `item.completed` rows are not speech |
+| `item.delta` | ignored | measured: `kind: "agentMessage"`, `text` is the fragment ("17 times 3 is ", then "51."). Decided: no streaming in this slice; the whole message arrives about a second later |
+| `run.result.proposed` | no row of its own; its `summary` is the run's answer when no `agentMessage` with `channel: "final"` came | measured: the summary, the final message and the stored comment were the same sentence three times |
+| anything else, and `"payload": null` (one in this body) | skipped | measured |
+
+**One answer, shown once.** A run's answer reaches the app up to three ways. The row for it has the key `r:<runId>:answer`: the final `agentMessage` if there is one, else the result's summary. When a comment arrives whose `createdByRunId` is that run (measured: the reply is a new comment by the agent carrying it), `Merge` gives that comment the answer row's place and takes the comment's text, so the bubble never doubles and never jumps.
 
 `Build` puts the task row first, then comments and activity by time. A comment by this agent is Assistant; by a user is User; by another agent is System, "<that agent's name>: <body>". Every text is cut at 8,000 bytes, the phone contract's line limit, so one rule serves both.
 
@@ -165,27 +170,30 @@ Task<PaperclipSent> OpenTaskAsync(string agentId, string text, CancellationToken
 // PaperclipSent(PaperclipOutcome Outcome, string? CommentId, string? IssueId)
 ```
 
-`CommentAsync` is `POST /api/issues/{id}/comments {"body": text}`. **Measured as a board user in a browser session; not measured with the app's board key (B1). That one call is the feature's only unproven write and is the first thing to settle.** Every other write the app makes with that key works (approve, reject, wake, pause, resume, resolve), which is a reason to expect it and not a measurement.
+`CommentAsync` is `POST /api/issues/{id}/comments {"body": text}`. **Measured with the app's own board key: 201 in 25 ms**, the comment stored as `authorType: "user"` with the key's user. Paired controls: no credential, 404 `{"error":"Issue not found"}` (not a 401); an empty body, 400 with a validation error. The response is the comment row, `id` included. The run it woke names the comment (`contextSnapshot.wakeCommentId`), which nothing here needs yet.
 
 | Outcome | When | What the person sees | `SendAsync` returns |
 | --- | --- | --- | --- |
 | Sent | 2xx | their bubble; "Waking <name>…" | `Sent` |
 | Sent, agent busy | 2xx while a run is live | their bubble; "<name> is working. It reads a message when this run ends." | `Sent` |
 | Sent, agent paused | 2xx, agent `paused` | their bubble; the Paused words | `Sent` |
-| No task | no current task | §4.4 | |
-| Refused | 4xx other than 401/403 | red line with Paperclip's own sentence when the body has one, else "Paperclip refused that."; text stays in the box | `Failed` |
+| No task | no current task | §3.1: the message opens one | `Sent` or as below |
+| Task gone | 404 | red line "That task is no longer in Paperclip."; text stays; the feed re-picks the task | `Failed` |
+| Refused | any other 4xx | red line with Paperclip's own `error` sentence when the body has one, else "Paperclip refused that."; text stays in the box | `Failed` |
 | Needs reconnect | 401, 403 | red line "Reconnect to Paperclip to message <name>."; text stays | `Failed` |
 | Unreachable | timeout, refused, 5xx | red line "Can't reach Paperclip."; text stays | `Failed` |
 
-"Agent busy" is worded as a fact about delivery that is **assumed** (B3): what Paperclip does with a comment that arrives mid-run has not been seen. If it turns out the running run reads it, only the sentence changes.
+"Agent busy" is worded as a fact about delivery that is **not measured**. Paperclip's OpenAPI document declares a queue for it (`GET /api/issues/{id}/queued-comments`, with `interrupt` and `steer` beside it), which fits "read when this run ends" and is a declaration, not a run. The lead can run it once the slice is building; if the running run reads the comment at once, only the sentence changes. Interrupting or steering a run from the panel is not in this plan.
 
-The person's bubble is raised by `SendAsync` on a 2xx (requirement 3), keyed by the comment id from the response, so the next comments read finds the same key and adds nothing. If the response carries no id (**assumed** that it does), the next read adopts the newest unkeyed user bubble with the same text.
+The person's bubble is raised by `SendAsync` on a 2xx (requirement 3), keyed by the comment id from the response (measured to be there), so the next comments read finds the same key and adds nothing. A 2xx whose body cannot be read still counts as sent; the next read then adopts the newest unkeyed user bubble with the same text.
 
 The 20 s `ActionTimeout` and the `PollNow` nudge after a settled call are reused, so the orb reacts at once.
 
 ### 3.1 No current task
 
-`OpenTaskAsync` creates a task assigned to the agent: title is the message's first line cut to 80 characters, description is the whole message. **Nothing about this call is measured** (E13): the route, whether a board key may call it, whether assignment wakes the agent. It ships in slice 1 only if E13 comes back clean. If it does not, an agent with no task shows no message box and the words "<name> has no task. Give it one in Paperclip.", with the link. That is honest on its own and loses only the least common case.
+`OpenTaskAsync` creates a task assigned to the agent, `POST /api/companies/{id}/issues` with `title`, `description`, `assigneeAgentId` and `status: "todo"`: title is the message's first line cut to 80 characters, description is the whole message. **Measured with the app's key: 201 in 26 ms; the assignee's run started 2.0 s later (`invocationSource: "assignment"`), finished 12.2 s after the create, and the task went to done.** No credential: 401. So it ships in slice 1. The new task becomes the panel's task, and the agent's answer arrives as a comment on it like any other.
+
+Because a done task still takes a message (§2.2 rung 4), the no-task case is only an agent that has never been given anything.
 
 ## 4. Design: wiring on the desktop
 
@@ -249,7 +257,7 @@ iOS and Android each: gate the composer and `watch` on the cap instead of on `cl
 
 | Slice | Contents | PRs |
 | --- | --- | --- |
-| **1. Desktop** (CB-443) | §2, §3, §4: the panel with the thread and live activity, the message box, every state in §1.2. The no-task send only if E13 is clean. | one PR to Orbweaver `develop`, branch `feature/paperclip-chat-desktop` |
+| **1. Desktop** (CB-443) | §2, §3, §4: the panel with the thread and live activity, the message box, every state in §1.2, the no-task send included. | one PR to Orbweaver `develop`, branch `feature/paperclip-chat-desktop` |
 | **2. Phone** (its own ticket under CB-419, to be filed by the lead) | §5 | contract PR to Orbweaver-Mobile first; then the desk PR and the two phone PRs in parallel against the merged contract |
 
 Slice 1 is honest alone: requirement 4 (the phone) is the only part missing, the phone keeps today's read-only row, and nothing on the desktop promises otherwise. Each slice is sized to an afternoon.
@@ -275,18 +283,18 @@ Target is 100% of added lines at the three levels. Fixtures come from the lead's
 ### 8.1 Unit (`tests/UnitTests`)
 
 - `ParseComments`: the real list; a user comment, this agent's, another agent's; missing fields; not an array; malformed JSON.
-- `ParseActivity`: the real run body end to end (the expected rows written out by hand from reading it); a tool with `progressed`; one with only `started`; one that only completes; a failed tool; `item.completed`; `item.delta` ignored; the result dropped when a comment has the run's id, kept when none has; `"payload": null`; an unknown event; malformed JSON.
+- `Fold`: the real run body end to end (expected: no tool row, since its one tool is the runner's own, and one answer row); the same body fed in three `afterSeq` slices gives the same rows as fed whole; a shell tool with a `subject` (from the CB-442 fixtures); a tool that only starts; a failed tool by `status` and by `exitCode` (edited copies, named so); the `paperclip` namespace hidden beside a control that is shown; each non-speech `item.completed` kind skipped; `item.delta` ignored; the answer from the final message, and from the summary when there is none; `"payload": null`; an unknown event; malformed JSON returns the state unchanged.
 - `CurrentTask`: one case per rung of §2.2, and none.
 - `Build`: order by time; each author kind; the 8,000-byte cut; no task.
-- `Merge`: append; update in place; a late row with an early time still appends; the 200-row cap; an empty side.
+- `Merge`: append; update in place; a late row with an early time still appends; the comment that carries a run's id takes the answer row's place; the 200-row cap; an empty side.
 - `Hint`: one case per row of §1.2, and the 30 s "hasn't woken" edge on both sides.
-- `PaperclipActions`: `CommentAsync` and `OpenTaskAsync` against a scripted `IPaperclipApi`, one case per row of §3's table, with the id read from the response and the id missing.
+- `PaperclipActions`: `CommentAsync` and `OpenTaskAsync` against a scripted `IPaperclipApi`, one case per row of §3's table (201, 404, 400 with Paperclip's sentence, 401, timeout), with the id read from the real response body and from an unreadable one.
 - `PaperclipChatSession` over a fake feed and fake actions with an inline dispatcher: history on open; added and updated events; replaced on task change; `SendAsync` raises one user turn on a 2xx and none on a failure; the later read does not double it; read-only on a refused key; the hint changing raises its event.
 - Slice 2: `PaperclipWindowDiff` per §5.2 (nothing changed, appended, one mid row changed, error flipped, shrank, task changed); the v18 vectors replayed; `RelayRemote` watch, unwatch and input for a `Listed` row with and without Paperclip connected, beside a control that a local CLI row behaves as before.
 
 ### 8.2 Integration (`tests/IntegrationTests`)
 
-Against the loopback HTTP listener the Paperclip tests already use: `PaperclipChatFeed` and `CommentAsync` through the real `PaperclipHttp`. The comment `POST` carries the bearer key and the exact JSON body, with a body containing a quote, a newline and a non-ASCII character; a 401 maps to reconnect; a closed connection maps to unreachable (raw listener, per the findings' wire facts); the feed makes **no** request before it is opened and none after it is closed (the listener's request count is the assertion).
+Against the loopback HTTP listener the Paperclip tests already use: `PaperclipChatFeed` and `CommentAsync` through the real `PaperclipHttp`. The comment `POST` carries the bearer key and the exact JSON body, with a body containing a quote, a newline and a non-ASCII character; a 401 maps to reconnect; a closed connection maps to unreachable (raw listener, per the findings' wire facts); the events read carries `afterSeq` and follows a full page with the next; the feed makes **no** request before it is opened and none after it is closed (the listener's request count is the assertion).
 
 ### 8.3 UI (`tests/UiTests`, class in `[Collection("Settings")]`) and screenshots
 
@@ -319,27 +327,47 @@ Either way the reply still arrives when a run ends, seconds to minutes later. Th
 
 ## 10. Measured, assumed, and what settles each
 
-Relied on as measured (lead, 2026.1117.0): a board user's comment `POST` wakes the assignee within 10 s; the events route and its tool, result and null-payload shapes; the answer stored as a comment with `createdByRunId`; live-runs fields; the feed refusing an app key; the 2 s and 4 s ticks.
+**Measured by the lead on 2026-11-24, Paperclip 2026.1117.0, loopback, with a key from the app's own connect flow.** The bodies are the fixtures' source; engineer A gets them from the lead and scrubs ids before committing any.
 
-Read from source and not run: everything in §5.1; that `ChatPanel` needs no change beyond the lifetime calls; that `IRemoteChatReadOnly.ReplyUrl` shows above a live composer.
+| Fact | Result |
+| --- | --- |
+| Comment with the app's key | 201, 25 ms; `authorType: "user"`; response is the comment row with `id`. No credential 404; empty body 400 |
+| The comment wakes the assignee | run started 2.0 s later, finished at 12.2 s; `invocationSource: "automation"`; `contextSnapshot` names `issueId` and `wakeCommentId` |
+| A comment on a done task | reopens it and wakes the agent; the task returned to done |
+| The reply | a new comment, `authorType: "agent"`, `createdByRunId` = the woken run; the list comes newest first, 5 to 6 ms |
+| Events after a seq | `afterSeq` works, oldest first; `after`, `sinceSeq` and `order=desc` are ignored |
+| Speech in the events | `item.completed` with `kind: "agentMessage"`; seven of nine `item.completed` rows were other kinds |
+| Create a task with the app's key | 201, 26 ms; assignee woke in 2.0 s; no credential 401 |
+| Issues by assignee | works; 49 rows, 169 KB, 79 ms. `&status=in_progress` works. A comma list of statuses returned nothing with nothing open, which proves nothing |
+| From a browser session, earlier | a comment on a blocked and on an in-progress task woke the assignee within 10 s; a task in `execution_reconciliation_required` cannot be woken by anything; setting a task back to `todo` does not wake its agent |
 
-Assumed, with the request in my batch to the lead that settles it:
+Relied on from before (findings file): the tool event shapes and the `subject` on a shell command; the feed refusing an app key; the 2 s and 4 s ticks.
 
-| # | Assumption | Request | If it fails |
+Read from source and not run: everything in §5.1; that `ChatPanel` needs no change beyond the lifetime calls; that `IRemoteChatReadOnly.ReplyUrl` shows above a live composer. Declared in Paperclip's OpenAPI document and not called: `GET /api/issues/{id}`; the queued-comments routes.
+
+**Still assumed.**
+
+| # | Assumption | Settled by | If it fails |
 | --- | --- | --- | --- |
-| 1 | The app's board key may post a comment | B1 | **Slice 1 has no message box.** It ships as the read-only activity panel and the send waits on a different credential. Settle before spawning engineers. |
-| 2 | The woken run names its task, and the reply is a comment with that run's id | B2, C6 | the result row is shown instead of the comment; ordering still holds |
-| 3 | A comment during a run is read when the run ends | B3 | only the "working" sentence changes |
-| 4 | A comment on a `todo` or `done` task wakes the agent | B4 | the box says "It reads this at its next run." for those statuses |
-| 5 | A comment for a paused agent is accepted and waits | B5 | a refusal is shown as refused, which already works |
-| 6 | `item.completed` carries the spoken text | D8 | speech rows are dropped from slice 1; tool lines and the answer remain |
-| 7 | `tool.execution.completed` says failure in a `status` | D8 | no red tool lines |
-| 8 | Events can be read after a `seq`, or `limit=500` returns the newest 500 | D9 | the "Earlier activity is in Paperclip" line (§2.3) |
-| 9 | A finished run's events stay readable and do not change | D10 | re-read on open instead of kept |
-| 10 | Issues can be listed by assignee | E12 | rung 4 of §2.2 is dropped: an agent that has never run shows "No task yet." |
-| 11 | A task can be created with the board key and assignment wakes the agent | E13 | §3.1's fallback: no box without a task |
-| 12 | The comment response carries the new comment's id | B1 | match by text (§3) |
-| 13 | LAN cost of the events read is close to loopback | F14 | the live tick goes to 4 s on a non-loopback address |
-| 14 | A multi-row restating tail applies correctly on both phones | read from source | run by the slice 2 phone engineers before the desk sends one |
+| 1 | A comment during a run is queued and read when the run ends | the lead, on request, once the slice is building | only the "working" sentence changes |
+| 2 | A comment for a paused agent is accepted and waits | the lead, on request | a refusal already shows as refused |
+| 3 | A comment on a `todo` or `backlog` task wakes the agent | not run; blocked, in-progress and done are measured | the "hasn't woken yet" words after 30 s already cover it |
+| 4 | A failed tool says so in `status` or `exitCode` | the first real failed tool call; QA looks for one in the proof | no red tool lines |
+| 5 | A finished run's events stay readable and do not change | not run (a day-old run was not read) | re-read on open instead of kept |
+| 6 | LAN cost of the events read is close to loopback's 10 ms | QA's Windows install, which reaches Paperclip over the LAN | the live tick goes to 4 s on a non-loopback address |
+| 7 | A long comment thread is cheap to re-read whole every 4 s | not measured; three comments took 5 ms | read comments on open, after a send and when a run ends only |
+| 8 | A task stuck in `execution_reconciliation_required` is rare enough to leave to the 30 s "hasn't woken yet" words | measured that it cannot be woken; how often it happens is not known | name the state in the box |
+| 9 | A multi-row restating tail applies correctly on both phones | read from source; run by the slice 2 phone engineers before the desk sends one | the desk sends a `reset` backfill instead |
+| 10 | `frames-v18` is free | I read v17 on Orbweaver-Mobile `origin/develop` at `1a872f4`; the lead reports v16 as the newest deployed. The contract author checks open branches | take the next number |
 
 Not looked at: the watch app beyond confirming it shows no thread; Paperclip versions other than 2026.1117.0; a `local_trusted` instance.
+
+## 11. Sharing the panel with CB-445 (agent pictures)
+
+CB-445 puts a Paperclip agent's picture on its orb, and the same picture belongs in this panel's header. The two tickets meet in four files and need not wait on each other.
+
+- **The header picture is CB-445's, and this plan adds nothing for it.** `ChatPanel.ApplyAvatar(sessionId)` (`ChatPanel.axaml.cs:1870`) already asks for a face by session id, and this panel opens under the orb's own id, `paperclip:<agent id>`. So when CB-445 teaches that lookup about a Paperclip agent, the header shows the picture with no change here; until then the header shows the orb's letters, as any session without a picture does. CB-443 writes no avatar code and does not read `avatarUrl`.
+- **The name and the line under it are CB-443's**: `DisplayName` is the agent's name. Its role or title goes in the header's meta line only if `ChatHeaderMeta` takes it without a new seam; otherwise it is left out.
+- **One rule CB-445 must hold, stated here because this panel is where it would show:** a custom picture needs the key (`/api/assets/{id}/content`, measured 406 KB), so it is fetched through `IPaperclipApi`, cached once per agent and per URL, and never fetched by the panel or per open. The generated one (`/api/agent-avatars/…`, 26 KB) needs no credential. The picture is not sent to the phone by this plan's frames.
+- **Where the edits touch.** `ChatPanel.axaml.cs`: this plan changes two lines near `:784` and `:933`, CB-445 the face lookup near `:1870`. `PaperclipApi.cs`: CB-445 adds `avatarUrl` to the agent row; this plan adds nothing to that file. `PaperclipSessions.cs`: both add read-only accessors. `SessionManager.cs`: CB-445 touches the Paperclip merge block, this plan `RemoteChatFor`. None overlap; whichever lands second rebases.
+- **Screenshots.** This plan's three captures draw the letters. If CB-445 lands first, engineer B gives the fake agent a picture in one of them so the header is seen once with it.
