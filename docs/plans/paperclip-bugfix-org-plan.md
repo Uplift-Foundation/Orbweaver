@@ -51,7 +51,7 @@ Every other writer on the repository is an admin (measured: three admins, the re
 
 **What stays unenforced, plainly.** Pushing a branch and merging a PR are the same GitHub permission. A misbehaving agent holding the token could merge its own green PR without the QA agent's review. What bounds that is the ruleset (CI green on both rids), which is the same bound a human-led team has. The warden audits every bot merge and pauses the company on one with no QA comment. Enforcing the review would mean keeping the token out of the sandbox and having the warden push and merge; that is designed in the appendix (A.6) and not recommended for the first release.
 
-**Warren's step, as one link.** The CB-455 team runs a one-shot helper on the mini and sends `http://192.168.0.127:<port>/`. The page posts the App manifest to GitHub. Warren clicks **Create GitHub App**, then on the next page picks **Only select repositories → Orbweaver** and clicks **Install**. The helper stores the key and exits. Assumed, not measured: GitHub's manifest flow has not been run on this org. The lead should try driving it in Warren's signed-in browser first and send the link only if that fails.
+**Warren's step, as one link.** The CB-455 team runs a one-shot helper on the mini and sends `http://192.168.0.127:<port>/`. The page posts the App manifest to GitHub. Warren clicks **Create GitHub App**, then on the next page picks **Only select repositories → Orbweaver** and clicks **Install**. The helper stores the key and exits. Assumed, not measured: GitHub's manifest flow has not been run on this org. The lead sends Warren the link; nobody drives his browser.
 
 ## 3. Which tickets, in what order
 
