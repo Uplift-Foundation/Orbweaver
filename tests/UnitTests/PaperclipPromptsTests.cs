@@ -135,6 +135,14 @@ public class PaperclipPromptsTests
     }
 
     [Fact]
+    public async Task The_phones_prompt_shows_the_command_a_person_is_allowing()
+    {
+        await Poll(Agent(needs: Runtime() with { Title = "Bash: mkdir cb442-proof-a && ls -ld cb442-proof-a", Summary = "Create empty directory\nTask: Proof" }));
+        var j = JsonDocument.Parse(Assert.Single(_sent.Prompts).Prompt).RootElement;
+        Assert.Contains("mkdir cb442-proof-a && ls -ld cb442-proof-a", j.GetProperty("preview").GetString());
+    }
+
+    [Fact]
     public async Task A_runtime_permission_the_build_cannot_answer_mints_no_prompt()
     {
         await Poll(Agent(needs: Runtime() with { RunId = null, TurnId = null }));

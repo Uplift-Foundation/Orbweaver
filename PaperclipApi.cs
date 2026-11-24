@@ -60,7 +60,7 @@ namespace Orbweaver
         // among its choices is the only kind this build answers; Answerable says so.
         internal sealed record RawRuntimeRequest(
             string RunId, string RequestId, string? TurnId, string? Prompt, string? ToolName,
-            string? RequestKind, bool CanAccept, bool CanDecline, DateTime? CreatedAt = null, string? AgentId = null, string? IssueId = null)
+            string? RequestKind, bool CanAccept, bool CanDecline, DateTime? CreatedAt = null, string? AgentId = null, string? IssueId = null, string? Subject = null)
         {
             internal bool Answerable => RequestKind == "permission_approval" && CanAccept && CanDecline && !string.IsNullOrEmpty(TurnId);
         }
@@ -257,8 +257,13 @@ namespace Orbweaver
         internal static IReadOnlyList<RawRuntimeRequest> ParseRuntimeRequests(string runId, string? eventsJson)
         {
             var rows = EventRows(eventsJson);
-            var tools = new Dictionary<string, string>(StringComparer.Ordinal);
-            var latest = new Dictionary<string, (long Order, RawRuntimeRequest? Open, string? ItemId)>(StringComparer.Ordinal);
+            // Every tool event in a run shares one itemId (measured), so the tool is joined by the tool call id:
+            // request.details.toolCallId equals the tool event's payload.executionId. The command is the newest
+            // `subject` a progressed event carried for that execution. With no match, the newest tool that
+            // started before the request stands in for the tool (and its subject).
+            var started = new List<(long Order, string Name, string? ExecutionId)>();
+            var subjects = new Dictionary<string, (long Order, string Subject)>(StringComparer.Ordinal);
+            var latest = new Dictionary<string, (long Order, RawRuntimeRequest? Open, string? ToolCallId)>(StringComparer.Ordinal);
             long n = 0;
             foreach (var e in rows)
             {
@@ -268,11 +273,17 @@ namespace Orbweaver
                 if (!e.TryGetProperty("payload", out var pl) || pl.ValueKind != JsonValueKind.Object
                     || !pl.TryGetProperty("prpEvent", out var prp)
                     || prp.ValueKind != JsonValueKind.Object) continue;
-                var itemId = Str(prp, "itemId");
                 var inner = prp.TryGetProperty("payload", out var ip) && ip.ValueKind == JsonValueKind.Object ? ip : default;
                 if (type == "tool.execution.started")
                 {
-                    if (itemId != null && NonEmpty(Str(inner, "name")) is { } name) tools[itemId] = name;
+                    if (NonEmpty(Str(inner, "name")) is { } name) started.Add((order, name, NonEmpty(Str(inner, "executionId"))));
+                    continue;
+                }
+                if (type == "tool.execution.progressed")
+                {
+                    if (NonEmpty(Str(inner, "executionId")) is { } exec && NonEmpty(Str(inner, "subject")) is { } subject
+                        && (!subjects.TryGetValue(exec, out var old) || old.Order <= order))
+                        subjects[exec] = (order, subject);
                     continue;
                 }
                 if (type is not ("runtime_request.created" or "runtime_request.resolved" or "runtime_request.cancelled" or "runtime_request.expired"))
@@ -285,12 +296,29 @@ namespace Orbweaver
                 var keys = new HashSet<string>();
                 if (req.ValueKind == JsonValueKind.Object && req.TryGetProperty("choices", out var ch) && ch.ValueKind == JsonValueKind.Array)
                     foreach (var c in ch.EnumerateArray()) if (Str(c, "key") is { } k) keys.Add(k);
+                string? toolCallId = req.ValueKind == JsonValueKind.Object && req.TryGetProperty("details", out var det) && det.ValueKind == JsonValueKind.Object
+                    ? NonEmpty(Str(det, "toolCallId")) : null;
                 latest[id] = (order, new RawRuntimeRequest(runId, id, NonEmpty(Str(prp, "turnId")),
                     Limit(NonEmpty(Str(req, "prompt")), PreviewLimit), null, NonEmpty(Str(req, "requestKind")),
-                    keys.Contains("accept"), keys.Contains("decline"), Time(Str(e, "createdAt"))), itemId);
+                    keys.Contains("accept"), keys.Contains("decline"), Time(Str(e, "createdAt"))), toolCallId);
             }
-            return latest.Values.Where(v => v.Open != null)
-                .Select(v => v.ItemId != null && tools.TryGetValue(v.ItemId, out var t) ? v.Open! with { ToolName = t } : v.Open!).ToList();
+            return latest.Values.Where(v => v.Open != null).Select(v =>
+            {
+                var open = v.Open!;
+                var created = v.Order;
+                (long Order, string Name, string? ExecutionId)? tool = null;
+                if (v.ToolCallId != null)
+                    foreach (var t in started) if (t.ExecutionId == v.ToolCallId) tool = t;
+                if (tool == null)
+                    foreach (var t in started) if (t.Order < created && (tool == null || t.Order >= tool.Value.Order)) tool = t;
+                if (tool == null) return open;
+                var exec = tool.Value.ExecutionId;
+                return open with
+                {
+                    ToolName = tool.Value.Name,
+                    Subject = exec != null && subjects.TryGetValue(exec, out var sj) ? Limit(sj.Subject, PreviewLimit) : null,
+                };
+            }).ToList();
         }
 
         private static IReadOnlyList<JsonElement> EventRows(string? json)
@@ -427,12 +455,19 @@ namespace Orbweaver
             // cannot answer (another kind, no accept / decline) still shows, without a run or turn, so it links only.
             foreach (var r in c.Runtime ?? Array.Empty<RawRuntimeRequest>())
             {
-                var what = r.Prompt ?? "Permission";
-                var title = r.ToolName != null ? r.ToolName + ": " + what : what;
+                // Paperclip's prompt is sometimes only the tool's name (measured: "Bash"), which would read "Bash: Bash".
+                // What a person must see is the command (the progressed event's subject), then the tool call's own
+                // description when it adds something.
+                var tool = r.ToolName;
+                bool Informative(string? t) => !string.IsNullOrWhiteSpace(t) && !string.Equals(t, tool, StringComparison.OrdinalIgnoreCase);
+                var what = Informative(r.Subject) ? r.Subject : Informative(r.Prompt) ? r.Prompt : null;
+                var title = tool != null ? (what != null ? tool + ": " + what : tool) : what ?? "Permission";
+                var more = Informative(r.Subject) && Informative(r.Prompt) && r.Prompt != r.Subject ? r.Prompt : null;
                 Add(Resolve(r.AgentId),
                     new PaperclipNeed("runtime", r.RequestId, title, AgentUrl(c.BaseUrl, c.IssuePrefix, r.AgentId ?? ""),
                         // The task the agent is on, so two agents' identical prompts can be told apart.
-                        r.IssueId != null && c.TaskTitles.TryGetValue(r.IssueId, out var task) ? "Task: " + task : null,
+                        string.Join("\n", new[] { more, r.IssueId != null && c.TaskTitles.TryGetValue(r.IssueId, out var task) ? "Task: " + task : null }
+                            .Where(x => x != null)) is { Length: > 0 } summary ? summary : null,
                         r.CreatedAt, Tool: r.ToolName ?? "Permission",
                         RunId: r.Answerable ? r.RunId : null, TurnId: r.Answerable ? r.TurnId : null));
             }

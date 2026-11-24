@@ -89,7 +89,7 @@ public class PaperclipRuntimeTests
         var admin = PaperclipApi.ParseRuntimeRequests("run1", Events)[1] with { AgentId = "ag1" };
         var bare = new PaperclipApi.RawRuntimeRequest("run1", "rb", "t", null, null, null, true, true, null, "ag1");
         var needs = Compose(admin, bare).Needs;
-        Assert.Equal(["Admin thing", "Permission"], needs.Select(n => n.Title).ToArray());
+        Assert.Equal(["Bash: Admin thing", "Permission"], needs.Select(n => n.Title).ToArray());   // the admin one falls back to the newest tool started before it
         Assert.All(needs, n => Assert.False(PaperclipActions.Answerable(n)));
         Assert.Equal("Permission", needs[1].Tool);
     }
@@ -116,6 +116,7 @@ public class PaperclipRuntimeTests
 
     [Theory]
     [InlineData(200, "Done", null)]
+    [InlineData(202, "Done", null)]   // measured twice on the mini: the resolve route answers 202
     [InlineData(409, "AlreadyDecided", "Already answered in Paperclip")]
     [InlineData(404, "Refused", "This request no longer exists in Paperclip")]
     [InlineData(403, "NeedsReconnect", "Reconnect to Paperclip to answer")]
@@ -128,7 +129,7 @@ public class PaperclipRuntimeTests
         var polled = 0;
         var o = await new PaperclipActions(api, "co", () => polled++).DecideAsync(Need(), true, default);
         Assert.Equal((result, why), (o.Result.ToString(), o.Why));
-        Assert.Equal(code is 200 or 409 ? 1 : 0, polled);
+        Assert.Equal(code is 200 or 202 or 409 ? 1 : 0, polled);
         Assert.DoesNotContain(api.Calls, c => c.StartsWith("GET"));
     }
 
@@ -261,7 +262,8 @@ public class PaperclipRuntimeTests
         api.Gets["/api/heartbeat-runs/run-1/events?limit=500"] = FakePaperclip.Ok(PaperclipFx.Read("native/runtime/live-pending-events.json"));
         var step = await PaperclipSessions.StepAsync(api, Cfg, PaperclipSessions.PollState.Initial, DateTime.UtcNow, default);
         var need = Assert.Single(Assert.Single(step.Next.Published!).Needs);
-        Assert.Equal(("runtime", "Bash: Create empty directory and verify", "Task: CB-442 proof A"), (need.Kind, need.Title, need.Summary));
+        Assert.Equal(("runtime", "Bash: mkdir cb442-proof-a && ls -ld cb442-proof-a", "Create empty directory and verify\nTask: CB-442 proof A"),
+            (need.Kind, need.Title, need.Summary));
     }
 
     [Fact]
@@ -334,5 +336,58 @@ public class PaperclipRuntimeTests
             throw new OperationCanceledException(ct);
         }
         public Task<PaperclipResponse> PostAsync(string p, string b, CancellationToken ct) => inner.PostAsync(p, b, ct);
+    }
+
+    // ---- tool join, command and title (measured on the mini: every tool event in a run shares one itemId) ----
+
+    private static string Tool(int seq, string type, string item, string exec, string name, string? subject = null) =>
+        "{\"seq\":" + seq + ",\"eventType\":\"" + type + "\",\"payload\":{\"prpEvent\":{\"turnId\":\"t\",\"itemId\":\"" + item + "\",\"payload\":{\"name\":\"" + name +
+        "\",\"executionId\":\"" + exec + "\"" + (subject != null ? ",\"subject\":\"" + subject + "\"" : "") + "}}}}";
+
+    private static string Created(int seq, string id, string item, string? call, string prompt) =>
+        "{\"seq\":" + seq + ",\"eventType\":\"runtime_request.created\",\"payload\":{\"prpEvent\":{\"turnId\":\"t\",\"itemId\":\"" + item + "\",\"payload\":{\"request\":{\"requestId\":\"" + id +
+        "\",\"requestKind\":\"permission_approval\",\"prompt\":\"" + prompt + "\",\"choices\":[{\"key\":\"accept\"},{\"key\":\"decline\"}]" +
+        (call != null ? ",\"details\":{\"toolCallId\":\"" + call + "\"}" : "") + "}}}}}";
+
+    [Fact]
+    public void The_tool_is_joined_by_tool_call_id_not_the_shared_item_id_and_the_newest_subject_is_the_command()
+    {
+        // Bash then paperclip_finish, one itemId; the request is for the FIRST call, so an itemId join would name the wrong tool.
+        var json = "[" + string.Join(",", Tool(1, "tool.execution.started", "item-run", "toolu-1", "Bash"),
+            Tool(2, "tool.execution.progressed", "item-run", "toolu-1", "Bash", "ls"),
+            Tool(3, "tool.execution.progressed", "item-run", "toolu-1", "Bash", "mkdir x"),
+            Tool(4, "tool.execution.started", "item-run", "toolu-2", "paperclip_finish"),
+            Created(5, "rq", "item-run", "toolu-1", "Make x")) + "]";
+        var r = Assert.Single(PaperclipApi.ParseRuntimeRequests("run", json));
+        Assert.Equal(("Bash", "mkdir x"), (r.ToolName, r.Subject));
+    }
+
+    [Fact]
+    public void With_no_matching_execution_id_the_newest_tool_started_before_the_request_stands_in()
+    {
+        var json = "[" + string.Join(",", Tool(1, "tool.execution.started", "i", "toolu-1", "Bash"),
+            Tool(2, "tool.execution.started", "i", "toolu-2", "Edit"), Tool(2, "tool.execution.progressed", "i", "toolu-2", "Edit", "file.cs"), Created(3, "rq", "i", "toolu-gone", "Edit it"),
+            Tool(4, "tool.execution.started", "i", "toolu-3", "Later")) + "]";
+        var r = Assert.Single(PaperclipApi.ParseRuntimeRequests("run", json));
+        Assert.Equal(("Edit", "file.cs"), (r.ToolName, r.Subject));
+        var none = "[" + Created(1, "rq", "i", null, "Orphan") + "]";
+        var o = Assert.Single(PaperclipApi.ParseRuntimeRequests("run", none));
+        Assert.Equal((null, null), (o.ToolName, o.Subject));
+    }
+
+    [Theory]
+    [InlineData("Bash", "mkdir x", "Make x", "Bash: mkdir x", "Make x")]          // the command leads, the description follows
+    [InlineData("Bash", "mkdir x", "bash", "Bash: mkdir x", null)]                 // prompt is only the tool name, any case
+    [InlineData("Bash", null, "Bash", "Bash", null)]                              // measured: prompt "Bash", never "Bash: Bash"
+    [InlineData("Bash", null, "", "Bash", null)]
+    [InlineData("Bash", null, "Make x", "Bash: Make x", null)]                    // no command known: the description
+    [InlineData("Bash", "same", "same", "Bash: same", null)]
+    [InlineData(null, null, null, "Permission", null)]
+    [InlineData(null, "ls", null, "ls", null)]
+    public void The_title_never_doubles_the_tool_name_and_shows_the_command_when_there_is_one(string? tool, string? subject, string? prompt, string title, string? summary)
+    {
+        var r = new PaperclipApi.RawRuntimeRequest("run1", "rq", "t", prompt, tool, "permission_approval", true, true, null, "ag1", null, subject);
+        var need = Assert.Single(Compose(r).Needs);
+        Assert.Equal((title, summary), (need.Title, need.Summary));
     }
 }
