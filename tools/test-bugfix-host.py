@@ -384,7 +384,7 @@ class FakeMinter:
 
 class FakePC:
     def __init__(self, paused=False, tokens=0, runs=0, active=(), issues=(), cancelled=(), logs=None):
-        self.cancelled_issues, self.logs = list(cancelled), logs or {}
+        self.cancelled_issues, self.logs, self.full = list(cancelled), logs or {}, {}
         self.paused, self.tokens, self.runs = paused, tokens, runs
         self.active, self.issues = list(active), list(issues)
         self.secrets, self.pauses, self.cancelled, self.blocked = [], [], [], []
@@ -393,8 +393,13 @@ class FakePC:
     def runs_today(self):
         return self.runs
 
-    def cancelled_issue_ids(self):
-        return [(i, f"CB-{n}") for n, i in enumerate(self.cancelled_issues, 1)]
+    def cancelled_issue_rows(self):
+        return self.cancelled_issues
+
+    def get_issue(self, issue_id):
+        if issue_id in self.full:
+            return self.full[issue_id]
+        raise OSError("no such issue")
 
     def recent_run_ids(self):
         return list(self.logs)
@@ -578,6 +583,13 @@ class StopWorkTests(unittest.TestCase):
         self.assertFalse(tick(pc=pc, cfg={})[1])
 
 
+def R(i, n=None, **over):
+    """A cancelled engineer issue row, as the lead writes it."""
+    row = {"id": i, "status": "cancelled", "description": f"Ticket: CB-{n or 100}\nfix"}
+    row.update(over)
+    return row
+
+
 class PaperclipSignalTests(unittest.TestCase):
     def test_first_look_only_seeds_history(self):
         st = {}
@@ -587,12 +599,12 @@ class PaperclipSignalTests(unittest.TestCase):
         self.assertEqual(warden.new_releases(["a", "b", "c"], st), [], "counted once")
 
     def test_two_newly_cancelled_issues_pause_without_any_spool_file(self):
-        state, pc = {}, FakePC(cancelled=["old"])
+        state, pc = {}, FakePC(cancelled=[R("old")])
         tick(pc=pc, state=state)
-        pc.cancelled_issues = ["old", "x"]
+        pc.cancelled_issues = [R("old"), R("x")]
         _, paused, _ = tick(pc=pc, state=state)
         self.assertFalse(paused, "one release is not a pause")
-        pc.cancelled_issues = ["old", "x", "y"]
+        pc.cancelled_issues = [R("old"), R("x"), R("y")]
         _, paused, _ = tick(pc=pc, state=state)
         self.assertTrue(paused)
         self.assertIn("Paperclip issue states", pc.pauses[0])
@@ -600,12 +612,12 @@ class PaperclipSignalTests(unittest.TestCase):
     def test_a_merge_between_releases_resets_the_paperclip_streak(self):
         state, pc = {}, FakePC()
         tick(pc=pc, state=state)
-        pc.cancelled_issues = ["x"]
+        pc.cancelled_issues = [R("x")]
         tick(pc=pc, state=state)
         gh = FakeGH(merged=[merged_pr()], comments={7: ["osx-arm64 win-x64"]},
                     checks={"abc": {n: "success" for n in warden.REQUIRED_CHECKS}})
         tick(gh=gh, pc=pc, state=state)
-        pc.cancelled_issues = ["x", "y"]
+        pc.cancelled_issues = [R("x"), R("y")]
         _, paused, _ = tick(pc=pc, state=state)
         self.assertFalse(paused)
 
@@ -613,13 +625,13 @@ class PaperclipSignalTests(unittest.TestCase):
         # No spool requests at all in either tick; Paperclip alone pauses.
         state, pc = {}, FakePC()
         tick(pc=pc, state=state)
-        pc.cancelled_issues = ["x", "y"]
+        pc.cancelled_issues = [R("x"), R("y")]
         self.assertTrue(tick(pc=pc, state=state)[1])
 
     def test_spool_release_and_paperclip_release_are_not_added_together(self):
         state, pc = {}, FakePC()
         tick(pc=pc, state=state)
-        pc.cancelled_issues = ["x"]
+        pc.cancelled_issues = [R("x")]
         _, paused, _ = tick(pc=pc, state=state, requests=[{"verb": "released", "ticket": "CB-1"}])
         self.assertFalse(paused, "one release reported twice is still one release")
 
@@ -638,39 +650,78 @@ class PaperclipSignalTests(unittest.TestCase):
         self.assertFalse(warden.log_shows_refusal(None))
 
 
-class ReleaseIssueTests(unittest.TestCase):
-    def test_only_engineer_ticket_issues_count(self):
-        rows = [
-            {"id": "a", "status": "cancelled", "description": "Ticket: CB-12\nfix the flake"},
-            {"id": "qa", "status": "cancelled", "description": "Review PR 77 for CB-12"},
-            {"id": "helper", "status": "cancelled", "description": "Find the flaky test"},
-            {"id": "c", "status": "done", "description": "Ticket: CB-13\n"},
-            {"id": "d", "status": "cancelled", "description": "see Ticket: CB-14 below"},
-            {"id": "e", "status": "cancelled"},
-            {"id": "n", "status": "cancelled", "description": None},
-            {"id": "f", "status": "cancelled", "description": "Ticket: CB-15"},
-        ]
-        self.assertEqual(warden.release_issues(rows), [("a", "CB-12"), ("f", "CB-15")])
+class ReleaseClassifyTests(unittest.TestCase):
+    def no_fetch(self, i):
+        raise AssertionError("must not fetch when the row carries a description")
 
-    def test_nothing_cancelled_is_no_release(self):
-        self.assertEqual(warden.release_issues([]), [])
+    def test_listing_row_with_a_description_is_decided_from_it(self):
+        c = warden.classify_release
+        self.assertEqual(c(R("a", 12), self.no_fetch), ("release", "CB-12"))
+        self.assertEqual(c(R("f", description="Ticket: CB-15"), self.no_fetch), ("release", "CB-15"))
+        for d in ("Review PR 77 for CB-12", "Find the flaky test", "see Ticket: CB-14 below", "", None):
+            self.assertEqual(c(R("q", description=d), self.no_fetch), ("other", None), d)
 
+    def test_row_without_a_description_key_is_read_in_full(self):
+        bare = {"id": "x", "status": "cancelled"}
+        full = lambda i: {"id": i, "status": "cancelled", "description": "Ticket: CB-31\nx"}
+        self.assertEqual(warden.classify_release(bare, full), ("release", "CB-31"))
+        child = lambda i: {"id": i, "description": "QA round"}
+        self.assertEqual(warden.classify_release(bare, child), ("other", None))
+
+    def test_unreadable_when_the_full_issue_has_no_description_or_cannot_be_fetched(self):
+        bare = {"id": "x", "status": "cancelled"}
+        self.assertEqual(warden.classify_release(bare, lambda i: {"id": i}), ("unreadable", None))
+        self.assertEqual(warden.classify_release(bare, lambda i: None), ("unreadable", None))
+
+        def boom(i):
+            raise OSError("500")
+        self.assertEqual(warden.classify_release(bare, boom), ("unreadable", None))
+
+
+class ReleaseTickTests(unittest.TestCase):
     def test_cancelled_qa_children_do_not_trip_two_in_a_row(self):
-        eng = {"id": "e1", "status": "cancelled", "description": "Ticket: CB-20\nx"}
         kids = [{"id": f"k{i}", "status": "cancelled", "description": "QA round"} for i in range(3)]
-        state, logs = {}, []
-        pc = FakePC(cancelled=[])
-        pc.cancelled_issue_ids = lambda: warden.release_issues(pc.rows)
-        pc.rows = []
+        state, pc = {}, FakePC()
         tick(pc=pc, state=state)
-        pc.rows = [eng] + kids
+        pc.cancelled_issues = [R("e1", 20)] + kids
         _, paused, logs = tick(pc=pc, state=state)
         self.assertFalse(paused, "one engineer release plus three cancelled children is one release")
         self.assertTrue(any("CB-20 released" in l for l in logs))
-        pc.rows = [eng, dict(eng, id="e2", description="Ticket: CB-21\n")] + kids
+        pc.cancelled_issues = [R("e1", 20), R("e2", 21)] + kids
         _, paused, logs = tick(pc=pc, state=state)
         self.assertTrue(paused)
         self.assertTrue(any("CB-21 released" in l for l in logs))
+
+    def test_row_missing_its_description_is_fetched_and_counted_when_it_is_an_engineer_issue(self):
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state)
+        pc.cancelled_issues = [{"id": "m1", "status": "cancelled"}, {"id": "m2", "status": "cancelled"}]
+        pc.full = {"m1": {"id": "m1", "description": "Ticket: CB-40\n"},
+                   "m2": {"id": "m2", "description": "Ticket: CB-41\n"}}
+        _, paused, logs = tick(pc=pc, state=state)
+        self.assertTrue(paused, "two engineer issues, read through the full GET, are two releases")
+        self.assertTrue(any("CB-40 released" in l for l in logs))
+
+    def test_row_missing_its_description_is_not_counted_when_it_is_a_qa_child(self):
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state)
+        pc.cancelled_issues = [{"id": f"m{i}", "status": "cancelled"} for i in range(3)]
+        pc.full = {f"m{i}": {"id": f"m{i}", "description": "QA round"} for i in range(3)}
+        self.assertFalse(tick(pc=pc, state=state)[1])
+
+    def test_unreadable_signal_pauses_and_says_so(self):
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state)
+        pc.cancelled_issues = [{"id": "zz112233", "status": "cancelled"}]
+        pc.full = {"zz112233": {"id": "zz112233"}}
+        _, paused, logs = tick(pc=pc, state=state)
+        self.assertTrue(paused)
+        self.assertIn("release signal unreadable", pc.pauses[0])
+        self.assertTrue(any("release signal unreadable" in l for l in logs))
+
+    def test_history_is_not_fetched(self):
+        pc = FakePC(cancelled=[{"id": "old", "status": "cancelled"}])
+        self.assertFalse(tick(pc=pc, state={})[1], "the first look seeds history without reading it")
 
 
 class CheckHostTests(unittest.TestCase):

@@ -166,21 +166,24 @@ def new_releases(cancelled_ids, state):
 TICKET_RE = re.compile(r"\ATicket: (CB-\d+)(?:\n|\Z)")
 
 
-def release_issues(rows):
-    """(issue id, CB key) for each cancelled engineer ticket issue. The lead
-    sets an engineer's issue to `cancelled` on release and `done` on merge, and
-    writes `Ticket: CB-NNN` as the first line of its description. Helper and QA
-    child tasks are cancelled too when a round fails, and are not releases, so
-    an issue without that first line, or with no description at all, does not
-    count."""
-    out = []
-    for r in rows:
-        if r.get("status") != "cancelled":
-            continue
-        m = TICKET_RE.match(r.get("description") or "")
-        if m:
-            out.append((r["id"], m.group(1)))
-    return out
+def classify_release(row, fetch):
+    """('release', key) | ('other', None) | ('unreadable', None) for one newly
+    cancelled issue row.
+
+    A row from the listing that carries a `description` key is decided from it.
+    A row with no `description` key at all (the listing may omit it) is read in
+    full through `fetch(id)`; skipping it would blind the brake and counting it
+    blindly would pause on a QA child. If the full issue has no description key
+    either, the signal cannot be read and the caller pauses."""
+    if "description" not in row:
+        try:
+            row = fetch(row["id"]) or {}
+        except Exception:
+            return "unreadable", None
+        if "description" not in row:
+            return "unreadable", None
+    m = TICKET_RE.match(row.get("description") or "")
+    return ("release", m.group(1)) if m else ("other", None)
 
 
 def log_shows_refusal(text):
@@ -245,13 +248,19 @@ class Warden:
     def watch_releases(self):
         """Releases from Paperclip's own issue states. The spool's `released`
         stays as an extra signal; this one cannot be suppressed from inside
-        the sandbox short of not releasing at all."""
-        keys = dict(self.pc.cancelled_issue_ids())
-        for issue_id in new_releases(list(keys), self.state):
-            n = self.state["paperclip_releases"] = self.state.get("paperclip_releases", 0) + 1
-            self.log(f"{keys[issue_id]} released (Paperclip issue cancelled; {n} in a row)")
-            if n >= RELEASES_IN_A_ROW:
-                self.pause(f"{RELEASES_IN_A_ROW} releases in a row (Paperclip issue states)")
+        the sandbox short of not releasing at all. Only issues that are newly
+        cancelled are read in full, so a long cancelled history costs nothing."""
+        rows = {r["id"]: r for r in self.pc.cancelled_issue_rows()}
+        for issue_id in new_releases(list(rows), self.state):
+            kind, key = classify_release(rows[issue_id], self.pc.get_issue)
+            if kind == "unreadable":
+                self.log(f"release signal unreadable for issue {issue_id[:8]}")
+                self.pause(f"release signal unreadable (issue {issue_id[:8]} has no readable description)")
+            elif kind == "release":
+                n = self.state["paperclip_releases"] = self.state.get("paperclip_releases", 0) + 1
+                self.log(f"{key} released (Paperclip issue cancelled; {n} in a row)")
+                if n >= RELEASES_IN_A_ROW:
+                    self.pause(f"{RELEASES_IN_A_ROW} releases in a row (Paperclip issue states)")
 
     def watch_push_refusals(self):
         """GitHub's ruleset refusal text in a run's log means an agent tried to
@@ -439,10 +448,13 @@ class PaperclipHttp:
     def block_issue(self, issue_id):
         self.call("PATCH", f"/api/issues/{issue_id}", {"status": "blocked"})
 
-    def cancelled_issue_ids(self):
+    def cancelled_issue_rows(self):
         rows = self.call("GET", f"/api/companies/{self.company}/issues?status=cancelled") or []
         rows = rows if isinstance(rows, list) else rows.get("issues", [])
-        return release_issues(rows)
+        return [r for r in rows if r.get("status") == "cancelled"]
+
+    def get_issue(self, issue_id):
+        return self.call("GET", f"/api/issues/{issue_id}")
 
     def recent_run_ids(self):
         return [r["id"] for r in self._runs()][:30]
