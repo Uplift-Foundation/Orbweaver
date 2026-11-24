@@ -148,6 +148,25 @@ def cost_problem(tokens, ceiling):
     return f"daily tokens {tokens} passed ceiling {ceiling}" if tokens > ceiling else None
 
 
+REFUSAL_MARKER = "GH013"  # "remote: error: GH013: Repository rule violations found"
+
+
+def new_releases(cancelled_ids, state):
+    """Count issues newly cancelled in the fix company: a release, as seen by
+    Paperclip itself rather than reported from the sandbox. The first look only
+    seeds the set (everything already cancelled is history, not a release)."""
+    seen = state.get("cancelled_seen")
+    ids = sorted(set(cancelled_ids))
+    state["cancelled_seen"] = sorted(set(seen or []) | set(ids))[-500:]
+    if seen is None:
+        return 0
+    return len([i for i in ids if i not in seen])
+
+
+def log_shows_refusal(text):
+    return REFUSAL_MARKER in (text or "")
+
+
 def runs_problem(count, cap):
     """Daily run brake. Paperclip's heartbeat.maxDailyRuns sits in the timer
     policy and does not bound assignment wakes (phase 0), so the warden counts."""
@@ -203,6 +222,29 @@ class Warden:
             self.pc.block_issue(issue_id)
             self.log(f"blocked issue {issue_id[:8]}")
 
+    def watch_releases(self):
+        """Releases from Paperclip's own issue states. The spool's `released`
+        stays as an extra signal; this one cannot be suppressed from inside
+        the sandbox short of not releasing at all."""
+        for _ in range(new_releases(self.pc.cancelled_issue_ids(), self.state)):
+            n = self.state["paperclip_releases"] = self.state.get("paperclip_releases", 0) + 1
+            self.log(f"a Paperclip issue was cancelled: release ({n} in a row)")
+            if n >= RELEASES_IN_A_ROW:
+                self.pause(f"{RELEASES_IN_A_ROW} releases in a row (Paperclip issue states)")
+
+    def watch_push_refusals(self):
+        """GitHub's ruleset refusal text in a run's log means an agent tried to
+        leave its lane. Each run is read once. See host/README.md for what this
+        does and does not see."""
+        scanned = set(self.state.get("scanned_runs", []))
+        for run_id in self.pc.recent_run_ids():
+            if run_id in scanned:
+                continue
+            scanned.add(run_id)
+            if log_shows_refusal(self.pc.run_log(run_id)):
+                self.pause(f"run {run_id[:8]} log shows GitHub refusing a push (GH013)")
+        self.state["scanned_runs"] = sorted(scanned)[-500:]
+
     def audit(self):
         seen = set(self.state.setdefault("audited", []))
         for pr in self.gh.merged_bot_prs():
@@ -211,6 +253,7 @@ class Warden:
                 continue
             seen.add(sha)
             self.state["consecutive_releases"] = next_release_state(self.state, "merged")
+            self.state["paperclip_releases"] = 0
             qa = has_qa_comment(self.gh.comment_bodies(pr["number"], before=pr["merged_at"]))
             for r in audit_merge(qa, self.gh.check_conclusions(sha)):
                 self.pause(f"PR {pr['number']}: {r}")
@@ -219,7 +262,9 @@ class Warden:
     def tick(self, requests):
         for req in requests:
             self.handle(req)
+        self.watch_releases()
         self.audit()
+        self.watch_push_refusals()
         why = cost_problem(self.pc.tokens_today(), self.cfg.get("token_ceiling"))
         if why:
             self.pause(why)
@@ -372,6 +417,17 @@ class PaperclipHttp:
 
     def block_issue(self, issue_id):
         self.call("PATCH", f"/api/issues/{issue_id}", {"status": "blocked"})
+
+    def cancelled_issue_ids(self):
+        rows = self.call("GET", f"/api/companies/{self.company}/issues?status=cancelled") or []
+        rows = rows if isinstance(rows, list) else rows.get("issues", [])
+        return [i["id"] for i in rows if i.get("status") == "cancelled"]
+
+    def recent_run_ids(self):
+        return [r["id"] for r in self._runs()][:30]
+
+    def run_log(self, run_id):
+        return json.dumps(self.call("GET", f"/api/heartbeat-runs/{run_id}/log?limitBytes=200000"))
 
     def tokens_today(self):
         day = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT00:00:00Z")

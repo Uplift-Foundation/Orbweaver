@@ -45,6 +45,7 @@ def load(name, rel):
 create_app = load("create_app", "host/create_app.py")
 warden = load("warden", "host/warden.py")
 stress = load("stress_run", "tools/stress-run.py")
+check_host = load("check_host", "host/check_host.py")
 
 
 # ---------------------------------------------------------------- create_app
@@ -382,7 +383,8 @@ class FakeMinter:
 
 
 class FakePC:
-    def __init__(self, paused=False, tokens=0, runs=0, active=(), issues=()):
+    def __init__(self, paused=False, tokens=0, runs=0, active=(), issues=(), cancelled=(), logs=None):
+        self.cancelled_issues, self.logs = list(cancelled), logs or {}
         self.paused, self.tokens, self.runs = paused, tokens, runs
         self.active, self.issues = list(active), list(issues)
         self.secrets, self.pauses, self.cancelled, self.blocked = [], [], [], []
@@ -390,6 +392,15 @@ class FakePC:
 
     def runs_today(self):
         return self.runs
+
+    def cancelled_issue_ids(self):
+        return self.cancelled_issues
+
+    def recent_run_ids(self):
+        return list(self.logs)
+
+    def run_log(self, run_id):
+        return self.logs[run_id]
 
     def active_run_ids(self):
         return self.active
@@ -567,43 +578,147 @@ class StopWorkTests(unittest.TestCase):
         self.assertFalse(tick(pc=pc, cfg={})[1])
 
 
-@unittest.skipIf(sys.platform == "win32", "bash and PlistBuddy-style host script")
+class PaperclipSignalTests(unittest.TestCase):
+    def test_first_look_only_seeds_history(self):
+        st = {}
+        self.assertEqual(warden.new_releases(["a", "b"], st), 0)
+        self.assertEqual(warden.new_releases(["a", "b"], st), 0)
+        self.assertEqual(warden.new_releases(["a", "b", "c"], st), 1)
+        self.assertEqual(warden.new_releases(["a", "b", "c"], st), 0, "counted once")
+
+    def test_two_newly_cancelled_issues_pause_without_any_spool_file(self):
+        state, pc = {}, FakePC(cancelled=["old"])
+        tick(pc=pc, state=state)
+        pc.cancelled_issues = ["old", "x"]
+        _, paused, _ = tick(pc=pc, state=state)
+        self.assertFalse(paused, "one release is not a pause")
+        pc.cancelled_issues = ["old", "x", "y"]
+        _, paused, _ = tick(pc=pc, state=state)
+        self.assertTrue(paused)
+        self.assertIn("Paperclip issue states", pc.pauses[0])
+
+    def test_a_merge_between_releases_resets_the_paperclip_streak(self):
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state)
+        pc.cancelled_issues = ["x"]
+        tick(pc=pc, state=state)
+        gh = FakeGH(merged=[merged_pr()], comments={7: ["osx-arm64 win-x64"]},
+                    checks={"abc": {n: "success" for n in warden.REQUIRED_CHECKS}})
+        tick(gh=gh, pc=pc, state=state)
+        pc.cancelled_issues = ["x", "y"]
+        _, paused, _ = tick(pc=pc, state=state)
+        self.assertFalse(paused)
+
+    def test_suppressing_the_spool_does_not_hide_releases(self):
+        # No spool requests at all in either tick; Paperclip alone pauses.
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state)
+        pc.cancelled_issues = ["x", "y"]
+        self.assertTrue(tick(pc=pc, state=state)[1])
+
+    def test_spool_release_and_paperclip_release_are_not_added_together(self):
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state)
+        pc.cancelled_issues = ["x"]
+        _, paused, _ = tick(pc=pc, state=state, requests=[{"verb": "released", "ticket": "CB-1"}])
+        self.assertFalse(paused, "one release reported twice is still one release")
+
+    def test_refusal_text_in_a_run_log_pauses_once_per_run(self):
+        state = {}
+        pc = FakePC(logs={"run-11111111": "remote: error: GH013: Repository rule violations found"})
+        _, paused, _ = tick(pc=pc, state=state)
+        self.assertTrue(paused)
+        pc2 = FakePC(logs={"run-11111111": "remote: error: GH013"})
+        _, paused, _ = tick(pc=pc2, state=state)
+        self.assertFalse(paused, "a run already read is not read again")
+
+    def test_clean_logs_do_not_pause(self):
+        pc = FakePC(logs={"run-22222222": "all good, pushed bugfix/pc-x"})
+        self.assertFalse(tick(pc=pc)[1])
+        self.assertFalse(warden.log_shows_refusal(None))
+
+
+class CheckHostTests(unittest.TestCase):
+    GOOD = {"enableIsolatedWorkspaces": True, "enableWorktreeRunExecution": True,
+            "enableIsolatedWorkspacesByDefault": False}
+
+    def test_flags(self):
+        self.assertEqual(check_host.flag_problems(self.GOOD), [])
+        for k, v in (("enableIsolatedWorkspaces", False), ("enableWorktreeRunExecution", None),
+                     ("enableIsolatedWorkspacesByDefault", True)):
+            self.assertEqual(len(check_host.flag_problems(dict(self.GOOD, **{k: v}))), 1, k)
+        self.assertEqual(len(check_host.flag_problems({})), 2)
+
+    def test_plist(self):
+        ok = "<key>GIT_CONFIG_GLOBAL</key>\n<string>/g/gitconfig</string>"
+        self.assertEqual(check_host.plist_problems(ok, "/g/gitconfig"), [])
+        self.assertEqual(len(check_host.plist_problems("<dict/>", "/g/gitconfig")), 1)
+        self.assertEqual(len(check_host.plist_problems(ok, "/other")), 1)
+
+    def test_gitconfig_must_exist_and_be_empty(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "gitconfig")
+            self.assertEqual(len(check_host.gitconfig_problems(p)), 1)
+            open(p, "w").close()
+            self.assertEqual(check_host.gitconfig_problems(p), [])
+            with open(p, "w") as f:
+                f.write("[credential]\n")
+            self.assertEqual(len(check_host.gitconfig_problems(p)), 1)
+
+    def test_config(self):
+        good = {"company_id": "c", "paperclip_login": "l", "spool": "s", "max_runs_per_day": 8}
+        self.assertEqual(check_host.config_problems(good), [])
+        self.assertEqual(len(check_host.config_problems({})), 3)
+        self.assertEqual(len(check_host.config_problems(dict(good, max_runs_per_day=0))), 1)
+        self.assertEqual(len(check_host.config_problems(dict(good, token_ceiling="9"))), 1)
+
+
+@unittest.skipUnless(sys.platform == "darwin", "PlistBuddy and the Mac mini's launchd")
 class GitConfigSetupTests(unittest.TestCase):
-    def run_script(self, plist_text):
-        with tempfile.TemporaryDirectory() as d:
-            plist = os.path.join(d, "svc.plist")
-            with open(plist, "w") as f:
-                f.write(plist_text)
-            env = dict(os.environ, PAPERCLIP_DIR=d, SERVICE_PLIST=plist)
-            p = subprocess.run(["bash", os.path.join(ROOT, "host/setup-git-config.sh")],
-                               capture_output=True, text=True, env=env)
-            empty = os.path.join(d, "empty-gitconfig")
-            return p, empty, os.path.exists(empty) and os.path.getsize(empty) == 0
+    PLIST = ('<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>'
+             '<key>Label</key><string>x</string>%s</dict></plist>\n')
 
-    PLIST_OK = "<dict><key>GIT_CONFIG_GLOBAL</key><string>%s</string></dict>"
+    def run_script(self, d, plist_body):
+        plist = os.path.join(d, "svc.plist")
+        with open(plist, "w") as f:
+            f.write(self.PLIST % plist_body)
+        env = dict(os.environ, PAPERCLIP_DIR=d, SERVICE_PLIST=plist, NO_RELOAD="1")
+        p = subprocess.run(["bash", os.path.join(ROOT, "host/setup-git-config.sh")],
+                           capture_output=True, text=True, env=env)
+        with open(plist) as f:
+            return p, f.read()
 
-    def test_creates_the_empty_file_and_accepts_a_plist_that_points_at_it(self):
+    def test_adds_the_variable_and_the_empty_file_when_missing(self):
         with tempfile.TemporaryDirectory() as d:
-            pass
-        p, empty, is_empty = self.run_script("x")
-        self.assertTrue(is_empty)
-        self.assertNotEqual(p.returncode, 0, "a plist without the variable must fail the check")
-        self.assertIn("GIT_CONFIG_GLOBAL", p.stderr)
-
-    def test_plist_naming_the_file_passes(self):
-        with tempfile.TemporaryDirectory() as d:
-            plist = os.path.join(d, "svc.plist")
-            empty = os.path.join(d, "empty-gitconfig")
-            with open(plist, "w") as f:
-                f.write(self.PLIST_OK % empty)
-            env = dict(os.environ, PAPERCLIP_DIR=d, SERVICE_PLIST=plist)
-            p = subprocess.run(["bash", os.path.join(ROOT, "host/setup-git-config.sh")],
-                               capture_output=True, text=True, env=env)
+            p, text = self.run_script(d, "")
             self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertEqual(check_host.plist_problems(text, os.path.join(d, "gitconfig")), [])
+            self.assertEqual(os.path.getsize(os.path.join(d, "gitconfig")), 0)
+            self.assertIn("set GIT_CONFIG_GLOBAL", p.stdout)
 
-    def test_plist_naming_another_file_fails(self):
-        p, _, _ = self.run_script(self.PLIST_OK % "/elsewhere/gitconfig")
-        self.assertNotEqual(p.returncode, 0)
+    def test_already_correct_plist_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as d:
+            body = ("<key>EnvironmentVariables</key><dict><key>GIT_CONFIG_GLOBAL</key><string>%s</string></dict>"
+                    % os.path.join(d, "gitconfig"))
+            p, text = self.run_script(d, body)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertIn("nothing to do", p.stdout)
+            self.assertEqual(text, self.PLIST % body)
+
+    def test_wrong_value_is_corrected(self):
+        with tempfile.TemporaryDirectory() as d:
+            body = ("<key>EnvironmentVariables</key><dict><key>GIT_CONFIG_GLOBAL</key><string>/etc/gitconfig</string></dict>")
+            p, text = self.run_script(d, body)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertEqual(check_host.plist_problems(text, os.path.join(d, "gitconfig")), [])
+
+    def test_refuses_a_non_empty_existing_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "gitconfig"), "w") as f:
+                f.write("[credential]\n")
+            p, _ = self.run_script(d, "")
+            self.assertNotEqual(p.returncode, 0)
+            self.assertIn("not empty", p.stderr)
 
 
 class SpoolTests(unittest.TestCase):

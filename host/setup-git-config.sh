@@ -3,42 +3,61 @@
 #
 #   host/setup-git-config.sh
 #
-# The org's agents run git as the service. With no GIT_CONFIG_GLOBAL, git reads
-# the logged-in user's ~/.gitconfig, which carries credential helpers and
-# identity that the bug-fix org must not inherit. Phase 0 found the fix: the
-# service environment gets GIT_CONFIG_GLOBAL pointing at an empty file under its
-# own instance directory.
+# Without GIT_CONFIG_GLOBAL the server's managed `git clone` for a git_repo
+# workspace fails under the sandbox profile ("unable to access ~/.gitconfig:
+# Operation not permitted"). The fix is NOT a profile read of ~/.gitconfig,
+# which can carry credential helpers; it is an empty file under the instance
+# directory that the service's environment names.
 #
-# This script creates that empty file (idempotent) and CHECKS that the service's
-# launchd plist names it; it does not edit the plist, because changing a live
-# service's plist needs bootout/bootstrap and is the lead's step. If the check
-# fails it prints the commands.
+# Idempotent. It creates the empty file if absent, and if the launchd plist does
+# not already set GIT_CONFIG_GLOBAL to it, adds the key with PlistBuddy and
+# reloads the service (bootout then bootstrap: kickstart does not reread a
+# plist). When the plist is already right it changes nothing and reloads
+# nothing, which is the case on the mini today (QA applied it; backup
+# launchagent.plist.bak-cb455).
 #
-# PAPERCLIP_DIR and SERVICE_PLIST can be overridden (the test suite does).
+# PAPERCLIP_DIR, SERVICE_PLIST and NO_RELOAD=1 can be set (the test suite does).
 set -euo pipefail
 
 DIR="${PAPERCLIP_DIR:-$HOME/.paperclip/instances/default}"
 PLIST="${SERVICE_PLIST:-$HOME/Library/LaunchAgents/ing.paperclip.paperclipai.plist}"
-EMPTY="$DIR/empty-gitconfig"
+EMPTY="$DIR/gitconfig"
 
 mkdir -p "$DIR"
-: > "$EMPTY"
-chmod 644 "$EMPTY"
+[ -e "$EMPTY" ] || : > "$EMPTY"
+if [ -s "$EMPTY" ]; then
+  echo "refusing: $EMPTY exists and is not empty" >&2
+  exit 1
+fi
 echo "empty git config: $EMPTY"
 
-if [ -f "$PLIST" ] && python3 - "$PLIST" "$EMPTY" <<'PY'
+current() {
+  python3 - "$PLIST" <<'PY'
 import re, sys
-text = open(sys.argv[1]).read()
-m = re.search(r"<key>GIT_CONFIG_GLOBAL</key>\s*<string>([^<]*)</string>", text)
-sys.exit(0 if m and m.group(1) == sys.argv[2] else 1)
+m = re.search(r"<key>GIT_CONFIG_GLOBAL</key>\s*<string>([^<]*)</string>", open(sys.argv[1]).read())
+print(m.group(1) if m else "")
 PY
-then
-  echo "ok: $PLIST sets GIT_CONFIG_GLOBAL to it"
+}
+
+[ -f "$PLIST" ] || { echo "no plist at $PLIST" >&2; exit 1; }
+if [ "$(current)" = "$EMPTY" ]; then
+  echo "ok: $PLIST already sets GIT_CONFIG_GLOBAL; nothing to do"
+  exit 0
+fi
+
+PB=/usr/libexec/PlistBuddy
+"$PB" -c "Print :EnvironmentVariables" "$PLIST" >/dev/null 2>&1 || "$PB" -c "Add :EnvironmentVariables dict" "$PLIST"
+if "$PB" -c "Print :EnvironmentVariables:GIT_CONFIG_GLOBAL" "$PLIST" >/dev/null 2>&1; then
+  "$PB" -c "Set :EnvironmentVariables:GIT_CONFIG_GLOBAL $EMPTY" "$PLIST"
 else
-  {
-    echo "GIT_CONFIG_GLOBAL in $PLIST is missing or points elsewhere. Add it, then reload:"
-    echo "  /usr/libexec/PlistBuddy -c 'Add :EnvironmentVariables:GIT_CONFIG_GLOBAL string $EMPTY' '$PLIST'"
-    echo "  launchctl bootout gui/\$(id -u) '$PLIST'; launchctl bootstrap gui/\$(id -u) '$PLIST'"
-  } >&2
-  exit 1
+  "$PB" -c "Add :EnvironmentVariables:GIT_CONFIG_GLOBAL string $EMPTY" "$PLIST"
+fi
+[ "$(current)" = "$EMPTY" ] || { echo "plist edit did not take" >&2; exit 1; }
+echo "set GIT_CONFIG_GLOBAL in $PLIST"
+if [ "${NO_RELOAD:-0}" = 1 ]; then
+  echo "NO_RELOAD set: reload the service yourself (bootout, then bootstrap)"
+else
+  launchctl bootout "gui/$(id -u)" "$PLIST" || true
+  launchctl bootstrap "gui/$(id -u)" "$PLIST"
+  echo "service reloaded"
 fi
