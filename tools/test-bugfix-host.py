@@ -382,9 +382,26 @@ class FakeMinter:
 
 
 class FakePC:
-    def __init__(self, paused=False, tokens=0):
-        self.paused, self.tokens = paused, tokens
-        self.secrets, self.pauses = [], []
+    def __init__(self, paused=False, tokens=0, runs=0, active=(), issues=()):
+        self.paused, self.tokens, self.runs = paused, tokens, runs
+        self.active, self.issues = list(active), list(issues)
+        self.secrets, self.pauses, self.cancelled, self.blocked = [], [], [], []
+        self.resumed = False
+
+    def runs_today(self):
+        return self.runs
+
+    def active_run_ids(self):
+        return self.active
+
+    def cancel_run(self, i):
+        self.cancelled.append(i)
+
+    def in_progress_issue_ids(self):
+        return self.issues
+
+    def block_issue(self, i):
+        self.blocked.append(i)
 
     def put_secret(self, name, value):
         self.secrets.append((name, value))
@@ -512,6 +529,81 @@ class TickTests(unittest.TestCase):
         pc = FakePC(paused=True)
         tick(pc=pc, requests=[{"verb": "push_refused"}])
         self.assertEqual(pc.pauses, [])
+
+
+class StopWorkTests(unittest.TestCase):
+    def test_pause_cancels_active_runs_and_blocks_in_progress_issues(self):
+        pc = FakePC(active=["run-aaaaaaaa", "run-bbbbbbbb"], issues=["iss-11111111"])
+        tick(pc=pc, requests=[{"verb": "push_refused"}])
+        self.assertEqual(pc.cancelled, ["run-aaaaaaaa", "run-bbbbbbbb"])
+        self.assertEqual(pc.blocked, ["iss-11111111"])
+
+    def test_still_paused_next_tick_keeps_cancelling_stragglers(self):
+        pc = FakePC(paused=True, active=["run-cccccccc"])
+        tick(pc=pc)
+        self.assertEqual(pc.cancelled, ["run-cccccccc"])
+        self.assertEqual(pc.secrets, [])
+
+    def test_unpaused_company_keeps_its_runs(self):
+        pc = FakePC(active=["run-dddddddd"], issues=["iss-22222222"])
+        _, paused, _ = tick(pc=pc)
+        self.assertFalse(paused)
+        self.assertEqual((pc.cancelled, pc.blocked), ([], []))
+
+    def test_warden_never_resumes(self):
+        self.assertFalse(hasattr(warden.Warden, "resume"))
+        self.assertFalse(hasattr(warden.PaperclipHttp, "resume"))
+        src = open(os.path.join(ROOT, "host/warden.py")).read()
+        self.assertNotIn('"status": "active"', src)
+
+    def test_daily_run_cap(self):
+        self.assertIsNone(warden.runs_problem(999, None))
+        self.assertIsNone(warden.runs_problem(10, 10))
+        self.assertTrue(warden.runs_problem(11, 10))
+        pc = FakePC(runs=11)
+        _, paused, _ = tick(pc=pc, cfg={"max_runs_per_day": 10})
+        self.assertTrue(paused)
+        pc = FakePC(runs=11)
+        self.assertFalse(tick(pc=pc, cfg={})[1])
+
+
+@unittest.skipIf(sys.platform == "win32", "bash and PlistBuddy-style host script")
+class GitConfigSetupTests(unittest.TestCase):
+    def run_script(self, plist_text):
+        with tempfile.TemporaryDirectory() as d:
+            plist = os.path.join(d, "svc.plist")
+            with open(plist, "w") as f:
+                f.write(plist_text)
+            env = dict(os.environ, PAPERCLIP_DIR=d, SERVICE_PLIST=plist)
+            p = subprocess.run(["bash", os.path.join(ROOT, "host/setup-git-config.sh")],
+                               capture_output=True, text=True, env=env)
+            empty = os.path.join(d, "empty-gitconfig")
+            return p, empty, os.path.exists(empty) and os.path.getsize(empty) == 0
+
+    PLIST_OK = "<dict><key>GIT_CONFIG_GLOBAL</key><string>%s</string></dict>"
+
+    def test_creates_the_empty_file_and_accepts_a_plist_that_points_at_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            pass
+        p, empty, is_empty = self.run_script("x")
+        self.assertTrue(is_empty)
+        self.assertNotEqual(p.returncode, 0, "a plist without the variable must fail the check")
+        self.assertIn("GIT_CONFIG_GLOBAL", p.stderr)
+
+    def test_plist_naming_the_file_passes(self):
+        with tempfile.TemporaryDirectory() as d:
+            plist = os.path.join(d, "svc.plist")
+            empty = os.path.join(d, "empty-gitconfig")
+            with open(plist, "w") as f:
+                f.write(self.PLIST_OK % empty)
+            env = dict(os.environ, PAPERCLIP_DIR=d, SERVICE_PLIST=plist)
+            p = subprocess.run(["bash", os.path.join(ROOT, "host/setup-git-config.sh")],
+                               capture_output=True, text=True, env=env)
+            self.assertEqual(p.returncode, 0, p.stderr)
+
+    def test_plist_naming_another_file_fails(self):
+        p, _, _ = self.run_script(self.PLIST_OK % "/elsewhere/gitconfig")
+        self.assertNotEqual(p.returncode, 0)
 
 
 class SpoolTests(unittest.TestCase):

@@ -148,6 +148,14 @@ def cost_problem(tokens, ceiling):
     return f"daily tokens {tokens} passed ceiling {ceiling}" if tokens > ceiling else None
 
 
+def runs_problem(count, cap):
+    """Daily run brake. Paperclip's heartbeat.maxDailyRuns sits in the timer
+    policy and does not bound assignment wakes (phase 0), so the warden counts."""
+    if cap is None:
+        return None
+    return f"{count} runs started today, cap {cap}" if count > cap else None
+
+
 def mint_due(state, now, paused):
     if paused:
         return False
@@ -183,6 +191,18 @@ class Warden:
         elif v == "push_refused":
             self.pause("GitHub refused a bot push on a ruleset")
 
+    def stop_work(self):
+        """A pause only defers new assignments: a run in flight keeps going
+        (phase 0, measured). So while the company is paused, every tick cancels
+        its queued and running runs and sets its in-progress issues to blocked.
+        The warden never resumes; a person or the lead does."""
+        for run_id in self.pc.active_run_ids():
+            self.pc.cancel_run(run_id)
+            self.log(f"cancelled run {run_id[:8]}")
+        for issue_id in self.pc.in_progress_issue_ids():
+            self.pc.block_issue(issue_id)
+            self.log(f"blocked issue {issue_id[:8]}")
+
     def audit(self):
         seen = set(self.state.setdefault("audited", []))
         for pr in self.gh.merged_bot_prs():
@@ -203,10 +223,15 @@ class Warden:
         why = cost_problem(self.pc.tokens_today(), self.cfg.get("token_ceiling"))
         if why:
             self.pause(why)
+        why = runs_problem(self.pc.runs_today(), self.cfg.get("max_runs_per_day"))
+        if why:
+            self.pause(why)
         paused = self.pc.is_paused()
         if self.pause_reasons and not paused:
             self.pc.pause("; ".join(self.pause_reasons))
             paused = True
+        if paused:
+            self.stop_work()
         for r in self.pause_reasons:
             self.log("PAUSED: " + r)
         if mint_due(self.state, self.now, paused):
@@ -326,6 +351,27 @@ class PaperclipHttp:
 
     def pause(self, reason):
         self.call("PATCH", f"/api/companies/{self.company}", {"status": "paused"})
+
+    def _runs(self):
+        return self.call("GET", f"/api/companies/{self.company}/heartbeat-runs?limit=200") or []
+
+    def runs_today(self):
+        day = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+        return sum(1 for r in self._runs() if str(r.get("createdAt", "")) >= day)
+
+    def active_run_ids(self):
+        return [r["id"] for r in self._runs() if r.get("status") in ("queued", "running")]
+
+    def cancel_run(self, run_id):
+        self.call("POST", f"/api/heartbeat-runs/{run_id}/cancel", {})
+
+    def in_progress_issue_ids(self):
+        rows = self.call("GET", f"/api/companies/{self.company}/issues?status=in_progress") or []
+        rows = rows if isinstance(rows, list) else rows.get("issues", [])
+        return [i["id"] for i in rows if i.get("status") == "in_progress"]
+
+    def block_issue(self, issue_id):
+        self.call("PATCH", f"/api/issues/{issue_id}", {"status": "blocked"})
 
     def tokens_today(self):
         day = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT00:00:00Z")
