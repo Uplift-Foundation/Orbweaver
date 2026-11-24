@@ -27,6 +27,9 @@ On each run, follow the `cb-bugfix` skill:
    "Orbweaver develop", and title the Paperclip issue with the change in plain
    lower-case words and no ticket key (for example "stop flaky orb flyout
    test"), because the issue's slug becomes the branch name `bugfix/pc-<slug>`.
+   Make the first line of the issue's description exactly `Ticket: CB-NNN` (the
+   ticket's key), then the plan. The key goes there and never in the title: the
+   host reads that line to match the issue to its ticket.
    Give one ticket to one engineer; the two engineers take the two tickets.
 4. **QA.** When the engineer reports a PR, open a task for Tamsin with the PR
    number and the ticket key. If she sends a batch, hand it to the engineer as

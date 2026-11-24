@@ -52,6 +52,10 @@ ticket back. If another comment or transition landed in between, release it.
 
 Release means: close the PR if there is one, comment `[bugfix-org] released`
 with what you learned and why you stopped, move the ticket back to Refinement.
+The engineer's Paperclip issue is titled with the change words, never the CB
+key (its slug becomes the branch name), and its description starts with the line
+`Ticket: CB-NNN`, which is how the host matches the issue to the ticket.
+
 Settling a ticket also leaves one fact in Paperclip, which the host reads in
 place of anything an agent says: the engineer's Paperclip issue ends `done` when
 the PR merged to `develop` and `cancelled` when the ticket was released. The

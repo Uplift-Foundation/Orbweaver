@@ -249,6 +249,18 @@ class BrakeTests(unittest.TestCase):
 
 
 class InstructionTests(unittest.TestCase):
+    def test_ticket_key_goes_on_the_first_description_line_never_the_title(self):
+        lead = read("agents", "marisol-vandenberg", "AGENTS.md")
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        self.assertIn("first line of the issue's description exactly `Ticket: CB-NNN`", lead)
+        self.assertIn("never in the title", lead)
+        self.assertIn("starts with the line\n`Ticket: CB-NNN`", skill)
+        # Control: the form the warden parses is a real match for a key, and a
+        # title carrying a key would put it in the branch name.
+        self.assertRegex("Ticket: CB-455\nplan", r"\ATicket: (CB-\d+)\n")
+        self.assertIsNone(re.match(r"\ATicket: (CB-\d+)\n", "plan\nTicket: CB-455"))
+        self.assertNotIn("Ticket: CB-NNN", read("agents", "hana-moriyama", "AGENTS.md"))
+
     def test_release_and_merge_leave_a_status_the_host_can_read(self):
         lead = read("agents", "marisol-vandenberg", "AGENTS.md")
         skill = read("skills", "cb-bugfix", "SKILL.md")
