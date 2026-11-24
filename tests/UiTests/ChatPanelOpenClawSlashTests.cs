@@ -333,6 +333,88 @@ public class ChatPanelOpenClawSlashTests : IDisposable
         Assert.Equal("a draft for the other one", inB);
     }
 
+    // CB-387: back in the first conversation before the reply lands, the draft
+    // was restored into the box. A send that went clears it there as well; one
+    // that failed keeps it; an edit made since is never wiped.
+    private async Task<string> SwitchAwayAndBackBeforeReplyAsync(bool replySucceeds, string? editAfterReturn = null)
+    {
+        var (socket, gateway, release) = await HeldReplyAsync();
+        using (gateway)
+        {
+            var (chat, panel) = OpenPanel();
+            var input = panel.FindControl<TextBox>("Input")!;
+            var orb = NewOrb();
+
+            var done = panel.CompletedSendsForTests;
+            Type(input, "please run the build");
+            Press(input, Key.Enter);
+            WaitFor(() => socket.Requests.Count(r => r.Method == "chat.send") == 1);
+
+            var other = new OpenClawChatSession("openclaw:" + SessionKey + ":b", SessionKey + ":b", "Other");
+            ChatPanel.OpenFor(orb, other);
+            Flush();
+            ChatPanel.OpenFor(orb, chat);
+            Flush();
+            Assert.Equal("please run the build", input.Text);
+            if (editAfterReturn is not null) Type(input, editAfterReturn);
+
+            if (replySucceeds) release();
+            else
+            {
+                var id = socket.Requests.Last(r => r.Method == "chat.send").Id;
+                socket.PushJson(JsonSerializer.Serialize(
+                    FakeGatewaySocket.Error(id, "UNAVAILABLE", "gateway down", null)));
+            }
+            WaitFor(() => panel.CompletedSendsForTests == done + 1);
+            return input.Text ?? "";
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task ASendThatWentClearsTheBoxWhenTheReplyLandsAfterSwitchingBack()
+    {
+        Assert.Equal("", await SwitchAwayAndBackBeforeReplyAsync(replySucceeds: true));
+    }
+
+    [AvaloniaFact]
+    public async Task ASendThatFailedKeepsTheBoxWhenTheReplyLandsAfterSwitchingBack()
+    {
+        Assert.Equal("please run the build", await SwitchAwayAndBackBeforeReplyAsync(replySucceeds: false));
+    }
+
+    [AvaloniaFact]
+    public async Task AnEditMadeAfterSwitchingBackSurvivesAReplyThatWent()
+    {
+        Assert.Equal("another thing", await SwitchAwayAndBackBeforeReplyAsync(replySucceeds: true, "another thing"));
+    }
+
+    // CB-387: HideNow stores the draft the same way Unbind does.
+    [AvaloniaFact]
+    public async Task ASendThatWentLeavesNoDraftBehindWhenThePanelIsHiddenBeforeTheReply()
+    {
+        var (socket, gateway, release) = await HeldReplyAsync();
+        using (gateway)
+        {
+            var (chat, panel) = OpenPanel();
+            var input = panel.FindControl<TextBox>("Input")!;
+            var orb = NewOrb();
+
+            var done = panel.CompletedSendsForTests;
+            Type(input, "please run the build");
+            Press(input, Key.Enter);
+            WaitFor(() => socket.Requests.Count(r => r.Method == "chat.send") == 1);
+
+            ChatPanel.HideFor(chat.SessionId);
+            Flush();
+            release();
+            WaitFor(() => panel.CompletedSendsForTests == done + 1);
+
+            ChatPanel.OpenFor(orb, chat);
+            Flush();
+            Assert.Equal("", input.Text ?? "");
+        }
+    }
+
     [AvaloniaFact]
     public async Task AnEditThatRestatesTheSentTextStillSurvivesTheReply()
     {

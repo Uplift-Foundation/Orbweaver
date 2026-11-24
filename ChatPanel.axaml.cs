@@ -730,20 +730,29 @@ namespace Orbweaver
         // a green orb are the same green.
         private static readonly IBrush ConnectedFill = new SolidColorBrush(Color.Parse("#E000AF5F"));
 
-        private void Unbind()
+        // Shared by Unbind and HideNow: both keep the composer text as the
+        // conversation's draft. CB-387: a send still in flight whose text is
+        // still what the box holds has put that text into the draft. Mark it, so
+        // the reply can take it back out if the send goes (CB-35: a failed send
+        // keeps it).
+        private void StoreDraftAndMarkSends()
         {
             if (_session is null) return;
 
             Drafts[_session.SessionId] = Input.Text ?? "";
 
-            // CB-387: a send still in flight whose text is still what the box holds
-            // has put that text into the draft above. Mark it, so the reply can
-            // take it back out if the send goes (CB-35: a failed send keeps it).
             foreach (var flight in _sendsInFlight)
             {
                 if (flight.Session == _session && flight.EditsAtSend == _inputEdits)
                     flight.AbandonedDraft = Input.Text ?? "";
             }
+        }
+
+        private void Unbind()
+        {
+            if (_session is null) return;
+
+            StoreDraftAndMarkSends();
 
             // Not carried to Drafts with the text: a picture pasted for one
             // conversation attached to whichever session happens to be open
@@ -3209,9 +3218,16 @@ namespace Orbweaver
                     // CB-387: the person switched away before the reply. The box is
                     // another conversation's now; what is left to clear is the old
                     // one's draft, and only while it is still the sent text.
-                    if (ShouldClearComposerAfterSend(outcome, false)
-                        && Drafts.GetValueOrDefault(session.SessionId) == flight.AbandonedDraft)
-                        Drafts[session.SessionId] = "";
+                    if (ShouldClearComposerAfterSend(outcome, false))
+                    {
+                        if (Drafts.GetValueOrDefault(session.SessionId) == flight.AbandonedDraft)
+                            Drafts[session.SessionId] = "";
+                        // Back in this conversation before the reply: the draft
+                        // was restored into the box, so clear it there too, but
+                        // only while it is still exactly the sent text.
+                        if (_session == session && Input.Text == flight.AbandonedDraft)
+                            Input.Text = "";
+                    }
                 }
                 else if (ShouldClearComposerAfterSend(outcome, _inputEdits != editsAtSend)) Input.Text = "";
             }
@@ -4245,7 +4261,7 @@ namespace Orbweaver
 
         private void HideNow()
         {
-            if (_session is not null) Drafts[_session.SessionId] = Input.Text ?? "";
+            StoreDraftAndMarkSends();
 
             StopAvatarAnimation();
 
