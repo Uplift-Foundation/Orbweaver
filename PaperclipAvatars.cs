@@ -9,7 +9,17 @@ namespace Orbweaver
     {
         internal static string Key(string file) => "paperclip:" + file;
 
-        internal static OpenClawAvatars.Avatar? For(string? file) =>
-            string.IsNullOrEmpty(file) ? null : OpenClawAvatars.ForFile(Key(file), file);
+        // A null decode is forgotten, not kept: OpenClawAvatars remembers a failed read for its key for
+        // good, and a kept picture that was locked or half-written for one tick would otherwise draw
+        // initials until restart (the CB-148 shape). The retry is one small file read per scan.
+        internal static void Forget(string file) => OpenClawAvatars.Forget(Key(file));
+
+        internal static OpenClawAvatars.Avatar? For(string? file)
+        {
+            if (string.IsNullOrEmpty(file)) return null;
+            var avatar = OpenClawAvatars.ForFile(Key(file), file);
+            if (avatar is null) OpenClawAvatars.Forget(Key(file));
+            return avatar;
+        }
     }
 }

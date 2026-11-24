@@ -11,10 +11,12 @@ namespace Orbweaver
 {
     // The pictures of a company's Paperclip agents (CB-445), kept as files.
     //
-    // Why files: the phone's picture path (PersonaImageStore.Offer) and the
-    // desktop's (OpenClawAvatars.ForFile) both take a path, so a picture that
-    // lives in a file reaches the orb, the panel header and the phone's roster
-    // through code that already exists and needs no new contract.
+    // Why files: the desktop's picture path (OpenClawAvatars.ForFile) and the
+    // phone's (PersonaImageStore.Offer) both take a path, so a picture that lives
+    // in a file reaches the orb and the panel header through code that already
+    // exists. The phone's roster row is NOT wired: frames-v15 omits persona on a
+    // paperclip row, so that is a contract change for the phone slice, and this
+    // cache only keeps its files in the shape that slice can offer as they are.
     //
     // Why the url is the key: Paperclip gives every upload a new asset id, so a
     // changed picture is a changed url and is fetched again, and an unchanged one
@@ -58,9 +60,18 @@ namespace Orbweaver
             && !url.Contains('\\') && !url.Contains("//", StringComparison.Ordinal)
             && !url.Any(char.IsControl) && !url.Any(char.IsWhiteSpace);
 
+        // The bytes cap bounds the file, not the decoded size: a few hundred bytes of PNG can declare a
+        // very large image. Paperclip stores at most 512 px, so anything past this is not one of its pictures.
+        internal const int MaxSide = 2048;
+
         internal static bool LooksLikePng(byte[] b) =>
-            b.Length > 8 && b[0] == 0x89 && b[1] == 0x50 && b[2] == 0x4E && b[3] == 0x47
-            && b[4] == 0x0D && b[5] == 0x0A && b[6] == 0x1A && b[7] == 0x0A;
+            b.Length >= 24 && b[0] == 0x89 && b[1] == 0x50 && b[2] == 0x4E && b[3] == 0x47
+            && b[4] == 0x0D && b[5] == 0x0A && b[6] == 0x1A && b[7] == 0x0A
+            && b[12] == (byte)'I' && b[13] == (byte)'H' && b[14] == (byte)'D' && b[15] == (byte)'R'
+            && Side(b, 16) is > 0 and <= MaxSide && Side(b, 20) is > 0 and <= MaxSide;
+
+        private static long Side(byte[] b, int at) =>
+            ((long)b[at] << 24) | ((long)b[at + 1] << 16) | ((long)b[at + 2] << 8) | b[at + 3];
 
         internal int Count { get { lock (_gate) return _files.Count; } }
 
@@ -107,6 +118,7 @@ namespace Orbweaver
                     if (!wanted.Contains(node.Value))
                     {
                         TryDelete(_files[node.Value]);
+                        PaperclipAvatars.Forget(_files[node.Value]);
                         _files.Remove(node.Value);
                         _age.Remove(node);
                     }
@@ -123,7 +135,7 @@ namespace Orbweaver
                 if (!r.IsOk) return null;
                 if (!string.Equals(r.ContentType, "image/png", StringComparison.OrdinalIgnoreCase) || !LooksLikePng(r.Body))
                 {
-                    log?.Invoke("a picture was not a PNG; keeping initials");
+                    log?.Invoke("a picture was not a PNG of a sane size; keeping initials");
                     return null;
                 }
                 Directory.CreateDirectory(_dir);

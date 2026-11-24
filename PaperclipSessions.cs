@@ -45,10 +45,10 @@ namespace Orbweaver
         DateTime LastActivity, string Url,
         bool Sleeping,
         int? RunPid = null, string? RunSessionId = null,
-        long BudgetCapCents = 0, long SpentCents = 0,
-        DateTime? LastRunFinished = null,
+        long BudgetCapCents = 0, long SpentCents = 0,   // the hover's "$0.26 of $50.00"
+        DateTime? LastRunFinished = null,   // the newest finished run's own finishedAt, for "last run … ago"
         string? AvatarUrl = null,           // Paperclip's path to the picture (CB-445), a cache key
-        string? AvatarFile = null);         // the cached picture, once fetched; null draws initials   // the newest finished run's own finishedAt, for "last run … ago"   // the hover's "$0.26 of $50.00"
+        string? AvatarFile = null);         // the cached picture, once fetched; null draws initials
 
     // The poll loop (plan 2.5), shaped after ClaudeCloudSessions: a volatile
     // snapshot replaced whole, a pure StepAsync that takes its transport and

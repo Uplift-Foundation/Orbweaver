@@ -455,4 +455,42 @@ public class PaperclipOrbTests : IDisposable
             Directory.Delete(Path.GetDirectoryName(file)!, true);
         }
     }
+
+    [AvaloniaFact]
+    public void A_picture_that_was_unreadable_once_is_drawn_when_the_file_is_there_the_next_time()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "cb445-late-" + Guid.NewGuid());
+        var file = Path.Combine(dir, "face.png");
+        try
+        {
+            Assert.Null(PaperclipAvatars.For(file));              // absent: no picture, and not remembered as none
+            Directory.CreateDirectory(dir);
+            File.WriteAllBytes(file, Portrait);
+            Assert.NotNull(PaperclipAvatars.For(file));            // present now: it is drawn
+        }
+        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+    }
+
+    [AvaloniaFact]
+    public void A_truncated_png_and_a_huge_declared_one_that_reach_the_orb_are_initials_without_an_exception()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "cb445-bad-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var truncated = Path.Combine(dir, "cut.png");
+            File.WriteAllBytes(truncated, Portrait.Take(40).ToArray());
+            var orb = Orb(Agent(avatarFile: truncated));
+            Assert.True(orb.Glyph.IsVisible);
+            Assert.False(orb.AvatarImage.IsVisible);
+
+            var huge = (byte[])Portrait.Clone();
+            huge[16] = 0xFF; huge[17] = 0xFF; huge[18] = 0xFF; huge[19] = 0xFF;
+            var hugeFile = Path.Combine(dir, "huge.png");
+            File.WriteAllBytes(hugeFile, huge);
+            var orb2 = Orb(Agent(avatarFile: hugeFile));
+            Assert.True(orb2.Glyph.IsVisible);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
 }

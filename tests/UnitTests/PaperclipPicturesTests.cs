@@ -37,6 +37,9 @@ public sealed class PaperclipPicturesTests : IDisposable
     [InlineData("/api/a\\b", false)]
     [InlineData("/api/a\nb", false)]
     [InlineData("/api/a b", false)]
+    [InlineData("https://other.example/api/assets/a/content", false)]
+    [InlineData("/api/x?next=http://evil.example/y", false)]
+    [InlineData("/api/assets/a/../../etc/passwd", false)]
     public void OnlyAnApiPathIsEverFetched(string? url, bool fetchable) =>
         Assert.Equal(fetchable, PaperclipPictureCache.IsFetchable(url));
 
@@ -150,6 +153,62 @@ public sealed class PaperclipPicturesTests : IDisposable
         Assert.Null(cache.FileFor(Asset));
         Assert.True(PaperclipPictureCache.LooksLikePng(Png));
         Assert.False(PaperclipPictureCache.LooksLikePng(new byte[] { 0x89, 0x50 }));
+    }
+
+    private static byte[] WithSide(int w, int h)
+    {
+        var b = (byte[])Png.Clone();
+        b[16] = (byte)(w >> 24); b[17] = (byte)(w >> 16); b[18] = (byte)(w >> 8); b[19] = (byte)w;
+        b[20] = (byte)(h >> 24); b[21] = (byte)(h >> 16); b[22] = (byte)(h >> 8); b[23] = (byte)h;
+        return b;
+    }
+
+    [Theory]
+    [InlineData(PaperclipPictureCache.MaxSide, PaperclipPictureCache.MaxSide, true)]
+    [InlineData(PaperclipPictureCache.MaxSide + 1, 8, false)]
+    [InlineData(8, PaperclipPictureCache.MaxSide + 1, false)]
+    [InlineData(0, 8, false)]
+    [InlineData(8, 0, false)]
+    [InlineData(int.MaxValue, int.MaxValue, false)]
+    public void ADeclaredSizeIsBoundedBeforeAnythingDecodesIt(int w, int h, bool ok) =>
+        Assert.Equal(ok, PaperclipPictureCache.LooksLikePng(WithSide(w, h)));
+
+    [Fact]
+    public void ATruncatedPngOrOneWithoutAHeaderChunk_IsNotKept()
+    {
+        Assert.False(PaperclipPictureCache.LooksLikePng(Png.Take(20).ToArray()));
+        var noIhdr = (byte[])Png.Clone();
+        noIhdr[12] = (byte)'X';
+        Assert.False(PaperclipPictureCache.LooksLikePng(noIhdr));
+    }
+
+    [Fact]
+    public async Task AHugeDeclaredPicture_IsInitialsAndWritesNoFile()
+    {
+        var api = new FakePaperclip();
+        api.Pictures[Asset] = PngOk(body: WithSide(60000, 60000));
+        var cache = Cache();
+        await cache.SyncAsync([Asset], api, default);
+        Assert.Null(cache.FileFor(Asset));
+        Assert.False(Directory.Exists(_dir) && Directory.EnumerateFiles(_dir).Any());
+    }
+
+    [Fact]
+    public async Task A401OnThePicture_WhileTheAgentsPollIsFine_IsInitials_TheLinkStaysConnected_AndItComesBackAfterTheRetry()
+    {
+        var f = Company(AgentsWithPictures(("a", Asset)));
+        f.Pictures[Asset] = new PaperclipBytes(PaperclipHttpKind.Unauthorized, 401, Array.Empty<byte>(), null);
+        var cache = Cache();
+        var first = await PaperclipSessions.StepAsync(f, Cfg, PaperclipSessions.PollState.Initial, PaperclipFx.Now, default, null, cache);
+        Assert.Equal(PaperclipLink.Connected, first.Next.Link);
+        Assert.Null(first.Next.Published!.Single().AvatarFile);
+        Assert.DoesNotContain("reconnect", first.Next.Status, StringComparison.OrdinalIgnoreCase);
+
+        f.Pictures[Asset] = PngOk();
+        _now += PaperclipPictureCache.RetryAfter;
+        var later = await PaperclipSessions.StepAsync(f, Cfg, first.Next, PaperclipFx.Now.AddMinutes(2), default, null, cache);
+        Assert.Equal(PaperclipLink.Connected, later.Next.Link);
+        Assert.NotNull(later.Next.Published!.Single().AvatarFile);
     }
 
     [Fact]
