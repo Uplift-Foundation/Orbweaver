@@ -61,3 +61,12 @@
 (deny appleevent-send)
 (deny signal)
 (allow signal (target same-sandbox))
+
+; Another team's install lock (CB-455). Teams take /tmp/ow-install.lock on the
+; Mac mini before installing, and other teams' checks wait on it. The temp
+; space above is writable, so without this an agent could create the lock and
+; stall everyone, or remove it and let two installs race. The bug-fix org never
+; installs, so it never needs it: reading stays allowed, writing, creating and
+; removing do not. The path is the real one (/tmp is a symlink to /private/tmp),
+; and subpath covers the lock whether it is a file or a directory.
+(deny file-write* (subpath "/private/tmp/ow-install.lock"))

@@ -1,0 +1,10 @@
+{
+  "enabled": true,
+  "defaultMode": "isolated_workspace",
+  "allowIssueOverride": false,
+  "workspaceStrategy": {
+    "type": "git_worktree",
+    "baseRef": "origin/develop",
+    "branchTemplate": "bugfix/pc-{{slug}}"
+  }
+}

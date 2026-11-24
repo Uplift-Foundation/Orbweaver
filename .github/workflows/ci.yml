@@ -141,6 +141,21 @@ jobs:
         if: ${{ !cancelled() && matrix.checks }}
         run: python tools/test-workflow-hardening.py
 
+      # CB-455: the bug-fix org's host side (App manifest helper, warden rules,
+      # ruleset JSON and apply script, stress-run.py). Fakes only: no GitHub,
+      # no Paperclip. The bash-based apply-script cases skip themselves on
+      # Windows, where the host that runs them is not.
+      - name: Unit tests (bug-fix org host side)
+        if: ${{ !cancelled() && matrix.checks }}
+        run: python tools/test-bugfix-host.py
+
+      # CB-455: the same host side against loopback stand-ins for Paperclip and the
+      # GitHub App API and stub gh/dotnet scripts, every pause trigger beside its
+      # control. POSIX only; the cases skip themselves on the Windows leg.
+      - name: End-to-end tests (bug-fix org host side)
+        if: ${{ !cancelled() && matrix.checks }}
+        run: python tools/test-bugfix-host-e2e.py
+
       # CB-256: no unrecorded "Claude Buddy" may reappear. The tests prove the
       # checker; the second step runs it on this tree against the exact-count
       # allow-list in tools/brand-allowlist.txt.
@@ -172,6 +187,15 @@ jobs:
       - name: Unit tests (require-team-sdlc.sh)
         if: ${{ !cancelled() && matrix.checks }}
         run: python tools/test-require-team-sdlc.py
+
+      # CB-455: the Paperclip bug-fix org package. Pins its YAML against the
+      # three things Paperclip's reader gets wrong, the brakes the plan relies
+      # on, the Bug-only and PR-body rules, and the sandbox profile's deny for
+      # the install lock, each with a negative control. Pure stdlib, no
+      # Paperclip needed.
+      - name: Unit tests (paperclip bugfix-org package)
+        if: ${{ !cancelled() && matrix.checks }}
+        run: python tools/test-paperclip-bugfix-org.py
 
       # CB-291: the team resolver the orbweaver-team skill ships. Real script,
       # real files in a scratch pool; on the Windows leg it runs under Git Bash
