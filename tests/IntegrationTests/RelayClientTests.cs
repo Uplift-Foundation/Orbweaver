@@ -1507,6 +1507,40 @@ public class RelayClientTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_close_against_a_peer_that_never_answers_gives_up_within_its_bound()
+    {
+        var returned = WebSocketRelayTransport.CloseBounded(ct => Task.Delay(Timeout.Infinite, ct), TimeSpan.FromMilliseconds(100));
+        await returned.WaitAsync(TimeSpan.FromSeconds(10));   // a hang fails here, not at the host
+    }
+
+    [Fact]
+    public async Task A_close_that_fails_is_given_up_quietly()
+    {
+        await WebSocketRelayTransport.CloseBounded(_ => throw new WebSocketException("gone"), TimeSpan.FromSeconds(10));
+        await WebSocketRelayTransport.CloseBounded(_ => throw new ObjectDisposedException("ws"), TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
+    public async Task A_close_cancelled_by_someone_else_is_not_swallowed()
+    {
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            WebSocketRelayTransport.CloseBounded(_ => throw new OperationCanceledException(), TimeSpan.FromSeconds(10)));
+    }
+
+    [Fact]
+    public async Task A_listener_close_that_never_returns_fails_naming_itself()
+    {
+        using var release = new ManualResetEventSlim();
+        var stub = new RelayStub { IoDeadline = TimeSpan.FromMilliseconds(200), BeforeListenerClose = () => release.Wait(TimeSpan.FromSeconds(30)) };
+        try
+        {
+            var ex = await Assert.ThrowsAsync<TimeoutException>(async () => await stub.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Contains("the listener's Close", ex.Message);
+        }
+        finally { release.Set(); }
+    }
+
+    [Fact]
     public async Task A_relay_that_is_down_is_retried_with_backoff()
     {
         _stub.AcceptSockets = false;
