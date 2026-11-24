@@ -31,8 +31,17 @@ then the oldest. At most **two tickets per run**.
 ## What this org fixes, and what it leaves
 
 1. **Flaky tests in this repository.** Proof: the test class run 30 times on
-   both rids on GitHub's runners, by the warden (you ask for it in the PR; you
-   cannot dispatch it).
+   both rids on GitHub's runners. You cannot dispatch that run; the warden
+   does, when you ask through its spool. Once your PR is open, write one file,
+   `$BUGFIX_SPOOL/stress-<PR number>.json`, holding exactly
+   `{"verb": "dispatch_stress", "pr": <PR number>, "test_class": "<Namespace.Class>", "n": 30, "suite": "unit"}`
+   (`suite` is `unit`, `integration` or `ui`, whichever holds the class). The
+   warden reads the spool every five minutes, checks the PR is the org's own and
+   open, and dispatches `stress.yml` on your branch. Find the run with
+   `gh run list --repo Uplift-Foundation/Orbweaver --workflow stress.yml --branch <your branch>`
+   and name it, with its result on both rids, in the PR body. A request the
+   warden refuses never runs, so a run that has not appeared ten minutes later
+   is a failed round, not a reason to wait.
 2. **Logic bugs with a testable seam.** Proof: a test that fails before the fix
    and passes after, plus CI green on both rids.
 
@@ -73,6 +82,26 @@ connector cannot check this; the rule is the control.
 | PR open | Development to Testing | the PR link and what the fix is |
 | merged to `develop` | Testing to Done | the merge sha, what was verified and what was not |
 | gave up | back to Refinement | `[bugfix-org] released`, what it learned, why it stopped |
+
+## GitHub access
+
+Your GitHub identity is the `orbweaver-bugfix` App, and its token is in
+`$BUGFIX_GH_TOKEN`. Paperclip blanks `GH_TOKEN` and `GITHUB_TOKEN` in your
+environment, and every shell command starts fresh. So begin **every** command
+that runs `gh`, or that runs `git` against GitHub (`fetch`, `push`, `ls-remote`),
+with:
+
+```
+export GH_TOKEN="$BUGFIX_GH_TOKEN"; export GIT_CONFIG_PARAMETERS="'credential.helper=' 'credential.https://github.com.helper=!gh auth git-credential' 'user.name=orbweaver-bugfix[bot]' 'user.email=360784342+orbweaver-bugfix[bot]@users.noreply.github.com'"; <your command>
+```
+
+That makes `gh` and `git` use the App and sign commits as its bot. Never print
+the token, never write it to a file, and never use any other credential. The
+token lasts at least 45 minutes from the start of your run. If a push or `gh`
+call fails with 401 late in a long run, finish the task, say so, and ask for
+another round: the next run gets a fresh token. A push the rulesets refuse
+(GH013) means you left your lane, which is `bugfix/pc-*` branches and PRs into
+`develop`. Stop there, and say so in your answer.
 
 ## Branch, commits, PR
 

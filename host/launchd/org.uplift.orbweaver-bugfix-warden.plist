@@ -15,6 +15,13 @@
     <string>__REPO__/host/warden.py</string>
     <string>run-once</string>
   </array>
+  <!-- launchd's own PATH is /usr/bin:/bin:/usr/sbin:/sbin, which has no gh, so
+       without this every merge audit fails with FileNotFoundError and the
+       third in a row pauses the company (measured on the mini, 2026-11-24). -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
   <key>StartInterval</key><integer>300</integer>
   <key>RunAtLoad</key><true/>
   <key>StandardErrorPath</key><string>/tmp/orbweaver-bugfix-warden.err</string>

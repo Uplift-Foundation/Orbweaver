@@ -8,10 +8,13 @@
 # `gh` login with repository admin. The dry run still reads (the existing
 # rulesets and the two bypass apps' ids) and writes nothing.
 #
-# The Dependabot and GitHub Actions bypass actor ids in
-# rulesets/other-branches-admins-only.json (29110 and 15368) were written from
-# memory, so the script checks them against GitHub (`gh api apps/<slug>`) before
-# any write and refuses if either differs. REPO and RULESETS_DIR can be
+# The Dependabot bypass actor id in rulesets/other-branches-admins-only.json
+# (29110) was written from memory, so the script checks it against GitHub
+# (`gh api apps/<slug>`) before any write and refuses if it differs. GitHub
+# Actions is not a bypass actor: GitHub refuses it on a repository ruleset
+# ("Actor GitHub Actions integration must be part of the ruleset source or
+# owner organization", HTTP 422, measured 2026-11-24), so the one branch
+# Actions pushes, `screenshots`, is excluded from that ruleset instead. REPO and RULESETS_DIR can be
 # overridden so the test suite can run this against a stub `gh`.
 set -euo pipefail
 
@@ -29,7 +32,6 @@ check_app() {  # slug id
     exit 1
   fi
 }
-check_app github-actions 15368
 check_app dependabot 29110
 
 existing="$(gh api "repos/$REPO/rulesets" --jq '.[] | "\(.id)\t\(.name)"')"

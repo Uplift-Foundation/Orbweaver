@@ -344,8 +344,8 @@ class AuditRuleTests(unittest.TestCase):
 
     def test_mint_due(self):
         self.assertTrue(warden.mint_due({}, 1000, False))
-        self.assertFalse(warden.mint_due({"last_mint": 1000}, 1000 + 44 * 60, False))
-        self.assertTrue(warden.mint_due({"last_mint": 1000}, 1000 + 45 * 60, False))
+        self.assertFalse(warden.mint_due({"last_mint": 1000}, 1000 + 9 * 60, False))
+        self.assertTrue(warden.mint_due({"last_mint": 1000}, 1000 + 10 * 60, False))
         self.assertFalse(warden.mint_due({}, 1000, True), "a paused org is not refreshed")
 
 
@@ -921,10 +921,14 @@ class RulesetJsonTests(unittest.TestCase):
         r = ruleset("other-branches-admins-only.json")
         self.assertEqual(r["conditions"]["ref_name"]["include"], ["~ALL"])
         self.assertEqual(sorted(r["conditions"]["ref_name"]["exclude"]),
-                         ["refs/heads/bugfix/pc-*", "refs/heads/develop", "refs/heads/main"])
+                         ["refs/heads/bugfix/pc-*", "refs/heads/develop", "refs/heads/main",
+                          "refs/heads/screenshots"])
         self.assertEqual({x["type"] for x in r["rules"]}, {"creation", "update", "deletion"})
         ids = {(a["actor_type"], a["actor_id"]) for a in r["bypass_actors"]}
-        self.assertEqual(ids, {("RepositoryRole", 5), ("Integration", 15368), ("Integration", 29110)})
+        # GitHub Actions cannot be a bypass actor on a repository ruleset (GitHub
+        # answers 422), so `screenshots`, the only branch Actions pushes, is
+        # excluded above instead.
+        self.assertEqual(ids, {("RepositoryRole", 5), ("Integration", 29110)})
 
     def test_tags_restrict_creation_to_admins(self):
         r = ruleset("tags-admins-only.json")
@@ -948,7 +952,6 @@ class RulesetJsonTests(unittest.TestCase):
 STUB_GH = r"""#!/usr/bin/env bash
 echo "$@" >> "$GH_LOG"
 case "$*" in
-  "api apps/github-actions --jq .id") echo "${ACTIONS_ID:-15368}" ;;
   "api apps/dependabot --jq .id") echo "${DEPENDABOT_ID:-29110}" ;;
   "api repos/Uplift-Foundation/Orbweaver/rulesets --jq"*) printf '%b' "${EXISTING:-}" ;;
 esac
@@ -995,7 +998,7 @@ class ApplyScriptTests(unittest.TestCase):
         self.assertEqual(sum("-X POST" in c for c in w), 2)
 
     def test_wrong_bypass_app_id_refuses_before_any_write(self):
-        for env in ({"ACTIONS_ID": "1"}, {"DEPENDABOT_ID": "2"}):
+        for env in ({"DEPENDABOT_ID": "2"},):
             p, calls = self.run_script("--apply", **env)
             self.assertNotEqual(p.returncode, 0)
             self.assertIn("refusing", p.stderr)

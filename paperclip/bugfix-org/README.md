@@ -18,17 +18,26 @@ honest state of what has been run.
 The personas are ones the triage org does not use, so no agent draws two orbs.
 Their pictures live in `.profiles-assets/`, which is not checked in.
 
-## Status: imported once, never run
+## Status: set up on the mini, 2026-11-24; first pilot run next
 
-**Imported into the existing company "Orbweaver Bug Fix" on the mini, by QA
-(Ines), 2026-11-24, and nothing has run since.** Measured: four agents, the
-`cb-bugfix` skill, the project "Orbweaver develop" and the routine were created
-and the company was reported `unchanged`; setup step 8's command worked exactly
-as written and the read-back showed `isolated_workspace`, `git_worktree`,
-`origin/develop` and `bugfix/pc-{{slug}}`. **Still unrun:** a worktree actually
-realised for a run on this project, and any agent run at all, because the agents
-cannot run until the AI connection exists (step 3). Every row of plan appendix
-A.7 not named here is still to be measured in phase 0.
+**Every host step below is done on the mini, and each was read back.**
+
+- **Rulesets:** the three in `host/rulesets` are `active`.
+- **GitHub App:** `orbweaver-bugfix` is owned by Uplift-Foundation and installed on Orbweaver only, with exactly the six permissions in plan section 2. `host/create_app.py` refuses any other set.
+- **Warden:** running under launchd every five minutes from a detached `develop` checkout outside `~/.paperclip`, where no agent can write. It writes the company's `GITHUB_TOKEN`.
+- **Claude connection:** "Claude (W Thompson)", shared with all four agents. All four passed Paperclip's verification and are `ready`.
+- **Jira:** six read actions for every agent. Comment and transition are for the lead only, behind two `block` policies created before the actions were enabled.
+- **Build env:** set for both engineers.
+
+The routine and its trigger stay off until a pilot run has carried one ticket through.
+
+**The App's lane, measured with its own installation token:**
+
+- The token lists only `Uplift-Foundation/Orbweaver`.
+- Creating and deleting `bugfix/pc-fixture-proof` were both accepted.
+- Pushing `feature/pc-fixture-refused` and the tag `pc-fixture-refused` were both refused with GH013.
+
+**Still unrun:** a worktree realised for a real run, `git`, `gh` and `dotnet` inside one, a stress dispatch from a spool request, and the lead's merge and ticket moves. The pilot run measures each of these.
 
 **Deviation from the plan:** appendix A.4 lists `tools/check-pr-body.sh`, the
 body rules lifted out of `tools/require-team-sdlc.sh` and called by both. It was
@@ -100,8 +109,9 @@ lead actually making that PATCH has not been run.
 ## The brakes (plan section 6)
 
 Two tickets per run; routine `coalesce_if_active`; `maxConcurrentRuns: 1`,
-`timeoutSec: 3600` and `maxDailyRuns` (3 for the lead, 6 for each other agent,
-values chosen, not measured; it defers wakes rather than dropping them, see the table above) per agent; two fix rounds and ninety minutes per ticket,
+`timeoutSec: 3600` and `maxDailyRuns` (12 for the lead, 6 for each other agent;
+the lead started at 3, which cannot finish one ticket, because every helper's
+answer wakes it and one ticket takes about five lead runs; it defers wakes rather than dropping them, see the table above) per agent; two fix rounds and ninety minutes per ticket,
 then release. The warden (host side, not in this package) pauses the company on
 the conditions in plan section 6. `budgetMonthlyCents` is set but is not a
 brake: on a subscription connection spend reads 0.
@@ -145,10 +155,25 @@ Then, none of which a package can carry:
    `/private/tmp/ow-install.lock`, then restart the service through its launchd
    job. The org never installs, so it never takes that lock.
 3. **AI connection** bound to each of the four agents, as for the triage org.
+   **Bind each agent explicitly.** Starting the sign-in with `allAgents: true`
+   did not bind agents that were still `verifying`. Verification then passed
+   anyway, because its probe does not need a binding, and the first real run
+   failed with "Not logged in · Please run /login" (measured 2026-11-24). Set
+   `runtimeConfig.aiConnection` to `{connectionId, grantId, method: "subscription",
+   mode: "shared", provider: "anthropic"}` on every agent, as the triage
+   agents have it, keeping `runtimeConfig.heartbeat`.
    This comes before any run: imported agents arrive `paused` with
    `lifecycleState: verifying` (measured), and verification needs the
    connection. An assignment to a verifying agent queues a run that never
    starts, so cancel it rather than waiting.
+   **Check each agent's harness after binding.** An import made while the
+   company had no Claude connection gives every agent
+   `adapterConfig.provider: codex`. Verification then fails with
+   `harness_test_failed` even with the connection bound, and pauses itself after
+   three tries (measured 2026-11-24). Set
+   `PATCH /api/agents/<id>` `{"adapterConfig": {"provider": "acpx", "acpxAgent": "claude"}}`
+   (a merge; it keeps the env bindings), then `POST /api/agents/<id>/lifecycle/retry`.
+   All four reached `ready` within a minute.
 4. **Jira, block first.** Add a tool policy of type `block` naming
    `addCommentToJiraIssue` and `transitionJiraIssue` and the three non-lead
    agents, at a priority ahead of the others. Only then finish the connector
@@ -159,12 +184,46 @@ Then, none of which a package can carry:
    the others. In that order there is no moment at which a non-lead can comment
    or move a ticket. Paperclip cannot limit a transition to Bug tickets, so the
    lead's instructions carry that rule.
+   **On Atlassian's consent page, expand all three groups and leave exactly
+   `read_jira`, `write_jira` and `search_jira` ticked.** Check the site says
+   Uplifttech, switching account first if it offers another. Measured
+   2026-11-24, three consents in a row:
+   - all 11 permissions ticked: every connector call came back HTTP 400 from
+     `mcp.atlassian.com`, even `atlassianUserInfo`;
+   - only `read_jira` and `write_jira`: reads worked, but `searchJiraIssuesUsingJql`
+     answered "tool not found", because the toolset sits under Search, not Read;
+   - all three Jira toolsets: the grant matched the triage org's six OAuth scopes
+     and search, read and the lead's write all answered, while a non-lead's
+     transition was refused by the block policy.
+   A click on an item inside a collapsed group does not register.
+   The OAuth callback goes to `127.0.0.1:3100`, so a browser on another machine
+   cannot complete it directly. Catch the callback path there, then replay it on
+   the mini with a board session.
 5. **GitHub identity.** The company secret `GITHUB_TOKEN`, written by the warden
    from the GitHub App described in plan section 2. Never a personal token.
+   **The secret alone does not reach an agent's shell, and nor does binding it
+   as `GH_TOKEN`.** Paperclip uses the company secret only for its own
+   server-side clone and fetch. It also blanks `GH_TOKEN` and `GITHUB_TOKEN` in
+   every run, even when they are bound on the agent. Measured 2026-11-24: bound
+   under those names, `gh` reported no login; bound as `BUGFIX_GH_TOKEN`, the
+   same secret arrived as a `ghs_` token. So bind it into every agent's
+   `adapterConfig.env` as
+   `BUGFIX_GH_TOKEN: {"type": "secret_ref", "secretId": "<GITHUB_TOKEN's id>", "version": "latest"}`.
+   The skill's "GitHub access" section has the one-line prefix that hands it to
+   `gh` and `git`. From an agent run, that prefix pushed `bugfix/pc-probe-push`,
+   was refused GH013 on `feature/pc-probe-refused` and deleted the probe branch.
+   A deliberate GH013 like that is a warden pause trigger, so add the run's id to
+   `scanned_runs` in the warden's `state.json` before its next tick. A run reads
+   the token once, when it starts, which is why the warden mints every ten
+   minutes.
 6. **Build environment.** In each engineer's environment set
    `NUGET_PACKAGES` to a folder inside the org's own Paperclip directory (the
-   restore cache was 2.2 GB), and `BUGFIX_BUILD_LOCK` to a path in that folder
-   for the one-build-at-a-time lock. Both are absolute paths, so the package
+   restore cache was 2.2 GB), `BUGFIX_BUILD_LOCK` to a path in that folder
+   for the one-build-at-a-time lock, and `BUGFIX_SPOOL` to the warden's
+   `spool` folder from `warden.json`, which is where the skill tells an engineer
+   to write a stress request. Without `BUGFIX_SPOOL` a flaky-test fix has no
+   way to get its 30-run proof, because the warden reads requests only from
+   the spool. Both are absolute paths, so the package
    cannot carry them. The package sets `AVALONIA_TELEMETRY_OPTOUT=1`,
    `DOTNET_CLI_TELEMETRY_OPTOUT=1` and `DOTNET_NOLOGO=1` itself.
 7. **Project workspace.** Import creates the project "Orbweaver develop" with a
