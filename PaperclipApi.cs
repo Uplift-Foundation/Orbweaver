@@ -280,14 +280,19 @@ namespace Orbweaver
             // caller then cannot page and starts that run's state afresh each read.
             internal long? LastSeq { get; private set; }
 
-            // A copy to fold a read into, so a read that fails halfway leaves the committed state as it was.
-            internal RuntimeFold Clone()
+            // Folds a delta (a fresh fold that read this tick's pages) into this one. Merging is what lets a read
+            // that fails halfway leave the committed state untouched without copying all of it every tick: the
+            // pages go into the small delta, and only a read that completed is merged. The guards are the ones
+            // Apply uses, so merging a delta equals folding its rows in order.
+            internal void Merge(RuntimeFold delta)
             {
-                var c = new RuntimeFold { n = n, LastSeq = LastSeq };
-                c.started.AddRange(started);
-                foreach (var kv in subjects) c.subjects[kv.Key] = kv.Value;
-                foreach (var kv in latest) c.latest[kv.Key] = kv.Value;
-                return c;
+                started.AddRange(delta.started);
+                foreach (var kv in delta.subjects)
+                    if (!subjects.TryGetValue(kv.Key, out var old) || old.Order <= kv.Value.Order) subjects[kv.Key] = kv.Value;
+                foreach (var kv in delta.latest)
+                    if (!(latest.TryGetValue(kv.Key, out var prev) && prev.Order > kv.Value.Order)) latest[kv.Key] = kv.Value;
+                n += delta.n;
+                if (delta.LastSeq is { } d && (LastSeq == null || d > LastSeq)) LastSeq = d;
             }
 
             // Folds one body in and returns how many rows it held (a short page ends a paged read).

@@ -402,7 +402,7 @@ namespace Orbweaver
         // for a transport failure.
         internal static async Task<StepResult> StepAsync(
             IPaperclipApi api, PaperclipConfig cfg, PollState st, DateTime now, CancellationToken ct,
-            Action<string>? log = null)
+            Action<string>? log = null, int maxEventPages = MaxEventPages)
         {
             if (!cfg.Enabled)
                 return new StepResult(PollState.Initial with { Link = PaperclipLink.Off, Status = "Paperclip is switched off." }, FastEvery);
@@ -531,35 +531,42 @@ namespace Orbweaver
                 foreach (var run in live.Where(x => x.Status == "running").DistinctBy(x => x.Id))
                 {
                     // Read and parse are one unit: a run whose body throws is treated as a failed read for that run
-                    // only, so one odd body never takes the company's poll down with it. The pages fold into a copy
-                    // of the run's state, which is committed only when every page read.
+                    // only, so one odd body never takes the company's poll down with it. The pages fold into a delta
+                    // that is merged into the run's state only when every page read.
                     IReadOnlyList<PaperclipApi.RawRuntimeRequest>? read = null;
-                    PaperclipApi.RuntimeFold? work = null;
+                    PaperclipApi.RuntimeFold? held = null;
                     try
                     {
-                        PaperclipApi.RuntimeFold? held = null;
                         st.RuntimeFolds?.TryGetValue(run.Id, out held);
                         // A prior state that never saw a seq cannot be paged from, so it is started afresh.
-                        work = held is { LastSeq: not null } ? held.Clone() : new PaperclipApi.RuntimeFold();
+                        if (held is not { LastSeq: not null }) held = new PaperclipApi.RuntimeFold();
+                        // The pages fold into a small delta, merged into the run's state only when every page read.
+                        var delta = new PaperclipApi.RuntimeFold();
                         var ok = true;
-                        for (var page = 0; page < MaxEventPages; page++)
+                        var ended = false;
+                        for (var page = 0; page < maxEventPages; page++)
                         {
-                            var before = work.LastSeq;
+                            var before = delta.LastSeq ?? held.LastSeq;
                             var query = before is { } s0 ? $"?afterSeq={s0}&limit={EventPageSize}" : $"?limit={EventPageSize}";
                             var ev = await api.GetAsync($"/api/heartbeat-runs/{Uri.EscapeDataString(run.Id)}/events{query}", ct).ConfigureAwait(false);
                             if (!ev.IsOk) { ok = false; break; }
-                            var rows = work.Apply(run.Id, ev.Body);
+                            var rows = delta.Apply(run.Id, ev.Body);
                             // A short page is the end; so is a page that moved nothing (no seq to page on).
-                            if (rows < EventPageSize || work.LastSeq == before) break;
+                            if (rows < EventPageSize || (delta.LastSeq ?? held.LastSeq) == before) { ended = true; break; }
                         }
                         if (ok)
-                            read = work.Pending(run.Id).Select(r => r with { AgentId = run.AgentId, IssueId = run.IssueId }).ToList();
+                        {
+                            held.Merge(delta);
+                            // Out of pages with more to read: what was read stands, and the next tick resumes from its cursor.
+                            if (!ended) log?.Invoke($"runtime events for run {run.Id} paused after {maxEventPages} pages at seq {held.LastSeq}; resuming next tick");
+                            read = held.Pending(run.Id).Select(r => r with { AgentId = run.AgentId, IssueId = run.IssueId }).ToList();
+                        }
                     }
                     catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
                     {
                         if (StepFailureLine(ex, ref fault, "runtime events read failed") is { } line) log?.Invoke(line);
                     }
-                    if (read != null) { seen[run.Id] = (read, false); nextFolds[run.Id] = work!; }
+                    if (read != null) { seen[run.Id] = (read, false); nextFolds[run.Id] = held!; }
                     else if (runtime != null && runtime.TryGetValue(run.Id, out var prior) && !prior.Stale)
                     {
                         seen[run.Id] = (prior.Requests, true);

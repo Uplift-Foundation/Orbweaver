@@ -18,7 +18,8 @@ public class PaperclipLongRunTests
     private sealed class EventLogApi : IPaperclipApi
     {
         internal readonly FakePaperclip Inner = new();
-        internal readonly List<string> Log = [];   // one JSON object per event, ascending by seq
+        internal readonly Dictionary<string, List<string>> Logs = new() { ["run1"] = [] };
+        internal List<string> Log => Logs["run1"];   // one JSON object per event, ascending by seq
         internal readonly List<string> EventCalls = [];
 
         internal EventLogApi()
@@ -30,16 +31,24 @@ public class PaperclipLongRunTests
 
         public Task<PaperclipResponse> GetAsync(string p, CancellationToken ct)
         {
-            if (!p.StartsWith("/api/heartbeat-runs/run1/events")) return Inner.GetAsync(p, ct);
+            if (!p.StartsWith("/api/heartbeat-runs/")) return Inner.GetAsync(p, ct);
             EventCalls.Add(p);
+            var runId = p["/api/heartbeat-runs/".Length..p.IndexOf("/events")];
             var q = System.Web.HttpUtility.ParseQueryString(p[(p.IndexOf('?') + 1)..]);
             var limit = int.Parse(q["limit"] ?? "200");
             var after = long.Parse(q["afterSeq"] ?? "0");
-            var rows = Log.Where(j => JsonDocument.Parse(j).RootElement.GetProperty("seq").GetInt64() > after).Take(limit);
+            var rows = Logs[runId].Where(j => JsonDocument.Parse(j).RootElement.GetProperty("seq").GetInt64() > after).Take(limit);
             return Task.FromResult(FakePaperclip.Ok("[" + string.Join(",", rows) + "]"));
         }
 
         public Task<PaperclipResponse> PostAsync(string p, string b, CancellationToken ct) => Inner.PostAsync(p, b, ct);
+
+        internal void TwoRuns()
+        {
+            Logs["run2"] = [];
+            Inner.Gets["/api/companies/co/agents"] = FakePaperclip.Ok("[{\"id\":\"ag1\",\"name\":\"Ledger\",\"status\":\"running\"},{\"id\":\"ag2\",\"name\":\"M\",\"status\":\"running\"}]");
+            Inner.Gets["/api/companies/co/live-runs"] = FakePaperclip.Ok("[{\"id\":\"run1\",\"agentId\":\"ag1\",\"status\":\"running\"},{\"id\":\"run2\",\"agentId\":\"ag2\",\"status\":\"running\"}]");
+        }
 
         internal long NextSeq => Log.Count + 1;
         internal void Filler(int count) { for (var i = 0; i < count; i++) Log.Add($"{{\"seq\":{NextSeq},\"eventType\":\"log\",\"payload\":{{\"prpEvent\":{{\"payload\":{{}}}}}}}}"); }
@@ -224,4 +233,105 @@ public class PaperclipLongRunTests
         Assert.Equal(["b"], whole.Select(r => r.RequestId).ToArray());
         Assert.Equal("ls", whole.Single().Subject);
     }
+
+    [Fact]
+    public async Task A_request_created_and_resolved_inside_one_page_is_never_shown()
+    {
+        var api = new EventLogApi();
+        api.Tool("Bash", "x1"); api.Created("blink", "x1"); api.Resolved("blink");
+        Assert.Empty(RuntimeNeeds(await Step(api, PaperclipSessions.PollState.Initial, DateTime.UtcNow)));
+    }
+
+    [Fact]
+    public void Duplicate_and_out_of_order_seq_rows_count_once_and_never_move_the_cursor_back()
+    {
+        string Row(long seq, string type, string id) => type == "runtime_request.created"
+            ? $"{{\"seq\":{seq},\"eventType\":\"{type}\",\"payload\":{{\"prpEvent\":{{\"turnId\":\"t\",\"payload\":{{\"request\":{{\"requestId\":\"{id}\",\"choices\":[{{\"key\":\"accept\"}},{{\"key\":\"decline\"}}]}}}}}}}}}}"
+            : $"{{\"seq\":{seq},\"eventType\":\"{type}\",\"payload\":{{\"prpEvent\":{{\"payload\":{{\"requestId\":\"{id}\"}}}}}}}}";
+        var fold = new PaperclipApi.RuntimeFold();
+        // resolved (9) before created (3) in the file, created twice, and a second request created twice.
+        fold.Apply("r", "[" + string.Join(",", Row(9, "runtime_request.resolved", "gone"), Row(3, "runtime_request.created", "gone"),
+            Row(5, "runtime_request.created", "kept"), Row(5, "runtime_request.created", "kept"), Row(4, "runtime_request.created", "kept")) + "]");
+        Assert.Equal(9, fold.LastSeq);
+        Assert.Equal(["kept"], fold.Pending("r").Select(x => x.RequestId).ToArray());
+        // A later page whose rows are older than the cursor (a replay) adds nothing and does not rewind it.
+        var delta = new PaperclipApi.RuntimeFold();
+        delta.Apply("r", "[" + Row(2, "runtime_request.created", "gone") + "," + Row(1, "runtime_request.resolved", "kept") + "]");
+        fold.Merge(delta);
+        Assert.Equal(9, fold.LastSeq);
+        Assert.Equal(["kept"], fold.Pending("r").Select(x => x.RequestId).ToArray());
+    }
+
+    [Fact]
+    public async Task A_failure_on_page_two_of_a_first_read_commits_nothing_and_the_next_tick_reads_from_the_start()
+    {
+        var api = new EventLogApi();
+        var t0 = DateTime.UtcNow;
+        api.Filler(520); api.Tool("Bash", "x1"); api.Created("late", "x1");
+        var failing = new FailsPage(api, "afterSeq");
+        var s1 = await Step(failing, PaperclipSessions.PollState.Initial, t0);
+        Assert.Equal(PaperclipLink.Connected, s1.Next.Link);
+        Assert.Empty(RuntimeNeeds(s1));
+        Assert.Empty(s1.Next.RuntimeFolds!);                 // no half-read state was kept
+        failing.Fail = false;
+        api.EventCalls.Clear();
+        var s2 = await Step(failing, s1.Next, t0.AddSeconds(5));
+        Assert.Equal(["late"], RuntimeNeeds(s2));
+        Assert.Equal("/api/heartbeat-runs/run1/events?limit=500", api.EventCalls[0]);
+    }
+
+    [Fact]
+    public async Task A_failure_on_a_later_page_of_a_followed_run_leaves_its_cursor_where_it_was()
+    {
+        var api = new EventLogApi();
+        var t0 = DateTime.UtcNow;
+        api.Filler(10);
+        var s1 = await Step(api, PaperclipSessions.PollState.Initial, t0);
+        api.Filler(520);                                      // next read is a full page then a second one
+        api.Tool("Bash", "x1"); api.Created("late", "x1");
+        var failing = new FailsPage(api, "afterSeq=510");     // the second page of the catch-up
+        var s2 = await Step(failing, s1.Next, t0.AddSeconds(5));
+        Assert.Equal(10, s2.Next.RuntimeFolds!["run1"].LastSeq);
+        failing.Fail = false;
+        api.EventCalls.Clear();
+        var s3 = await Step(failing, s2.Next, t0.AddSeconds(10));
+        Assert.Equal(["late"], RuntimeNeeds(s3));
+        Assert.Equal("/api/heartbeat-runs/run1/events?afterSeq=10&limit=500", api.EventCalls[0]);
+    }
+
+    [Fact]
+    public async Task Two_running_runs_each_ask_for_their_own_afterSeq_once_per_tick()
+    {
+        var api = new EventLogApi();
+        api.TwoRuns();
+        var t0 = DateTime.UtcNow;
+        api.Filler(5);
+        api.Logs["run2"].AddRange(Enumerable.Range(1, 7).Select(i => $"{{\"seq\":{i},\"eventType\":\"log\",\"payload\":{{}}}}"));
+        var s1 = await Step(api, PaperclipSessions.PollState.Initial, t0);
+        Assert.Equal(["/api/heartbeat-runs/run1/events?limit=500", "/api/heartbeat-runs/run2/events?limit=500"], api.EventCalls);
+        api.EventCalls.Clear();
+        await Step(api, s1.Next, t0.AddSeconds(5));
+        Assert.Equal(["/api/heartbeat-runs/run1/events?afterSeq=5&limit=500", "/api/heartbeat-runs/run2/events?afterSeq=7&limit=500"], api.EventCalls);
+    }
+
+    [Fact]
+    public async Task A_run_longer_than_the_page_ceiling_is_read_in_slices_and_a_late_request_still_shows()
+    {
+        var api = new EventLogApi();
+        var t0 = DateTime.UtcNow;
+        api.Filler(1100); api.Tool("Bash", "x1"); api.Created("late", "x1");      // 1102 rows: three pages
+        var log = new List<string>();
+        var s1 = await Step2(api, PaperclipSessions.PollState.Initial, t0, log);
+        Assert.Empty(RuntimeNeeds(s1));
+        Assert.Equal(2, api.EventCalls.Count);                                     // the ceiling: two pages
+        Assert.Equal("runtime events for run run1 paused after 2 pages at seq 1000; resuming next tick", Assert.Single(log));
+        api.EventCalls.Clear();
+        var s2 = await Step2(api, s1.Next, t0.AddSeconds(5), log);
+        Assert.Equal(["late"], RuntimeNeeds(s2));
+        Assert.Equal(["/api/heartbeat-runs/run1/events?afterSeq=1000&limit=500"], api.EventCalls);
+        Assert.Single(log);                                                        // no second pause line
+    }
+
+    private static Task<PaperclipSessions.StepResult> Step2(IPaperclipApi api, PaperclipSessions.PollState st, DateTime at, List<string> log) =>
+        PaperclipSessions.StepAsync(api, Cfg, st, at, default, log.Add, maxEventPages: 2);
 }
