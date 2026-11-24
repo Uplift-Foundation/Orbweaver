@@ -1,0 +1,79 @@
+name: Stress
+
+# Runs ONE test class N times on both rids (CB-455, plan §4). The bug-fix org's
+# proof for a flaky-test fix is "this class, 30 times, on GitHub's runners",
+# and the org itself cannot dispatch this (its App has Actions read only), so
+# the host-side warden does, for the org's own PRs only.
+#
+# Deliberately inert: no secrets, read-only token, no artifacts, no
+# publishing, and the branch under test is checked out without persisted
+# credentials. The inputs are passed to the script through env, never
+# interpolated into a `run:` line, because they are typed by whoever
+# dispatches (tools/test-workflow-hardening.py pins that).
+on:
+  workflow_dispatch:
+    inputs:
+      test_class:
+        description: Test class to run (e.g. Orbweaver.Tests.OrbFlyoutTests)
+        required: true
+        type: string
+      n:
+        description: How many times (1-50)
+        required: true
+        default: '30'
+        type: string
+      suite:
+        description: Which suite the class lives in
+        required: true
+        default: unit
+        type: choice
+        options: [unit, integration, ui]
+
+permissions:
+  contents: read
+
+jobs:
+  stress:
+    name: stress (${{ matrix.os }}, ${{ matrix.rid }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest, rid: osx-arm64 }
+          - { os: windows-latest, rid: win-x64 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Build the suite
+        env:
+          SUITE: ${{ inputs.suite }}
+        shell: bash
+        run: |
+          case "$SUITE" in
+            unit) proj=tests/UnitTests ;;
+            integration) proj=tests/IntegrationTests ;;
+            ui) proj=tests/UiTests ;;
+            *) echo "bad suite"; exit 2 ;;
+          esac
+          dotnet build "$proj" -c Release
+
+      - name: Run the class
+        env:
+          SUITE: ${{ inputs.suite }}
+          TEST_CLASS: ${{ inputs.test_class }}
+          RUNS: ${{ inputs.n }}
+        shell: bash
+        run: python tools/stress-run.py --suite "$SUITE" --test-class "$TEST_CLASS" --n "$RUNS"
