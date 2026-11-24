@@ -232,7 +232,9 @@ namespace Orbweaver
             var answerKey = activity == null ? null : AnswerKey(activity.RunId);
             var answerTaken = false;
             // Only the run's LAST comment, and only once the run has ended, can stand for its answer.
-            var lastOfRun = activity is { Ended: true }
+            // Before the end is seen (the comment is created ~1.6 s after run.terminal, and a comments read can land
+            // before the events read that folds it) the comment still stands for the answer when it SAYS the answer.
+            var lastOfRun = activity != null
                 ? comments.Where(x => x.RunId == activity.RunId && x.AuthorAgentId == agentId).OrderBy(x => x.At ?? DateTime.MinValue).LastOrDefault()
                 : null;
             foreach (var c in comments)
@@ -250,7 +252,8 @@ namespace Orbweaver
                 }
                 else role = ChatRole.System;
                 var takes = answerKey != null && ReferenceEquals(c, lastOfRun) && role == ChatRole.Assistant
-                    && activity!.Rows.Any(r => r.Key == answerKey);
+                    && activity!.Rows.FirstOrDefault(r => r.Key == answerKey) is { } answerRow
+                    && (activity.Ended || answerRow.Text.Trim() == c.Body.Trim());
                 answerTaken |= takes;
                 body.Add(new Row(CommentKey(c.Id), role, Cap(text), c.At ?? DateTime.MinValue, false, takes ? answerKey : null));
             }
@@ -282,6 +285,7 @@ namespace Orbweaver
         {
             var result = shown.ToList();
             var fresh = new List<(Row Row, int Order)>();
+            var drop = new List<string>();
             var n = 0;
             foreach (var b in built)
             {
@@ -290,9 +294,16 @@ namespace Orbweaver
                 if (i < 0 && b.Replaces != null) i = result.FindIndex(r => r.Key == b.Replaces);
                 if (i < 0 && b.Role == ChatRole.User)
                     i = result.FindIndex(r => r.Key.StartsWith(LocalPrefix, StringComparison.Ordinal) && r.Role == ChatRole.User && r.Text == b.Text);
-                if (i >= 0) result[i] = b with { At = result[i].At, Replaces = null };
+                if (i >= 0)
+                {
+                    // A comment shown as an ordinary bubble that is later learned to carry the run's answer: the
+                    // answer row it now stands for is still shown, and must go or the sentence shows twice.
+                    if (b.Replaces != null && result[i].Key != b.Replaces) drop.Add(b.Replaces);
+                    result[i] = b with { At = result[i].At, Replaces = null };
+                }
                 else fresh.Add((b, n));
             }
+            if (drop.Count > 0) result.RemoveAll(r => drop.Contains(r.Key));
             result.AddRange(fresh.OrderBy(f => f.Row.At).ThenBy(f => f.Order).Select(f => f.Row with { Replaces = null }));
             if (result.Count > RowCap)
             {

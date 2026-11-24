@@ -457,6 +457,40 @@ public class PaperclipChatTests
     }
 
     [Fact]
+    public void The_comment_read_before_run_terminal_is_folded_still_shows_one_bubble_with_the_answer_text()
+    {
+        // QA F1. The comment lands ~1.6 s after run.terminal, but a comments read can arrive before the events
+        // read that folds it. Order: answer row shown, comment (same sentence) read first, terminal second.
+        var live = Fold(Activity.Empty("r"), Body(Ev(1, "item.completed", new { kind = "agentMessage", text = "It is 51.", channel = "final" }, "m")));
+        var comment = C("a1", "It is 51.", agent: Agent, run: "r", sec: 20);
+
+        var shown = Merge([], Build(null, Agent, Names, [], live));                    // answer row on screen
+        // comment arrives, run not yet seen ended: it says the answer, so it takes the row at once
+        shown = Merge(shown, Build(null, Agent, Names, [comment], live));
+        Assert.Equal(1, shown.Count(r => r.Text == "It is 51."));
+        var ended = Fold(live, Body(Ev(2, "run.terminal", new { })));
+        shown = Merge(shown, Build(null, Agent, Names, [comment], ended));
+        Assert.Equal(1, shown.Count(r => r.Text == "It is 51."));
+        Assert.Equal(["task", "c:a1"], shown.Select(r => r.Key));
+    }
+
+    [Fact]
+    public void A_comment_shown_plain_and_later_learned_to_carry_the_answer_drops_the_answer_row()
+    {
+        // Different wording (the comment is longer than the final message), so no early take: both show until the
+        // end is seen, and then the answer row must go.
+        var live = Fold(Activity.Empty("r"), Body(Ev(1, "item.completed", new { kind = "agentMessage", text = "Done.", channel = "final" }, "m")));
+        var comment = C("a1", "Done. Details follow.", agent: Agent, run: "r", sec: 20);
+        var shown = Merge(Merge([], Build(null, Agent, Names, [], live)), Build(null, Agent, Names, [comment], live));
+        Assert.Contains(shown, r => r.Key == AnswerKey("r"));
+        Assert.Contains(shown, r => r.Key == "c:a1");
+        var ended = Fold(live, Body(Ev(2, "run.terminal", new { })));
+        shown = Merge(shown, Build(null, Agent, Names, [comment], ended));
+        Assert.Equal(["task", "c:a1"], shown.Select(r => r.Key));
+        Assert.Equal("Done. Details follow.", shown[1].Text);
+    }
+
+    [Fact]
     public void A_comment_replaces_the_answer_only_once_the_run_has_ended_and_only_if_it_is_the_runs_last()
     {
         var spoke = Body(Ev(1, "run.result.proposed", new { summary = "Answer." }));
@@ -465,8 +499,11 @@ public class PaperclipChatTests
         Assert.False(live.Ended);
         Assert.True(ended.Ended);
         var last = C("last", "Answer.", agent: Agent, run: "r", sec: 20);
-        // run still live: a comment carrying its id is not yet its answer
-        Assert.Contains(Build(null, Agent, Names, [last], live), r => r.Key == AnswerKey("r"));
+        // run not seen ended: a comment carrying its id that does NOT say the answer is not yet its answer
+        var other = C("other", "Something else entirely.", agent: Agent, run: "r", sec: 20);
+        Assert.Contains(Build(null, Agent, Names, [other], live), r => r.Key == AnswerKey("r"));
+        // one that says the same sentence takes it at once (the comment can be read before run.terminal is folded)
+        Assert.DoesNotContain(Build(null, Agent, Names, [last], live), r => r.Key == AnswerKey("r"));
         // ended: the last comment of the run takes the place
         var done = Build(null, Agent, Names, [last], ended);
         Assert.DoesNotContain(done, r => r.Key == AnswerKey("r"));

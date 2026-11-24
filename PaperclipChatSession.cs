@@ -256,7 +256,8 @@ namespace Orbweaver
                 // later row one place up: the index-for-index diff below no longer lines up.
                 var shifted = merged.Count > 2 && merged.Count == _shown.Count && _shown.Count >= PaperclipChat.RowCap
                     && merged[1].Key != _shown[1].Key && merged[1].Key == _shown[2].Key;
-                if (shifted) ReplaceRows(merged); else MergeRows(merged);
+                // A removal (a comment learned to carry the answer drops the answer row) shortens the list the same way.
+                if (shifted || merged.Count < _shown.Count) ReplaceRows(merged); else MergeRows(merged);
             }
 
             if (!_loaded) { _loaded = true; SetState(RemoteChatState.Connected); }
