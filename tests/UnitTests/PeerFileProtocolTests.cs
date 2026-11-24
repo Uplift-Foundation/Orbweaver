@@ -301,11 +301,12 @@ public class PeerFileProtocolTests
         Assert.Equal(3, r.Reads);
     }
 
-    // And it does not wait on a read another caller has in progress: that
-    // read holds the memo's lock across every launch, which is what made a
-    // FILE take seconds on the mini.
-    [Fact]
-    public void PeekDoesNotWaitOnAReadInProgress()
+    // Runs `peek` on its own thread while a refresh holds the memo's lock, and says
+    // whether it returned within the deadline. The deadline starts when the thread
+    // signals it is about to call `peek`, so how long a busy runner takes to start
+    // the thread (waited for generously) is not charged to Peek.
+    private static (bool Returned, IReadOnlyList<AgentRoster.Entry>? Result, IReadOnlyList<AgentRoster.Entry> First)
+        PeekWhileARefreshHoldsTheLock(Func<RemoteMirrorServer.RosterMemo, IReadOnlyList<AgentRoster.Entry>?> peek)
     {
         var r = new Roster();
         var first = r.Memo.Read();
@@ -313,17 +314,44 @@ public class PeerFileProtocolTests
         r.Hold = new ManualResetEventSlim();
         r.Reading.Reset();
 
-        // Both on dedicated threads: the 2 s deadline below is for Peek's lock, not
-        // for how long a busy runner's shared pool takes to start a task.
         var refresh = Task.Factory.StartNew(() => r.Memo.Read(), TaskCreationOptions.LongRunning);
         Assert.True(r.Reading.Wait(TimeSpan.FromSeconds(10)));
 
-        var peek = Task.Factory.StartNew(() => r.Memo.Peek(), TaskCreationOptions.LongRunning);
-        Assert.True(peek.Wait(TimeSpan.FromSeconds(2)), "Peek waited on the refresh's lock");
-        Assert.Same(first, peek.Result);
+        var entered = new ManualResetEventSlim();
+        var task = Task.Factory.StartNew(() =>
+        {
+            entered.Set();
+            return peek(r.Memo);
+        }, TaskCreationOptions.LongRunning);
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(30)), "The peek thread never started");
+
+        var returned = task.Wait(TimeSpan.FromSeconds(2));
+        var result = returned ? task.Result : null;
 
         r.Hold.Set();
         Assert.NotSame(first, refresh.Result);
+        task.Wait(TimeSpan.FromSeconds(30));
+        return (returned, result, first);
+    }
+
+    // And it does not wait on a read another caller has in progress: that
+    // read holds the memo's lock across every launch, which is what made a
+    // FILE take seconds on the mini.
+    [Fact]
+    public void PeekDoesNotWaitOnAReadInProgress()
+    {
+        var (returned, result, first) = PeekWhileARefreshHoldsTheLock(m => m.Peek());
+        Assert.True(returned, "Peek waited on the refresh's lock");
+        Assert.Same(first, result);
+    }
+
+    // The control: a stand-in that does take the memo's lock (Snapshot waits on the
+    // refresh) misses the same deadline, so the test above can still fail.
+    [Fact]
+    public void ThePeekDeadlineIsMissedByAPeekThatTakesTheLock()
+    {
+        var (returned, _, _) = PeekWhileARefreshHoldsTheLock(m => m.Snapshot().Agents);
+        Assert.False(returned);
     }
 
     // --- the download mark's content ---------------------------------------------------------
