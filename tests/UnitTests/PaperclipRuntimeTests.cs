@@ -239,8 +239,10 @@ public class PaperclipRuntimeTests
         var t0 = DateTime.UtcNow;
         var s1 = await PaperclipSessions.StepAsync(api, Cfg, PaperclipSessions.PollState.Initial, t0, default);
         // Appended after the closing bracket, found by trimming: a Windows checkout turns the file's "\n" into "\r\n".
-        api.Gets[EventsPath] = FakePaperclip.Ok(Events.TrimEnd().TrimEnd(']') +
-            ",{\"seq\":20,\"eventType\":\"runtime_request.resolved\",\"payload\":{\"prpEvent\":{\"payload\":{\"request\":{\"requestId\":\"r-open\"}}}}}]");
+        // CB-446: the second read asks only for what came after the last seq of the first, so the answer is the new rows alone.
+        var lastSeq = JsonDocument.Parse(Events).RootElement.EnumerateArray().Max(e => e.TryGetProperty("seq", out var q) ? q.GetInt64() : 0);
+        api.Gets[$"/api/heartbeat-runs/run1/events?afterSeq={lastSeq}&limit=500"] = FakePaperclip.Ok(
+            "[{\"seq\":" + (lastSeq + 1) + ",\"eventType\":\"runtime_request.resolved\",\"payload\":{\"prpEvent\":{\"payload\":{\"request\":{\"requestId\":\"r-open\"}}}}}]");
         var s2 = await PaperclipSessions.StepAsync(api, Cfg, s1.Next, t0.AddSeconds(5), default);
         Assert.DoesNotContain(s2.Next.Published!.Single().Needs, n => n.Id == "r-open");
         api.Gets["/api/companies/co/live-runs"] = FakePaperclip.Ok("[]");
