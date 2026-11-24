@@ -3,6 +3,7 @@ using Xunit;
 namespace Orbweaver.Tests;
 
 // CB-447: the shared per-agent thread a phone's watch holds, and the registry that counts its holders.
+[Collection("PaperclipSessions statics")]
 public class PaperclipPhoneThreadTests : IDisposable
 {
     private const string Agent = "3f2a9c4e-6b1d-4e87-a5c3-9d0e7b2f1a64";
