@@ -253,12 +253,48 @@ Vectors (`frames-v18-vectors.json`, with `make_v18_vectors.py`, `check_v18_vecto
 
 iOS and Android each: gate the composer and `watch` on the cap instead of on `cli`; lift the waiting guard for a paperclip row; the `send_failed` copy; the "Sent. Waking…" line; snapshot or UI test of an agent screen with a thread and a composer, and of the same row on a desk without the cap. The watch app shows no thread and is unchanged.
 
+### 5.5 Agent pictures on the phone (CB-445's phone half, in the same contract file)
+
+The desktop half of CB-445 fetches each agent's picture with the board key and keeps it as an owner-only PNG file that `PersonaImageStore.Offer(path)` can take. This section is how that picture reaches a phone, so a Paperclip row gets one contract change and not two.
+
+**What old phones do with a Paperclip row that carries a persona** (read from Orbweaver-Mobile `origin/develop` at `1a872f4`; none of it run):
+
+| Phone | What happens | Verdict |
+| --- | --- | --- |
+| iOS | The roster decoder takes `id` and `image_hash` on any row, whatever its `cli` (`RosterReducer.swift:146`), and offers every roster hash for fetching (`LiveClient.swift:1042`). So the picture is fetched and drawn on the orb card, the session header and the bubbles. | mostly right by accident |
+| iOS | New Session takes "this folder's persona" from the first row on that machine with the same `cwd` and a persona (`LiveMapping.swift:89`). A Paperclip row's `cwd` is `""`, so an empty folder field would show an agent's name there. | wrong, small |
+| iOS | The sheet's subtitle is machine, cli and persona name (`SheetScreens.swift:84`): the agent's name twice. | cosmetic |
+| Android | The roster decoder keeps a persona's `name`, `initials` and `color` only (`Roster.kt:101`); `id` and `image_hash` are dropped. **Android draws no persona picture on any session today**, only the initial disc; its picture store is fed by account icons alone (`LiveClient.kt:112`). | no picture, no harm |
+| Android | The Personas screen is every distinct persona name across the roster (`Shell.kt:639`). Each Paperclip agent would be listed there as a persona, with a read-aloud setting. | wrong |
+
+Neither phone drops the roster or crashes on such a row. But two of those outcomes put an agent where a persona belongs, on builds nobody can fix after the fact. So the desk does not send it to a phone that has not asked.
+
+**The rule.**
+
+| Rule | Text |
+| --- | --- |
+| who asks | The phone, not the desk. A desk's `caps` cannot protect an old phone from a field on a row, so this is **not** part of `paperclip_chat`. It is one optional boolean on the phone's `prefs` frame, `paperclip_personas`, exactly as frames-v16 added `broke_alerts`: absent is false, anything that is not JSON `true` is false, a phone that never sent prefs is false, a desk that does not know the key ignores it (read from source: `AlertPrefs.Parse` reads only the keys it knows). |
+| the row | For a phone whose stored prefs say true, a `paperclip:` row may carry `persona`: `name` (the agent's name, equal to `title`), `initials` (the two letters the desktop orb wears), `id`, and `image_hash` when the desk can offer the picture now. No `color`. `id` is 16 lowercase hex: the first 16 of SHA-256 over UTF-8 `"orbweaver-paperclip-persona-v1\n"` + the agent's id, so it is stable across restarts and no path or URL crosses the wire. `image_hash` is frames-v5's: SHA-256 of the cached file's bytes. |
+| every other phone | Gets today's row, byte for byte: no `persona` key. The desk builds each phone's roster separately already (`RelayLink.cs:1015`), so this is one filter before `Stream.Roster`. |
+| a prefs change | A phone whose `paperclip_personas` changes is sent a fresh whole roster. |
+| a picture change | A new or changed picture changes `image_hash`, which re-sends the roster (frames-v5: a changed persona record is a changed row). A picture the desk cannot offer (not fetched yet, too large, refused) leaves `image_hash` out and the phone draws the initials. |
+| the picture itself | frames-v5's `persona_image` request and windows, unchanged. The desk offers the cached file's path to `PersonaImageStore` and answers by hash. |
+| the `personas` frame | **A Paperclip agent is never a row in it.** That frame is the list of personas a person can start a session as (the Personas screen, the New Session row). The roster row alone carries the agent's face; frames-v5 already has a phone fetch a hash named by a roster row. |
+| prompts and pushes | Unchanged: a Paperclip prompt carries no persona, so no notification changes its sender or picture. Not in this slice. |
+| new phones | Send `paperclip_personas: true` only from a build that (a) draws a row's picture, (b) keeps a `paperclip` row out of its Personas list and out of "this folder's persona", and (c) does not repeat the name in the sheet subtitle. |
+
+**What it costs each phone.** iOS already draws a roster row's picture, so it needs the prefs key and the three exclusions: small. **Android has no persona pictures for sessions at all**, so to send the key honestly it first needs what CB-321 gave iOS: decode `id` and `image_hash`, offer roster hashes to its picture store, and draw the picture on the orb card and the session header. That is the larger part of this section and is Android's own piece of work; until it lands Android does not send the key and keeps today's row. It is the lead's call whether that rides in slice 2 or follows it.
+
+Vectors, added to `frames-v18-vectors.json`: a prefs frame with the key true, false and absent; a roster holding a Paperclip lead with a picture, a report with a persona and no picture, and a Claude row, as sent to a phone with the key and to one without (the second byte-identical to frames-v15's `paperclip_roster` for those rows); the persona id for a known agent id. `roster-fixtures.json` gains the with-key roster, byte-identical on both repos.
+
+Desk changes, on top of §5.3: `AlertPrefs` gains the flag (parsed, stored, logged as a boolean); `RelayRoster.Project` gives a Paperclip row its persona from a seam that returns the cached picture's path for an agent id (CB-445's cache; this plan does not fetch pictures); a pure `RelayRoster.ForPhone(sessions, paperclipPersonas)` that strips it; the roster re-send on a prefs change.
+
 ## 6. What ships when
 
 | Slice | Contents | PRs |
 | --- | --- | --- |
 | **1. Desktop** (CB-443) | §2, §3, §4: the panel with the thread and live activity, the message box, every state in §1.2, the no-task send included. | one PR to Orbweaver `develop`, branch `feature/paperclip-chat-desktop` |
-| **2. Phone** (its own ticket under CB-419, to be filed by the lead) | §5 | contract PR to Orbweaver-Mobile first; then the desk PR and the two phone PRs in parallel against the merged contract |
+| **2. Phone** (its own ticket under CB-419, to be filed by the lead) | §5: the thread and the message box (§5.2 to §5.4), and agent pictures (§5.5, CB-445's phone half) | one contract PR to Orbweaver-Mobile first, holding both; then the desk PR and the two phone PRs in parallel against the merged contract |
 
 Slice 1 is honest alone: requirement 4 (the phone) is the only part missing, the phone keeps today's read-only row, and nothing on the desktop promises otherwise. Each slice is sized to an afternoon.
 
@@ -274,7 +310,7 @@ Known shape, no new subsystem; this plan is the architect stage. The lead spawns
 - **Engineer B, the session and the panel.** `PaperclipChatSession.cs` against a fake feed and the fake `IPaperclipActions`, the §4 wiring, UI tests, the screenshot captures, the README.
 - **QA.** Writes the matrix from §1.2 and §3 while they build; coverage of added lines; installs (one install owner: QA); the real-machine proof in §8.4.
 
-**Slice 2: one contract author, then three engineers and QA.** Contract and vectors (one engineer, about an hour, merged first). Then desk relay side, iOS, Android in parallel. QA proves it on a real phone against a real desk.
+**Slice 2: one contract author, then three engineers and QA.** Contract and vectors (one engineer, about an hour, merged first). Then desk relay side, iOS, Android in parallel. QA proves it on a real phone against a real desk. Pictures (§5.5) add little to the desk and iOS and a lot to Android, which has no session pictures today; if Android's share does not fit the afternoon, Android ships the thread and the message box and leaves the prefs key unsent, which the contract makes safe.
 
 ## 8. Tests
 
@@ -290,7 +326,7 @@ Target is 100% of added lines at the three levels. Fixtures come from the lead's
 - `Hint`: one case per row of §1.2, and the 30 s "hasn't woken" edge on both sides.
 - `PaperclipActions`: `CommentAsync` and `OpenTaskAsync` against a scripted `IPaperclipApi`, one case per row of §3's table (201, 404, 400 with Paperclip's sentence, 401, timeout), with the id read from the real response body and from an unreadable one.
 - `PaperclipChatSession` over a fake feed and fake actions with an inline dispatcher: history on open; added and updated events; replaced on task change; `SendAsync` raises one user turn on a 2xx and none on a failure; the later read does not double it; read-only on a refused key; the hint changing raises its event.
-- Slice 2: `PaperclipWindowDiff` per §5.2 (nothing changed, appended, one mid row changed, error flipped, shrank, task changed); the v18 vectors replayed; `RelayRemote` watch, unwatch and input for a `Listed` row with and without Paperclip connected, beside a control that a local CLI row behaves as before.
+- Slice 2: `PaperclipWindowDiff` per §5.2 (nothing changed, appended, one mid row changed, error flipped, shrank, task changed); the v18 vectors replayed; `RelayRemote` watch, unwatch and input for a `Listed` row with and without Paperclip connected, beside a control that a local CLI row behaves as before. For §5.5: `AlertPrefs.Parse` with the key true, false, absent and not a boolean; the persona id from an agent id; `Project` with and without a cached picture; `ForPhone` strips a Paperclip row's persona and leaves a Claude row's alone; the without-key roster equals today's bytes; a prefs change re-sends the roster; a Paperclip agent never appears in the `personas` frame.
 
 ### 8.2 Integration (`tests/IntegrationTests`)
 
@@ -358,6 +394,8 @@ Read from source and not run: everything in §5.1; that `ChatPanel` needs no cha
 | 7 | A long comment thread is cheap to re-read whole every 4 s | not measured; three comments took 5 ms | read comments on open, after a send and when a run ends only |
 | 8 | A task stuck in `execution_reconciliation_required` is rare enough to leave to the 30 s "hasn't woken yet" words | measured that it cannot be woken; how often it happens is not known | name the state in the box |
 | 9 | A multi-row restating tail applies correctly on both phones | read from source; run by the slice 2 phone engineers before the desk sends one | the desk sends a `reset` backfill instead |
+| 11 | Old phones behave as §5.5's table says when a Paperclip row carries a persona | read from source at `1a872f4`, not run. The gate means no old phone is ever sent one, so the table is the reason for the gate, not something the feature depends on | nothing: the gate holds either way |
+| 12 | CB-445's cached picture file is accepted by `PersonaImageStore.Offer` and encodes under frames-v5's caps (a custom one is 406 KB, measured) | the desk engineer, with a real cached file | no `image_hash`; the phone draws initials |
 | 10 | `frames-v18` is free | I read v17 on Orbweaver-Mobile `origin/develop` at `1a872f4`; the lead reports v16 as the newest deployed. The contract author checks open branches | take the next number |
 
 Not looked at: the watch app beyond confirming it shows no thread; Paperclip versions other than 2026.1117.0; a `local_trusted` instance.
@@ -366,6 +404,7 @@ Not looked at: the watch app beyond confirming it shows no thread; Paperclip ver
 
 CB-445 puts a Paperclip agent's picture on its orb, and the same picture belongs in this panel's header. The two tickets meet in four files and need not wait on each other.
 
+- **The phone half of CB-445 is §5.5**, in the same contract file as the thread, so a Paperclip row changes once.
 - **The header picture is CB-445's, and this plan adds nothing for it.** `ChatPanel.ApplyAvatar(sessionId)` (`ChatPanel.axaml.cs:1870`) already asks for a face by session id, and this panel opens under the orb's own id, `paperclip:<agent id>`. So when CB-445 teaches that lookup about a Paperclip agent, the header shows the picture with no change here; until then the header shows the orb's letters, as any session without a picture does. CB-443 writes no avatar code and does not read `avatarUrl`.
 - **The name and the line under it are CB-443's**: `DisplayName` is the agent's name. Its role or title goes in the header's meta line only if `ChatHeaderMeta` takes it without a new seam; otherwise it is left out.
 - **One rule CB-445 must hold, stated here because this panel is where it would show:** a custom picture needs the key (`/api/assets/{id}/content`, measured 406 KB), so it is fetched through `IPaperclipApi`, cached once per agent and per URL, and never fetched by the panel or per open. The generated one (`/api/agent-avatars/…`, 26 KB) needs no credential. The picture is not sent to the phone by this plan's frames.
