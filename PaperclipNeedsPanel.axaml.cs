@@ -157,8 +157,8 @@ namespace Orbweaver
             Button? approve = null, decline = null;
             if (PaperclipActions.Answerable(need))
             {
-                approve = Pill("Approve", "#FF2E7D4F");
-                decline = Pill("Decline", "#FF8A3A3A");
+                approve = Pill(need.Kind == "runtime" ? "Allow once" : "Approve", "#FF2E7D4F");
+                decline = Pill(need.Kind == "runtime" ? "Deny" : "Decline", "#FF8A3A3A");
                 buttons.Children.Add(approve);
                 buttons.Children.Add(decline);
             }
@@ -251,7 +251,7 @@ namespace Orbweaver
             }
             else Rows.Children.Remove(row.Card);
             UpdateHeading();
-            Footer.Text = result.IsDone ? (result.Why ?? (approve ? "Approved." : "Declined.")) : null;
+            Footer.Text = result.IsDone ? (result.Why ?? (row.Need.Kind == "runtime" ? (approve ? "Allowed once." : "Denied.") : approve ? "Approved." : "Declined.")) : null;
             Footer.IsVisible = result.IsDone;
             _holdUntil = Clock() + Hold;
             Schedule(Hold, Sweep);

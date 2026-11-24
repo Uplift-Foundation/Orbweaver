@@ -72,14 +72,25 @@ namespace Orbweaver
             {
                 "approval" when need.Id != "pending" => $"/api/approvals/{id}/" + (approve ? "approve" : "reject"),
                 "action" => $"/api/tool-gateway/action-requests/{id}/" + (approve ? "approve" : "decline"),
+                // CB-442: a runtime permission prompt is resolved on its run. One without a run or a turn
+                // (a request kind this build cannot answer) is shown with the link only.
+                "runtime" when !string.IsNullOrEmpty(need.RunId) && !string.IsNullOrEmpty(need.TurnId) =>
+                    $"/api/heartbeat-runs/{Uri.EscapeDataString(need.RunId)}/runtime-requests/{id}/resolve",
                 _ => null,
             };
         }
 
         internal static bool Answerable(PaperclipNeed need) => PathFor(need, true) != null;
 
-        internal static string BodyFor(PaperclipNeed need, string companyId) =>
-            need.Kind == "action"
+        internal static string BodyFor(PaperclipNeed need, string companyId, bool approve = true) =>
+            need.Kind == "runtime"
+                ? JsonSerializer.Serialize(new
+                {
+                    resolution = new { action = approve ? "accept" : "decline" },
+                    requestKind = "permission_approval",
+                    turnId = need.TurnId,
+                })
+            : need.Kind == "action"
                 ? JsonSerializer.Serialize(new { companyId })
                 : JsonSerializer.Serialize(new { decisionNote = DecisionNote });
 
@@ -90,7 +101,7 @@ namespace Orbweaver
         {
             var path = PathFor(need, approve);
             if (path == null) return new(PaperclipActionResult.Refused, "This one can only be answered in Paperclip.");
-            var res = await _api.PostAsync(path, BodyFor(need, _companyId), ct).ConfigureAwait(false);
+            var res = await _api.PostAsync(path, BodyFor(need, _companyId, approve), ct).ConfigureAwait(false);
             var outcome = Classify(res);
 
             // A tool action's approve runs the tool inside the same call, and the
@@ -108,6 +119,15 @@ namespace Orbweaver
             // 409 on a tool action is "no longer pending" / "already resolved".
             else if (need.Kind == "action" && res.StatusCode == 409)
                 outcome = new(PaperclipActionResult.AlreadyDecided, AlreadyDecidedWhy);
+
+            // Runtime: 409 is "stale or no longer pending" (measured), 404 the run or request is gone, 403 is
+            // "Board access required", which for a key that was valid a minute ago means reconnect.
+            if (need.Kind == "runtime")
+            {
+                if (res.StatusCode == 409) outcome = new(PaperclipActionResult.AlreadyDecided, AlreadyDecidedWhy);
+                else if (res.StatusCode == 404) outcome = new(PaperclipActionResult.Refused, RequestGoneWhy);
+                else if (res.StatusCode == 403) outcome = new(PaperclipActionResult.NeedsReconnect, ReconnectWhy);
+            }
 
             // A 4xx other than 401 to an approval is how Paperclip says "not
             // pending" (the measured 422), but the wording is its own, so the item

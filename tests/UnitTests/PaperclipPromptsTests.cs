@@ -76,6 +76,79 @@ public class PaperclipPromptsTests
     private static PaperclipNeed Approval(string id = "a1f0c9d2-0b3e-4f55-8d6a-9e7c1b2a3d44", string title = "Hire a research agent", string tool = "Hire") =>
         new("approval", id, title, "http://pc/approvals/" + id, Tool: tool);
     private static PaperclipNeed Action(string id = "7c4e2b90-5d1a-4a6f-b3c8-0f9e8d7c6b5a") => new("action", id, "Send email", "http://pc/requests", Tool: "Tool action");
+    private static PaperclipNeed Runtime(string id = "rq-1") =>
+        new("runtime", id, "Bash: Create probe directory", "http://pc/agents/x", Tool: "Bash", RunId: "run1", TurnId: "t1");
+
+    [Fact]
+    public async Task A_runtime_permission_is_a_prompt_labelled_Allow_once_and_Deny_under_the_usual_keys_and_answers_through_the_seam()
+    {
+        await Poll(Agent(needs: Runtime()));
+        var (_, _, prompt, push) = Assert.Single(_sent.Prompts);
+        var j = JsonDocument.Parse(prompt).RootElement;
+        Assert.Equal("Bash", j.GetProperty("tool").GetString());
+        Assert.Equal([("approve", "Allow once"), ("decline", "Deny")],
+            j.GetProperty("options").EnumerateArray().Select(o => (o.GetProperty("key").GetString()!, o.GetProperty("label").GetString()!)).ToArray());
+        Assert.NotNull(push);
+        await Answer(AnswerTo(action: "approve"));
+        Assert.Equal(["approve runtime rq-1"], _act.Calls);
+        Assert.Single(_sent.Resolved);
+    }
+
+    [Fact]
+    public async Task Two_runtime_requests_on_one_agent_go_oldest_first_the_second_after_the_first_resolves_and_never_twice()
+    {
+        var older = DateTime.UtcNow.AddMinutes(-2);
+        var first = Runtime("rq-old") with { CreatedAt = older };
+        var second = Runtime("rq-new") with { CreatedAt = older.AddMinutes(1) };
+        await Poll(Agent(needs: [second, first]));
+        await Poll(Agent(needs: [second, first]));                 // another tick: no repeat for the same request
+        Assert.Single(_sent.Prompts);
+        await Answer(AnswerTo(action: "approve"));
+        Assert.Equal(["approve runtime rq-old"], _act.Calls);
+        _now = _now.AddSeconds(31);
+        await Poll(Agent(needs: [second]));                         // the first is gone: the next one alerts as a new request
+        Assert.Equal(2, _sent.Prompts.Count);
+        Assert.NotNull(_sent.Prompts[1].Push);
+    }
+
+    [Fact]
+    public async Task A_runtime_need_and_an_action_need_on_one_agent_are_one_prompt_at_a_time_and_each_answers_by_its_own_kind()
+    {
+        var act = Action() with { CreatedAt = DateTime.UtcNow.AddMinutes(-5) };
+        await Poll(Agent(needs: [Runtime(), act]));
+        Assert.Single(_sent.Prompts);                               // the action is older, so it goes first
+        await Answer(AnswerTo(action: "deny"));
+        Assert.Equal(["decline action " + act.Id], _act.Calls);
+        _now = _now.AddSeconds(31);
+        await Poll(Agent(needs: [Runtime()]));
+        await Answer(AnswerTo(1, "approve"));
+        Assert.Equal("approve runtime rq-1", _act.Calls[1]);
+    }
+
+    [Fact]
+    public async Task A_runtime_request_on_each_of_two_agents_is_a_prompt_each()
+    {
+        const string other = "b2222222-2222-4222-8222-222222222222";
+        var roster = new HashSet<string> { Sid, PaperclipScan.KeyPrefix + other };
+        await _p.OnPolledAsync([Agent(needs: Runtime("rq-a")), Agent(other, "Second", "r", Runtime("rq-b"))], roster);
+        Assert.Equal(2, _sent.Prompts.Count);
+    }
+
+    [Fact]
+    public async Task The_phones_prompt_shows_the_command_a_person_is_allowing()
+    {
+        await Poll(Agent(needs: Runtime() with { Title = "Bash: mkdir cb442-proof-a && ls -ld cb442-proof-a", Summary = "Create empty directory\nTask: Proof" }));
+        var j = JsonDocument.Parse(Assert.Single(_sent.Prompts).Prompt).RootElement;
+        Assert.Contains("mkdir cb442-proof-a && ls -ld cb442-proof-a", j.GetProperty("preview").GetString());
+    }
+
+    [Fact]
+    public async Task A_runtime_permission_the_build_cannot_answer_mints_no_prompt()
+    {
+        await Poll(Agent(needs: Runtime() with { RunId = null, TurnId = null }));
+        Assert.Empty(_sent.Prompts);
+    }
+
     private static PaperclipNeed Blocked() => new("blocked", "issue-1", "Blocked: CB-1 x", "http://pc/issues/1");
 
     private static PaperclipAgent Agent(string id = AgentId, string name = "Ledger bot", string role = "accountant", params PaperclipNeed[] needs) =>

@@ -15,7 +15,7 @@ namespace Orbweaver
 
     internal enum PaperclipLink { Off, Connecting, Connected, NeedsReconnect, Unreachable }
 
-    // One thing that needs a person. Kind is "approval", "action" or "blocked".
+    // One thing that needs a person. Kind is "approval", "action", "runtime" or "blocked".
     internal sealed record PaperclipNeed(
         string Kind,
         string Id,
@@ -28,7 +28,10 @@ namespace Orbweaver
         DateTime? ExpiresAt = null,
         // CB-428: what a phone's prompt calls it ("Hire", "Budget override", "Strategy", "Approval",
         // "Tool action"). Null on a need no prompt is minted for.
-        string? Tool = null);
+        string? Tool = null,
+        // CB-442: a runtime permission request is answered on its run, with the turn it was raised in.
+        string? RunId = null,
+        string? TurnId = null);
 
     internal sealed record PaperclipAgent(
         string Id, string Name, string Role, string Title,
@@ -370,7 +373,11 @@ namespace Orbweaver
             PaperclipLink Link = PaperclipLink.Connecting,
             string Status = "Connecting to Paperclip…",
             bool NeedRuns = true,
-            IReadOnlyList<string>? Degraded = null)
+            IReadOnlyList<string>? Degraded = null,
+            // CB-442: per running run, what its events said last time and whether that reading is already a tick old.
+            IReadOnlyDictionary<string, (IReadOnlyList<PaperclipApi.RawRuntimeRequest> Requests, bool Stale)>? RuntimeByRun = null,
+            // The last message a per-run events fault logged, so one odd body is one line, not one per tick.
+            string? RuntimeFault = null)
         {
             internal static readonly PollState Initial = new();
         }
@@ -386,7 +393,8 @@ namespace Orbweaver
         // that backs off and, past the grace, says unreachable. Never throws
         // for a transport failure.
         internal static async Task<StepResult> StepAsync(
-            IPaperclipApi api, PaperclipConfig cfg, PollState st, DateTime now, CancellationToken ct)
+            IPaperclipApi api, PaperclipConfig cfg, PollState st, DateTime now, CancellationToken ct,
+            Action<string>? log = null)
         {
             if (!cfg.Enabled)
                 return new StepResult(PollState.Initial with { Link = PaperclipLink.Off, Status = "Paperclip is switched off." }, FastEvery);
@@ -503,8 +511,39 @@ namespace Orbweaver
                 }
             }
 
+            // CB-442: a run waiting on a permission prompt has no flag anywhere (measured), so each running run's events
+            // are read on the slow tick. A failed read keeps that run's last answer for one tick; a second miss drops it.
+            var runtime = st.RuntimeByRun;
+            var fault = st.RuntimeFault;
+            if (slow && firstFailure == null && live != null)
+            {
+                var seen = new Dictionary<string, (IReadOnlyList<PaperclipApi.RawRuntimeRequest>, bool)>();
+                foreach (var run in live.Where(x => x.Status == "running").DistinctBy(x => x.Id))
+                {
+                    // Read and parse are one unit: a run whose body throws is treated as a failed read for that run
+                    // only, so one odd body never takes the company's poll down with it.
+                    IReadOnlyList<PaperclipApi.RawRuntimeRequest>? read = null;
+                    try
+                    {
+                        var ev = await api.GetAsync($"/api/heartbeat-runs/{Uri.EscapeDataString(run.Id)}/events?limit=500", ct).ConfigureAwait(false);
+                        if (ev.IsOk)
+                            read = PaperclipApi.ParseRuntimeRequests(run.Id, ev.Body)
+                                .Select(r => r with { AgentId = run.AgentId, IssueId = run.IssueId }).ToList();
+                    }
+                    catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
+                    {
+                        if (StepFailureLine(ex, ref fault, "runtime events read failed") is { } line) log?.Invoke(line);
+                    }
+                    if (read != null) seen[run.Id] = (read, false);
+                    else if (runtime != null && runtime.TryGetValue(run.Id, out var prior) && !prior.Stale)
+                        seen[run.Id] = (prior.Requests, true);
+                }
+                runtime = seen;
+            }
+
             var stamped = st with
             {
+                RuntimeByRun = runtime, RuntimeFault = fault,
                 LastFast = fast ? now : st.LastFast,
                 LastSlow = slow ? now : st.LastSlow,
                 Agents = agents, LiveRuns = live, Runs = runs, Approvals = approvals,
@@ -519,7 +558,8 @@ namespace Orbweaver
                 : PaperclipApi.Compose(new PaperclipApi.ComposeInput(
                     agents, live ?? Array.Empty<PaperclipApi.RawLiveRun>(), runs ?? Array.Empty<PaperclipApi.RawRun>(),
                     approvals ?? Array.Empty<PaperclipApi.RawApproval>(), actions ?? Array.Empty<PaperclipApi.RawActionRequest>(),
-                    blocked ?? Array.Empty<PaperclipApi.RawIssue>(), tasks, cfg.BaseUrl, st.IssuePrefix, now));
+                    blocked ?? Array.Empty<PaperclipApi.RawIssue>(), tasks, cfg.BaseUrl, st.IssuePrefix, now,
+                    runtime?.Values.SelectMany(v => v.Requests).ToList()));
             var (stamps, _) = PaperclipApi.TrackAwake(st.AwakeStamps ?? new Dictionary<string, DateTime>(), composed, now);
 
             return new StepResult(stamped with
@@ -574,6 +614,17 @@ namespace Orbweaver
         internal static bool NeedsNewClient(bool haveClient, string lastKey, string lastUrl, PaperclipConfig cfg) =>
             !haveClient || cfg.Key != lastKey || cfg.BaseUrl != lastUrl;
 
+        // CB-442: a step that throws backs the loop off for 30 s, and used to say nothing, which hid a parser
+        // fault on the mini for the length of a proof. One line per distinct message: the exception's type and
+        // message, cut, never a body, key or address from this code (a message is the framework's own words).
+        internal static string? StepFailureLine(Exception ex, ref string? lastMessage, string what = "poll step failed")
+        {
+            var message = ex.Message.Length <= 200 ? ex.Message : ex.Message[..200];
+            if (message == lastMessage) return null;
+            lastMessage = message;
+            return $"{what} {ex.GetType().Name}: {message}";
+        }
+
         // ---- the loop -------------------------------------------------------
 
         // Excluded from coverage: a `while` around StepAsync and a delay.
@@ -582,6 +633,7 @@ namespace Orbweaver
         {
             var state = PollState.Initial;
             string lastKey = "", lastUrl = "";
+            string? lastFailure = null;
             IPaperclipApi? api = null;
             while (!ct.IsCancellationRequested)
             {
@@ -595,14 +647,16 @@ namespace Orbweaver
                 TimeSpan wait;
                 try
                 {
-                    var step = await StepAsync(api, cfg, state, DateTime.UtcNow, ct).ConfigureAwait(false);
+                    var step = await StepAsync(api, cfg, state, DateTime.UtcNow, ct, PaperclipHttp.DefaultLog).ConfigureAwait(false);
                     state = step.Next; wait = step.Wait;
+                    lastFailure = null;
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
                 catch (Exception ex)
                 {
                     state = state with { Status = ex.Message };
                     wait = Backoff[^1];
+                    if (StepFailureLine(ex, ref lastFailure) is { } line) PaperclipHttp.DefaultLog(line);
                 }
                 PublishStep(state, cfg, remembered, RosterStore, DateTime.UtcNow);
                 if (state.Published != null) remembered = Array.Empty<PaperclipAgent>();   // never used once live
