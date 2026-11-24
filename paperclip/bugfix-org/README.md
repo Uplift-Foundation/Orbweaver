@@ -184,13 +184,18 @@ Then, none of which a package can carry:
    the others. In that order there is no moment at which a non-lead can comment
    or move a ticket. Paperclip cannot limit a transition to Bug tickets, so the
    lead's instructions carry that rule.
-   **On Atlassian's consent page, leave only `read_jira` and `write_jira`
-   ticked** (untick Compass, Confluence, Teamwork Graph and the whole Search
-   group), and check the site says Uplifttech, switching account first if it
-   offers another. With all 11 permissions granted, every call through the
-   connector came back HTTP 400 from `mcp.atlassian.com`, even
-   `atlassianUserInfo`. Re-consented with those two, the grant matched the
-   triage org's six scopes and the same calls answered (measured 2026-11-24).
+   **On Atlassian's consent page, expand all three groups and leave exactly
+   `read_jira`, `write_jira` and `search_jira` ticked.** Check the site says
+   Uplifttech, switching account first if it offers another. Measured
+   2026-11-24, three consents in a row:
+   - all 11 permissions ticked: every connector call came back HTTP 400 from
+     `mcp.atlassian.com`, even `atlassianUserInfo`;
+   - only `read_jira` and `write_jira`: reads worked, but `searchJiraIssuesUsingJql`
+     answered "tool not found", because the toolset sits under Search, not Read;
+   - all three Jira toolsets: the grant matched the triage org's six OAuth scopes
+     and search, read and the lead's write all answered, while a non-lead's
+     transition was refused by the block policy.
+   A click on an item inside a collapsed group does not register.
    The OAuth callback goes to `127.0.0.1:3100`, so a browser on another machine
    cannot complete it directly. Catch the callback path there, then replay it on
    the mini with a board session.
