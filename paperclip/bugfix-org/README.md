@@ -18,12 +18,25 @@ honest state of what has been run.
 The personas are ones the triage org does not use, so no agent draws two orbs.
 Their pictures live in `.profiles-assets/`, which is not checked in.
 
-## Status: dry-run clean, never imported
+## Status: imported once, never run
 
-**Nothing in this package has been imported into a live Paperclip.** What exists
-is the package, `tools/test-paperclip-bugfix-org.py` (run by CI), and the
-profile change below. Every row of plan appendix A.7 is still to be measured in
-phase 0.
+**Imported into the existing company "Orbweaver Bug Fix" on the mini, by QA
+(Ines), 2026-11-24, and nothing has run since.** Measured: four agents, the
+`cb-bugfix` skill, the project "Orbweaver develop" and the routine were created
+and the company was reported `unchanged`; setup step 8's command worked exactly
+as written and the read-back showed `isolated_workspace`, `git_worktree`,
+`origin/develop` and `bugfix/pc-{{slug}}`. **Still unrun:** a worktree actually
+realised for a run on this project, and any agent run at all, because the agents
+cannot run until the AI connection exists (step 3). Every row of plan appendix
+A.7 not named here is still to be measured in phase 0.
+
+**Deviation from the plan:** appendix A.4 lists `tools/check-pr-body.sh`, the
+body rules lifted out of `tools/require-team-sdlc.sh` and called by both. It was
+not built. `tools/test-paperclip-bugfix-org.py` feeds the skill's PR template to
+the real hook instead, with a control that the hook denies it without the
+"Installed on" line, so the org's body shape is checked by the hook's own code
+and cannot drift from it, but an agent has no script to check its body with
+before `gh pr create`; the hook is what refuses a bad one.
 
 **Import dry run, measured 2026-11-24 on the Mac mini** against the live
 instance (Paperclip 2026.1117.0), `paperclipai company import paperclip/bugfix-org
@@ -66,7 +79,7 @@ has **not** been run.
 | The YAML has no anchors, no trailing comments and no unquoted colon strings, by a reader of this repo's own | **measured** (the test), not run through Paperclip's reader |
 | `heartbeat.maxConcurrentRuns` and `maxDailyRuns` are fields Paperclip's agent policy reads; `adapter.config.env` takes `{type: plain, value}` bindings; a project's `executionWorkspacePolicy.workspaceStrategy` takes `git_worktree`, `baseRef`, `branchTemplate` | **read from source** (Paperclip 2026.1117.0), not run on an import |
 | `maxDailyRuns` gates assignment wakes | **measured** by Ines on the mini's live Paperclip, 2026-11-24: with a cap of 16 and three assignments, one run happened; the control with no cap ran all three. An earlier reading of `heartbeat/timer-policy` that it caps only timer heartbeats was wrong. **Deferred wakes are not dropped:** they fire when the cap resets at UTC midnight or when it is raised, so a backlog of assignments can burst later. The cap delays a burst, it does not end it. What stops a backlog burst is the warden's pause of the company (plan section 6) |
-| The lead's `claude-opus-5-5` model id is accepted by the connection | **assumed**; the id appears in Paperclip's source, nobody ran it here |
+| The lead's `claude-opus-5-5` model id is accepted by the connection | **assumed**; the id appears in Paperclip's source and the import accepted it, which says nothing about the connection accepting it; the first real run settles that |
 | `defaultMode: isolated_workspace` with the strategy realises one worktree per issue under the sandbox profile | **assumed** (A.7 row 2) |
 | `git`, `gh` and `dotnet` run unprompted under `approve-all` with the opt-out variables set | **assumed** for a real run; `dotnet build` and four test classes passed in a shell under the profile (plan A.2, **measured**) |
 | The profile's new deny stops a process under the profile creating the lock | **measured** on the MacBook, 2026-11-24: a copy of the rule with the lock's name swapped for a scratch name refused `touch` (`Operation not permitted`) while `touch` of another name in `/private/tmp` succeeded. The live lock path was deliberately not touched, and the live service profile has not been re-rendered, so this says nothing about the running service |
@@ -120,13 +133,22 @@ paperclipai company import paperclip/bugfix-org --target existing -C <company id
 
 Then, none of which a package can carry:
 
-1. **Pause the routine** straight after import. It imports active with its
-   schedule enabled, and nothing below is in place yet.
+1. **Pause the routine and disable its trigger**, straight after import. It
+   imports active with its schedule trigger `enabled: true`, and pausing the
+   routine alone leaves that trigger enabled (measured by QA). Do both
+   (`PATCH /routine-triggers/<id>` with `{"enabled": false}`, then read back
+   `enabled: false` and the routine `paused`); re-enabling needs both, the
+   routine back to `active` and the trigger `enabled: true`. Nothing below is in
+   place yet.
 2. **Sandbox profile.** Re-render `paperclip/triage-org/host/paperclip-service.sb.template`
    (the command is in the triage README) so the profile gains the deny for
    `/private/tmp/ow-install.lock`, then restart the service through its launchd
    job. The org never installs, so it never takes that lock.
 3. **AI connection** bound to each of the four agents, as for the triage org.
+   This comes before any run: imported agents arrive `paused` with
+   `lifecycleState: verifying` (measured), and verification needs the
+   connection. An assignment to a verifying agent queues a run that never
+   starts, so cancel it rather than waiting.
 4. **Jira, block first.** Add a tool policy of type `block` naming
    `addCommentToJiraIssue` and `transitionJiraIssue` and the three non-lead
    agents, at a priority ahead of the others. Only then finish the connector
@@ -152,7 +174,9 @@ Then, none of which a package can carry:
 8. **Worktree policy.** Apply it to that project (the import route refuses it):
    `paperclipai project update orbweaver-develop -C <company id> --execution-workspace-policy-json "$(cat paperclip/bugfix-org/host/project-workspace-policy.json)"`,
    then read the project back to confirm `workspaceStrategy` is `git_worktree`
-   with `branchTemplate` `bugfix/pc-{{slug}}`. Not yet run.
+   with `branchTemplate` `bugfix/pc-{{slug}}`. Run by QA on 2026-11-24 against
+   the existing company and read back as expected. `defaultProjectWorkspaceId`
+   did not need setting: the imported `git_repo` workspace was already primary.
 
 ## What the org does not do
 
