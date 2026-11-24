@@ -40,7 +40,7 @@ namespace Orbweaver
         private string? _taskId;
         private IReadOnlyList<PaperclipChat.Comment> _comments = Array.Empty<PaperclipChat.Comment>();
         private PaperclipChat.Activity? _activity;
-        private bool _lastLive, _readOnce, _needsReconnect;
+        private bool _lastLive, _readOnce, _needsReconnect, _published;
         private DateTime _commentsAt = DateTime.MinValue;
 
         internal event Action<ChatSnapshot>? Updated;
@@ -62,7 +62,7 @@ namespace Orbweaver
                 if (_cts != null) return;
                 _cts = new CancellationTokenSource();
                 _taskId = null; _comments = Array.Empty<PaperclipChat.Comment>(); _activity = null;
-                _lastLive = _readOnce = _needsReconnect = false; _commentsAt = DateTime.MinValue;
+                _lastLive = _readOnce = _needsReconnect = _published = false; _commentsAt = DateTime.MinValue;
                 var ct = _cts.Token;
                 _ = Task.Run(() => LoopAsync(ct));
             }
@@ -130,7 +130,12 @@ namespace Orbweaver
             }
             else if (string.IsNullOrEmpty(t.RunId) && _activity != null) { _activity = null; changed = true; }
 
-            if (changed) Updated?.Invoke(new ChatSnapshot(t.Task, _comments, _activity, _needsReconnect));
+            // The first tick always raises, so a panel opened on an agent with no task still hears "no task".
+            if (changed || !_published)
+            {
+                _published = true;
+                Updated?.Invoke(new ChatSnapshot(t.Task, _comments, _activity, _needsReconnect));
+            }
         }
 
         private async Task<bool> ReadEventsAsync(string runId, CancellationToken ct)
