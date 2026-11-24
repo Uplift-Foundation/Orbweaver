@@ -346,6 +346,55 @@ public class NewChatWindowHeightTests : IDisposable
         }
     }
 
+    // CB-434: Resume against a remote machine — loading, a full list, each
+    // error status, and back to this machine — holds the same height.
+    [AvaloniaFact]
+    public void TheHeightHoldsAcrossARemoteResumeAndItsStatuses()
+    {
+        var fake = new NewChatWindowMachineTests.FakeLauncher();
+        fake.Answers["mini"] = NewChatWindowMachineTests.Info(installed: ["claude", "codex"]) with { Resume = 1 };
+        var remote = new NewChatWindowRemoteResumeTests.FakeRemote
+        {
+            List = new(RemoteListOutcome.Ok, Enumerable.Range(0, 9)
+                .Select(i => NewChatWindowRemoteResumeTests.Row("r" + i, "Remote " + i)).ToList(), null)
+        };
+        NewChatWindow.PeerLauncherForTests = fake;
+        NewChatWindow.PeerLinkOnForTests = true;
+        NewChatWindow.RemotePastForTests = remote;
+        var window = EverythingAvailable();
+        NewChatWindow.ResumeLoadInlineForTests = true;
+        try
+        {
+            var opened = ContentHeight(window);
+            window.MachineCombo.SelectedIndex = 1;
+            Assert.Equal(opened, ContentHeight(window));
+
+            window.LocalResumeRadio.IsChecked = true;
+            Assert.True(window.ResumePane.IsVisible);
+            Assert.Equal(opened, ContentHeight(window));
+
+            foreach (var outcome in new[] { RemoteListOutcome.NeedsUpdate, RemoteListOutcome.Unreachable, RemoteListOutcome.Ok })
+            {
+                remote.List = new(outcome, outcome == RemoteListOutcome.Ok ? remote.List.Rows : Array.Empty<PastSessionRow>(), "a very long reason that wraps " + new string('x', 200));
+                window.ResumeOlder.IsChecked = window.ResumeOlder.IsChecked != true;
+                Assert.Equal(opened, ContentHeight(window));
+            }
+
+            window.ResumeList.SelectedIndex = 0;
+            window.StartButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+            Assert.Equal(opened, ContentHeight(window));
+
+            window.MachineCombo.SelectedIndex = 0;
+            Assert.Equal(opened, ContentHeight(window));
+        }
+        finally
+        {
+            NewChatWindow.RemotePastForTests = null;
+            NewChatWindow.PeerLinkOnForTests = null;
+            NewChatWindow.ResumeLoadInlineForTests = false;
+        }
+    }
+
     [AvaloniaFact]
     public void TheResumeGhostMeasuresLikeThePaneItStandsIn()
     {

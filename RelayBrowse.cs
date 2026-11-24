@@ -484,6 +484,13 @@ namespace Orbweaver
         // Whether a canonical path is, or is inside, one of the system folders.
         internal static bool IsDenied(IBrowseFileSystem fs, string canonical) => Denied(fs, canonical);
 
+        // CB-434 (contract amendment 2): whether a phone may see or resume a
+        // session recorded in `cwd`: inside the browse scope, judged on the
+        // canonical path. A folder that no longer exists keeps its written form
+        // in Canonical, so it is judged lexically. No folder is out of scope.
+        internal static bool PhoneMaySee(string? cwd, BrowseSettings settings, IBrowseFileSystem fs) =>
+            cwd is not null && IsAbsolute(cwd, fs) && Canonical(fs, cwd) is { } canonical && InScope(settings, fs, canonical);
+
         // Equal under the filesystem's own case rule.
         internal static bool SamePath(string a, string b, IBrowseFileSystem fs) => Equal(a, b, fs);
 
@@ -552,7 +559,8 @@ namespace Orbweaver
         internal const string CapsCk = "caps";
 
         // CB-404: frames-v13 adds run_options; the names are byte-sorted.
-        internal static readonly string Caps = CapsFrame("list_dir", RunFrames.Cap);
+        // CB-434: frames-v17 adds resume (list_sessions and a resume launch), byte-sorted between them.
+        internal static readonly string Caps = CapsFrame("list_dir", SessionFrames.Cap, RunFrames.Cap);
 
         internal static string CapsFrame(params string[] names) =>
             new CanonicalJson().Str("t", "caps").Array("caps", names.Select(CanonicalJson.Quote)).ToString();

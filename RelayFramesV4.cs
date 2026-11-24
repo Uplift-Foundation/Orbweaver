@@ -64,12 +64,21 @@ namespace Orbweaver
         // The launch's optional account names one this desktop does not list.
         internal const string UnknownAccount = "unknown_account";
 
+        // CB-434 (frames-v17): resume. already_running is an ok code carrying
+        // the session id. unknown_resume: no such session in this desk's index
+        // for that CLI and account, not in that folder, or (phone) outside the
+        // browse scope. resume_unsupported: the installed CLI cannot resume by
+        // id, with this desk's own sentence as `why`. resume_started is not
+        // here: a phone never receives it (PeerLaunchCodes.ResumeStarted).
+        internal const string AlreadyRunning = "already_running",
+            UnknownResume = "unknown_resume", ResumeUnsupported = "resume_unsupported";
+
         // CB-339 (frames-v11 errors_added.sealed_err_codes): the folder picker's four. forbidden_path is
         // the one answer for everything outside the roots, whether or not the folder exists.
         internal const string ForbiddenPath = "forbidden_path", UnknownPath = "unknown_path",
             Unreadable = "unreadable", RateLimited = "rate_limited";
 
-        internal static readonly string[] OkCodes = [Watching, Unwatched, Typed, Launched, RunFrames.SetOk];
+        internal static readonly string[] OkCodes = [Watching, Unwatched, Typed, Launched, RunFrames.SetOk, AlreadyRunning];
 
         internal static readonly string[] ErrCodes =
         [
@@ -78,13 +87,15 @@ namespace Orbweaver
             LaunchFailed, NoSession, UnknownImage, UnknownAccount, ForbiddenPath, UnknownPath, Unreadable, RateLimited,
             // CB-404 (frames-v13 set_run).
             RunFrames.BadValue, RunFrames.Unavailable, RunFrames.SetFailed,
+            // CB-434 (frames-v17 resume).
+            UnknownResume, ResumeUnsupported,
         ];
 
         // Only these carry the desktop's own sentence; every other code's
         // copy is the phone's (frames-v4 err.rules).
         // frames-v13 adds two: a set the desk cannot make here, and one the CLI refused.
         internal static readonly string[] CodesWithWhy =
-            [NotAtPrompt, TypingFailed, NoTerminal, LaunchFailed, RunFrames.Unavailable, RunFrames.SetFailed];
+            [NotAtPrompt, TypingFailed, NoTerminal, LaunchFailed, RunFrames.Unavailable, RunFrames.SetFailed, ResumeUnsupported];
 
         internal static string Ok(string reference, string code, string sessionId, long? total = null)
         {
@@ -126,11 +137,11 @@ namespace Orbweaver
 
     internal sealed record LaunchFields(
         string Cwd, string Cli, string Persona, string Model, string ParentSessionId,
-        string FirstMessage, string Nonce, long ExpiresAt, string Account = "");
+        string FirstMessage, string Nonce, long ExpiresAt, string Account = "", string ResumeSessionId = "");
 
     internal static class RelayRequests
     {
-        internal static readonly string[] Types = ["watch", "unwatch", "input", "launch", "persona_image", "list_dir", "set_run"];
+        internal static readonly string[] Types = ["watch", "unwatch", "input", "launch", "persona_image", "list_dir", "set_run", "list_sessions"];
 
         // Null when the plaintext is not a v4 request at all (an answer, or a
         // type this desktop does not know) — those keep their existing paths.
@@ -183,6 +194,9 @@ namespace Orbweaver
                     return RunFrames.FieldOk(field) && RunFrames.IdOk(value)
                         ? new SetRunRequest(reference, sid, field!, value!)
                         : new BadFrameRequest(reference, sid);
+                // CB-434 (frames-v17): a phone listing this desk's past sessions.
+                case "list_sessions":
+                    return SessionFrames.Parse(f, reference);
                 default:
                     return ParseLaunch(f, reference);
             }
@@ -204,12 +218,21 @@ namespace Orbweaver
                 if (a.ValueKind != JsonValueKind.String) return new BadFrameRequest(reference, null);
                 account = a.GetString()!;
             }
+            // CB-434 (frames-v17): resume_session_id is additive too; when present
+            // it must be a string of the id shape ("" is a new chat).
+            var resume = "";
+            if (f.TryGetProperty("resume_session_id", out var r))
+            {
+                if (r.ValueKind != JsonValueKind.String) return new BadFrameRequest(reference, null);
+                resume = r.GetString()!;
+                if (resume.Length > 0 && !PastSessions.IsSafeId(resume)) return new BadFrameRequest(reference, null);
+            }
             if (Str(f, "cwd") is not { } cwd || Str(f, "cli") is not { } cli || Str(f, "persona") is not { } persona
                 || Str(f, "model") is not { } model || Str(f, "first_message") is not { } message
                 || Str(f, "nonce") is not { } nonce || Str(f, "sig") is not { } sig
                 || !f.TryGetProperty("expires_at", out var e) || e.ValueKind != JsonValueKind.Number || !e.TryGetInt64(out var expires))
                 return new BadFrameRequest(reference, null);
-            return new LaunchRequest(reference, new LaunchFields(cwd, cli, persona, model, parent, message, nonce, expires, account), sig);
+            return new LaunchRequest(reference, new LaunchFields(cwd, cli, persona, model, parent, message, nonce, expires, account, resume), sig);
         }
 
         private static string? Str(JsonElement e, string name) =>

@@ -217,6 +217,11 @@ namespace Orbweaver
 
         private static IPeerLauncher? PeerLauncher => PeerLauncherForTests ?? PeerSessions.Launcher;
 
+        // CB-434: the far machine's past sessions. A launcher that cannot list
+        // them leaves Resume off for a remote machine, as it was in CB-361.
+        internal static IRemotePastSessions? RemotePastForTests;
+        private static IRemotePastSessions? RemotePast => RemotePastForTests ?? PeerLauncher as IRemotePastSessions;
+
         // Two lines reserved under the Machine row, always, for the same
         // reason the status line reserves three: every note it shows (asking,
         // no answer, switch off) arrives after the window is on screen, and a
@@ -376,6 +381,12 @@ namespace Orbweaver
         private string? _resumeLoadedKey;
         private string? _resumeFolderWanted;
         private IReadOnlyList<PastSession>? _resumeSessions;
+        // CB-434: set while the list on screen is a far machine's. Its rows'
+        // transcript paths and folders are that machine's, so nothing here reads
+        // them from disk, and its live ids come off the wire.
+        private bool _resumeRemote;
+        private HashSet<string>? _resumeRemoteLive;
+        private string? _resumeProblem;
         private string? _watchResumeSessionId;
         internal static bool ResumeLoadInlineForTests;
 
@@ -1496,7 +1507,7 @@ namespace Orbweaver
 
         private async Task StartClicked()
         {
-            if (_machine is not null)
+            if (_machine is not null && !ResumeActive)
             {
                 await StartRemoteClicked();
                 return;
@@ -2103,7 +2114,17 @@ namespace Orbweaver
 
         // Resume is what Start does only for a local CLI on this machine.
         private bool ResumeActive =>
-            _resumeMode && !_openClawSelected && _machine is null && _selectedCli is not null;
+            _resumeMode && !_openClawSelected && _selectedCli is not null && ResumeHere;
+
+        // Local, or a remote machine that has answered and can list sessions.
+        private bool ResumeHere =>
+            _machine is null || (_scope is { State: NewChatMachines.InfoState.Ready, AnyCli: true, Info.Resume: >= 1 } && RemotePast is not null);
+
+        // The wire account for the far machine, as StartRemoteClicked sends it.
+        private string RemoteAccount() =>
+            _accountSection.IsVisible && _accountCombo.SelectedItem is NewChatAccounts.Choice choice
+                ? choice.ProfileDir ?? RelayAccounts.Default
+                : RelayAccounts.Default;
 
         private string? SelectedProfileDir() =>
             _accountSection.IsVisible && _accountCombo.SelectedItem is NewChatAccounts.Choice choice
@@ -2139,21 +2160,30 @@ namespace Orbweaver
         private void UpdateLocalModeVisibility()
         {
             var local = !_openClawSelected;
-            _localModeRow.IsVisible = local && _localModeAvailable;
-
             var remote = _machine is not null;
-            _localResumeRadio.IsEnabled = !remote;
-            ToolTip.SetTip(_localResumeRadio, remote ? "Resume works on this machine only." : null);
+            _localModeRow.IsVisible = local && (remote ? RemotePast is not null : _localModeAvailable);
+
+            // A remote machine resumes through its own index (CB-434); only one
+            // that cannot be asked, or is not ready, keeps the radio off.
+            _localResumeRadio.IsEnabled = !remote || ResumeHere;
+            ToolTip.SetTip(_localResumeRadio, remote && !ResumeHere
+                ? (RemotePast is null ? "Resume is not available on that machine from here."
+                    : _scope is { State: NewChatMachines.InfoState.Ready, Info.Resume: < 1 } ? PeerResumeCopy.UpdateToResume(_machine!.Name!)
+                    : "Resume is available once the machine answers.")
+                : null);
 
             _resumePane.IsVisible = ResumeActive;
             if (local && !_openClawSelected && ResumeActive)
             {
                 _startButton.Content = "Resume";
+                // Start's own gate is the remote scope's folder; Resume needs a row.
+                if (remote && _trustAsked is null) _startButton.IsEnabled = !_resumeLaunching;
                 LoadResume();
             }
             else if (!_openClawSelected)
             {
                 _startButton.Content = "Start";
+                if (remote && _trustAsked is null) _startButton.IsEnabled = _scope?.StartEnabled == true && !_resumeLaunching;
             }
         }
 
@@ -2205,7 +2235,9 @@ namespace Orbweaver
             _resumeList.ContainerPrepared += (_, e) =>
             {
                 if (e.Container is ListBoxItem item)
-                    item.IsEnabled = item.DataContext is not PastSessionRow { Session.FolderMissing: true };
+                    item.IsEnabled = item.DataContext is not PastSessionRow { Session.FolderMissing: true }
+                        // A far row with no folder cannot be resumed: its folder is in the signed request.
+                        && !(_resumeRemote && item.DataContext is PastSessionRow { Session.Cwd: null or "" });
             };
             var box = new Grid { Height = ExistingListHeight };
             box.Children.Add(_resumeList);
@@ -2252,9 +2284,22 @@ namespace Orbweaver
         }
 
         // A folder-filter entry: null path is "All folders".
-        internal sealed record ResumeFolder(string? Path)
+        internal sealed record ResumeFolder(string? Path, bool Remote = false)
         {
-            public override string ToString() => Path is null ? "All folders" : System.IO.Path.GetFileName(Path.TrimEnd('/', '\\')) is { Length: > 0 } n ? n : Path;
+            public override string ToString() => Path is null ? "All folders" : FolderLabel(Path, Remote);
+        }
+
+        // The last segment of a folder. A far machine's paths follow its own
+        // separators, not this one's — a Windows desk's `C:\src\app` read on a Mac
+        // is one segment to Path.GetFileName, and a POSIX one on Windows is fine
+        // either way — so a remote path is cut at either separator.
+        internal static string FolderLabel(string path, bool remote)
+        {
+            var trimmed = path.TrimEnd('/', '\\');
+            var name = remote
+                ? trimmed[(trimmed.LastIndexOfAny(new[] { '/', '\\' }) + 1)..]
+                : System.IO.Path.GetFileName(trimmed);
+            return name.Length > 0 ? name : path;
         }
 
         // Reads off the UI thread; a result that arrives after the CLI, account
@@ -2268,13 +2313,24 @@ namespace Orbweaver
             // Every visibility pass asks; only a different CLI, account or
             // "Older" is a different question. The rows stay put otherwise, as
             // the Open existing list does while the dialog sits open.
-            var key = cli + "|" + profileDir + "|" + older;
+            var machine = _machine?.Name;
+            var key = machine + "|" + cli + "|" + profileDir + "|" + older;
+            if (machine is not null) key += "|" + RemoteAccount();
             if (key == _resumeLoadedKey) return;
             _resumeLoadedKey = key;
             var generation = ++_resumeGeneration;
             _resumeLoading = true;
             _resumeSessions = null;
+            _resumeRemoteLive = null;
+            _resumeProblem = null;
+            _resumeRemote = machine is not null;
             RefreshResumeList();
+
+            if (machine is not null && RemotePast is { } remote)
+            {
+                LoadRemoteResume(remote, machine, cli, RemoteAccount(), older, generation);
+                return;
+            }
 
             var now = ResumeNowOffset();
             void Apply(IReadOnlyList<PastSession> rows)
@@ -2294,6 +2350,53 @@ namespace Orbweaver
 
             _ = Task.Run(() => SafeLoad(cli, profileDir, older, now))
                 .ContinueWith(t => Dispatcher.UIThread.Post(() => Apply(t.Result)), TaskScheduler.Default);
+        }
+
+        // The far machine's list. Off the UI thread like the local read; a late
+        // answer for a machine, CLI, account or "Older" the form has left is
+        // dropped by the generation. Every failure is a status, never a throw.
+        private void LoadRemoteResume(IRemotePastSessions remote, string machine, NewChatCli cli, string account, bool older, int generation)
+        {
+            void Apply(RemoteListResult result)
+            {
+                if (generation != _resumeGeneration) return;
+                _resumeLoading = false;
+                if (result.Outcome == RemoteListOutcome.Ok)
+                {
+                    _resumeSessions = result.Rows.Select(r => r.Session).ToList();
+                    _resumeRemoteLive = new HashSet<string>(result.Rows.Where(r => r.IsLive).Select(r => r.Session.Id), StringComparer.Ordinal);
+                    BuildResumeFolderFilter();
+                    // The far desk caps what it returns; say so rather than let
+                    // a short list read as the whole history.
+                    if (result.Total is { } total && total > result.Rows.Count && string.IsNullOrEmpty(_statusLine.Text))
+                        _statusLine.Text = PeerResumeCopy.Capped(machine, result.Rows.Count);
+                }
+                else
+                {
+                    _resumeProblem = result.Outcome == RemoteListOutcome.NeedsUpdate
+                        ? PeerResumeCopy.NeedsUpdate(machine)
+                        : PeerResumeCopy.Unreachable(machine, result.Why);
+                }
+
+                RefreshResumeList();
+            }
+
+            async Task<RemoteListResult> Run()
+            {
+                try { return await remote.ListAsync(machine, cli, account, older, CancellationToken.None); }
+                catch (Exception ex)
+                {
+                    return new RemoteListResult(RemoteListOutcome.Unreachable, Array.Empty<PastSessionRow>(), ex.GetType().Name);
+                }
+            }
+
+            if (ResumeLoadInlineForTests)
+            {
+                Apply(Run().GetAwaiter().GetResult());
+                return;
+            }
+
+            _ = Task.Run(Run).ContinueWith(t => Dispatcher.UIThread.Post(() => Apply(t.Result)), TaskScheduler.Default);
         }
 
         private static IReadOnlyList<PastSession> SafeLoad(NewChatCli cli, string? profileDir, bool older, DateTimeOffset now)
@@ -2323,7 +2426,7 @@ namespace Orbweaver
             var keep = _resumeFolderWanted ?? (_resumeFolderFilter.SelectedItem as ResumeFolder)?.Path;
             _resumeFolderWanted = null;
             var items = new List<ResumeFolder> { new((string?)null) };
-            items.AddRange(PastSessions.Folders(_resumeSessions!).Select(f => new ResumeFolder(f)));
+            items.AddRange(PastSessions.Folders(_resumeSessions!).Select(f => new ResumeFolder(f, _resumeRemote)));
             _resumeFolderFilter.ItemsSource = items;
             var at = keep is null ? 0 : items.FindIndex(i => i.Path == keep);
             _resumeFolderFilter.SelectedIndex = at >= 0 ? at : 0;
@@ -2332,7 +2435,9 @@ namespace Orbweaver
         private IReadOnlyList<PastSessionRow> ResumeRowsShown()
         {
             if (_resumeSessions is null) return Array.Empty<PastSessionRow>();
-            var live = new HashSet<string>(CurrentStatuses().Where(kv => kv.Value.IsLocalCli).Select(kv => kv.Key), StringComparer.Ordinal);
+            var live = _resumeRemote
+                ? _resumeRemoteLive ?? new HashSet<string>(StringComparer.Ordinal)
+                : new HashSet<string>(CurrentStatuses().Where(kv => kv.Value.IsLocalCli).Select(kv => kv.Key), StringComparer.Ordinal);
             var folder = (_resumeFolderFilter.SelectedItem as ResumeFolder)?.Path;
             return PastSessions.List(
                 _resumeSessions, live, _resumeSearch.Text, folder,
@@ -2343,7 +2448,8 @@ namespace Orbweaver
         {
             var shown = ResumeRowsShown();
             string? text = null;
-            if (_resumeLoading) text = "Loading…";
+            if (_resumeLoading) text = _resumeRemote && _machine?.Name is { } m ? PeerResumeCopy.Loading(m) : "Loading…";
+            else if (_resumeProblem is not null) text = _resumeProblem;
             else if (_resumeSessions is { Count: 0 }) text = _resumeOlder.IsChecked == true ? "No past sessions" : "No sessions in the last 30 days";
             else if (shown.Count == 0) text = "No matches";
 
@@ -2378,10 +2484,12 @@ namespace Orbweaver
 
         private Control ResumeAvatar(PastSession s)
         {
+            // A far machine's folder is not one this machine can read a persona
+            // out of: initials only.
             try
             {
-                var persona = LocalPersona.Resolve(s.Cwd, SourceOf(s.Cli), LocalPersona.UserConfigDirs());
-                if (persona.AvatarPath is { Length: > 0 } path && File.Exists(path))
+                LocalPersona.Persona? persona = _resumeRemote ? null : LocalPersona.Resolve(s.Cwd, SourceOf(s.Cli), LocalPersona.UserConfigDirs());
+                if (persona?.AvatarPath is { Length: > 0 } path && File.Exists(path))
                 {
                     // Decoded at twice the 24 dip it is drawn at, once per file,
                     // and released with the window: a persona picture can be
@@ -2417,10 +2525,10 @@ namespace Orbweaver
         // `counting` is true while a lazily-read message count is still on its
         // way ("…"); a count that could not be read is left out rather than
         // shown as zero.
-        internal static string ResumeDetail(PastSessionRow row, int? count = null, bool counting = false)
+        internal static string ResumeDetail(PastSessionRow row, int? count = null, bool counting = false, bool remote = false)
         {
             var s = row.Session;
-            var folder = s.Cwd is null ? "unknown folder" : (System.IO.Path.GetFileName(s.Cwd.TrimEnd('/', '\\')) is { Length: > 0 } n ? n : s.Cwd);
+            var folder = s.Cwd is null ? "unknown folder" : FolderLabel(s.Cwd, remote);
             var detail = folder;
             if (counting) detail += " · …";
             else if ((count ?? s.MessageCount) is { } c) detail += " · " + c + (c == 1 ? " message" : " messages");
@@ -2479,6 +2587,14 @@ namespace Orbweaver
         private void BindResumeCount(PastSessionRow row, TextBlock detail)
         {
             var s = row.Session;
+            // A far machine's transcript is not ours to read: the count is what
+            // came over the wire, or left out.
+            if (_resumeRemote)
+            {
+                detail.Text = ResumeDetail(row, remote: true);
+                return;
+            }
+
             if (s.MessageCount is not null || _resumeCounts.TryGetValue(s.TranscriptPath, out _))
             {
                 detail.Text = ResumeDetail(row, _resumeCounts.GetValueOrDefault(s.TranscriptPath));
@@ -2527,6 +2643,18 @@ namespace Orbweaver
             if (session.FolderMissing)
             {
                 _statusLine.Text = "That session's folder no longer exists.";
+                return;
+            }
+
+            if (_resumeRemote && string.IsNullOrEmpty(session.Cwd))
+            {
+                _statusLine.Text = PeerResumeCopy.NoFolder(_machine?.Name ?? "that machine");
+                return;
+            }
+
+            if (_resumeRemote && _machine?.Name is { } machineName)
+            {
+                RemoteResumeClicked(cli, row, machineName);
                 return;
             }
 
@@ -2583,6 +2711,117 @@ namespace Orbweaver
             }
 
             _ = Task.Run(Run).ContinueWith(t => Dispatcher.UIThread.Post(() => Finish(t.Result)), TaskScheduler.Default);
+        }
+
+        // CB-434. The far machine decides "already running" (its own roster, asked
+        // at the moment of the click, not the list's minutes-old mark), and says
+        // so; this side then takes the user to that session's orb if the roster
+        // has one here, and otherwise names the machine it is running on.
+        private void RemoteResumeClicked(NewChatCli cli, PastSessionRow row, string machine)
+        {
+            if (RemotePast is not { } remote) return;
+            var session = row.Session;
+            var account = RemoteAccount();
+            _resumeLaunching = true;
+            _startButton.IsEnabled = false;
+            // The far desk starts it whatever happens here, so the form cannot
+            // move to another machine and lose the answer (as StartRemoteClicked).
+            _machineCombo.IsEnabled = false;
+            _statusLine.Text = PeerResumeCopy.Resuming(machine);
+
+            void Finish(RemoteResumeResult result)
+            {
+                _resumeLaunching = false;
+                _startButton.IsEnabled = true;
+                _machineCombo.IsEnabled = true;
+                OnRemoteResumed(cli, session, machine, result);
+            }
+
+            async Task<RemoteResumeResult> Run()
+            {
+                try { return await remote.ResumeAsync(machine, cli, session.Id, session.Cwd ?? "", account, CancellationToken.None); }
+                catch (Exception ex)
+                {
+                    return new RemoteResumeResult(RemoteResumeOutcome.Failed, "Couldn't resume that session: " + ex.GetType().Name, false);
+                }
+            }
+
+            if (ResumeLoadInlineForTests)
+            {
+                Finish(Run().GetAwaiter().GetResult());
+                return;
+            }
+
+            _ = Task.Run(Run).ContinueWith(t => Dispatcher.UIThread.Post(() => Finish(t.Result)), TaskScheduler.Default);
+        }
+
+        // A far session's orb here is keyed "rc:<account>:<route>"
+        // (RemoteControlSessions.Remote.Key), and the far desk's route for a
+        // session is "sid:<session id>" (RemoteMirrorServer.RouteFor, which is
+        // what its roster offers as Route). So the key is the one builder's
+        // output, not the bare id, and only the account in the middle is not
+        // known here; match the rest exactly.
+        private static OrbWindow? MirroredOrbFor(string machine, string sessionId)
+        {
+            var route = ":" + RemoteMirrorServer.RouteFor(sessionId);
+            foreach (var (key, status) in CurrentStatuses())
+            {
+                if (status.Source != SessionSource.RemoteControl) continue;
+                if (key.StartsWith("rc:", StringComparison.Ordinal) && key.EndsWith(route, StringComparison.Ordinal)
+                    && OrbForSession(key) is { } orb)
+                    return orb;
+            }
+
+            return null;
+        }
+
+        private void OnRemoteResumed(NewChatCli cli, PastSession session, string machine, RemoteResumeResult result)
+        {
+            switch (result.Outcome)
+            {
+                case RemoteResumeOutcome.Launched:
+                    // Nothing local is written and no orb watch starts: the last
+                    // CLI and account are this machine's, and the new orb comes
+                    // from the far machine's own roster.
+                    _statusLine.Text = result.IsCodex || cli == NewChatCli.Codex
+                        ? PeerResumeCopy.ResumedCodex(machine)
+                        : PeerResumeCopy.Resumed(machine);
+                    break;
+                case RemoteResumeOutcome.AlreadyRunning:
+                    if (MirroredOrbFor(machine, session.Id) is { } orb)
+                    {
+                        (FocusOrbForTests ?? (o => o.GoToSession()))(orb);
+                        _statusLine.Text = PeerResumeCopy.AlreadyRunningFocused(machine);
+                    }
+                    else
+                    {
+                        _statusLine.Text = PeerResumeCopy.AlreadyRunning(machine);
+                    }
+
+                    // The row now reads "running".
+                    _resumeRemoteLive?.Add(session.Id);
+                    RefreshResumeList();
+                    break;
+                case RemoteResumeOutcome.Unsupported:
+                    _statusLine.Text = result.Message ?? PeerResumeCopy.Unsupported(machine, RelayAccounts.CliName(cli));
+                    break;
+                case RemoteResumeOutcome.NeedsUpdate:
+                    _statusLine.Text = PeerResumeCopy.NeedsUpdate(machine);
+                    break;
+                case RemoteResumeOutcome.Failed:
+                    // The far desk may no longer have this session (unknown_resume),
+                    // so the list on screen is stale: ask again, keeping the status.
+                    _resumeLoadedKey = null;
+                    LoadResume();
+                    _statusLine.Text = PeerResumeCopy.Failed(machine, result.Message);
+                    break;
+                case RemoteResumeOutcome.Unreachable:
+                    _statusLine.Text = PeerResumeCopy.Unreachable(machine, result.Message);
+                    break;
+                default:
+                    _statusLine.Text = PeerResumeCopy.Failed(machine, result.Message);
+                    break;
+            }
         }
 
         private void OnResumeLaunched(NewChatCli cli, PastSession session, string? profileDir, LaunchResult launch)

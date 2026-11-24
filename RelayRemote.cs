@@ -77,6 +77,13 @@ namespace Orbweaver
             // forbidden_path for a list_dir, as a desk with nothing to share would.
             internal BrowseSeams? Browse { get; init; }
 
+            // CB-434: resume. Null means this desk cannot resume (resume_unsupported)
+            // and, with Past null too, does not advertise the cap.
+            internal LaunchRunner.ResumeSeams? Resume { get; init; }
+
+            // CB-434: the past-sessions page list_sessions answers from.
+            internal PastSessionsRemote? Past { get; init; }
+
             // CB-404: the run controls a set_run drives and a run frame reports.
             // Null means none: no run frames, and every set_run is unavailable.
             internal IRunControls? RunControls { get; init; }
@@ -325,6 +332,8 @@ namespace Orbweaver
             PersonaImageRequest p => Task.Run(() => ImageAsync(phoneId, p)),
             // CB-339: a folder listing, built off the pump with its own clock on the read.
             ListDirRequest d => ListDirAsync(phoneId, d),
+            // CB-434: a past-sessions page, off the pump: it reads transcript heads.
+            ListSessionsRequest s => Task.Run(() => ListSessions(phoneId, s)),
             // CB-404: a run change, off the pump — a control request waits on the CLI's answer.
             SetRunRequest r => Task.Run(() => SetRunAsync(phoneId, r)),
             // The only other kind RelayRequests makes.
@@ -377,6 +386,48 @@ namespace Orbweaver
             var frames = BrowseFrames.Dir(r.Ref, outcome.Listing!);
             _seams.Log($"list_dir {RelayLink.Safe(r.Ref)} {outcome.Listing!.Items.Count} entries");
             foreach (var frame in frames) _send.Reply(phoneId, null, frame);
+        }
+
+        // CB-434 (frames-v17 list_sessions): list_dir's rate limit first, then
+        // the shape, then the page, kept to the browse scope (amendment 2). A
+        // desk with no Past seams answers unreadable. Logged as the ref, the
+        // code and a count, never a title, a folder or an id.
+        private void ListSessions(string phoneId, ListSessionsRequest r)
+        {
+            if (!_browseRate.TryAccept(phoneId, _seams.Now().ToUnixTimeMilliseconds()))
+            {
+                Err(phoneId, r.Ref, RelayReplies.RateLimited);
+                return;
+            }
+            if (r.Query is not { } query)
+            {
+                Err(phoneId, r.Ref, RelayReplies.BadFrame);
+                return;
+            }
+            if (_seams.Past is not { } past)
+            {
+                Err(phoneId, r.Ref, RelayReplies.Unreadable);
+                return;
+            }
+
+            var page = past.Page(query, PhoneScope());
+            if (!page.Ok)
+            {
+                Err(phoneId, r.Ref, page.Code);
+                return;
+            }
+            _seams.Log($"list_sessions {RelayLink.Safe(r.Ref)} {page.Rows.Count}/{page.Total}");
+            foreach (var frame in SessionFrames.Sessions(r.Ref, query.Cli, page)) _send.Reply(phoneId, null, frame);
+        }
+
+        // The phone's browse scope, read on each request as list_dir's is. With
+        // no browse seams nothing is in scope, as a desk with nothing to share
+        // answers forbidden_path to every list_dir.
+        private Func<string?, bool> PhoneScope()
+        {
+            if (_seams.Browse is not { } browse) return _ => false;
+            var settings = browse.Settings();
+            return cwd => BrowseRules.PhoneMaySee(cwd, settings, browse.Fs);
         }
 
         // frames-v13 set_run, after the parser's bad_frame: unknown_session, then
@@ -617,14 +668,27 @@ namespace Orbweaver
                 return;
             }
 
+            // CB-434 (amendment 2): a phone's Codex resume must carry a first
+            // message. Without one Codex fires no hook, so the phone would wait
+            // on a session that never appears in its roster.
+            if (f.ResumeSessionId.Length > 0 && LaunchGate.CliFor(f.Cli) == NewChatCli.Codex && f.FirstMessage.Length == 0)
+            {
+                Err(phoneId, r.Ref, RelayReplies.BadInput);
+                return;
+            }
+
             var outcome = await runner.RunAsync(f, LaunchRunner.TrustPolicy.Report).ConfigureAwait(false);
             if (outcome.SessionId is not { } sessionId)
             {
                 Err(phoneId, r.Ref, outcome.Code, why: outcome.Why);
                 return;
             }
-            Ok(phoneId, r.Ref, RelayReplies.Launched, sessionId);
-            if (f.FirstMessage.Length == 0) return;
+            // launched, or CB-434's already_running and resume_started, each with the id.
+            Ok(phoneId, r.Ref, outcome.Code, sessionId);
+            // Already running: nothing was started, so nothing is typed into
+            // somebody's live session on the strength of a resume request. The
+            // phone opens that chat and the person types there.
+            if (f.FirstMessage.Length == 0 || outcome.Code == RelayReplies.AlreadyRunning) return;
 
             // Codex and Grok were handed the message as their launch prompt, so
             // it is delivered the moment the session exists: `typed` here means
@@ -641,7 +705,10 @@ namespace Orbweaver
         }
 
         private LaunchRunner Runner() =>
-            new(new LaunchRunner.Seams(_seams.Launch, _seams.Accounts, Snapshot, _seams.Now, _seams.Delay));
+            new(new LaunchRunner.Seams(_seams.Launch, _seams.Accounts, Snapshot, _seams.Now, _seams.Delay)
+            {
+                Resume = _seams.Resume is { } resume ? resume with { InScope = cwd => PhoneScope()(cwd) } : null,
+            });
 
         // Kept where RelayRemote's callers already look for it.
         internal static bool SameFolder(string? a, string b, bool isWindows) => LaunchRunner.SameFolder(a, b, isWindows);

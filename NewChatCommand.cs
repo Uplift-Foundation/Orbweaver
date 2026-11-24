@@ -100,10 +100,20 @@ namespace Orbweaver
         // Null for an id that is not plain letters, digits and dashes. Every
         // id these CLIs write is a UUID; anything else came from somewhere it
         // should not have, and would otherwise reach a shell or a cmd /k line.
-        internal static IReadOnlyList<string>? ResumeArgs(NewChatCli cli, string id)
+        internal static IReadOnlyList<string>? ResumeArgs(NewChatCli cli, string id, string firstMessage = "")
         {
             if (!PastSessions.IsSafeId(id)) return null;
-            return cli == NewChatCli.Codex ? ["resume", id] : ["--resume", id];
+            List<string> args = cli == NewChatCli.Codex ? ["resume", id] : ["--resume", id];
+            // CB-434: a phone's first message on a resume. Codex and Grok take it
+            // as the prompt after `--` (frames-v4's rule, so a message starting
+            // with '-' is a prompt and never a flag); Claude's is typed after
+            // check-in, as a new chat's is.
+            if (firstMessage.Length > 0 && PromptAsArgument(cli))
+            {
+                args.Add("--");
+                args.Add(firstMessage);
+            }
+            return args;
         }
 
         // The general Windows launch shape: wt.exe when it's installed

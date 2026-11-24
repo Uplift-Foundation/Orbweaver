@@ -38,6 +38,9 @@ namespace Orbweaver
             // CB-397: what the 120 s question lifetime waits on. Defaults to
             // Delay; a suite supplies one it can release.
             internal Func<TimeSpan, Task>? TrustDelay { get; init; }
+
+            // CB-434: what a resume reads. Null: every resume is resume_unsupported.
+            internal LaunchRunner.ResumeSeams? Resume { get; init; }
         }
 
         // How long the far desk holds a trust question open.
@@ -55,7 +58,7 @@ namespace Orbweaver
         internal PeerLaunchServer(Seams seams)
         {
             _seams = seams;
-            _runner = new LaunchRunner(new LaunchRunner.Seams(seams.Launch, seams.Accounts, seams.Snapshot, seams.Now, seams.Delay));
+            _runner = new LaunchRunner(new LaunchRunner.Seams(seams.Launch, seams.Accounts, seams.Snapshot, seams.Now, seams.Delay) { Resume = seams.Resume });
         }
 
         internal int NoncesSeen => _nonces.Count;
@@ -70,7 +73,8 @@ namespace Orbweaver
                 return Refuse(machine, RelayReplies.BadFrame);
 
             var fields = new LaunchFields(request.Cwd, request.Cli, request.Persona, request.Model,
-                request.ParentSessionId, request.FirstMessage, request.Nonce, request.ExpiresAt, request.Account);
+                request.ParentSessionId, request.FirstMessage, request.Nonce, request.ExpiresAt, request.Account,
+                request.ResumeSessionId ?? "");
             var signer = new LaunchGate.PeerSigner(_seams.KnownPeer(machine)?.Pin ?? "", _seams.OwnPin(), certDer);
 
             if (LaunchGate.Decide(new LaunchRequest("peer", fields, request.Sig), signer, _seams.Now(), _nonces,
@@ -92,8 +96,10 @@ namespace Orbweaver
 
             // The machine name and the code only, never the folder: the mirror
             // log is something people paste into bug reports.
-            _seams.Log($"peer-launch {machine} {PeerLaunchCodes.Launched}");
-            return new PeerLaunchResult(true, PeerLaunchCodes.Launched, sessionId, null);
+            // CB-434: the code is launched, already_running or resume_started; a
+            // resumed id is never logged either.
+            _seams.Log($"peer-launch {machine} {outcome.Code}");
+            return new PeerLaunchResult(true, outcome.Code, sessionId, null);
         }
 
         // --- the trust question (CB-397) -------------------------------------
@@ -250,6 +256,9 @@ namespace Orbweaver
             new RelayRemote.AccountSeams(RelayAccounts.Choices, _ => null),
             () => DateTimeOffset.UtcNow,
             Task.Delay,
-            line => MirrorLog.Say("peer-launch", line));
+            line => MirrorLog.Say("peer-launch", line))
+        {
+            Resume = LaunchRunner.DefaultResumeSeams(),
+        };
     }
 }
