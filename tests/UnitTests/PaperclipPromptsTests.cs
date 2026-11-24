@@ -380,13 +380,13 @@ public class PaperclipPromptsTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Paperclip_unreachable_or_throwing_is_stale_prompt_and_the_prompt_stays_pending_and_answerable_again(bool throws)
+    public async Task Paperclip_unreachable_or_throwing_is_the_unreachable_refusal_and_the_prompt_stays_pending_and_answerable_again(bool throws)
     {
         await Poll(Agent(needs: Approval()));
         _act.Result = PaperclipActionResult.Unreachable;
         if (throws) _act.Throw = new HttpRequestException("down");
         await Answer(AnswerTo());
-        Assert.Equal("stale_prompt", Assert.Single(_sent.Refusals).Code);
+        Assert.Equal(PaperclipPrompts.UnreachableCode, Assert.Single(_sent.Refusals).Code);
         Assert.Empty(_sent.Resolved);
         Assert.True(_p.HasPending(Sid));
         if (throws) Assert.Contains(_log, l => l.Contains("paperclip-action-failed"));
@@ -554,7 +554,7 @@ public class PaperclipPromptsTests
         await Poll(Agent(needs: Approval()));
         _act.Result = result;
         await Answer(AnswerTo());
-        Assert.Equal("stale_prompt", Assert.Single(_sent.Refusals).Code);
+        Assert.Equal(name == "Unreachable" ? PaperclipPrompts.UnreachableCode : "stale_prompt", Assert.Single(_sent.Refusals).Code);
         Assert.True(_p.HasPending(Sid));
     }
 
@@ -572,12 +572,12 @@ public class PaperclipPromptsTests
     }
 
     [Fact]
-    public async Task With_no_actions_available_an_answer_is_stale_prompt_and_nothing_is_lost()
+    public async Task With_no_actions_available_an_answer_is_the_unreachable_refusal_and_nothing_is_lost()
     {
         await Poll(Agent(needs: Approval()));
         _actions = null;                                                                            // Paperclip switched off or no company
         await Answer(AnswerTo());
-        Assert.Equal("stale_prompt", Assert.Single(_sent.Refusals).Code);
+        Assert.Equal(PaperclipPrompts.UnreachableCode, Assert.Single(_sent.Refusals).Code);
         Assert.True(_p.HasPending(Sid));
     }
 
@@ -642,7 +642,7 @@ public class PaperclipPromptsTests
         api.Gets[EventsFrom40] = FakePaperclip.Ok("[" + Filler(40, 43) + "]");
         await Poll(Agent(needs: Runtime() with { Seq = 40 }));
         await Answer(AnswerTo(action: "approve"));
-        Assert.Equal("stale_prompt", Assert.Single(_sent.Refusals).Code);
+        Assert.Equal(PaperclipPrompts.UnreachableCode, Assert.Single(_sent.Refusals).Code);
         Assert.Empty(_sent.Resolved);
         Assert.True(_p.HasPending(Sid));
         Assert.Equal(1, api.Posts);
@@ -674,10 +674,10 @@ public class PaperclipPromptsTests
 
         api.Gets.Clear();                                    // the read times out too
         await Answer(AnswerTo(action: "approve"));
-        Assert.Equal("stale_prompt", _sent.Refusals[^1].Code);
+        Assert.Equal(PaperclipPrompts.UnreachableCode, _sent.Refusals[^1].Code);
         api.ThrowOnGet = new InvalidOperationException("odd");
         await Answer(AnswerTo(action: "approve"));
-        Assert.Equal("stale_prompt", _sent.Refusals[^1].Code);
+        Assert.Equal(PaperclipPrompts.UnreachableCode, _sent.Refusals[^1].Code);
     }
 
     [Fact]
@@ -688,7 +688,7 @@ public class PaperclipPromptsTests
         api.Gets["/api/heartbeat-runs/run1/events?afterSeq=539&limit=500"] = FakePaperclip.Ok("[" + Resolved(540, "rq-1", "accept") + "]");
         await Poll(Agent(needs: Runtime() with { Seq = 40 }));
         await Answer(AnswerTo(action: "approve"));
-        Assert.Equal("stale_prompt", Assert.Single(_sent.Refusals).Code);
+        Assert.Equal(PaperclipPrompts.UnreachableCode, Assert.Single(_sent.Refusals).Code);
         Assert.Equal(1, api.Calls.Count(c => c.StartsWith("GET")));
     }
 
@@ -699,7 +699,7 @@ public class PaperclipPromptsTests
         api.Gets["/api/heartbeat-runs/run1/events?afterSeq=0&limit=500"] = FakePaperclip.Ok("[{\"eventType\":\"log\"}]");
         await Poll(Agent(needs: Runtime()));                 // no Seq: reads from the start
         await Answer(AnswerTo(action: "approve"));
-        Assert.Equal("stale_prompt", Assert.Single(_sent.Refusals).Code);
+        Assert.Equal(PaperclipPrompts.UnreachableCode, Assert.Single(_sent.Refusals).Code);
         Assert.Equal(1, api.Calls.Count(c => c.StartsWith("GET")));
     }
 
@@ -707,7 +707,7 @@ public class PaperclipPromptsTests
     [InlineData("approve", "approved", true, null)]
     [InlineData("deny", "rejected", true, null)]
     [InlineData("approve", "rejected", false, "not_pending")]
-    [InlineData("approve", "pending", false, "stale_prompt")]
+    [InlineData("approve", "pending", false, "paperclip_unreachable")]
     public async Task An_approval_whose_post_timed_out_is_confirmed_from_the_item_itself(string action, string status, bool resolved, string? refusal)
     {
         var api = RealActions();
@@ -728,7 +728,7 @@ public class PaperclipPromptsTests
         api.Gets[list] = FakePaperclip.Ok($"{{\"actionRequests\":[{{\"request\":{{\"id\":\"{need.Id}\",\"status\":\"pending\"}},\"toolTitle\":\"Send email\"}}]}}");
         await Poll(Agent(needs: need));
         await Answer(AnswerTo(action: "approve"));
-        Assert.Equal("stale_prompt", Assert.Single(_sent.Refusals).Code);
+        Assert.Equal(PaperclipPrompts.UnreachableCode, Assert.Single(_sent.Refusals).Code);
         api.Gets[list] = FakePaperclip.Ok("{\"actionRequests\":[]}");
         await Answer(AnswerTo(action: "approve"));
         Assert.Equal("not_pending", _sent.Refusals[^1].Code);      // gone, and which way it went is not on the list
@@ -763,7 +763,7 @@ public class PaperclipPromptsTests
         var clock = System.Diagnostics.Stopwatch.StartNew();
         await Answer(AnswerTo(action: "approve"));
         Assert.True(clock.Elapsed < TimeSpan.FromSeconds(3));
-        Assert.Equal("stale_prompt", Assert.Single(_sent.Refusals).Code);
+        Assert.Equal(PaperclipPrompts.UnreachableCode, Assert.Single(_sent.Refusals).Code);
         Assert.True(_p.HasPending(Sid));
         Assert.Equal(1, api.Posts);
     }
@@ -775,11 +775,11 @@ public class PaperclipPromptsTests
         api.Gets[EventsFrom40] = FakePaperclip.Ok("[" + Filler(40, 43) + "]");        // the read says: not applied yet
         await Poll(Agent(needs: Runtime() with { Seq = 40 }));
         await Answer(AnswerTo(action: "approve"));                                    // tap one: POST timed out, still pending
-        Assert.Equal("stale_prompt", Assert.Single(_sent.Refusals).Code);
+        Assert.Equal(PaperclipPrompts.UnreachableCode, Assert.Single(_sent.Refusals).Code);
         // Paperclip applies the first POST after all; the person taps again and the second POST is a 409.
         api.PostResult = FakePaperclip.Status(PaperclipHttpKind.Other, 409);
         await Answer(AnswerTo(action: "approve"));
-        Assert.Equal(["stale_prompt", "not_pending"], _sent.Refusals.Select(r => r.Code).ToArray());
+        Assert.Equal([PaperclipPrompts.UnreachableCode, "not_pending"], _sent.Refusals.Select(r => r.Code).ToArray());
         Assert.Empty(_sent.Resolved);                                                 // nothing resolved by the phone
         Assert.Equal(2, api.Posts);                                                   // two POSTs, the second refused: one action applied in total
         await Poll(Agent());                                                          // the request has left the run: the poll clears it
@@ -798,7 +798,7 @@ public class PaperclipPromptsTests
         await Answer(AnswerTo(action: "approve"));
         api.PostResult = FakePaperclip.Status(PaperclipHttpKind.Other, 409);
         await Answer(AnswerTo(action: "approve"));
-        Assert.Equal(["stale_prompt", "not_pending"], _sent.Refusals.Select(r => r.Code).ToArray());
+        Assert.Equal([PaperclipPrompts.UnreachableCode, "not_pending"], _sent.Refusals.Select(r => r.Code).ToArray());
         api.Gets[EventsFrom40] = FakePaperclip.Ok("[" + Filler(40, 43) + "," + Resolved(44, "rq-1", "accept") + "]");   // applied after all
         await Poll(Agent());
         Assert.Equal("phone:" + PhoneId, Assert.Single(_sent.Resolved).By);

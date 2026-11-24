@@ -58,4 +58,23 @@ public partial class RelayLinkTests
         var b = new RelayPhoneStream().Roster(never);
         Assert.Equal(System.Text.Encoding.UTF8.GetString(b), System.Text.Encoding.UTF8.GetString(a));
     }
+
+    // CB-447: the refusal goes sealed to the one phone that answered, worded as that phone asked.
+    [Fact]
+    public void An_unreachable_paperclip_is_refused_as_paperclip_unreachable_only_to_a_phone_that_asked_and_stale_prompt_to_any_other()
+    {
+        var (link, _, phone, _, _) = Paired();
+        string CodeOf(string code) =>
+            phone.OpenFromDesktop(link.SendRefusal(phone.Id, "01JCD0PROMPT00000000000AB1", "paperclip:a", code).Single()).GetProperty("code").GetString()!;
+
+        Assert.Equal("stale_prompt", CodeOf(PaperclipPrompts.UnreachableCode));              // never sent prefs
+        link.OnFrame(phone.Sealed("pair", """{"t":"prefs","done_alerts":"all","paperclip_unreachable":true}"""));
+        Assert.Equal("paperclip_unreachable", CodeOf(PaperclipPrompts.UnreachableCode));
+        Assert.Equal("stale_prompt", CodeOf("stale_prompt"));                                // a refusing Paperclip is stale_prompt for everyone
+        Assert.Equal("not_pending", CodeOf("not_pending"));
+        link.OnFrame(phone.Sealed("pair", """{"t":"prefs","done_alerts":"all","paperclip_unreachable":"true"}"""));   // not the JSON true
+        Assert.Equal("stale_prompt", CodeOf(PaperclipPrompts.UnreachableCode));
+        Assert.Empty(link.SendRefusal("ph_unknown", "r", "paperclip:a", PaperclipPrompts.UnreachableCode));
+    }
 }
+

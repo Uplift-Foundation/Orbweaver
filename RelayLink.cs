@@ -1124,10 +1124,17 @@ namespace Orbweaver
             return WithActivity(frames);
         }
 
+        // frames-v18: paperclip_unreachable only for a phone whose stored prefs say so, else stale_prompt.
+        internal static string RefusalFor(string code, bool phoneAsked) =>
+            code == PaperclipPrompts.UnreachableCode && !phoneAsked ? AnswerGate.StalePrompt : code;
+
         // A refusal goes only to the phone that answered.
         internal IReadOnlyList<string> SendRefusal(string phoneId, string requestId, string sessionId, string code)
         {
             if (!Welcomed || !_channels.TryGetValue(phoneId, out var c)) return [];
+            // CB-447 (frames-v18): the new code only for a phone that asked for it; every other phone is told what
+            // it always was (the same outcome, worded stale_prompt), so an older build never meets a code it does not know.
+            code = RefusalFor(code, c.Alerts.PaperclipUnreachable);
             return Collect(SealTo(c, "action", RelayCrypto.Ck(c.CkKey, sessionId),
                 System.Text.Encoding.UTF8.GetBytes(PromptFrames.Refusal(requestId, sessionId, code))));
         }

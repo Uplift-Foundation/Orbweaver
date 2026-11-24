@@ -26,6 +26,22 @@ namespace Orbweaver
     // unit test against a fake.
     internal sealed class PaperclipPrompts
     {
+        // CB-447 (frames-v18): the answer refusal for "could not reach Paperclip, and it did not apply the answer".
+        // Not one of frames-v3's six codes (AnswerGate.Codes): only a phone whose prefs say paperclip_unreachable
+        // true is sent it; RelayLink.SendRefusal words it as stale_prompt for every other.
+        internal const string UnreachableCode = "paperclip_unreachable";
+
+        // The refusal for an answer Paperclip did not take: none when it did (Done). Already decided in Paperclip is
+        // not_pending, an unreachable Paperclip is the code above, and a refusing one or one asking to reconnect is
+        // stale_prompt for every phone.
+        internal static string? RefusalCode(PaperclipActionResult result) => result switch
+        {
+            PaperclipActionResult.Done => null,
+            PaperclipActionResult.AlreadyDecided => AnswerGate.NotPending,
+            PaperclipActionResult.Unreachable => UnreachableCode,
+            _ => AnswerGate.StalePrompt,
+        };
+
         // Paperclip keeps an item pending for as long as it takes; frames-v3's 1800 is a terminal
         // dialog's lifetime (frames-v15 prompt.frame.expires_at).
         internal const int Lifetime = 86400;
@@ -313,7 +329,10 @@ namespace Orbweaver
                 // longer list the item.
                 live.Pending.Answered = false;
                 if (outcome.Result == PaperclipActionResult.Unreachable) live.Unconfirmed = (phoneId, approving);
-                Refuse(phoneId, answer, outcome.Result == PaperclipActionResult.AlreadyDecided ? AnswerGate.NotPending : AnswerGate.StalePrompt);
+                // CB-447 (frames-v18): an unreachable Paperclip, after DecideAsync's own check that it did not apply
+                // the answer, is its own refusal; RelayLink words it as stale_prompt for a phone that has not asked
+                // for it. A refusing Paperclip or one asking to reconnect stays stale_prompt for every phone.
+                Refuse(phoneId, answer, RefusalCode(outcome.Result)!);
             }
             catch (Exception ex) { _log($"warning paperclip-answer-failed {answer.RequestId} {ex.GetType().Name}"); }
             finally { _gate.Release(); }

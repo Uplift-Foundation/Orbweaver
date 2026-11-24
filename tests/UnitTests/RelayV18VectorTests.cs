@@ -198,4 +198,33 @@ public class RelayV18VectorTests
         var stripped = RelayRoster.ForPhone(sessions, paperclipPersonas: false);
         Assert.Equal(JsonSerializer.Serialize(without), Encoding.UTF8.GetString(RelayRoster.RosterJson(without.GetProperty("seq").GetInt64(), stripped)));
     }
+
+    // The answer refusal: its frame is frames-v3's shape, and the table is the desk's decision per outcome and per phone.
+    [Fact]
+    public void The_unreachable_answer_refusal_is_a_v3_frame_and_the_table_is_what_the_desk_decides()
+    {
+        var r = V.GetProperty("answer_refusal");
+        var frame = JsonDocument.Parse(Str(r, "frame")).RootElement;
+        Assert.Equal(Str(r, "frame"), PromptFrames.Refusal(Str(frame, "request_id"), Str(frame, "session_id"), PaperclipPrompts.UnreachableCode));
+        Assert.Equal("paperclip_unreachable", PaperclipPrompts.UnreachableCode);
+
+        var decided = new Dictionary<string, PaperclipActionResult>
+        {
+            ["decided"] = PaperclipActionResult.Done,
+            ["already_decided"] = PaperclipActionResult.AlreadyDecided,
+            ["unreachable"] = PaperclipActionResult.Unreachable,
+            ["refusing"] = PaperclipActionResult.Refused,
+            ["reconnect"] = PaperclipActionResult.NeedsReconnect,
+        };
+        var rows = r.GetProperty("table").EnumerateArray().ToList();
+        foreach (var row in rows)
+        {
+            var sent = PaperclipPrompts.RefusalCode(decided[Str(row, "outcome")]);
+            var expected = row.GetProperty("code").ValueKind == JsonValueKind.Null ? null : Str(row, "code");
+            var wire = sent is null ? null : RelayLink.RefusalFor(sent, row.GetProperty("paperclip_unreachable").GetBoolean());
+            Assert.Equal(expected, wire);
+        }
+        Assert.Equal(10, rows.Count);
+    }
 }
+
