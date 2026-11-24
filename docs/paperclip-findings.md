@@ -153,7 +153,7 @@ As reported by QA and the lead, on a real Windows PC against the LAN Paperclip (
 
 - A **successful agent run under the native runner** (no run has succeeded there; the native runs that happened failed).
 - An **"Ask first" tool action request**: its row has never been seen, so the parser's keys remain guesses.
-- A **blocked task waiting on another task**, so the other `blockerAttention` states.
+- A task an agent itself marks blocked **on a person with no sub-task**: an attempt did not end blocked, so this shape is unmeasured. The app treats it, like any row that is not the covered case, as needing a person.
 - The **one-orb fold on a real screen**: a hook-firing agent next to a local session, and a company of more than eight agents folding and unfolding.
 - **Anything on a phone**: the roster rows, the old-build behaviour, and release 2's prompts.
 - **`local_trusted` connect**, and **local discovery on Windows** (the Paperclip there is on another machine).
@@ -200,3 +200,13 @@ Measured 2026-11-24 on the mini's Paperclip 2026.1117.0, one run of an agent in 
 - Polling cost over a LAN or on a long run; 403 as the answer to a key that was valid a minute ago (mapped to "reconnect", not seen).
 
 **What Orbweaver does:** on the 4 s tick it reads the events of each `running` live run, keeps requests whose latest event is `created`, and shows one per agent as a `runtime` need ("Bash: Create probe directory"), answerable with "Allow once" / "Deny" in the flyout and on the phone (same option keys, different labels). Only `permission_approval` with accept and decline choices is answerable; anything else links to Paperclip. A failed events read keeps that run's last answer for one tick.
+
+## A blocked task waiting on its own sub-tasks (CB-444)
+
+Measured 2026-11-24 on Paperclip 2026.1117.0 (fixtures `native/issues-blocked-covered.json` and `native/issues-blocked-cancelled-child.json`, reduced and scrubbed from the real rows).
+
+- A lead depending on a helper task that is queued or running stays `status: "blocked"`, and its `…/issues?status=blocked` row carries `blockerAttention { state: "covered", reason: "active_child", unresolvedBlockerCount: 1, coveredBlockerCount: 1, stalledBlockerCount: 0, attentionBlockerCount: 0, blockingTreeLive: true }`. It reached `done` by itself about 60 s later. No second read is needed.
+- The same lead after the helper's task was cancelled: still `blocked`, `blockerAttention { state: "needs_attention", reason: "attention_required", unresolvedBlockerCount: 1, coveredBlockerCount: 0, attentionBlockerCount: 1, blockingTreeLive: false }`, and the detail's `blockedBy[0].status` is `cancelled`.
+- `blockingTreeLive` was `true` on the covered row and `false` on the cancelled one. The rule does not key on it.
+
+The rule: a blocked task is a wait only when `state == "covered"` with `attentionBlockerCount == 0` and `stalledBlockerCount == 0`. A wait draws no amber and mints no need; the hover says "Waiting on N sub-task(s)", N being `unresolvedBlockerCount`. Every other row is a need, including an unknown state and a row with no `blockerAttention`. **Unmeasured:** a failed child, a child blocked on a person, and a task blocked on a person with no sub-task; the phone's roster for the wait state.

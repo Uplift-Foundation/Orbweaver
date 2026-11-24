@@ -67,7 +67,16 @@ namespace Orbweaver
 
         internal sealed record RawIssue(
             string Id, string Identifier, string Title, string Status,
-            string? AssigneeAgentId, string? BlockerState = null);
+            string? AssigneeAgentId, string? BlockerState = null,
+            int? UnresolvedBlockers = null, int? AttentionBlockers = null, int? StalledBlockers = null)
+        {
+            // Paperclip's own verdict that the task is only waiting on work that is
+            // running or queued (CB-444). Measured: state "covered", reason
+            // "active_child", no attention and no stalled blockers. Every other
+            // shape, an absent verdict included, is treated as needing a person.
+            internal bool IsWaiting => BlockerState == "covered" && (AttentionBlockers ?? 0) == 0 && (StalledBlockers ?? 0) == 0;
+            internal int WaitingOn => Math.Max(1, UnresolvedBlockers ?? 1);
+        }
 
         internal sealed record Health(string Status, string DeploymentMode);
 
@@ -336,11 +345,14 @@ namespace Orbweaver
             {
                 var id = Str(r, "id");
                 if (string.IsNullOrEmpty(id)) return null;
-                string? blocker = null;
+                string? blocker = null; int? unresolved = null, attention = null, stalled = null;
                 if (r.TryGetProperty("blockerAttention", out var b) && b.ValueKind == JsonValueKind.Object)
+                {
                     blocker = NonEmpty(Str(b, "state"));
+                    unresolved = IntOrNull(b, "unresolvedBlockerCount"); attention = IntOrNull(b, "attentionBlockerCount"); stalled = IntOrNull(b, "stalledBlockerCount");
+                }
                 return new RawIssue(id, Str(r, "identifier") ?? "", Str(r, "title") ?? "",
-                    Str(r, "status") ?? "", NonEmpty(Str(r, "assigneeAgentId")), blocker);
+                    Str(r, "status") ?? "", NonEmpty(Str(r, "assigneeAgentId")), blocker, unresolved, attention, stalled);
             }).Where(a => a != null).Select(a => a!).ToList();
 
         internal static Health? ParseHealth(string? json)
@@ -436,6 +448,7 @@ namespace Orbweaver
             }
 
             var needs = new Dictionary<string, List<PaperclipNeed>>();
+            var waitingOn = new Dictionary<string, int>();
             void Add(string? agent, PaperclipNeed n)
             {
                 if (agent == null) return;
@@ -474,11 +487,17 @@ namespace Orbweaver
             foreach (var i in c.BlockedIssues)
             {
                 // An unassigned blocked issue is nobody's orb to light. Paperclip's
-                // own verdict decides whether a person is needed: only
-                // `needs_attention` (or no verdict at all) is. A task blocked on
-                // another task, which Paperclip resolves itself, is not.
+                // own verdict decides whether a person is needed: a task blocked
+                // only on running or queued work (`covered`, nothing needing
+                // attention or stalled) is a wait, which Paperclip resolves itself,
+                // and is counted for the hover. Anything else, an unknown state
+                // and no verdict at all included, needs a person (CB-444).
                 if (i.AssigneeAgentId == null || !known.Contains(i.AssigneeAgentId)) continue;
-                if (i.BlockerState != null && i.BlockerState != "needs_attention") continue;
+                if (i.IsWaiting)
+                {
+                    waitingOn[i.AssigneeAgentId] = waitingOn.GetValueOrDefault(i.AssigneeAgentId) + i.WaitingOn;
+                    continue;
+                }
                 var label = string.Join(" ", new[] { i.Identifier, i.Title }.Where(s => s.Length > 0));
                 Add(i.AssigneeAgentId, new PaperclipNeed("blocked", i.Id, "Blocked: " + label,
                     IssueUrl(c.BaseUrl, c.IssuePrefix, i.Id)));
@@ -536,7 +555,8 @@ namespace Orbweaver
                     last == null ? null : ResultWording(last.Status),
                     RingPercent(a.BudgetCents, a.SpentCents), lastActivity,
                     AgentUrl(c.BaseUrl, c.IssuePrefix, a.Id), sleeping,
-                    last?.ProcessPid, last?.SessionIdAfter, a.BudgetCents, a.SpentCents, last?.FinishedAt));
+                    last?.ProcessPid, last?.SessionIdAfter, a.BudgetCents, a.SpentCents, last?.FinishedAt,
+                    waitingOn.GetValueOrDefault(a.Id)));
             }
             return result;
         }

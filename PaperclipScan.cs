@@ -102,6 +102,7 @@ namespace Orbweaver
         {
             var lines = new List<string>();
             foreach (var n in a.Needs) lines.Add(n.Title);
+            if (a.WaitingOnTasks > 0) lines.Add(a.WaitingOnTasks == 1 ? "Waiting on 1 sub-task" : $"Waiting on {a.WaitingOnTasks} sub-tasks");
             if (a.Mark != PaperclipMark.None && !string.IsNullOrEmpty(a.MarkReason)) lines.Add(a.MarkReason!);
             if (!string.IsNullOrEmpty(a.Task)) lines.Add(a.Task!);
             if (!string.IsNullOrEmpty(a.Activity)) lines.Add(a.Activity!);

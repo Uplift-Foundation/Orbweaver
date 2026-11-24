@@ -298,6 +298,50 @@ public class PaperclipStateTests
     }
 
     [Fact]
+    public void BlockedIssue_AnyVerdictButCovered_StaysANeed()
+    {
+        // CB-444: only the measured covered case is a wait; an unknown state is a need, not silence.
+        PaperclipApi.RawIssue Row(string? state, int? attention = 0, int? stalled = 0) =>
+            new("i", "EX-1", "T", "blocked", "x", state, 1, attention, stalled);
+        foreach (var r in new[] { Row("some_future_state"), Row("covered", attention: 1), Row("covered", stalled: 1), Row("needs_attention") })
+            Assert.Single(PaperclipApi.Compose(Input(Team, blocked: [r])).Single(a => a.Id == "x").Needs);
+        Assert.Equal(0, PaperclipApi.Compose(Input(Team, blocked: [Row("some_future_state")])).Single(a => a.Id == "x").WaitingOnTasks);
+    }
+
+    [Fact]
+    public void RealCoveredRow_IsAWaitCountedForTheHover_NotANeed()
+    {
+        var blocked = PaperclipApi.ParseIssues(Read("native/issues-blocked-covered.json"));
+        var agents = PaperclipApi.ParseAgents(Read("native/agents.json"));
+        var x = PaperclipApi.Compose(Input(agents, blocked: blocked)).Single(a => a.Id.EndsWith("4"));
+        Assert.Empty(x.Needs);
+        Assert.Equal(1, x.WaitingOnTasks);
+        Assert.NotEqual("waiting", x.State);
+    }
+
+    [Fact]
+    public void RealCancelledChildRow_StillNeedsAPerson()
+    {
+        var blocked = PaperclipApi.ParseIssues(Read("native/issues-blocked-cancelled-child.json"));
+        var agents = PaperclipApi.ParseAgents(Read("native/agents.json"));
+        var x = PaperclipApi.Compose(Input(agents, blocked: blocked)).Single(a => a.Id.EndsWith("4"));
+        Assert.Equal("waiting", x.State);
+        Assert.Equal("Blocked: EX-9 Example task whose sub-task was cancelled", Assert.Single(x.Needs).Title);
+        Assert.Equal(0, x.WaitingOnTasks);
+    }
+
+    [Fact]
+    public void WaitsAcrossSeveralTasks_AddUp_AndAMissingCountReadsAsOne()
+    {
+        var issues = new PaperclipApi.RawIssue[]
+        {
+            new("a", "EX-1", "A", "blocked", "x", "covered", 3, 0, 0),
+            new("b", "EX-2", "B", "blocked", "x", "covered"),
+        };
+        Assert.Equal(4, PaperclipApi.Compose(Input(Team, blocked: issues)).Single(a => a.Id == "x").WaitingOnTasks);
+    }
+
+    [Fact]
     public void NoLead_NeedWithNowhereToGo_IsDropped()
     {
         var cyc = new[] { Agent("a", reportsTo: "b"), Agent("b", reportsTo: "a") };

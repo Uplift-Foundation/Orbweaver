@@ -229,6 +229,13 @@ public class PaperclipScanTests
     }
 
     [Fact]
+    public void Hover_NamesTheSubTasksAnAgentIsOnlyWaitingFor()
+    {
+        Assert.Equal(new[] { "Waiting on 1 sub-task" }, PaperclipHover.Lines(A("a") with { WaitingOnTasks = 1 }, Now).ToArray());
+        Assert.Equal(new[] { "Waiting on 3 sub-tasks" }, PaperclipHover.Lines(A("a") with { WaitingOnTasks = 3 }, Now).ToArray());
+    }
+
+    [Fact]
     public void Hover_NothingToSay_IsNull_AndLastRunIsNotRepeatedByItsOwnMark()
     {
         Assert.Empty(PaperclipHover.Lines(A("a"), Now));

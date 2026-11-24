@@ -121,6 +121,19 @@ public class PaperclipApiParseTests
         Assert.Null(Assert.Single(PaperclipApi.ParseIssues("[{\"id\":\"i\",\"blockerAttention\":5}]")).BlockerState);
     }
 
+    [Fact]
+    public void RealBlockedRows_CarryTheirBlockerCounts_AndOnlyTheCoveredOneIsAWait()
+    {
+        var wait = Assert.Single(PaperclipApi.ParseIssues(PaperclipFx.Read("native/issues-blocked-covered.json")));
+        Assert.Equal(("covered", 1, 0, 0), (wait.BlockerState, wait.UnresolvedBlockers, wait.AttentionBlockers, wait.StalledBlockers));
+        Assert.True(wait.IsWaiting);
+        Assert.Equal(1, wait.WaitingOn);
+        var cancelled = Assert.Single(PaperclipApi.ParseIssues(PaperclipFx.Read("native/issues-blocked-cancelled-child.json")));
+        Assert.Equal(("needs_attention", 1, 1), (cancelled.BlockerState, cancelled.UnresolvedBlockers, cancelled.AttentionBlockers));
+        Assert.False(cancelled.IsWaiting);
+        Assert.False(Assert.Single(PaperclipApi.ParseIssues("[{\"id\":\"i\"}]")).IsWaiting);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]
