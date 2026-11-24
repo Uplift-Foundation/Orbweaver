@@ -79,7 +79,7 @@ public class RelayRosterTests
         (id, new SessionStatus { Source = SessionSource.Paperclip, Title = name, State = state, Lead = lead, Cwd = "" });
 
     [Fact]
-    public void A_paperclip_agent_is_projected_with_an_empty_cwd_no_persona_and_a_parent_that_is_a_row()
+    public void A_paperclip_agent_is_projected_with_an_empty_cwd_the_persona_seam_and_a_parent_that_is_a_row()
     {
         var personaAsked = new List<string>();
         var rows = RelayRoster.Project(
@@ -88,12 +88,14 @@ public class RelayRosterTests
 
         Assert.Equal(["8-claude", "paperclip:a", "paperclip:b"], rows.Select(r => r.SessionId));   // ordinal by id
         var atlas = rows[1];
-        Assert.Equal(("paperclip", "Atlas", "", "generating", (string?)null, (RelayPersona?)null),
-            (atlas.Cli, atlas.Title, atlas.Cwd, atlas.State, atlas.ParentSessionId, atlas.Persona));
+        Assert.Equal(("paperclip", "Atlas", "", "generating", (string?)null),
+            (atlas.Cli, atlas.Title, atlas.Cwd, atlas.State, atlas.ParentSessionId));
         Assert.Equal(("paperclip:a", "waiting"), (rows[2].ParentSessionId, rows[2].State));
-        Assert.Null(rows[2].Persona);
-        // The persona callback is never asked about a paperclip row, only the claude one.
-        Assert.Equal(["8-claude"], personaAsked);
+        // CB-447: a paperclip row's persona is the seam's too (ForPhone strips it for a phone that has not
+        // asked), and a seam that answers null leaves the row without one, as frames-v15 had it.
+        Assert.Equal(new RelayPersona("P", "P", null), atlas.Persona);
+        Assert.Equal(["8-claude", "paperclip:a", "paperclip:b"], personaAsked);
+        Assert.Null(RelayRoster.Project([Agent("paperclip:a", "Atlas")])[0].Persona);   // no seam at all
     }
 
     [Fact]
@@ -311,6 +313,7 @@ public class RosterFixtureTests
     [InlineData("windows_roster")]
     [InlineData("empty_roster")]
     [InlineData("paperclip_roster")]
+    [InlineData("paperclip_roster_personas")]
     public void Each_roster_is_exactly_what_RelayRoster_writes(string name)
     {
         var r = F.GetProperty(name);

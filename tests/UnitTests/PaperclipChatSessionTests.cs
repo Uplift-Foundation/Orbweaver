@@ -4,6 +4,7 @@ namespace Orbweaver.Tests;
 
 // CB-443: PaperclipChatSession's decisions, with an inline dispatcher, a fake feed and fake
 // actions. The panel-level behaviour is in tests/UiTests/PaperclipChatPanelTests.
+[Collection("Settings")]
 public class PaperclipChatSessionTests : IDisposable
 {
     internal sealed class Feed : IPaperclipChatFeed
@@ -37,7 +38,8 @@ public class PaperclipChatSessionTests : IDisposable
     private PaperclipLink _link = PaperclipLink.Connected;
     private PaperclipSessions.ChatView _view = Empty;
     private IPaperclipActions? _actions;
-    private IReadOnlyList<PaperclipChat.AssignedIssue>? _assignedAnswer;
+    // What the assigned-issues read answers: [] is "the agent has no assigned task", null is a read that failed.
+    private IReadOnlyList<PaperclipChat.AssignedIssue>? _assignedAnswer = Array.Empty<PaperclipChat.AssignedIssue>();
     private int _assignedReads;
     private readonly List<(TimeSpan After, Action Run)> _scheduled = new();
 
@@ -52,14 +54,18 @@ public class PaperclipChatSessionTests : IDisposable
     private static ChatSnapshot Snap(string? taskId, bool refused = false, PaperclipChat.Activity? act = null, params PaperclipChat.Comment[] cs) =>
         new(taskId is null ? null : TaskOf(taskId), cs, act, refused);
 
+    // A gate the assigned read waits at, when a test wants it to land late; and the session's bound on waiting for it.
+    private TaskCompletionSource? _assignedGate;
+    private TimeSpan? _assignedWait;
+
     private (PaperclipChatSession S, Feed F, Actions A) Make(string name = "Nova", string? url = "https://p/a")
     {
         var f = new Feed();
         var a = new Actions();
         _actions = a;
         var s = new PaperclipChatSession("ag1", name, url, () => f, () => _actions, () => _roster, () => _view,
-            async ct => { _assignedReads++; await Task.Yield(); return _assignedAnswer; },
-            () => _link, () => _now, act => act(), (after, run) => _scheduled.Add((after, run)));
+            async ct => { _assignedReads++; await Task.Yield(); if (_assignedGate is { } gate) await gate.Task.WaitAsync(ct); return _assignedAnswer; },
+            () => _link, () => _now, act => act(), (after, run) => _scheduled.Add((after, run)), _assignedWait);
         s.PanelOpened();
         return (s, f, a);
     }
@@ -625,4 +631,92 @@ public class PaperclipChatSessionTests : IDisposable
         Assert.Null(s.Target().Task);
         Assert.Equal("Message Nova. This opens a new task.", s.ComposerHint);
     }
+
+    // A defect in merged code (CB-443, PR 356): the panel read the agent's assigned issues once on open and a send
+    // decided "no task" without waiting for it, so a person who sent within that read's latency, to an agent whose
+    // only task has no live, blocked or finished run (a done one), opened a second task.
+    [Fact]
+    public async Task A_message_sent_before_the_assigned_read_lands_is_a_comment_on_that_task_not_a_new_task()
+    {
+        _assignedAnswer = [new(TaskOf("i7"), T0, false)];
+        _assignedGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (s, f, a) = Make();
+        Assert.Equal(1, _assignedReads);
+
+        var send = s.SendAsync("one more thing");
+        await Task.Delay(50);
+        Assert.False(send.IsCompleted);                      // waiting on the read, not deciding on no task
+        Assert.Empty(a.Sent);
+
+        _assignedGate.SetResult();
+        Assert.Equal(ChatSendOutcome.Sent, await send);
+        Assert.Equal(["comment:i7:one more thing"], a.Sent);   // a comment on the task the read found; nothing opened
+    }
+
+    [Fact]
+    public async Task A_read_that_answers_none_lets_the_message_open_a_task()
+    {
+        _assignedAnswer = [];
+        _assignedGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (s, _, a) = Make();
+        var first = s.SendAsync("hello");
+        await Task.Delay(30);
+        _assignedGate.SetResult();
+        Assert.Equal(ChatSendOutcome.Sent, await first);
+        Assert.Equal(["open:ag1:hello"], a.Sent);                // the agent really has no task
+    }
+
+    // CB-452: a read that FAILED or outran the bound is not "none". On a slow host that is how a second task is made.
+    // The send fails as unreachable, the red line shows, and nothing is opened.
+    [Theory]
+    [InlineData("null")]
+    [InlineData("throws")]
+    [InlineData("bound")]
+    public async Task A_read_that_failed_or_outran_its_bound_fails_the_send_with_the_red_line_and_opens_nothing(string how)
+    {
+        var throwing = how == "throws";
+        _assignedAnswer = null;
+        if (how == "bound") { _assignedGate = new TaskCompletionSource(); _assignedWait = TimeSpan.FromMilliseconds(60); }
+        var f = new Feed();
+        var a = new Actions();
+        _actions = a;
+        var s = new PaperclipChatSession("ag1", "Nova", "https://p/a", () => f, () => _actions, () => _roster, () => _view,
+            async ct => { _assignedReads++; await Task.Yield(); if (throwing) throw new InvalidOperationException("boom"); if (_assignedGate is { } g) await g.Task.WaitAsync(ct); return _assignedAnswer; },
+            () => _link, () => _now, act => act(), (after, run) => _scheduled.Add((after, run)), _assignedWait);
+        s.PanelOpened();
+
+        var started = DateTime.UtcNow;
+        Assert.Equal(ChatSendOutcome.Failed, await s.SendAsync("hello"));      // the panel keeps the text in the box on Failed
+        Assert.Empty(a.Sent);                                                  // no OpenTask, no comment
+        Assert.True(DateTime.UtcNow - started < TimeSpan.FromSeconds(2));
+        Assert.Equal("Can't reach Paperclip.", s.History[^1].Text);
+        Assert.True(s.History[^1].IsError);
+        s.PanelClosed();
+    }
+
+    [Fact]
+    public async Task A_failed_read_is_made_again_by_the_next_send()
+    {
+        _assignedAnswer = null;
+        var (s, _, a) = Make();
+        Assert.Equal(ChatSendOutcome.Failed, await s.SendAsync("one"));
+        Assert.Empty(a.Sent);
+
+        _assignedAnswer = [new(TaskOf("i7"), T0, false)];
+        Assert.Equal(ChatSendOutcome.Sent, await s.SendAsync("two"));
+        Assert.Equal(["comment:i7:two"], a.Sent);
+        Assert.True(_assignedReads >= 2);                    // the read was made again; how many is a matter of scheduling
+    }
+
+    [Fact]
+    public async Task A_message_to_an_agent_the_poll_already_knows_the_task_of_does_not_wait_for_the_read()
+    {
+        _view = new([Live("r1", "i1")], [], []);
+        _assignedGate = new TaskCompletionSource();
+        var (s, _, a) = Make();
+        Assert.Equal(ChatSendOutcome.Sent, await s.SendAsync("go"));
+        Assert.Equal(["comment:i1:go"], a.Sent);
+        s.PanelClosed();
+    }
 }
+

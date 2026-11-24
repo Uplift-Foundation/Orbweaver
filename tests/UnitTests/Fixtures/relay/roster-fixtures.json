@@ -192,5 +192,62 @@
       "since": 1794124950,
       "removed": true
     }
-  ]
+  ],
+  "_paperclip_personas_rules": "CB-447 (frames-v18): paperclip_roster_personas is paperclip_roster as sent to a phone whose prefs say paperclip_personas true: the same rows, each paperclip row carrying persona {name, initials, id, image_hash?} (no color; image_hash only when the desk can offer the picture). Stripping persona from every row gives paperclip_roster byte for byte. paperclip_roster itself, and its no-persona rule, are unchanged.",
+  "paperclip_roster_personas": {
+    "t": "roster",
+    "seq": 1,
+    "sessions": [
+      {
+        "session_id": "8a6f0c1e-2b3d-4e5f-9a8b-7c6d5e4f3a2b",
+        "cli": "claude",
+        "title": "CB-421 paperclip orbs",
+        "cwd": "/Users/someone/Source/Orbweaver",
+        "state": "idle",
+        "since": 1794124800
+      },
+      {
+        "session_id": "paperclip:3f2a9c4e-6b1d-4e87-a5c3-9d0e7b2f1a64",
+        "cli": "paperclip",
+        "title": "Atlas",
+        "cwd": "",
+        "state": "generating",
+        "since": 1794124810,
+        "persona": {
+          "name": "Atlas",
+          "initials": "At",
+          "id": "c1334a1a8c0660d2",
+          "image_hash": "4b24ec61c60d78f8cb81a849c3ec73268a9ea79c6556f3f1c1794e54fcee1e6a"
+        }
+      },
+      {
+        "session_id": "paperclip:5b8d1e07-c2a4-4f69-8e3b-1a7c9d4f2e05",
+        "cli": "paperclip",
+        "title": "Beacon",
+        "cwd": "",
+        "state": "waiting",
+        "since": 1794124820,
+        "parent_session_id": "paperclip:3f2a9c4e-6b1d-4e87-a5c3-9d0e7b2f1a64",
+        "persona": {
+          "name": "Beacon",
+          "initials": "Be",
+          "id": "a7028b53206272ea"
+        }
+      },
+      {
+        "session_id": "paperclip:9c6e2a13-d8f5-4b70-b1a9-e4c3f7d02a58",
+        "cli": "paperclip",
+        "title": "Cinder",
+        "cwd": "",
+        "state": "idle",
+        "since": 1794124830,
+        "parent_session_id": "paperclip:3f2a9c4e-6b1d-4e87-a5c3-9d0e7b2f1a64",
+        "persona": {
+          "name": "Cinder",
+          "initials": "Ci",
+          "id": "b40c9dcb4456f7a2"
+        }
+      }
+    ]
+  }
 }

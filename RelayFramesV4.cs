@@ -73,6 +73,11 @@ namespace Orbweaver
         internal const string AlreadyRunning = "already_running",
             UnknownResume = "unknown_resume", ResumeUnsupported = "resume_unsupported";
 
+        // CB-447 (frames-v18): a message to a Paperclip agent that was not posted. `why` is required, the desk's
+        // own sentence, at most 140 characters.
+        internal const string SendFailed = "send_failed";
+        internal const int SendFailedWhyLimit = 140;
+
         // CB-339 (frames-v11 errors_added.sealed_err_codes): the folder picker's four. forbidden_path is
         // the one answer for everything outside the roots, whether or not the folder exists.
         internal const string ForbiddenPath = "forbidden_path", UnknownPath = "unknown_path",
@@ -89,13 +94,15 @@ namespace Orbweaver
             RunFrames.BadValue, RunFrames.Unavailable, RunFrames.SetFailed,
             // CB-434 (frames-v17 resume).
             UnknownResume, ResumeUnsupported,
+            // CB-447 (frames-v18).
+            SendFailed,
         ];
 
         // Only these carry the desktop's own sentence; every other code's
         // copy is the phone's (frames-v4 err.rules).
         // frames-v13 adds two: a set the desk cannot make here, and one the CLI refused.
         internal static readonly string[] CodesWithWhy =
-            [NotAtPrompt, TypingFailed, NoTerminal, LaunchFailed, RunFrames.Unavailable, RunFrames.SetFailed, ResumeUnsupported];
+            [NotAtPrompt, TypingFailed, NoTerminal, LaunchFailed, RunFrames.Unavailable, RunFrames.SetFailed, ResumeUnsupported, SendFailed];
 
         internal static string Ok(string reference, string code, string sessionId, long? total = null)
         {

@@ -78,6 +78,23 @@ namespace Orbweaver
             return list;
         }
 
+        // One issue read on its own (`GET /api/issues/{id}`), for the task line when the poll holds no title for it
+        // (CB-453): the issue itself, or one wrapped under "issue". Null when it is not an issue with an id.
+        internal static TaskRef? ParseTask(string? json)
+        {
+            if (string.IsNullOrWhiteSpace(json)) return null;
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                var e = doc.RootElement;
+                if (e.ValueKind == JsonValueKind.Object && e.TryGetProperty("issue", out var inner) && inner.ValueKind == JsonValueKind.Object) e = inner;
+                if (e.ValueKind != JsonValueKind.Object) return null;
+                var id = Str(e, "id");
+                return string.IsNullOrEmpty(id) ? null : new TaskRef(id, Str(e, "identifier") ?? "", Str(e, "title") ?? "", Str(e, "status") ?? "");
+            }
+            catch (JsonException) { return null; }
+        }
+
         // The first that exists (plan 2.2): the live run's task; the agent's blocked task that needs a person;
         // the newest finished run's task; the most recently active assigned task that is not cancelled
         // (a done one counts: a comment on it reopened it and woke the agent, measured); none.

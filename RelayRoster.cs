@@ -111,7 +111,8 @@ namespace Orbweaver
         {
             // CB-422 (frames-v15): a Paperclip agent is a row too, though not a
             // local CLI session. Its identity is the "paperclip:<uuid>" key the
-            // scan already uses, its cwd is empty, it carries no persona, and
+            // scan already uses, its cwd is empty, its persona (CB-447) is the agent's name and picture and is
+            // stripped by ForPhone for a phone that has not asked for it, and
             // it names a parent only when that lead is itself a row, so a lead
             // the scan folded away or never drew leaves the report a root.
             var admitted = sessions
@@ -128,7 +129,7 @@ namespace Orbweaver
                     "",
                     MapState(s.Status.State),
                     paperclipIds.Contains(s.Status.Lead) ? s.Status.Lead : null,
-                    null,
+                    persona(s.SessionId, s.Status),
                     s.Status.Mark == PaperclipMark.Broke ? WhyOf(s.Status.MarkReason) : null,
                     // PaperclipScan parks every row while the link is down and blanks its status: the mark is then
                     // unknown, not "none", and must not read as a recovery (CB-428 review).
@@ -141,6 +142,15 @@ namespace Orbweaver
                     MapState(s.Status.State),
                     s.Status.Source == SessionSource.ClaudeCode && !string.IsNullOrEmpty(s.Status.Lead) ? s.Status.Lead : null,
                     persona(s.SessionId, s.Status))).ToList();
+        }
+
+        // CB-447 (frames-v18): the roster one phone is sent. A Paperclip row's persona goes only to a phone whose
+        // stored prefs say paperclip_personas true; every other phone gets the row exactly as frames-v15 had it, so
+        // its roster is byte for byte what it was. The same list comes back when nothing needs stripping.
+        internal static IReadOnlyList<RelaySession> ForPhone(IReadOnlyList<RelaySession> rows, bool paperclipPersonas)
+        {
+            if (paperclipPersonas || !rows.Any(r => r.Cli == "paperclip" && r.Persona is not null)) return rows;
+            return rows.Select(r => r.Cli == "paperclip" && r.Persona is not null ? r with { Persona = null } : r).ToList();
         }
 
         // The persona a phone draws for a session: the name the persona files

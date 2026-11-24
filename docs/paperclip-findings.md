@@ -213,3 +213,21 @@ Measured 2026-11-24 on Paperclip 2026.1117.0 with a board key from the app's own
 - A list read straight after the PUT already showed the new `avatarUrl`.
 - The app keeps each fetched PNG as a 0600 file under its settings directory and reuses the persona picture path from there. Only `/api/` paths are fetched, a non-PNG answer or a non-200 means initials, and none of it touches the link state. **Not measured:** an expired key on the asset route (assumed 401, as `/api/cli-auth/me` answered), a deleted asset (assumed 404), a LAN fetch, and the phone.
 - **Not built:** the phone's row. frames-v15 says a paperclip row's `persona` is omitted, so a picture there is a contract change and its own slice.
+
+## A revoked key, on every route the panel uses (CB-447, measured 2026-11-24)
+
+Measured by the lead against this Paperclip, with a board key minted through the app's own connect flow and then revoked. Every route the chat panel and the picture cache call answers **401** with `{"error":"Agent token did not verify; obtain fresh credentials and retry"}`:
+
+| Route | Status with the revoked key |
+| --- | --- |
+| `GET /api/issues/{id}/comments` | 401 |
+| `POST /api/issues/{id}/comments` | 401 |
+| `POST /api/companies/{id}/issues` | 401 |
+| `GET /api/companies/{id}/agents` | 401 |
+| `GET /api/companies/{id}/live-runs` | 401 |
+| `GET /api/heartbeat-runs/{id}/events` | 401 |
+| `GET /api/assets/{id}/content` | 401 |
+
+That is a different case from **no credential at all**, which the earlier measurement found answering a comment `POST` with `404 {"error":"Issue not found"}`, not a 401. A revoked or expired key is therefore a 401 everywhere, which is what `PaperclipActions` and `PaperclipChatFeed` already read as "reconnect" (a 401 or a 403 on a comment is `NeedsReconnect`; a 404 is "That task is no longer in Paperclip."). It also settles the one thing CB-445 left unmeasured: an expired key on the picture route (`/api/assets/{id}/content`) is a 401.
+
+`tests/UiTests/PaperclipChatLiveProofTests.cs` relies on it: its control sends once with a revoked key and expects the reconnect words, the text still in the box and no new bubble. A 404 there would fail the control with "That task is no longer in Paperclip.", and that would mean the key was never presented.

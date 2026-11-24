@@ -63,6 +63,7 @@ namespace Orbweaver
                 _cts = new CancellationTokenSource();
                 _taskId = null; _comments = Array.Empty<PaperclipChat.Comment>(); _activity = null;
                 _lastLive = _readOnce = _needsReconnect = _published = false; _commentsAt = DateTime.MinValue;
+                _details.Clear(); _shownTask = null;
                 var ct = _cts.Token;
                 _ = Task.Run(() => LoopAsync(ct));
             }
@@ -104,9 +105,11 @@ namespace Orbweaver
             var t = _target();
             var taskId = t.Task?.Id;
             string? curTask; IReadOnlyList<PaperclipChat.Comment> curComments; PaperclipChat.Activity? curActivity;
+            PaperclipChat.TaskRef? shownTask;
             bool lastLive, readOnce, reconnect;
             lock (_gate)
             {
+                shownTask = _shownTask;
                 curTask = _taskId; curComments = _comments; curActivity = _activity;
                 lastLive = _lastLive; readOnce = _readOnce; reconnect = _needsReconnect;
             }
@@ -118,6 +121,20 @@ namespace Orbweaver
                 lastLive = readOnce = false; changed = true;
                 comments = true;
             }
+
+            // CB-453: the task a finished run or an assigned issue names is only an id to the poll, which maps blocked and
+            // in-progress issues alone, so its line read "Task". Read the issue itself, once per task, and keep it.
+            var task = t.Task;
+            // A task the poll resolves can carry only some of its fields: a live run's task has a title and no identifier or
+            // status. So any blank field is read for, and the poll's non-blank ones are kept where the read says nothing.
+            if (task is { } named && (string.IsNullOrWhiteSpace(named.Title) || string.IsNullOrWhiteSpace(named.Identifier)
+                || string.IsNullOrWhiteSpace(named.Status)))
+            {
+                var (filled, refused) = await FilledAsync(named, t.RunId, t.RunLive, ct).ConfigureAwait(false);
+                task = filled;
+                if (refused && !reconnect) { reconnect = true; changed = true; }
+            }
+            if (!Equals(task, shownTask)) changed = true;
 
             var commentsRead = false;
             if (taskId != null && comments)
@@ -162,17 +179,65 @@ namespace Orbweaver
             lock (_gate)
             {
                 if (ct.IsCancellationRequested) return;
-                _taskId = taskId; _comments = curComments; _activity = curActivity;
+                _taskId = taskId; _comments = curComments; _activity = curActivity; _shownTask = task;
                 _lastLive = lastLive; _readOnce = readOnce; _needsReconnect = reconnect;
                 if (commentsRead) _commentsAt = DateTime.UtcNow;
                 // The first tick always raises, so a panel opened on an agent with no task still hears "no task".
                 if (changed || !_published)
                 {
                     _published = true;
-                    raise = new ChatSnapshot(t.Task, curComments, curActivity, reconnect);
+                    raise = new ChatSnapshot(task, curComments, curActivity, reconnect);
                 }
             }
             if (raise != null && !ct.IsCancellationRequested) Updated?.Invoke(raise);
+        }
+
+        // What was read of one task, and when to look again. Final: nothing more to learn (a 404, or an answer with no
+        // title), so no further reads while the panel stays open. RetryAt: a read that failed, tried again at the
+        // comments cadence, not every tick. RunId and Live: the run state the fields were read at, because the status
+        // moves with the run (a done task a message reopens, one that finishes) while the title and identifier do not.
+        private sealed record Detail(PaperclipChat.TaskRef Task, string? RunId, bool Live, bool Final, DateTime? RetryAt);
+
+        private readonly Dictionary<string, Detail> _details = new();
+        private PaperclipChat.TaskRef? _shownTask;
+
+        // The read's fields over the poll's: the read is fresher where it says something, and the poll's stand where it does not.
+        private static PaperclipChat.TaskRef Overlay(PaperclipChat.TaskRef polled, PaperclipChat.TaskRef read) => new(
+            read.Id,
+            read.Identifier.Length > 0 ? read.Identifier : polled.Identifier,
+            read.Title.Length > 0 ? read.Title : polled.Title,
+            read.Status.Length > 0 ? read.Status : polled.Status);
+
+        // One issue's own fields (`GET /api/issues/{id}`), kept per task and read again when the target's run or its
+        // liveness changes, so the line's status follows the task. A 401 or 403 says reconnect.
+        private async Task<(PaperclipChat.TaskRef Task, bool Refused)> FilledAsync(
+            PaperclipChat.TaskRef named, string? runId, bool live, CancellationToken ct)
+        {
+            Detail? known;
+            lock (_gate) _details.TryGetValue(named.Id, out known);
+            if (known is not null)
+            {
+                if (known.Final) return (known.Task, false);
+                if (known.RetryAt is { } at && DateTime.UtcNow < at) return (known.Task, false);
+                if (known.RetryAt is null && known.RunId == runId && known.Live == live) return (known.Task, false);
+            }
+
+            var res = await _api.GetAsync($"/api/issues/{Uri.EscapeDataString(named.Id)}", ct).ConfigureAwait(false);
+            if (Refused(res)) return (known?.Task ?? named, true);
+
+            Detail next;
+            if (res.StatusCode == 404)
+                next = new Detail(known?.Task ?? named, runId, live, Final: true, null);
+            else if (!res.IsOk || PaperclipChat.ParseTask(res.Body) is not { } read || read.Id != named.Id)
+                next = new Detail(known?.Task ?? named, runId, live, Final: false, DateTime.UtcNow + _commentsEvery);
+            else if (read.Title.Length == 0 && read.Identifier.Length == 0 && read.Status.Length == 0)
+                next = new Detail(known?.Task ?? named, runId, live, Final: true, null);
+            else
+                next = new Detail(Overlay(named, read), runId, live, Final: false, null);
+
+            // Like every other write in a tick: nothing is kept by a read that was in flight when the panel closed.
+            lock (_gate) if (!ct.IsCancellationRequested) _details[named.Id] = next;
+            return (next.Task, false);
         }
 
         // The rows of issues?assigneeAgentId=<agent>, for the task rung that is read once on open (plan 2.2).

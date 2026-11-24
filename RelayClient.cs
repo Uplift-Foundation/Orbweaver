@@ -254,6 +254,8 @@ namespace Orbweaver
             // CB-434: list and resume past sessions, under the phone's own account rule.
             Past = PastSessionsRemote.ForThisDesk(new RelayRemote.AccountSeams(RelayAccounts.Choices, OrbweaverSettings.PhoneLaunchProfileFor)),
             Resume = LaunchRunner.DefaultResumeSeams(),
+            // CB-447: a phone's watch and input on a Paperclip row, while the desk is connected to Paperclip.
+            Paperclip = PaperclipPhoneThreads.Live,
         };
 
         // CB-339: the real folder picker seam: the real disk, the settings as they are on each

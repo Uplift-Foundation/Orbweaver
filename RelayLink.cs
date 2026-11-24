@@ -486,10 +486,13 @@ namespace Orbweaver
         {
             var parsed = AlertPrefs.Parse(body);
             var ok = parsed is not null;
+            // CB-447: a phone whose paperclip_personas flipped is sent a fresh whole roster (frames-v18).
+            var personasFlipped = false;
             if (parsed is { } prefs)
             {
+                personasFlipped = c.Alerts.PaperclipPersonas != prefs.PaperclipPersonas;
                 c.Alerts = prefs;
-                Note($"prefs from {Safe(from)} done_alerts={prefs.DoneAlerts} amber_members={prefs.AmberMembers} broke_alerts={prefs.BrokeAlerts}");
+                Note($"prefs from {Safe(from)} done_alerts={prefs.DoneAlerts} amber_members={prefs.AmberMembers} broke_alerts={prefs.BrokeAlerts} paperclip_personas={prefs.PaperclipPersonas} paperclip_unreachable={prefs.PaperclipUnreachable}");
                 // Still prefs.ok when the write fails: the choice is in force
                 // now, and the phone has nothing better to do with a refusal.
                 if (!_identity.SaveAlerts(c.Phone.PhoneId, prefs))
@@ -499,7 +502,9 @@ namespace Orbweaver
             var reply = ok
                 ? new CanonicalJson().Str("t", "prefs.ok").Str("ref", envelopeId)
                 : new CanonicalJson().Str("t", "prefs.err").Str("ref", envelopeId).Str("code", "malformed");
-            return Collect(SealTo(c, "pair", "", Encoding.UTF8.GetBytes(reply.ToString())));
+            var frames = new List<string>(Collect(SealTo(c, "pair", "", Encoding.UTF8.GetBytes(reply.ToString()))));
+            if (personasFlipped && c.Online && Welcomed) frames.AddRange(Collect(RosterFor(c)));
+            return frames;
         }
 
         private byte[]? OpenFromPhone(Channel c, string cls, string ct)
@@ -1013,7 +1018,7 @@ namespace Orbweaver
         // Always the whole book, unconditionally — a resync asks for the book,
         // not the diff — and it restarts the phone's numbering at 1.
         private string? RosterFor(Channel c) =>
-            SealTo(c, "state", "", c.Stream.Roster(_book.Snapshot()));
+            SealTo(c, "state", "", c.Stream.Roster(RelayRoster.ForPhone(_book.Snapshot(), c.Alerts.PaperclipPersonas)));
 
         // CB-316: a phone coming online (or just paired) gets its roster, then
         // the latest usage frame (frames-v4: "sent on connect, after the
@@ -1119,10 +1124,17 @@ namespace Orbweaver
             return WithActivity(frames);
         }
 
+        // frames-v18: paperclip_unreachable only for a phone whose stored prefs say so, else stale_prompt.
+        internal static string RefusalFor(string code, bool phoneAsked) =>
+            code == PaperclipPrompts.UnreachableCode && !phoneAsked ? AnswerGate.StalePrompt : code;
+
         // A refusal goes only to the phone that answered.
         internal IReadOnlyList<string> SendRefusal(string phoneId, string requestId, string sessionId, string code)
         {
             if (!Welcomed || !_channels.TryGetValue(phoneId, out var c)) return [];
+            // CB-447 (frames-v18): the new code only for a phone that asked for it; every other phone is told what
+            // it always was (the same outcome, worded stale_prompt), so an older build never meets a code it does not know.
+            code = RefusalFor(code, c.Alerts.PaperclipUnreachable);
             return Collect(SealTo(c, "action", RelayCrypto.Ck(c.CkKey, sessionId),
                 System.Text.Encoding.UTF8.GetBytes(PromptFrames.Refusal(requestId, sessionId, code))));
         }
