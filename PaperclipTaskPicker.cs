@@ -1,0 +1,76 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace Orbweaver
+{
+    // Which task an agent's thread follows, and which run on it the feed reads (plan 2.2). Pulled out of
+    // PaperclipChatSession so the rule exists once: the desktop panel and a phone watching the same agent
+    // (CB-447) both ask it. Thread-safe: the feed's thread calls Target() while the UI thread (or the
+    // relay's) pins a task and stores the assigned-issues answer.
+    internal sealed class PaperclipTaskPicker
+    {
+        private readonly string _agentId;
+        private readonly Func<PaperclipSessions.ChatView> _view;
+        private readonly Func<IReadOnlyList<PaperclipAgent>> _roster;
+        private readonly object _gate = new();
+        private IReadOnlyList<PaperclipChat.AssignedIssue>? _assigned;
+        private PaperclipChat.TaskRef? _focus;
+
+        internal PaperclipTaskPicker(string agentId, Func<PaperclipSessions.ChatView> view,
+            Func<IReadOnlyList<PaperclipAgent>> roster)
+        {
+            _agentId = agentId;
+            _view = view;
+            _roster = roster;
+        }
+
+        // Rung 4's input: read once on open, never polled.
+        internal void SetAssigned(IReadOnlyList<PaperclipChat.AssignedIssue> read)
+        {
+            lock (_gate) _assigned = read;
+        }
+
+        // The task a message just opened: it is the thread's task until the agent runs on another.
+        internal void Pin(PaperclipChat.TaskRef task)
+        {
+            lock (_gate) _focus = task;
+        }
+
+        internal PaperclipChat.TaskRef? Pick()
+        {
+            var view = _view();
+            PaperclipChat.TaskRef? task;
+            lock (_gate)
+            {
+                var liveHere = view.Live.Any(r => r.AgentId == _agentId && !string.IsNullOrEmpty(r.IssueId));
+                // A run on any task is the agent's own word on which task it is on: the task a message
+                // just opened stops being pinned.
+                if (liveHere) _focus = null;
+                var picked = PaperclipChat.CurrentTask(_agentId, view.Live, view.Blocked, view.Runs, _assigned,
+                    Array.Empty<PaperclipApi.RawIssue>());
+                task = _focus ?? picked;
+            }
+            if (task != null && string.IsNullOrWhiteSpace(task.Title)
+                && _roster().FirstOrDefault(a => a.Id == _agentId)?.Task is { Length: > 0 } title)
+                task = task with { Title = title };
+            return task;
+        }
+
+        // What the feed reads this tick: the task, and the newest run on it (the live one, or the newest
+        // finished).
+        internal ChatTarget Target()
+        {
+            var task = Pick();
+            var view = _view();
+            var live = task == null ? null
+                : view.Live.Where(r => r.AgentId == _agentId && r.IssueId == task.Id)
+                    .OrderByDescending(r => r.StartedAt ?? DateTime.MinValue).FirstOrDefault();
+            if (live != null) return new ChatTarget(_agentId, task, live.Id, true);
+            var finished = task == null ? null
+                : view.Runs.Where(r => r.AgentId == _agentId && r.IssueId == task.Id)
+                    .OrderByDescending(r => r.FinishedAt ?? r.StartedAt ?? DateTime.MinValue).FirstOrDefault();
+            return new ChatTarget(_agentId, task, finished?.Id, false);
+        }
+    }
+}

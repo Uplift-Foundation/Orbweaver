@@ -69,8 +69,6 @@ namespace Orbweaver
         private readonly Func<DateTime> _now;
         private readonly Action<Action> _post;
         private readonly Action<TimeSpan, Action> _schedule;
-        // Guards what the feed's thread (Target) and the UI thread (Apply, SendAsync) both touch.
-        private readonly object _gate = new();
 
         // The rows on screen and the turn for each, index for index; a replaced row keeps its
         // place and its turn. The red send-failure line is not one of them.
@@ -79,9 +77,8 @@ namespace Orbweaver
         private readonly List<ChatTurn> _history = new();
         private ChatTurn? _errorTurn;
 
-        private IReadOnlyList<PaperclipChat.AssignedIssue>? _assigned;
+        private readonly PaperclipTaskPicker _picker;
         private PaperclipChat.TaskRef? _task;
-        private PaperclipChat.TaskRef? _focus;
         private bool _loaded, _live, _refused, _open;
         private DateTime? _wakingSince;
         private CancellationTokenSource? _assignedCts;
@@ -105,6 +102,7 @@ namespace Orbweaver
             _actions = actions;
             _roster = roster ?? PaperclipSessions.Snapshot;
             _view = view ?? (() => PaperclipSessions.CurrentChatView);
+            _picker = new PaperclipTaskPicker(agentId, _view, _roster);
             _readAssigned = readAssigned ?? (_ => Task.FromResult<IReadOnlyList<PaperclipChat.AssignedIssue>?>(null));
             _link = link ?? (() => PaperclipSessions.Link);
             _now = now ?? (() => DateTime.UtcNow);
@@ -170,7 +168,7 @@ namespace Orbweaver
             catch (OperationCanceledException) { return; }
             catch (Exception) { return; }   // a failed read leaves "no task", never an exception text
             if (cts.IsCancellationRequested || read == null) return;
-            lock (_gate) _assigned = read;
+            _picker.SetAssigned(read);
             _feed.Nudge();
         }
 
@@ -190,42 +188,11 @@ namespace Orbweaver
         });
 
         // ---- which task, and which run: what the feed is told to read ----------
+        // The rule is PaperclipTaskPicker's, shared with a phone watching the same agent.
 
-        internal PaperclipChat.TaskRef? PickTask()
-        {
-            var view = _view();
-            PaperclipChat.TaskRef? task;
-            lock (_gate)
-            {
-                var liveHere = view.Live.Any(r => r.AgentId == _agentId && !string.IsNullOrEmpty(r.IssueId));
-                // A run on any task is the agent's own word on which task it is on: the task a message
-                // just opened stops being pinned.
-                if (liveHere) _focus = null;
-                var picked = PaperclipChat.CurrentTask(_agentId, view.Live, view.Blocked, view.Runs, _assigned,
-                    Array.Empty<PaperclipApi.RawIssue>());
-                task = _focus ?? picked;
-            }
-            if (task != null && string.IsNullOrWhiteSpace(task.Title) && AgentRow()?.Task is { Length: > 0 } title)
-                task = task with { Title = title };
-            return task;
-        }
+        internal PaperclipChat.TaskRef? PickTask() => _picker.Pick();
 
-        // What the feed reads this tick: the task, and the newest run on it (the live one, or the
-        // newest finished).
-        internal ChatTarget Target()
-        {
-            var task = PickTask();   // runs on the feed's thread: it writes no field the UI thread reads
-            var view = _view();
-            var live = task == null ? null
-                : view.Live.Where(r => r.AgentId == _agentId && r.IssueId == task.Id)
-                    .OrderByDescending(r => r.StartedAt ?? DateTime.MinValue).FirstOrDefault();
-            if (live != null) return new ChatTarget(_agentId, task, live.Id, true);
-            var finished = task == null ? null
-                : view.Runs.Where(r => r.AgentId == _agentId && r.IssueId == task.Id)
-                    .OrderByDescending(r => r.FinishedAt ?? r.StartedAt ?? DateTime.MinValue).FirstOrDefault();
-            return new ChatTarget(_agentId, task, finished?.Id, false);
-        }
-
+        internal ChatTarget Target() => _picker.Target();
 
         private PaperclipAgent? AgentRow() => _roster().FirstOrDefault(a => a.Id == _agentId);
 
@@ -375,7 +342,7 @@ namespace Orbweaver
             _schedule(PaperclipChat.WakeGrace + TimeSpan.FromMilliseconds(250), () => _post(RefreshAffordances));
             // A task this message opened is the panel's task now (until the agent runs on another).
             if (task is null && !string.IsNullOrEmpty(sent.IssueId))
-                lock (_gate) _focus = new PaperclipChat.TaskRef(sent.IssueId, "", FirstLine(text), "todo");
+                _picker.Pin(new PaperclipChat.TaskRef(sent.IssueId, "", FirstLine(text), "todo"));
             _feed.Nudge();
             RefreshAffordances();
             return ChatSendOutcome.Sent;
