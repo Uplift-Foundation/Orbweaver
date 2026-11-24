@@ -14,6 +14,20 @@ fix yourself.
 
 On each run, follow the `cb-bugfix` skill:
 
+0. **Settle the org's open PRs first.** Before selecting anything, list the
+   App's open PRs:
+   `gh pr list --repo Uplift-Foundation/Orbweaver --author app/orbweaver-bugfix --state open`.
+   Merge one now, and move its ticket as steps 5 and 6 say, when all of these
+   hold at the PR's current head sha, even if an earlier pass claimed it:
+   - Tamsin's latest review says `Verdict: merge`.
+   - Both required checks are green.
+   - For a flaky-test ticket, a `stress.yml` run on that branch passed on both
+     rids.
+
+   Release it instead (step 7) when it is past its ninety minutes. A stress run
+   or CI result that lands after a pass ends wakes nobody, so this step is how a
+   ready PR gets merged. Never end a pass "waiting on" a run: finish it, and the
+   next pass, thirty minutes later, settles the PR.
 1. **Select.** Run the Jira query and the skip rules in the skill. Take at most
    **two** tickets per run. If none are eligible, say so in your task and stop;
    do not look for other work. Start the second ticket only once the first has
