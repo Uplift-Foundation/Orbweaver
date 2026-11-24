@@ -273,6 +273,66 @@ public class ChatPanelOpenClawSlashTests : IDisposable
         }
     }
 
+    // CB-387: the reply to a send can land after the person has gone to another
+    // conversation. Back in the first, the box must not offer the sent text as
+    // unsent (a duplicate send) when the send went, and must keep it when the
+    // send failed (CB-35). The other conversation's draft is not touched.
+    private async Task<(string InA, string InB)> SwitchAwayBeforeReplyAsync(bool replySucceeds)
+    {
+        var (socket, gateway, release) = await HeldReplyAsync();
+        using (gateway)
+        {
+            var (chat, panel) = OpenPanel();
+            var input = panel.FindControl<TextBox>("Input")!;
+            var orb = NewOrb();
+
+            var done = panel.CompletedSendsForTests;
+            Type(input, "please run the build");
+            Press(input, Key.Enter);
+            WaitFor(() => socket.Requests.Count(r => r.Method == "chat.send") == 1);
+
+            var other = new OpenClawChatSession("openclaw:" + SessionKey + ":b", SessionKey + ":b", "Other");
+            ChatPanel.OpenFor(orb, other);
+            Flush();
+            Type(input, "a draft for the other one");
+
+            if (replySucceeds) release();
+            else
+            {
+                var id = socket.Requests.Last(r => r.Method == "chat.send").Id;
+                socket.PushJson(JsonSerializer.Serialize(
+                    FakeGatewaySocket.Error(id, "UNAVAILABLE", "gateway down", null)));
+            }
+            WaitFor(() => panel.CompletedSendsForTests == done + 1);
+            Assert.Equal("a draft for the other one", input.Text);
+
+            ChatPanel.OpenFor(orb, chat);
+            Flush();
+            var inA = input.Text ?? "";
+            ChatPanel.OpenFor(orb, other);
+            Flush();
+            return (inA, input.Text ?? "");
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task ASendThatWentLeavesNoDraftBehindWhenTheReplyLandsAfterASwitch()
+    {
+        var (inA, inB) = await SwitchAwayBeforeReplyAsync(replySucceeds: true);
+
+        Assert.Equal("", inA);
+        Assert.Equal("a draft for the other one", inB);
+    }
+
+    [AvaloniaFact]
+    public async Task ASendThatFailedKeepsItsTextWhenTheReplyLandsAfterASwitch()
+    {
+        var (inA, inB) = await SwitchAwayBeforeReplyAsync(replySucceeds: false);
+
+        Assert.Equal("please run the build", inA);
+        Assert.Equal("a draft for the other one", inB);
+    }
+
     [AvaloniaFact]
     public async Task AnEditThatRestatesTheSentTextStillSurvivesTheReply()
     {
