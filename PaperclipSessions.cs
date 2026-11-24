@@ -532,7 +532,7 @@ namespace Orbweaver
                     }
                     catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
                     {
-                        if (StepFailureLine(ex, ref fault) is { } line) log?.Invoke("runtime events read failed " + line);
+                        if (StepFailureLine(ex, ref fault, "runtime events read failed") is { } line) log?.Invoke(line);
                     }
                     if (read != null) seen[run.Id] = (read, false);
                     else if (runtime != null && runtime.TryGetValue(run.Id, out var prior) && !prior.Stale)
@@ -617,12 +617,12 @@ namespace Orbweaver
         // CB-442: a step that throws backs the loop off for 30 s, and used to say nothing, which hid a parser
         // fault on the mini for the length of a proof. One line per distinct message: the exception's type and
         // message, cut, never a body, key or address from this code (a message is the framework's own words).
-        internal static string? StepFailureLine(Exception ex, ref string? lastMessage)
+        internal static string? StepFailureLine(Exception ex, ref string? lastMessage, string what = "poll step failed")
         {
             var message = ex.Message.Length <= 200 ? ex.Message : ex.Message[..200];
             if (message == lastMessage) return null;
             lastMessage = message;
-            return $"poll step failed {ex.GetType().Name}: {message}";
+            return $"{what} {ex.GetType().Name}: {message}";
         }
 
         // ---- the loop -------------------------------------------------------

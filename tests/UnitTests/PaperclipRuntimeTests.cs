@@ -313,7 +313,7 @@ public class PaperclipRuntimeTests
         Assert.DoesNotContain(byAgent["ag1"], n => n.Kind == "runtime");      // nothing prior to keep for the odd run
         var s2 = await PaperclipSessions.StepAsync(wrapped, Cfg, s1.Next, t0.AddSeconds(5), default, log.Add);
         Assert.Contains(s2.Next.Published!.Single(a => a.Id == "ag2").Needs, n => n.Id == "r-three");
-        Assert.Equal("runtime events read failed poll step failed InvalidOperationException: odd body", Assert.Single(log));
+        Assert.Equal("runtime events read failed InvalidOperationException: odd body", Assert.Single(log));
     }
 
     [Fact]
