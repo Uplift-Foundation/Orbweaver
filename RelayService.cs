@@ -308,7 +308,10 @@ namespace Orbweaver
         {
             var dirs = UserConfigDirs();
             var rows = RelayRoster.Project(snapshot, (sessionId, status) =>
-                RelayPersonaRows.For(PersonaName(status, dirs), status, LocalPersonaFor(sessionId), OfferImage));
+                status.Source == SessionSource.Paperclip
+                    ? RelayPersonaRows.ForPaperclip(sessionId,
+                        TrayController.DisplayName(new TrayController.SessionEntry(sessionId, status)), status.PaperclipAvatarFile, OfferImage)
+                    : RelayPersonaRows.For(PersonaName(status, dirs), status, LocalPersonaFor(sessionId), OfferImage));
             var personaRows = RelayPersonaRows.Rows(rows, DefaultPersona(dirs), OfferImage);
             return (rows, PersonaFrames.Personas(personaRows), PushPersona.Of(personaRows.FirstOrDefault(r => r.Default)));
         }

@@ -486,10 +486,13 @@ namespace Orbweaver
         {
             var parsed = AlertPrefs.Parse(body);
             var ok = parsed is not null;
+            // CB-447: a phone whose paperclip_personas flipped is sent a fresh whole roster (frames-v18).
+            var personasFlipped = false;
             if (parsed is { } prefs)
             {
+                personasFlipped = c.Alerts.PaperclipPersonas != prefs.PaperclipPersonas;
                 c.Alerts = prefs;
-                Note($"prefs from {Safe(from)} done_alerts={prefs.DoneAlerts} amber_members={prefs.AmberMembers} broke_alerts={prefs.BrokeAlerts}");
+                Note($"prefs from {Safe(from)} done_alerts={prefs.DoneAlerts} amber_members={prefs.AmberMembers} broke_alerts={prefs.BrokeAlerts} paperclip_personas={prefs.PaperclipPersonas} paperclip_unreachable={prefs.PaperclipUnreachable}");
                 // Still prefs.ok when the write fails: the choice is in force
                 // now, and the phone has nothing better to do with a refusal.
                 if (!_identity.SaveAlerts(c.Phone.PhoneId, prefs))
@@ -499,7 +502,9 @@ namespace Orbweaver
             var reply = ok
                 ? new CanonicalJson().Str("t", "prefs.ok").Str("ref", envelopeId)
                 : new CanonicalJson().Str("t", "prefs.err").Str("ref", envelopeId).Str("code", "malformed");
-            return Collect(SealTo(c, "pair", "", Encoding.UTF8.GetBytes(reply.ToString())));
+            var frames = new List<string>(Collect(SealTo(c, "pair", "", Encoding.UTF8.GetBytes(reply.ToString()))));
+            if (personasFlipped && c.Online && Welcomed) frames.AddRange(Collect(RosterFor(c)));
+            return frames;
         }
 
         private byte[]? OpenFromPhone(Channel c, string cls, string ct)
@@ -1013,7 +1018,7 @@ namespace Orbweaver
         // Always the whole book, unconditionally — a resync asks for the book,
         // not the diff — and it restarts the phone's numbering at 1.
         private string? RosterFor(Channel c) =>
-            SealTo(c, "state", "", c.Stream.Roster(_book.Snapshot()));
+            SealTo(c, "state", "", c.Stream.Roster(RelayRoster.ForPhone(_book.Snapshot(), c.Alerts.PaperclipPersonas)));
 
         // CB-316: a phone coming online (or just paired) gets its roster, then
         // the latest usage frame (frames-v4: "sent on connect, after the

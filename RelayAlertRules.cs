@@ -12,7 +12,11 @@ internal enum DoneAlerts { All, Leads, Off }
 // BrokeAlerts (CB-428, frames-v16 prefs): whether this phone wants the push for a Paperclip agent that stopped
 // working. Off until the phone says true: absent, false and anything that is not the JSON true all read as off,
 // so a phone that predates the key (or sends it garbled) is never sent one.
-internal readonly record struct AlertPrefs(DoneAlerts DoneAlerts, bool AmberMembers, bool BrokeAlerts = false)
+//
+// PaperclipPersonas (CB-447, frames-v18 prefs): whether this phone draws a Paperclip row's persona; PaperclipUnreachable:
+// whether it words the paperclip_unreachable answer refusal. Both off until the phone says true, for BrokeAlerts' reason.
+internal readonly record struct AlertPrefs(DoneAlerts DoneAlerts, bool AmberMembers, bool BrokeAlerts = false,
+    bool PaperclipPersonas = false, bool PaperclipUnreachable = false)
 {
     // What a phone gets before it has ever sent prefs: today's behaviour.
     internal static readonly AlertPrefs Default = new(DoneAlerts.All, AmberMembers: true);
@@ -25,7 +29,9 @@ internal readonly record struct AlertPrefs(DoneAlerts DoneAlerts, bool AmberMemb
         if (Mode(done.GetString()) is not { } known) return null;
         var amber = !body.TryGetProperty("amber_members", out var a) || a.ValueKind != JsonValueKind.False;
         var broke = body.TryGetProperty("broke_alerts", out var b) && b.ValueKind == JsonValueKind.True;
-        return new AlertPrefs(known, amber, broke);
+        var personas = body.TryGetProperty("paperclip_personas", out var pp) && pp.ValueKind == JsonValueKind.True;
+        var unreachable = body.TryGetProperty("paperclip_unreachable", out var pu) && pu.ValueKind == JsonValueKind.True;
+        return new AlertPrefs(known, amber, broke, personas, unreachable);
     }
 
     private static DoneAlerts? Mode(string? name) => name switch
@@ -47,8 +53,11 @@ internal readonly record struct AlertPrefs(DoneAlerts DoneAlerts, bool AmberMemb
         _ => "off",
     };
 
-    internal static AlertPrefs? FromStored(string? doneAlerts, bool? amberMembers, bool? brokeAlerts = null) =>
-        Mode(doneAlerts) is { } known ? new AlertPrefs(known, amberMembers ?? true, brokeAlerts ?? false) : null;
+    internal static AlertPrefs? FromStored(string? doneAlerts, bool? amberMembers, bool? brokeAlerts = null,
+        bool? paperclipPersonas = null, bool? paperclipUnreachable = null) =>
+        Mode(doneAlerts) is { } known
+            ? new AlertPrefs(known, amberMembers ?? true, brokeAlerts ?? false, paperclipPersonas ?? false, paperclipUnreachable ?? false)
+            : null;
 }
 
 internal static class RelayAlertRules
