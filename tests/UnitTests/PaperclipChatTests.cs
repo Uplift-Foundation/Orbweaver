@@ -587,7 +587,7 @@ public class PaperclipChatTests
     {
         Assert.Equal("Message Ines. It wakes to read it.", H());
         Assert.Equal("Message Ines. This opens a new task.", H(hasTask: false));
-        Assert.Equal("Ines is working. It reads a message when this run ends.", H(live: true));
+        Assert.Equal("Ines is working. Your message goes to this run.", H(live: true));
         Assert.Equal("Ines is paused in Paperclip. It reads this when resumed.", H("paused"));
         Assert.Equal("Reconnect to Paperclip", H(link: PaperclipLink.NeedsReconnect));
         Assert.Equal("Waking Ines…", H(since: T0));

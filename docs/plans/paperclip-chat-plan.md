@@ -30,7 +30,7 @@ The state shows in two places only: the orb the person already reads, and the wo
 | --- | --- | --- |
 | Asleep, has a task | the task's thread and the last run's activity | "Message <name>. It wakes to read it." |
 | Asleep, never had a task | "No task yet." | "Message <name>. This opens a new task." |
-| Working live | tool lines and speech appear as they happen | "<name> is working. It reads a message when this run ends." |
+| Working live | tool lines and speech appear as they happen | "<name> is working. Your message goes to this run." |
 | Just messaged | the person's bubble | "Waking <name>…" until a run shows, then the Working words |
 | Waiting on a sub-task | the thread; a muted line naming the task it waits on, when Paperclip says | the Asleep words |
 | Needs you | the thread; the amber flyout keeps Approve and Decline exactly as today | "Message <name>. It wakes to read it." |
@@ -175,7 +175,7 @@ Task<PaperclipSent> OpenTaskAsync(string agentId, string text, CancellationToken
 | Outcome | When | What the person sees | `SendAsync` returns |
 | --- | --- | --- | --- |
 | Sent | 2xx | their bubble; "Waking <name>…" | `Sent` |
-| Sent, agent busy | 2xx while a run is live | their bubble; "<name> is working. It reads a message when this run ends." | `Sent` |
+| Sent, agent busy | 2xx while a run is live | their bubble; "<name> is working. Your message goes to this run." | `Sent` |
 | Sent, agent paused | 2xx, agent `paused` | their bubble; the Paused words | `Sent` |
 | No task | no current task | §3.1: the message opens one | `Sent` or as below |
 | Task gone | 404 | red line "That task is no longer in Paperclip."; text stays; the feed re-picks the task | `Failed` |
@@ -183,7 +183,7 @@ Task<PaperclipSent> OpenTaskAsync(string agentId, string text, CancellationToken
 | Needs reconnect | 401, 403 | red line "Reconnect to Paperclip to message <name>."; text stays | `Failed` |
 | Unreachable | timeout, refused, 5xx | red line "Can't reach Paperclip."; text stays | `Failed` |
 
-"Agent busy" is worded as a fact about delivery that is **not measured**. Paperclip's OpenAPI document declares a queue for it (`GET /api/issues/{id}/queued-comments`, with `interrupt` and `steer` beside it), which fits "read when this run ends" and is a declaration, not a run. The lead can run it once the slice is building; if the running run reads the comment at once, only the sentence changes. Interrupting or steering a run from the panel is not in this plan.
+"Agent busy" is **measured once** (2026-11-24, board session, Paperclip 2026.1117.0): a comment posted while the agent was already running on that task was a 201, started no second run, and the same run took it in and answered both the task and the message in its one final comment. That is why the words are "Your message goes to this run." and not a promise about timing: one reading cannot show what a message landing in a run's last second does. A paused agent was also measured: the comment is accepted (201), the task goes from done back to todo, nothing runs until the agent is resumed, and it answered 18 s after resume. Interrupting or steering a run from the panel is not in this plan.
 
 The person's bubble is raised by `SendAsync` on a 2xx (requirement 3), keyed by the comment id from the response (measured to be there), so the next comments read finds the same key and adds nothing. A 2xx whose body cannot be read still counts as sent; the next read then adopts the newest unkeyed user bubble with the same text.
 

@@ -345,7 +345,7 @@ public class PaperclipChatSessionTests : IDisposable
 
         _roster = [Agent(state: "generating")];
         PaperclipSessions.Publish(_roster, PaperclipLink.Connected, "Connected");
-        Assert.Equal("Nova is working. It reads a message when this run ends.", s.ComposerHint);
+        Assert.Equal("Nova is working. Your message goes to this run.", s.ComposerHint);
 
         _roster = [Agent(status: "paused")];
         PaperclipSessions.Publish(_roster, PaperclipLink.Connected, "Connected 2");
@@ -373,7 +373,7 @@ public class PaperclipChatSessionTests : IDisposable
 
         _view = new([Live("r1", "i1")], [], []);
         f.Push(Snap("i1", act: PaperclipChat.Activity.Empty("r1")));
-        Assert.Equal("Nova is working. It reads a message when this run ends.", s.ComposerHint);
+        Assert.Equal("Nova is working. Your message goes to this run.", s.ComposerHint);
         _view = Empty;
         f.Push(Snap("i1", act: PaperclipChat.Activity.Empty("r1")));
         Assert.Equal("Message Nova. It wakes to read it.", s.ComposerHint);

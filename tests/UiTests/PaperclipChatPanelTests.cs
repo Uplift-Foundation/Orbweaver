@@ -231,7 +231,7 @@ public class PaperclipChatPanelTests : IDisposable
         _view = new([new("r1", "ag1", "running", T0, "i1", null, null)], [], []);
         feed.Push(Thread());
         FlushRender();
-        Assert.Equal("Nova is working. It reads a message when this run ends.", InputOf(panel).Watermark);
+        Assert.Equal("Nova is working. Your message goes to this run.", InputOf(panel).Watermark);
 
         _view = new([], [], []);
         _roster = [AgentWith("paused")];

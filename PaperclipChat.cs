@@ -312,7 +312,7 @@ namespace Orbweaver
         {
             if (link == PaperclipLink.NeedsReconnect) return "Reconnect to Paperclip";
             if (agentStatus == "paused") return $"{agentName} is paused in Paperclip. It reads this when resumed.";
-            if (runLive) return $"{agentName} is working. It reads a message when this run ends.";
+            if (runLive) return $"{agentName} is working. Your message goes to this run.";
             if (wakingSince is { } since)
                 return now - since >= WakeGrace
                     ? $"{agentName} hasn't woken yet. Wake it from the orb's menu."
