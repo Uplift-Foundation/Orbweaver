@@ -188,7 +188,10 @@ namespace Orbweaver
         internal static string TitleFor(string text)
         {
             var first = text.Trim().Split('\n')[0].Trim();
-            return first.Length <= TaskTitleLimit ? first : first[..TaskTitleLimit].TrimEnd();
+            if (first.Length <= TaskTitleLimit) return first;
+            // Never leave half a surrogate pair at the cut: an emoji at the limit goes whole or not at all.
+            var cut = char.IsHighSurrogate(first[TaskTitleLimit - 1]) ? TaskTitleLimit - 1 : TaskTitleLimit;
+            return first[..cut].TrimEnd();
         }
 
         internal static string OpenTaskBody(string agentId, string text) =>

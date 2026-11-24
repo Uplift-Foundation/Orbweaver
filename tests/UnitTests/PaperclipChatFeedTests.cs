@@ -143,4 +143,71 @@ public class PaperclipChatFeedTests
         feed.Dispose();
         Assert.False(feed.IsOpen);
     }
+
+    // An API whose comments read waits on a gate, so a tick can be caught in flight.
+    private sealed class GatedApi : IPaperclipApi
+    {
+        internal readonly TaskCompletionSource Release = new();
+        internal readonly TaskCompletionSource Entered = new();
+        public async Task<PaperclipResponse> GetAsync(string path, CancellationToken ct)
+        {
+            Entered.TrySetResult();
+            await Release.Task;
+            return FakePaperclip.Ok(Cm);
+        }
+        public Task<PaperclipResponse> PostAsync(string path, string jsonBody, CancellationToken ct) => throw new NotSupportedException();
+    }
+
+    [Fact]
+    public async Task A_tick_in_flight_when_the_feed_closes_writes_and_raises_nothing()
+    {
+        var api = new GatedApi(); var got = new List<ChatSnapshot>();
+        var feed = new PaperclipChatFeed(api, "co", () => new ChatTarget("a", T1, null, false));
+        feed.Updated += got.Add;
+        using var cts = new CancellationTokenSource();
+        var tick = feed.TickAsync(true, cts.Token);
+        await api.Entered.Task;                                // the read is in flight
+        cts.Cancel();                                          // the panel closed (Closed() cancels this token)
+        api.Release.SetResult();
+        await tick;
+        Assert.Empty(got);                                     // nothing raised after close
+
+        // and nothing was written: a fresh tick on a new token still sees a task change, so it raises
+        var fresh = new FakePaperclip();
+        fresh.Gets["/api/issues/is-1/comments"] = FakePaperclip.Ok(Cm);
+        var feed2 = new PaperclipChatFeed(fresh, "co", () => new ChatTarget("a", T1, null, false));
+        var got2 = new List<ChatSnapshot>(); feed2.Updated += got2.Add;
+        await feed2.TickAsync(true, default);
+        Assert.Single(got2);
+    }
+
+    [Fact]
+    public async Task A_cancelled_tick_leaves_the_state_for_the_next_one_to_start_from()
+    {
+        var api = new GatedApi(); var got = new List<ChatSnapshot>();
+        var feed = new PaperclipChatFeed(api, "co", () => new ChatTarget("a", T1, null, false));
+        feed.Updated += got.Add;
+        using var cts = new CancellationTokenSource();
+        var tick = feed.TickAsync(true, cts.Token);
+        await api.Entered.Task; cts.Cancel(); api.Release.SetResult(); await tick;
+        // the reopened feed's first tick on a live token publishes as a first tick (state was not poisoned)
+        await feed.TickAsync(true, default);
+        Assert.Single(got);
+        Assert.Single(got[0].Comments);
+    }
+
+    [Fact]
+    public async Task A_404_on_the_comments_of_a_deleted_task_keeps_the_thread_and_is_tried_again_next_tick()
+    {
+        var (feed, api, got, _) = Rig(new ChatTarget("a", T1, null, false));
+        api.Gets["/api/issues/is-1/comments"] = FakePaperclip.Ok(Cm);
+        await feed.TickAsync(true, default);
+        api.Gets.Remove("/api/issues/is-1/comments");           // the fake now answers 404
+        await feed.TickAsync(true, default);
+        Assert.Single(got);                                    // pinned: silent, nothing raised, nothing cleared
+        api.Gets["/api/issues/is-1/comments"] = FakePaperclip.Ok("[{\"id\":\"c1\",\"body\":\"hi\",\"authorUserId\":\"u\"},{\"id\":\"c2\",\"body\":\"more\",\"authorUserId\":\"u\"}]");
+        await feed.TickAsync(true, default);
+        Assert.Equal(2, got[^1].Comments.Count);               // the next tick read again and recovered
+        Assert.Equal(3, api.Calls.Count(c => c.EndsWith("/comments")));
+    }
 }

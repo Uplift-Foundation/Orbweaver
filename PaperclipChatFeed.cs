@@ -95,66 +95,84 @@ namespace Orbweaver
             catch (OperationCanceledException) { }
         }
 
-        // One tick. `comments` says whether the comments list is read this time.
+        // One tick. `comments` says whether the comments list is read this time. The reads work on local
+        // copies; the result is committed (and raised) under the gate only if `ct` is still live, so a tick
+        // that was in flight when the panel closed, or when it closed and reopened, writes nothing and
+        // raises nothing into the new session (QA W2).
         internal async Task TickAsync(bool comments, CancellationToken ct)
         {
             var t = _target();
-            var changed = false;
             var taskId = t.Task?.Id;
-            if (taskId != _taskId)
+            string? curTask; IReadOnlyList<PaperclipChat.Comment> curComments; PaperclipChat.Activity? curActivity;
+            bool lastLive, readOnce, reconnect;
+            lock (_gate)
             {
-                _taskId = taskId; _comments = Array.Empty<PaperclipChat.Comment>(); _activity = null;
-                _lastLive = _readOnce = false; changed = true;
+                curTask = _taskId; curComments = _comments; curActivity = _activity;
+                lastLive = _lastLive; readOnce = _readOnce; reconnect = _needsReconnect;
+            }
+
+            var changed = false;
+            if (taskId != curTask)
+            {
+                curComments = Array.Empty<PaperclipChat.Comment>(); curActivity = null;
+                lastLive = readOnce = false; changed = true;
                 comments = true;
             }
 
+            var commentsRead = false;
             if (taskId != null && comments)
             {
-                _commentsAt = DateTime.UtcNow;
+                commentsRead = true;
                 var res = await _api.GetAsync($"/api/issues/{Uri.EscapeDataString(taskId)}/comments", ct).ConfigureAwait(false);
-                if (Refused(res)) changed |= SetReconnect();
+                if (Refused(res)) { if (!reconnect) { reconnect = true; changed = true; } }
                 else if (res.IsOk)
                 {
                     var parsed = PaperclipChat.ParseComments(res.Body);
-                    if (!parsed.SequenceEqual(_comments)) { _comments = parsed; changed = true; }
+                    if (!parsed.SequenceEqual(curComments)) { curComments = parsed; changed = true; }
+                }
+                // Any other status (a 404 for a deleted task, a 5xx) keeps what is shown and is tried again at the
+                // next comments tick; it is deliberately silent (pinned by a test).
+            }
+
+            if (taskId != null && !reconnect && !string.IsNullOrEmpty(t.RunId))
+            {
+                if (curActivity == null || curActivity.RunId != t.RunId) { curActivity = PaperclipChat.Activity.Empty(t.RunId); readOnce = false; }
+                // Live: every tick. Just ended: once more for the tail. Finished: once, then kept.
+                if (t.RunLive || lastLive || !readOnce)
+                {
+                    for (var page = 0; page < MaxPagesPerTick; page++)
+                    {
+                        var after = curActivity.LastSeq;
+                        var res = await _api.GetAsync(
+                            $"/api/heartbeat-runs/{Uri.EscapeDataString(t.RunId)}/events?afterSeq={after}&limit={PageSize}", ct).ConfigureAwait(false);
+                        if (Refused(res)) { if (!reconnect) { reconnect = true; changed = true; } break; }
+                        if (!res.IsOk) break;
+                        readOnce = true;
+                        var next = PaperclipChat.Fold(curActivity, res.Body);
+                        if (next.LastSeq != curActivity.LastSeq || next.Rows.Count != curActivity.Rows.Count) changed = true;
+                        curActivity = next;
+                        if (PaperclipChat.CountEvents(res.Body) < PageSize || next.LastSeq == after) break;
+                    }
+                }
+                lastLive = t.RunLive;
+            }
+            else if (string.IsNullOrEmpty(t.RunId) && curActivity != null) { curActivity = null; changed = true; }
+
+            ChatSnapshot? raise = null;
+            lock (_gate)
+            {
+                if (ct.IsCancellationRequested) return;
+                _taskId = taskId; _comments = curComments; _activity = curActivity;
+                _lastLive = lastLive; _readOnce = readOnce; _needsReconnect = reconnect;
+                if (commentsRead) _commentsAt = DateTime.UtcNow;
+                // The first tick always raises, so a panel opened on an agent with no task still hears "no task".
+                if (changed || !_published)
+                {
+                    _published = true;
+                    raise = new ChatSnapshot(t.Task, curComments, curActivity, reconnect);
                 }
             }
-
-            if (taskId != null && !_needsReconnect && !string.IsNullOrEmpty(t.RunId))
-            {
-                if (_activity == null || _activity.RunId != t.RunId) { _activity = PaperclipChat.Activity.Empty(t.RunId); _readOnce = false; }
-                // Live: every tick. Just ended: once more for the tail. Finished: once, then kept.
-                if (t.RunLive || _lastLive || !_readOnce)
-                    changed |= await ReadEventsAsync(t.RunId, ct).ConfigureAwait(false);
-                _lastLive = t.RunLive;
-            }
-            else if (string.IsNullOrEmpty(t.RunId) && _activity != null) { _activity = null; changed = true; }
-
-            // The first tick always raises, so a panel opened on an agent with no task still hears "no task".
-            if (changed || !_published)
-            {
-                _published = true;
-                Updated?.Invoke(new ChatSnapshot(t.Task, _comments, _activity, _needsReconnect));
-            }
-        }
-
-        private async Task<bool> ReadEventsAsync(string runId, CancellationToken ct)
-        {
-            var changed = false;
-            for (var page = 0; page < MaxPagesPerTick; page++)
-            {
-                var after = _activity!.LastSeq;
-                var res = await _api.GetAsync(
-                    $"/api/heartbeat-runs/{Uri.EscapeDataString(runId)}/events?afterSeq={after}&limit={PageSize}", ct).ConfigureAwait(false);
-                if (Refused(res)) return SetReconnect() | changed;
-                if (!res.IsOk) return changed;
-                _readOnce = true;
-                var next = PaperclipChat.Fold(_activity, res.Body);
-                if (next.LastSeq != _activity.LastSeq || next.Rows.Count != _activity.Rows.Count) changed = true;
-                _activity = next;
-                if (PaperclipChat.CountEvents(res.Body) < PageSize || next.LastSeq == after) break;
-            }
-            return changed;
+            if (raise != null && !ct.IsCancellationRequested) Updated?.Invoke(raise);
         }
 
         // The rows of issues?assigneeAgentId=<agent>, for the task rung that is read once on open (plan 2.2).
@@ -168,12 +186,5 @@ namespace Orbweaver
         }
 
         private static bool Refused(PaperclipResponse r) => r.StatusCode is 401 or 403;
-
-        private bool SetReconnect()
-        {
-            if (_needsReconnect) return false;
-            _needsReconnect = true;
-            return true;
-        }
     }
 }

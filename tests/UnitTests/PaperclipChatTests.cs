@@ -441,6 +441,22 @@ public class PaperclipChatTests
     }
 
     [Fact]
+    public void Measured_a_user_comment_mid_run_then_the_runs_one_final_comment_shows_exactly_one_answer_bubble()
+    {
+        // The B3 shape: the person's comment while the run was live, then the run's single final comment,
+        // carrying the run id, which answers both. The run has ended.
+        var ended = Fold(Fold(Activity.Empty("r"), Body(
+                Ev(1, "item.completed", new { kind = "agentMessage", text = "It printed the date.\n\n2 plus 2 = 4.", channel = "final" }, "m"))),
+            Body(Ev(2, "run.terminal", new { })));
+        var rows = Build(null, Agent, Names, [
+            C("u1", "While you are at it: what is 2 plus 2?", user: "user-1", sec: 5),
+            C("a1", "It printed the date.\n\n2 plus 2 = 4.", agent: Agent, run: "r", sec: 20)], ended);
+        Assert.Equal(1, rows.Count(r => r.Text.Contains("2 plus 2 = 4")));
+        Assert.Equal(["task", "c:u1", "c:a1"], rows.Select(r => r.Key));
+        Assert.DoesNotContain(rows, r => r.Key == AnswerKey("r"));
+    }
+
+    [Fact]
     public void A_comment_replaces_the_answer_only_once_the_run_has_ended_and_only_if_it_is_the_runs_last()
     {
         var spoke = Body(Ev(1, "run.result.proposed", new { summary = "Answer." }));
@@ -607,6 +623,17 @@ public class PaperclipMessageActionsTests
         Assert.Equal(80, title.Length);
         Assert.Equal(new string('x', 80), title);
         Assert.Equal("ab", PaperclipActions.TitleFor("ab" + new string(' ', 200) + "cd")[..2]);
+    }
+
+    [Fact]
+    public void An_emoji_at_the_title_limit_goes_whole_or_not_at_all()
+    {
+        var at79 = new string('x', 79) + "\U0001F600tail";              // the pair would straddle chars 79 and 80
+        var t = PaperclipActions.TitleFor(at79);
+        Assert.Equal(new string('x', 79), t);
+        Assert.DoesNotContain(t, c => char.IsSurrogate(c));
+        var at78 = new string('x', 78) + "\U0001F600tail";              // the pair fits exactly in 80
+        Assert.Equal(new string('x', 78) + "\U0001F600", PaperclipActions.TitleFor(at78));
     }
 
     [Fact]
