@@ -210,9 +210,21 @@ public class PaperclipChatWiringTests : IDisposable
             var session = m.RemoteChatFor("paperclip:a1")!;
 
             PaperclipSessions.Actions = fake;
+
+            // Paperclip is off here, so the assigned-issues read cannot answer: not "none", so nothing is opened (CB-452).
+            Assert.Equal(ChatSendOutcome.Failed, session.SendAsync("hello").Result);
+            Assert.Empty(fake.Sent);
+
+            // With the poll holding a task for the agent the send is a comment on it, through whatever the seam holds now.
+            PaperclipSessions.SetChatViewForTests(new(
+                [new PaperclipApi.RawLiveRun("r1", "a1", "running", DateTime.UtcNow, "i1", null, null)], [], []));
             Assert.Equal(ChatSendOutcome.Sent, session.SendAsync("hello").Result);
-            Assert.Equal(new[] { "open:a1:hello" }, fake.Sent);   // no task yet, so the message opens one
+            Assert.Equal(new[] { "comment:i1:hello" }, fake.Sent);
         }
-        finally { PaperclipSessions.Actions = null; }
+        finally
+        {
+            PaperclipSessions.Actions = null;
+            PaperclipSessions.SetChatViewForTests(new([], [], []));
+        }
     }
 }
