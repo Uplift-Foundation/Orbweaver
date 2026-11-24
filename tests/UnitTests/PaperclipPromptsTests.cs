@@ -679,31 +679,15 @@ public class PaperclipPromptsTests
     }
 
     [Fact]
-    public async Task A_confirming_read_follows_a_full_page_to_the_next_and_gives_up_after_its_bound()
+    public async Task A_confirming_read_is_one_page_and_a_full_page_with_no_match_is_not_followed()
     {
         var api = RealActions();
         api.Gets[EventsFrom40] = FakePaperclip.Ok("[" + Filler(40, 539) + "]");
         api.Gets["/api/heartbeat-runs/run1/events?afterSeq=539&limit=500"] = FakePaperclip.Ok("[" + Resolved(540, "rq-1", "accept") + "]");
         await Poll(Agent(needs: Runtime() with { Seq = 40 }));
         await Answer(AnswerTo(action: "approve"));
-        Assert.Single(_sent.Resolved);
-        Assert.Equal(2, api.Calls.Count(c => c.StartsWith("GET")));
-    }
-
-    [Fact]
-    public async Task A_confirming_read_stops_at_its_page_bound_and_on_a_page_it_cannot_advance_past()
-    {
-        var api = RealActions();
-        for (var k = 0; k < PaperclipActions.VerifyPages + 2; k++)
-        {
-            var from = 40 + k * 500;
-            api.Gets[$"/api/heartbeat-runs/run1/events?afterSeq={(k == 0 ? 39 : from - 1)}&limit=500"] = FakePaperclip.Ok("[" + Filler(from, from + 499) + "]");
-        }
-        await Poll(Agent(needs: Runtime() with { Seq = 40 }));
-        await Answer(AnswerTo(action: "approve"));
         Assert.Equal("stale_prompt", Assert.Single(_sent.Refusals).Code);
-        Assert.Equal(PaperclipActions.VerifyPages, api.Calls.Count(c => c.StartsWith("GET")));
-
+        Assert.Equal(1, api.Calls.Count(c => c.StartsWith("GET")));
     }
 
     [Fact]
@@ -799,6 +783,92 @@ public class PaperclipPromptsTests
         await Poll(Agent());                                                          // the request has left the run: the poll clears it
         Assert.Equal("desk", Assert.Single(_sent.Resolved).By);
         Assert.False(_p.HasPending(Sid));
+    }
+
+    // The measured order of 2026-11-24: the POST timed out, the read said pending, Paperclip applied the first POST 20 s
+    // later, the person's second tap was a 409, then the poll saw the item gone. The phone ends with resolved by itself.
+    [Fact]
+    public async Task A_late_applied_answer_is_resolved_by_the_phone_that_gave_it_when_the_poll_sees_it_decided_that_way()
+    {
+        var api = RealActions();
+        api.Gets[EventsFrom40] = FakePaperclip.Ok("[" + Filler(40, 43) + "]");
+        await Poll(Agent(needs: Runtime() with { Seq = 40 }));
+        await Answer(AnswerTo(action: "approve"));
+        api.PostResult = FakePaperclip.Status(PaperclipHttpKind.Other, 409);
+        await Answer(AnswerTo(action: "approve"));
+        Assert.Equal(["stale_prompt", "not_pending"], _sent.Refusals.Select(r => r.Code).ToArray());
+        api.Gets[EventsFrom40] = FakePaperclip.Ok("[" + Filler(40, 43) + "," + Resolved(44, "rq-1", "accept") + "]");   // applied after all
+        await Poll(Agent());
+        Assert.Equal("phone:" + PhoneId, Assert.Single(_sent.Resolved).By);
+        Assert.Equal(2, api.Posts);                                                   // one action applied, never a third POST
+    }
+
+    [Fact]
+    public async Task A_late_applied_answer_stays_by_desk_when_decided_the_other_way_when_another_answer_intervened_or_for_a_tool_action()
+    {
+        // Decided the other way.
+        var api = RealActions();
+        api.Gets[EventsFrom40] = FakePaperclip.Ok("[" + Filler(40, 43) + "]");
+        await Poll(Agent(needs: Runtime() with { Seq = 40 }));
+        await Answer(AnswerTo(action: "approve"));
+        api.Gets[EventsFrom40] = FakePaperclip.Ok("[" + Resolved(44, "rq-1", "decline") + "]");
+        await Poll(Agent());
+        Assert.Equal("desk", Assert.Single(_sent.Resolved).By);
+    }
+
+    [Fact]
+    public async Task A_different_choice_or_a_different_phone_accepted_in_between_drops_the_memory_of_the_unconfirmed_answer()
+    {
+        var api = RealActions();
+        api.Gets[EventsFrom40] = FakePaperclip.Ok("[" + Filler(40, 43) + "]");
+        await Poll(Agent(needs: Runtime() with { Seq = 40 }));
+        await Answer(AnswerTo(action: "approve"));                                    // unconfirmed: approve by the phone
+        await Answer(AnswerTo(action: "deny"));                                       // the same phone changes its mind, also unconfirmed
+        api.Gets[EventsFrom40] = FakePaperclip.Ok("[" + Resolved(44, "rq-1", "accept") + "]");
+        await Poll(Agent());
+        Assert.Equal("desk", Assert.Single(_sent.Resolved).By);                       // the remembered choice is now deny: accept is not it
+    }
+
+    [Fact]
+    public async Task Another_phones_accepted_answer_drops_the_memory_so_a_late_decision_is_by_desk()
+    {
+        var api = RealActions();
+        api.Gets[EventsFrom40] = FakePaperclip.Ok("[" + Filler(40, 43) + "]");
+        await Poll(Agent(needs: Runtime() with { Seq = 40 }));
+        await Answer(AnswerTo(action: "approve"));
+        api.PostResult = FakePaperclip.Status(PaperclipHttpKind.Other, 409);          // another phone's answer is accepted and refused by Paperclip
+        await _p.OnAnswerAsync("ph_0f0f0f0f0f0f0f0f", Other.Public, AnswerTo(action: "approve", signer: Other));
+        api.Gets[EventsFrom40] = FakePaperclip.Ok("[" + Resolved(44, "rq-1", "accept") + "]");
+        await Poll(Agent());
+        Assert.Equal("desk", Assert.Single(_sent.Resolved).By);
+    }
+
+    [Fact]
+    public async Task A_tool_action_that_left_the_list_after_a_timed_out_answer_is_by_desk()
+    {
+        var api = RealActions();
+        var need = Action();
+        var list = "/api/companies/co/tools/action-requests";
+        api.Gets[list] = FakePaperclip.Ok($"{{\"actionRequests\":[{{\"request\":{{\"id\":\"{need.Id}\",\"status\":\"pending\"}},\"toolTitle\":\"Send email\"}}]}}");
+        await Poll(Agent(needs: need));
+        await Answer(AnswerTo(action: "approve"));
+        api.Gets[list] = FakePaperclip.Ok("{\"actionRequests\":[]}");
+        await Poll(Agent());
+        Assert.Equal("desk", Assert.Single(_sent.Resolved).By);
+    }
+
+    [Fact]
+    public async Task A_re_read_with_events_for_another_request_only_does_not_count_as_resolved_and_the_callers_cancellation_propagates()
+    {
+        var api = new SlowApi();
+        api.Gets[EventsFrom40] = FakePaperclip.Ok("[" + Resolved(44, "someone-else", "accept") + "]");
+        var actions = new PaperclipActions(api, "co", () => { });
+        var need = Runtime() with { Seq = 40 };
+        Assert.Equal(PaperclipActionResult.Unreachable, (await actions.DecideAsync(need, true, default)).Result);
+        api.Gets.Clear();
+        api.HangGetsUntilCancelled = true;
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => actions.DecideAsync(need, true, cts.Token));
     }
 
     [Fact]

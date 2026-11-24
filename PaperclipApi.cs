@@ -388,17 +388,6 @@ namespace Orbweaver
             return best is { } r ? (r.Type, r.Action) : null;
         }
 
-        // The highest seq in one events body, and its row count (a full page means there may be more).
-        internal static long? LastSeqOf(string? eventsJson)
-        {
-            long? last = null;
-            foreach (var e in EventRows(eventsJson))
-                if (e.TryGetProperty("seq", out _) && Num(e, "seq") is var q && (last == null || q > last)) last = q;
-            return last;
-        }
-
-        internal static int RowCountOf(string? eventsJson) => EventRows(eventsJson).Count;
-
         private static IReadOnlyList<JsonElement> EventRows(string? json)
         {
             var rows = Rows(json);

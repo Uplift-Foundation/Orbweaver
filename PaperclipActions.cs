@@ -29,6 +29,13 @@ namespace Orbweaver
         Task<PaperclipOutcome> ResumeAsync(string agentId, CancellationToken ct);
     }
 
+    // CB-450: what PaperclipPrompts asks of the actions when an unconfirmed answer's item turns out decided: was it
+    // decided the way that answer chose. Its own interface so IPaperclipActions, which other work is changing, stays as it is.
+    internal interface IPaperclipConfirm
+    {
+        Task<bool> DecidedTheWayAsync(PaperclipNeed need, bool approve, CancellationToken ct);
+    }
+
     // The HTTP implementation, built on the same IPaperclipApi the poll uses and
     // bound to one company (a tool action request names it in the body).
     //
@@ -38,7 +45,7 @@ namespace Orbweaver
     // approve / decline (a 409 for the opposite decision, a 200 whose status can
     // read failed because the tool runs inside the call). No request raised by a
     // real agent run has been seen, only test-call ones.
-    internal sealed class PaperclipActions : IPaperclipActions
+    internal sealed class PaperclipActions : IPaperclipActions, IPaperclipConfirm
     {
         internal const string DecisionNote = "From Orbweaver";
         internal const string AlreadyDecidedWhy = "Already answered in Paperclip";
@@ -149,19 +156,16 @@ namespace Orbweaver
             return Settle(outcome);
         }
 
-        // How many pages of a run's events one confirming read follows. Each is a 5 s read at worst, and the
-        // request's own seq starts it, so one page is the normal case.
-        internal const int VerifyPages = 4;
-
-        // The whole confirming read, every page together. The actions client carries the 20 s action timeout, so
-        // without this a slow Paperclip could hold the phone's answer for another 20 s per page on top of the
-        // POST's own; with it the phone waits at most the POST's 20 s plus this.
+        // The whole confirming read: one request (one page of a run's events, which the request's own seq makes the
+        // few rows after it), under one budget. The actions client carries the 20 s action timeout, so without this
+        // a slow Paperclip could hold the phone's answer for another 20 s on top of the POST's own; with it an
+        // answer holds its prompt gate at most the POST's 20 s plus this.
         internal static readonly TimeSpan VerifyBudget = TimeSpan.FromSeconds(5);
 
         // What Paperclip says of the item now, for an answer whose POST outcome is unknown: Done when it was
         // decided the way this answer decided it, AlreadyDecided when it was decided some other way or the
         // way cannot be told, null when it is still pending or this read failed too. Never throws for a
-        // transport or parse failure; one read per item (a run's events: a few pages at most), no retry.
+        // transport or parse failure; one read per item (a run's events: one page), no retry.
         private async Task<PaperclipOutcome?> VerifyAsync(PaperclipNeed need, bool approve, CancellationToken callerCt)
         {
             var ct = callerCt;
@@ -187,28 +191,25 @@ namespace Orbweaver
                         if (!r.IsOk) return null;
                         return PaperclipApi.ParseActionRequests(r.Body).Any(a => a.Id == need.Id) ? null : Decided(false);
                     }
-                    case "runtime" when !string.IsNullOrEmpty(need.RunId):
+                    default:   // "runtime": PathFor answers only a runtime need that has its run
                     {
                         var after = need.Seq is > 0 ? need.Seq.Value - 1 : 0;
-                        for (var page = 0; page < VerifyPages; page++)
-                        {
-                            var r = await _api.GetAsync($"/api/heartbeat-runs/{Uri.EscapeDataString(need.RunId)}/events?afterSeq={after}&limit=500", ct).ConfigureAwait(false);
-                            if (!r.IsOk) return null;
-                            if (PaperclipApi.RuntimeResolution(r.Body, need.Id) is { } res)
-                                return Decided(res.Type == "resolved" && res.Action == (approve ? "accept" : "decline"));
-                            var next = PaperclipApi.LastSeqOf(r.Body);
-                            if (next == null || next <= after || PaperclipApi.RowCountOf(r.Body) < 500) return null;
-                            after = next.Value;
-                        }
-                        return null;
+                        var r = await _api.GetAsync($"/api/heartbeat-runs/{Uri.EscapeDataString(need.RunId)}/events?afterSeq={after}&limit=500", ct).ConfigureAwait(false);
+                        if (!r.IsOk) return null;
+                        return PaperclipApi.RuntimeResolution(r.Body, need.Id) is { } res
+                            ? Decided(res.Type == "resolved" && res.Action == (approve ? "accept" : "decline")) : null;
                     }
-                    default: return null;
                 }
             }
             // Out of budget is "could not tell"; the caller's own cancellation is not swallowed.
             catch (OperationCanceledException) when (budget.IsCancellationRequested && !callerCt.IsCancellationRequested) { return null; }
             catch (Exception ex) when (ex is not OperationCanceledException) { return null; }
         }
+
+        // The poll found an item gone that an earlier answer of ours timed out on: was it decided the way that answer
+        // chose. False for anything else, including a read that could not tell.
+        public async Task<bool> DecidedTheWayAsync(PaperclipNeed need, bool approve, CancellationToken ct) =>
+            await VerifyAsync(need, approve, ct).ConfigureAwait(false) is { Result: PaperclipActionResult.Done };
 
         public Task<PaperclipOutcome> WakeAsync(string agentId, CancellationToken ct)
         {
