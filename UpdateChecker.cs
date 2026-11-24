@@ -66,6 +66,7 @@ namespace Orbweaver
         private readonly Func<DateTimeOffset> _now;
         private readonly Action<string> _log;
         private readonly Func<TimeSpan, Action, IDisposable> _schedule;
+        private readonly Func<Task>? _afterCheck;
         private readonly CancellationTokenSource _lifetime = new();
         private readonly object _gate = new();
         private IDisposable? _timer;
@@ -79,8 +80,10 @@ namespace Orbweaver
             string currentVersion,
             Func<DateTimeOffset> now,
             Action<string> log,
-            Func<TimeSpan, Action, IDisposable> schedule)
+            Func<TimeSpan, Action, IDisposable> schedule,
+            Func<Task>? afterCheck = null)
         {
+            _afterCheck = afterCheck;
             _feed = feed;
             _settings = settings;
             _currentVersion = currentVersion;
@@ -120,7 +123,7 @@ namespace Orbweaver
 
         // The real wiring: GitHub (or the fixture named by ORBWEAVER_UPDATE_FEED_URL),
         // the real settings, the real clock and a real timer. Not started.
-        internal static UpdateChecker Create(Action<string> log, Func<string, string?>? env = null)
+        internal static UpdateChecker Create(Action<string> log, Func<string, string?>? env = null, Func<Task>? afterCheck = null)
         {
             env ??= Environment.GetEnvironmentVariable;
             // EngineVersion is the build's informational version already cut at "+",
@@ -138,7 +141,8 @@ namespace Orbweaver
                 current,
                 TimeProvider.System.GetUtcNow,
                 log,
-                UpdateTimers.Threading);
+                UpdateTimers.Threading,
+                afterCheck);
         }
 
         internal string CurrentVersion => _currentVersion;
@@ -259,7 +263,22 @@ namespace Orbweaver
 
             SetPending(result.Outcome == UpdateCheckOutcome.Failed ? Pending : result.Release);
             if (manual || result.Outcome == UpdateCheckOutcome.Available) RaiseCompleted(result);
+            RunAfterCheck();
             return new CheckSnapshot(fetched, includePre, result);
+        }
+
+        // CB-466: the anonymous install count rides on every check, whatever its
+        // outcome (a rate-limited GitHub must not cost the day's ping). Fire and
+        // forget: it is never awaited, so it can neither delay the notice nor change
+        // the check's result or schedule, and nothing it throws escapes.
+        private void RunAfterCheck()
+        {
+            if (_afterCheck is null) return;
+            _ = Task.Run(async () =>
+            {
+                try { await _afterCheck().ConfigureAwait(false); }
+                catch (Exception ex) { _log($"install ping hook threw: {ex.Message}"); }
+            });
         }
 
         // Each subscriber in its own try/catch, so one bad handler cannot starve the
