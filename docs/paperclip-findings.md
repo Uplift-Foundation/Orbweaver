@@ -200,3 +200,14 @@ Measured 2026-11-24 on the mini's Paperclip 2026.1117.0, one run of an agent in 
 - Polling cost over a LAN or on a long run; 403 as the answer to a key that was valid a minute ago (mapped to "reconnect", not seen).
 
 **What Orbweaver does:** on the 4 s tick it reads the events of each `running` live run, keeps requests whose latest event is `created`, and shows one per agent as a `runtime` need ("Bash: Create probe directory"), answerable with "Allow once" / "Deny" in the flyout and on the phone (same option keys, different labels). Only `permission_approval` with accept and decline choices is answerable; anything else links to Paperclip. A failed events read keeps that run's last answer for one tick.
+
+## Agent pictures (CB-445)
+
+Measured 2026-11-24 on Paperclip 2026.1117.0 with a board key from the app's own connect flow (loopback only; not measured over a LAN).
+
+- Every row of `GET /api/companies/{id}/agents` carries `avatarUrl`, a path relative to the base URL. A custom picture is `/api/assets/{assetId}/content`; an agent with none gets `/api/agent-avatars/cap-v1/{palette}/rest.png?size=512&scale=1`.
+- Custom: 200, `image/png`, 405,951 bytes, 5 ms with the key; **404 with no credential**, so the fetch must carry the key. Generated: 200, `image/png`, 26,100 bytes, 540 ms (rendered on demand), with or without a credential.
+- Paperclip normalises uploads to a single-frame PNG of at most 512 px (read from its code). Each upload gets a new asset id, and re-uploading identical bytes is skipped, so the path is a cache key.
+- A list read straight after the PUT already showed the new `avatarUrl`.
+- The app keeps each fetched PNG as a 0600 file under its settings directory and reuses the persona picture path from there. Only `/api/` paths are fetched, a non-PNG answer or a non-200 means initials, and none of it touches the link state. **Not measured:** an expired key on the asset route (assumed 401, as `/api/cli-auth/me` answered), a deleted asset (assumed 404), a LAN fetch, and the phone.
+- **Not built:** the phone's row. frames-v15 says a paperclip row's `persona` is omitted, so a picture there is a contract change and its own slice.

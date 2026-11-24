@@ -80,6 +80,8 @@ namespace Orbweaver
 
         [JsonIgnore]
         public string PaperclipAgentStatus { get; set; } = "";
+        // CB-445: the cached picture of a Paperclip agent, a file path; null draws initials.
+        public string? PaperclipAvatarFile { get; set; }
 
         // The agent's own page, so an orb that stops asking points there again.
         [JsonIgnore]

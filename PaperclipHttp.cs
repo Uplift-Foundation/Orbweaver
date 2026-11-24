@@ -25,6 +25,16 @@ namespace Orbweaver
     {
         Task<PaperclipResponse> GetAsync(string path, CancellationToken ct);
         Task<PaperclipResponse> PostAsync(string path, string jsonBody, CancellationToken ct);
+
+        // A binary body (CB-445: an agent's picture), which the string-bodied calls above would mangle.
+        // A default so the many fakes that only speak JSON need not know pictures exist.
+        Task<PaperclipBytes> GetBytesAsync(string path, CancellationToken ct) =>
+            Task.FromResult(new PaperclipBytes(PaperclipHttpKind.Other, 0, Array.Empty<byte>(), null));
+    }
+
+    internal sealed record PaperclipBytes(PaperclipHttpKind Kind, int StatusCode, byte[] Body, string? ContentType)
+    {
+        internal bool IsOk => Kind == PaperclipHttpKind.Ok;
     }
 
     // The real thing. Bound to one base URL and, optionally, one board key; the
@@ -69,6 +79,51 @@ namespace Orbweaver
 
         public Task<PaperclipResponse> PostAsync(string path, string jsonBody, CancellationToken ct) =>
             SendAsync(HttpMethod.Post, path, jsonBody, ct);
+
+        // The most a picture may be: Paperclip stores them as PNGs of at most 512 px, so this is generous.
+        internal const long MaxPictureBytes = 4L * 1024 * 1024;
+
+        public async Task<PaperclipBytes> GetBytesAsync(string path, CancellationToken ct)
+        {
+            var started = DateTime.UtcNow;
+            try
+            {
+                using var req = new HttpRequestMessage(HttpMethod.Get, _baseUrl + path);
+                if (_key != null) req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _key);
+                req.Headers.Accept.ParseAdd("image/png");
+                using var res = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+                var code = (int)res.StatusCode;
+                var kind = Classify(code);
+                byte[] body = Array.Empty<byte>();
+                if (kind == PaperclipHttpKind.Ok)
+                {
+                    if (res.Content.Headers.ContentLength is > MaxPictureBytes)
+                        kind = PaperclipHttpKind.Other;
+                    else
+                    {
+                        body = await res.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+                        if (body.LongLength > MaxPictureBytes) { body = Array.Empty<byte>(); kind = PaperclipHttpKind.Other; }
+                    }
+                }
+                if (_logSuccess || kind != PaperclipHttpKind.Ok)
+                    _log?.Invoke($"GET {PathOnly(path)} -> {code}, {body.Length} bytes, {(int)(DateTime.UtcNow - started).TotalMilliseconds} ms");
+                return new PaperclipBytes(kind, code, body, res.Content.Headers.ContentType?.MediaType);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                _log?.Invoke($"GET {PathOnly(path)} -> timed out, {(int)(DateTime.UtcNow - started).TotalMilliseconds} ms");
+                return new PaperclipBytes(PaperclipHttpKind.Timeout, 0, Array.Empty<byte>(), null);
+            }
+            catch (Exception ex)
+            {
+                _log?.Invoke($"GET {PathOnly(path)} -> unreachable ({ex.GetType().Name}), {(int)(DateTime.UtcNow - started).TotalMilliseconds} ms");
+                return new PaperclipBytes(PaperclipHttpKind.Unreachable, 0, Array.Empty<byte>(), null);
+            }
+        }
 
         private async Task<PaperclipResponse> SendAsync(HttpMethod method, string path, string? body, CancellationToken ct)
         {
