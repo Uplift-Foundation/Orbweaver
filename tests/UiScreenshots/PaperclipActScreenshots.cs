@@ -113,5 +113,7 @@ public class PaperclipActScreenshots : IDisposable
         public Task<PaperclipOutcome> WakeAsync(string a, CancellationToken ct) => No;
         public Task<PaperclipOutcome> PauseAsync(string a, CancellationToken ct) => No;
         public Task<PaperclipOutcome> ResumeAsync(string a, CancellationToken ct) => No;
+        public Task<PaperclipSent> CommentAsync(string issueId, string text, CancellationToken ct) => throw new NotSupportedException();
+        public Task<PaperclipSent> OpenTaskAsync(string agentId, string text, CancellationToken ct) => throw new NotSupportedException();
     }
 }

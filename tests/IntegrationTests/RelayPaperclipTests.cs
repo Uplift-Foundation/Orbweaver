@@ -40,6 +40,8 @@ public class RelayPaperclipTests : IAsyncLifetime
         public Task<PaperclipOutcome> WakeAsync(string agentId, CancellationToken ct) => throw new NotSupportedException();
         public Task<PaperclipOutcome> PauseAsync(string agentId, CancellationToken ct) => throw new NotSupportedException();
         public Task<PaperclipOutcome> ResumeAsync(string agentId, CancellationToken ct) => throw new NotSupportedException();
+        public Task<PaperclipSent> CommentAsync(string issueId, string text, CancellationToken ct) => throw new NotSupportedException();
+        public Task<PaperclipSent> OpenTaskAsync(string agentId, string text, CancellationToken ct) => throw new NotSupportedException();
     }
 
     public Task InitializeAsync() { _stub = new RelayStub(); return Task.CompletedTask; }

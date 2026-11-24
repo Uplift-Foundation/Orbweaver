@@ -26,7 +26,15 @@ namespace Orbweaver
         Task<PaperclipOutcome> WakeAsync(string agentId, CancellationToken ct);
         Task<PaperclipOutcome> PauseAsync(string agentId, CancellationToken ct);
         Task<PaperclipOutcome> ResumeAsync(string agentId, CancellationToken ct);
+        // CB-443: a message to an agent is a comment on its task, or, when it has none, a new task.
+        Task<PaperclipSent> CommentAsync(string issueId, string text, CancellationToken ct);
+        Task<PaperclipSent> OpenTaskAsync(string agentId, string text, CancellationToken ct);
     }
+
+    // The outcome of a message plus what Paperclip named in its 2xx answer: the new comment's id,
+    // or the new task's id. Both are null on a failure and when a 2xx body could not be read (a
+    // send that landed still counts as sent; the next read adopts it).
+    internal readonly record struct PaperclipSent(PaperclipOutcome Outcome, string? CommentId = null, string? IssueId = null);
 
     // The HTTP implementation, built on the same IPaperclipApi the poll uses and
     // bound to one company (a tool action request names it in the body).
@@ -47,7 +55,10 @@ namespace Orbweaver
         internal const string ReconnectWhy = "Reconnect to Paperclip to answer";
         internal const string UnreachableWhy = "Can't reach Paperclip";
         internal const string RefusedWhy = "Paperclip refused that";
+        internal const string TaskGoneWhy = "That task is no longer in Paperclip.";
+        internal const string NothingToSendWhy = "Nothing to send.";
         internal const int WhyLimit = 140;
+        internal const int TaskTitleLimit = 80;
 
         private readonly IPaperclipApi _api;
         private readonly string _companyId;
@@ -160,6 +171,58 @@ namespace Orbweaver
         {
             var res = await _api.PostAsync(AgentPath(agentId, verb), body, ct).ConfigureAwait(false);
             return Settle(res.StatusCode == 404 ? new(PaperclipActionResult.Refused, AgentGoneWhy) : Classify(res));
+        }
+
+        // ---- messages (CB-443) -------------------------------------------------
+        // Measured (plan 3, 2026-11-24, the app's own board key): the comment POST is a 201 whose body is
+        // the comment row; the create-task POST is a 201 whose body is the issue row and whose assignee
+        // woke 2.0 s later. No credential on the comment route answered 404 (not 401), and an empty body
+        // 400 with a validation sentence. Assumed, not run: a 403 for a key without board access, which
+        // is read as reconnect, as it is for a runtime request.
+
+        internal static string CommentPath(string issueId) => $"/api/issues/{Uri.EscapeDataString(issueId)}/comments";
+        internal string OpenTaskPath() => $"/api/companies/{Uri.EscapeDataString(_companyId)}/issues";
+        internal static string CommentBody(string text) => JsonSerializer.Serialize(new { body = text });
+
+        // The title is the first line, cut to 80 characters; the description is the whole message.
+        internal static string TitleFor(string text)
+        {
+            var first = text.Trim().Split('\n')[0].Trim();
+            return first.Length <= TaskTitleLimit ? first : first[..TaskTitleLimit].TrimEnd();
+        }
+
+        internal static string OpenTaskBody(string agentId, string text) =>
+            JsonSerializer.Serialize(new
+            {
+                title = TitleFor(text),
+                description = text,
+                assigneeAgentId = agentId,
+                status = "todo",
+            });
+
+        public async Task<PaperclipSent> CommentAsync(string issueId, string text, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return new(new(PaperclipActionResult.Refused, NothingToSendWhy));
+            var res = await _api.PostAsync(CommentPath(issueId), CommentBody(text), ct).ConfigureAwait(false);
+            if (res.StatusCode == 404) return new(new(PaperclipActionResult.Refused, TaskGoneWhy));
+            return Sent(res, commentId: true);
+        }
+
+        public async Task<PaperclipSent> OpenTaskAsync(string agentId, string text, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return new(new(PaperclipActionResult.Refused, NothingToSendWhy));
+            var res = await _api.PostAsync(OpenTaskPath(), OpenTaskBody(agentId, text), ct).ConfigureAwait(false);
+            if (res.StatusCode == 404) return new(new(PaperclipActionResult.Refused, AgentGoneWhy));
+            return Sent(res, commentId: false);
+        }
+
+        private PaperclipSent Sent(PaperclipResponse res, bool commentId)
+        {
+            var outcome = res.StatusCode == 403 ? new PaperclipOutcome(PaperclipActionResult.NeedsReconnect, ReconnectWhy) : Classify(res);
+            if (!outcome.IsDone) return new(outcome);
+            var id = Field(res.Body, "id");
+            _pollNow();
+            return commentId ? new(outcome, CommentId: id) : new(outcome, IssueId: id);
         }
 
         private PaperclipOutcome Settle(PaperclipOutcome o)
