@@ -9,6 +9,7 @@
  {"seq":8,"eventType":"runtime_request.created","payload":{"prpEvent":{"turnId":"t2","itemId":"i6","payload":{"request":{"requestId":"r-late","requestKind":"permission_approval","prompt":"Created after cancel in file order","choices":[{"key":"accept"},{"key":"decline"}]}}}}},
  {"seq":9,"eventType":"runtime_request.cancelled","payload":{"prpEvent":{"turnId":"t2","itemId":"i6","payload":{"requestId":"r-late"}}}},
  {"seq":10,"eventType":"agent.message","payload":{}},
+ {"seq":10,"eventType":"item.delta","payload":{"prpEvent":{"turnId":"t2","itemId":"i9","payload":{"requestId":"r-open"}}}},
  {"eventType":"runtime_request.expired","payload":{"requestId":"nobody"}},
  {"seq":11,"eventType":"runtime_request.created","payload":{"prpEvent":{"turnId":"t2","itemId":"i7","payload":{"request":{"prompt":"no id"}}}}}
 ]

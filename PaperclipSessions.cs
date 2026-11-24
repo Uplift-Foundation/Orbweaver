@@ -519,7 +519,7 @@ namespace Orbweaver
                     var ev = await api.GetAsync($"/api/heartbeat-runs/{Uri.EscapeDataString(run.Id)}/events?limit=500", ct).ConfigureAwait(false);
                     if (ev.IsOk)
                         seen[run.Id] = (PaperclipApi.ParseRuntimeRequests(run.Id, ev.Body)
-                            .Select(r => r with { AgentId = run.AgentId }).ToList(), false);
+                            .Select(r => r with { AgentId = run.AgentId, IssueId = run.IssueId }).ToList(), false);
                     else if (runtime != null && runtime.TryGetValue(run.Id, out var prior) && !prior.Stale)
                         seen[run.Id] = (prior.Requests, true);
                 }

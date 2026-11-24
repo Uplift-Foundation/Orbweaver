@@ -120,6 +120,7 @@ public class PaperclipRuntimeTests
     [InlineData(404, "Refused", "This request no longer exists in Paperclip")]
     [InlineData(403, "NeedsReconnect", "Reconnect to Paperclip to answer")]
     [InlineData(500, "Unreachable", "Can't reach Paperclip")]
+    [InlineData(401, "NeedsReconnect", "Reconnect to Paperclip to answer")]
     public async Task Each_measured_status_of_the_resolve_call_maps_to_its_outcome(int code, string result, string? why)
     {
         var api = new FakePaperclip();
@@ -129,6 +130,52 @@ public class PaperclipRuntimeTests
         Assert.Equal((result, why), (o.Result.ToString(), o.Why));
         Assert.Equal(code is 200 or 409 ? 1 : 0, polled);
         Assert.DoesNotContain(api.Calls, c => c.StartsWith("GET"));
+    }
+
+    [Fact]
+    public void The_task_the_agent_is_on_rides_in_the_summary_when_its_title_is_known()
+    {
+        var r = new PaperclipApi.RawRuntimeRequest("run1", "rq", "t", "p", "Bash", "permission_approval", true, true, null, "ag1", "iss1");
+        var with = PaperclipApi.Compose(new PaperclipApi.ComposeInput([Raw("ag1")], [], [], [], [], [],
+            new Dictionary<string, string> { ["iss1"] = "Probe the workspace" }, "http://pc", "EX", DateTime.UtcNow, [r])).Single();
+        Assert.Equal("Task: Probe the workspace", with.Needs.Single().Summary);
+        Assert.Null(Compose(r).Needs.Single().Summary);   // no title known for that issue
+    }
+
+    [Fact]
+    public void A_new_request_after_one_was_resolved_is_pending_on_its_own()
+    {
+        string Ev(int seq, string type, string id, bool request) =>
+            "{\"seq\":" + seq + ",\"eventType\":\"" + type + "\",\"payload\":{\"prpEvent\":{\"turnId\":\"t\",\"payload\":" +
+            (request ? "{\"request\":{\"requestId\":\"" + id + "\"}}" : "{\"requestId\":\"" + id + "\"}") + "}}}";
+        var json = "[" + string.Join(",", Ev(1, "runtime_request.created", "a", true), Ev(2, "runtime_request.resolved", "a", false),
+            Ev(3, "runtime_request.created", "b", true)) + "]";
+        Assert.Equal(["b"], PaperclipApi.ParseRuntimeRequests("run", json).Select(r => r.RequestId).ToArray());
+    }
+
+    [Fact]
+    public async Task Two_requests_on_one_run_both_show_and_a_first_failed_read_with_nothing_before_it_shows_none()
+    {
+        var api = Api();
+        api.Gets[EventsPath] = FakePaperclip.Ok(Events.Replace("r-admin", "r-open-2"));
+        var step = await PaperclipSessions.StepAsync(api, Cfg, PaperclipSessions.PollState.Initial, DateTime.UtcNow, default);
+        Assert.Equal(2, step.Next.Published!.Single().Needs.Count(n => n.Kind == "runtime" && n.Id.StartsWith("r-open")));
+        // Pinned: with no earlier reading there is nothing to keep, so a failed read shows no runtime need and is not a link failure.
+        var bare = Api();
+        bare.Gets[EventsPath] = FakePaperclip.Status(PaperclipHttpKind.ServerError, 500);
+        var s = await PaperclipSessions.StepAsync(bare, Cfg, PaperclipSessions.PollState.Initial, DateTime.UtcNow, default);
+        Assert.Equal(PaperclipLink.Connected, s.Next.Link);
+        Assert.DoesNotContain(s.Next.Published!.Single().Needs, n => n.Kind == "runtime");
+    }
+
+    [Fact]
+    public async Task A_dropped_connection_on_a_runtime_resolve_is_unreachable_and_the_need_stays_answerable()
+    {
+        var api = new FakePaperclip();
+        api.Posts["/api/heartbeat-runs/run1/runtime-requests/r-open/resolve"] = new(PaperclipHttpKind.Unreachable, 0, "");
+        var polled = 0;
+        var o = await new PaperclipActions(api, "co", () => polled++).DecideAsync(Need(), false, default);
+        Assert.Equal((PaperclipActionResult.Unreachable, 0), (o.Result, polled));
     }
 
     // ---- the prompt frame --------------------------------------------------------

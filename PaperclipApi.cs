@@ -60,7 +60,7 @@ namespace Orbweaver
         // among its choices is the only kind this build answers; Answerable says so.
         internal sealed record RawRuntimeRequest(
             string RunId, string RequestId, string? TurnId, string? Prompt, string? ToolName,
-            string? RequestKind, bool CanAccept, bool CanDecline, DateTime? CreatedAt = null, string? AgentId = null)
+            string? RequestKind, bool CanAccept, bool CanDecline, DateTime? CreatedAt = null, string? AgentId = null, string? IssueId = null)
         {
             internal bool Answerable => RequestKind == "permission_approval" && CanAccept && CanDecline && !string.IsNullOrEmpty(TurnId);
         }
@@ -430,7 +430,9 @@ namespace Orbweaver
                 var title = r.ToolName != null ? r.ToolName + ": " + what : what;
                 Add(Resolve(r.AgentId),
                     new PaperclipNeed("runtime", r.RequestId, title, AgentUrl(c.BaseUrl, c.IssuePrefix, r.AgentId ?? ""),
-                        null, r.CreatedAt, Tool: r.ToolName ?? "Permission",
+                        // The task the agent is on, so two agents' identical prompts can be told apart.
+                        r.IssueId != null && c.TaskTitles.TryGetValue(r.IssueId, out var task) ? "Task: " + task : null,
+                        r.CreatedAt, Tool: r.ToolName ?? "Permission",
                         RunId: r.Answerable ? r.RunId : null, TurnId: r.Answerable ? r.TurnId : null));
             }
             foreach (var i in c.BlockedIssues)

@@ -95,6 +95,46 @@ public class PaperclipPromptsTests
     }
 
     [Fact]
+    public async Task Two_runtime_requests_on_one_agent_go_oldest_first_the_second_after_the_first_resolves_and_never_twice()
+    {
+        var older = DateTime.UtcNow.AddMinutes(-2);
+        var first = Runtime("rq-old") with { CreatedAt = older };
+        var second = Runtime("rq-new") with { CreatedAt = older.AddMinutes(1) };
+        await Poll(Agent(needs: [second, first]));
+        await Poll(Agent(needs: [second, first]));                 // another tick: no repeat for the same request
+        Assert.Single(_sent.Prompts);
+        await Answer(AnswerTo(action: "approve"));
+        Assert.Equal(["approve runtime rq-old"], _act.Calls);
+        _now = _now.AddSeconds(31);
+        await Poll(Agent(needs: [second]));                         // the first is gone: the next one alerts as a new request
+        Assert.Equal(2, _sent.Prompts.Count);
+        Assert.NotNull(_sent.Prompts[1].Push);
+    }
+
+    [Fact]
+    public async Task A_runtime_need_and_an_action_need_on_one_agent_are_one_prompt_at_a_time_and_each_answers_by_its_own_kind()
+    {
+        var act = Action() with { CreatedAt = DateTime.UtcNow.AddMinutes(-5) };
+        await Poll(Agent(needs: [Runtime(), act]));
+        Assert.Single(_sent.Prompts);                               // the action is older, so it goes first
+        await Answer(AnswerTo(action: "deny"));
+        Assert.Equal(["decline action " + act.Id], _act.Calls);
+        _now = _now.AddSeconds(31);
+        await Poll(Agent(needs: [Runtime()]));
+        await Answer(AnswerTo(1, "approve"));
+        Assert.Equal("approve runtime rq-1", _act.Calls[1]);
+    }
+
+    [Fact]
+    public async Task A_runtime_request_on_each_of_two_agents_is_a_prompt_each()
+    {
+        const string other = "b2222222-2222-4222-8222-222222222222";
+        var roster = new HashSet<string> { Sid, PaperclipScan.KeyPrefix + other };
+        await _p.OnPolledAsync([Agent(needs: Runtime("rq-a")), Agent(other, "Second", "r", Runtime("rq-b"))], roster);
+        Assert.Equal(2, _sent.Prompts.Count);
+    }
+
+    [Fact]
     public async Task A_runtime_permission_the_build_cannot_answer_mints_no_prompt()
     {
         await Poll(Agent(needs: Runtime() with { RunId = null, TurnId = null }));
