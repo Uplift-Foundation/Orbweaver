@@ -141,6 +141,14 @@ jobs:
         if: ${{ !cancelled() && matrix.checks }}
         run: python tools/test-workflow-hardening.py
 
+      # CB-455: the bug-fix org's host side (App manifest helper, warden rules,
+      # ruleset JSON and apply script, stress-run.py). Fakes only: no GitHub,
+      # no Paperclip. The bash-based apply-script cases skip themselves on
+      # Windows, where the host that runs them is not.
+      - name: Unit tests (bug-fix org host side)
+        if: ${{ !cancelled() && matrix.checks }}
+        run: python tools/test-bugfix-host.py
+
       # CB-256: no unrecorded "Claude Buddy" may reappear. The tests prove the
       # checker; the second step runs it on this tree against the exact-count
       # allow-list in tools/brand-allowlist.txt.

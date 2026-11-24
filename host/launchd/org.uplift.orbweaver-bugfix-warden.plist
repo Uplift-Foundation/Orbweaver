@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The bug-fix org's warden (CB-455). Install by copying to
+     ~/Library/LaunchAgents/ with __REPO__ replaced by a checkout of
+     feature/paperclip-bugfix-org (or develop once merged), then
+     launchctl bootstrap gui/$(id -u) <plist>. It runs as the logged-in user,
+     outside the Paperclip sandbox, because it holds the App key and the gh login.
+     Exit code 3 means "ran, and the company is paused"; launchd just logs it. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>org.uplift.orbweaver-bugfix-warden</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>__REPO__/host/warden.py</string>
+    <string>run-once</string>
+  </array>
+  <key>StartInterval</key><integer>300</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardErrorPath</key><string>/tmp/orbweaver-bugfix-warden.err</string>
+  <key>StandardOutPath</key><string>/tmp/orbweaver-bugfix-warden.out</string>
+</dict>
+</plist>
