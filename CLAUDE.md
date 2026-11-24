@@ -105,12 +105,17 @@ GitHub refuses an approving review on a PR the same account opened, which is the
 
 Approving is not the same as landing it. The ticket moves to Done when the change is actually on `develop`, so an approved-but-unmerged PR stays in Testing until the merge goes through.
 
-Only where the agent genuinely cannot approve does it ask a human to pull the branch, install it and approve by hand:
+**There is no human in the loop for testing, so an agent that cannot approve builds the proof it is missing; it does not ask a person to click, check or install.** This paragraph used to send the agent to a human, in the terminal or on the PR, to pull the branch and approve by hand. Warren withdrew that on 2026-11-24, after CB-443 was held in Testing while he was asked about ten times to click an orb and send a message: "Everything should always be built and tested autonomously. There's no human in the loop here to help with testing."
 
-- **If someone is driving the feature in Claude Code**, ask them in the terminal. They are already there and the round trip costs seconds.
-- **If nobody is watching the terminal**, ask on GitHub, on the PR.
+So "this needs a click on a real screen" names a missing test seam, and the seam is the work:
 
-Either way, name the specific thing you could not confirm from the screenshots. "The Windows flyout renders, but I can't tell from the capture whether the mic button is enabled" is a request someone can settle in a minute. "Needs manual approval" is not.
+- **Drive the real window code headlessly against the real backend**, behind an environment variable so no suite runs it by accident. `tests/UiTests/PaperclipChatLiveProofTests.cs` is the pattern: the real panel, feed and session against a live Paperclip with a real key, a paired negative control (a revoked key must get 401), and a transcript with timestamps.
+- **Stand in for the device you do not have.** `tools/relay-probe --answer-phone` is a phone for the desk, and `ORBWEAVER_RELAY_TEST_HOOKS=1` pairs the installed app without a person at the keyboard.
+- **Install and launch on all three machines yourself**, and read the result back from the machine (the process table, the log, the window server), not from somebody's eyes.
+
+A PR's `## Not verified` section may still name a limit. It names it as a fact, with the harness that would close it, never as a request: "the Windows flyout renders, and no capture shows whether the mic button is enabled; a `UiScreenshots` case for that state would" is a known gap. "Needs manual approval" is not, and neither is "please check and tell me what you saw". A ticket is never held open until its owner has looked.
+
+What still goes to a person is a decision that is genuinely theirs, such as scope, money or a release to users. That is one plain question with a recommendation, asked once, and the work carries on along the recommended branch while it is open.
 
 ## Branching: gitflow
 
