@@ -163,8 +163,12 @@ Then, none of which a package can carry:
    from the GitHub App described in plan section 2. Never a personal token.
 6. **Build environment.** In each engineer's environment set
    `NUGET_PACKAGES` to a folder inside the org's own Paperclip directory (the
-   restore cache was 2.2 GB), and `BUGFIX_BUILD_LOCK` to a path in that folder
-   for the one-build-at-a-time lock. Both are absolute paths, so the package
+   restore cache was 2.2 GB), `BUGFIX_BUILD_LOCK` to a path in that folder
+   for the one-build-at-a-time lock, and `BUGFIX_SPOOL` to the warden's
+   `spool` folder from `warden.json`, which is where the skill tells an engineer
+   to write a stress request. Without `BUGFIX_SPOOL` a flaky-test fix has no
+   way to get its 30-run proof, because the warden reads requests only from
+   the spool. Both are absolute paths, so the package
    cannot carry them. The package sets `AVALONIA_TELEMETRY_OPTOUT=1`,
    `DOTNET_CLI_TELEMETRY_OPTOUT=1` and `DOTNET_NOLOGO=1` itself.
 7. **Project workspace.** Import creates the project "Orbweaver develop" with a

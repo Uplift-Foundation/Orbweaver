@@ -31,8 +31,17 @@ then the oldest. At most **two tickets per run**.
 ## What this org fixes, and what it leaves
 
 1. **Flaky tests in this repository.** Proof: the test class run 30 times on
-   both rids on GitHub's runners, by the warden (you ask for it in the PR; you
-   cannot dispatch it).
+   both rids on GitHub's runners. You cannot dispatch that run; the warden
+   does, when you ask through its spool. Once your PR is open, write one file,
+   `$BUGFIX_SPOOL/stress-<PR number>.json`, holding exactly
+   `{"verb": "dispatch_stress", "pr": <PR number>, "test_class": "<Namespace.Class>", "n": 30, "suite": "unit"}`
+   (`suite` is `unit`, `integration` or `ui`, whichever holds the class). The
+   warden reads the spool every five minutes, checks the PR is the org's own and
+   open, and dispatches `stress.yml` on your branch. Find the run with
+   `gh run list --repo Uplift-Foundation/Orbweaver --workflow stress.yml --branch <your branch>`
+   and name it, with its result on both rids, in the PR body. A request the
+   warden refuses never runs, so a run that has not appeared ten minutes later
+   is a failed round, not a reason to wait.
 2. **Logic bugs with a testable seam.** Proof: a test that fails before the fix
    and passes after, plus CI green on both rids.
 
