@@ -65,7 +65,7 @@ has **not** been run.
 | --- | --- |
 | The YAML has no anchors, no trailing comments and no unquoted colon strings, by a reader of this repo's own | **measured** (the test), not run through Paperclip's reader |
 | `heartbeat.maxConcurrentRuns` and `maxDailyRuns` are fields Paperclip's agent policy reads; `adapter.config.env` takes `{type: plain, value}` bindings; a project's `executionWorkspacePolicy.workspaceStrategy` takes `git_worktree`, `baseRef`, `branchTemplate` | **read from source** (Paperclip 2026.1117.0), not run on an import |
-| `maxDailyRuns` caps only timer heartbeats, not assignment or routine wakes | **reported from source** by Ines on this ticket, who read `services/heartbeat/timer-policy`; I did not read it myself, and nobody ran it. The agents here have the timer off and wake on assignment, so treat the field as no brake at all. The real daily brake is the warden's own count of runs per day |
+| `maxDailyRuns` gates assignment wakes | **measured** by Ines on the mini's live Paperclip, 2026-11-24: with a cap of 16 and three assignments, one run happened; the control with no cap ran all three. An earlier reading of `heartbeat/timer-policy` that it caps only timer heartbeats was wrong. **Deferred wakes are not dropped:** they fire when the cap resets at UTC midnight or when it is raised, so a backlog of assignments can burst later. The cap delays a burst, it does not end it. What stops a backlog burst is the warden's pause of the company (plan section 6) |
 | The lead's `claude-opus-5-5` model id is accepted by the connection | **assumed**; the id appears in Paperclip's source, nobody ran it here |
 | `defaultMode: isolated_workspace` with the strategy realises one worktree per issue under the sandbox profile | **assumed** (A.7 row 2) |
 | `git`, `gh` and `dotnet` run unprompted under `approve-all` with the opt-out variables set | **assumed** for a real run; `dotnet build` and four test classes passed in a shell under the profile (plan A.2, **measured**) |
@@ -88,7 +88,7 @@ lead actually making that PATCH has not been run.
 
 Two tickets per run; routine `coalesce_if_active`; `maxConcurrentRuns: 1`,
 `timeoutSec: 3600` and `maxDailyRuns` (3 for the lead, 6 for each other agent,
-chosen not measured, and probably inert: see the table above) per agent; two fix rounds and ninety minutes per ticket,
+values chosen, not measured; it defers wakes rather than dropping them, see the table above) per agent; two fix rounds and ninety minutes per ticket,
 then release. The warden (host side, not in this package) pauses the company on
 the conditions in plan section 6. `budgetMonthlyCents` is set but is not a
 brake: on a subscription connection spend reads 0.

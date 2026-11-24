@@ -44,9 +44,9 @@ agents:
         enabled: false
         wakeOnAssignment: true
         wakeOnDemand: true
-        # One run at a time per agent, and a daily ceiling. The ceiling
-        # appears to cap only timer heartbeats, which are off here, so it is
-        # probably no brake at all; the warden's own count is (see the README).
+        # One run at a time per agent, and a daily ceiling that gates
+        # assignment wakes (measured). Deferred wakes fire when it resets at
+        # UTC midnight or is raised, so the warden's pause is what stops a burst.
         maxConcurrentRuns: 1
         maxDailyRuns: 3
     budgetMonthlyCents: 5000
@@ -83,9 +83,9 @@ agents:
         enabled: false
         wakeOnAssignment: true
         wakeOnDemand: true
-        # One run at a time per agent, and a daily ceiling. The ceiling
-        # appears to cap only timer heartbeats, which are off here, so it is
-        # probably no brake at all; the warden's own count is (see the README).
+        # One run at a time per agent, and a daily ceiling that gates
+        # assignment wakes (measured). Deferred wakes fire when it resets at
+        # UTC midnight or is raised, so the warden's pause is what stops a burst.
         maxConcurrentRuns: 1
         maxDailyRuns: 6
     budgetMonthlyCents: 5000
@@ -122,9 +122,9 @@ agents:
         enabled: false
         wakeOnAssignment: true
         wakeOnDemand: true
-        # One run at a time per agent, and a daily ceiling. The ceiling
-        # appears to cap only timer heartbeats, which are off here, so it is
-        # probably no brake at all; the warden's own count is (see the README).
+        # One run at a time per agent, and a daily ceiling that gates
+        # assignment wakes (measured). Deferred wakes fire when it resets at
+        # UTC midnight or is raised, so the warden's pause is what stops a burst.
         maxConcurrentRuns: 1
         maxDailyRuns: 6
     budgetMonthlyCents: 5000
@@ -161,9 +161,9 @@ agents:
         enabled: false
         wakeOnAssignment: true
         wakeOnDemand: true
-        # One run at a time per agent, and a daily ceiling. The ceiling
-        # appears to cap only timer heartbeats, which are off here, so it is
-        # probably no brake at all; the warden's own count is (see the README).
+        # One run at a time per agent, and a daily ceiling that gates
+        # assignment wakes (measured). Deferred wakes fire when it resets at
+        # UTC midnight or is raised, so the warden's pause is what stops a burst.
         maxConcurrentRuns: 1
         maxDailyRuns: 6
     budgetMonthlyCents: 5000
