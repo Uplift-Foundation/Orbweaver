@@ -394,7 +394,7 @@ class FakePC:
         return self.runs
 
     def cancelled_issue_ids(self):
-        return self.cancelled_issues
+        return [(i, f"CB-{n}") for n, i in enumerate(self.cancelled_issues, 1)]
 
     def recent_run_ids(self):
         return list(self.logs)
@@ -581,10 +581,10 @@ class StopWorkTests(unittest.TestCase):
 class PaperclipSignalTests(unittest.TestCase):
     def test_first_look_only_seeds_history(self):
         st = {}
-        self.assertEqual(warden.new_releases(["a", "b"], st), 0)
-        self.assertEqual(warden.new_releases(["a", "b"], st), 0)
-        self.assertEqual(warden.new_releases(["a", "b", "c"], st), 1)
-        self.assertEqual(warden.new_releases(["a", "b", "c"], st), 0, "counted once")
+        self.assertEqual(warden.new_releases(["a", "b"], st), [])
+        self.assertEqual(warden.new_releases(["a", "b"], st), [])
+        self.assertEqual(warden.new_releases(["a", "b", "c"], st), ["c"])
+        self.assertEqual(warden.new_releases(["a", "b", "c"], st), [], "counted once")
 
     def test_two_newly_cancelled_issues_pause_without_any_spool_file(self):
         state, pc = {}, FakePC(cancelled=["old"])
@@ -642,16 +642,35 @@ class ReleaseIssueTests(unittest.TestCase):
     def test_only_engineer_ticket_issues_count(self):
         rows = [
             {"id": "a", "status": "cancelled", "description": "Ticket: CB-12\nfix the flake"},
-            {"id": "b", "status": "cancelled", "description": "Fix open CB bugs (routine)"},
+            {"id": "qa", "status": "cancelled", "description": "Review PR 77 for CB-12"},
+            {"id": "helper", "status": "cancelled", "description": "Find the flaky test"},
             {"id": "c", "status": "done", "description": "Ticket: CB-13\n"},
             {"id": "d", "status": "cancelled", "description": "see Ticket: CB-14 below"},
             {"id": "e", "status": "cancelled"},
+            {"id": "n", "status": "cancelled", "description": None},
             {"id": "f", "status": "cancelled", "description": "Ticket: CB-15"},
         ]
-        self.assertEqual(warden.release_issue_ids(rows), ["a", "e", "f"])
+        self.assertEqual(warden.release_issues(rows), [("a", "CB-12"), ("f", "CB-15")])
 
     def test_nothing_cancelled_is_no_release(self):
-        self.assertEqual(warden.release_issue_ids([]), [])
+        self.assertEqual(warden.release_issues([]), [])
+
+    def test_cancelled_qa_children_do_not_trip_two_in_a_row(self):
+        eng = {"id": "e1", "status": "cancelled", "description": "Ticket: CB-20\nx"}
+        kids = [{"id": f"k{i}", "status": "cancelled", "description": "QA round"} for i in range(3)]
+        state, logs = {}, []
+        pc = FakePC(cancelled=[])
+        pc.cancelled_issue_ids = lambda: warden.release_issues(pc.rows)
+        pc.rows = []
+        tick(pc=pc, state=state)
+        pc.rows = [eng] + kids
+        _, paused, logs = tick(pc=pc, state=state)
+        self.assertFalse(paused, "one engineer release plus three cancelled children is one release")
+        self.assertTrue(any("CB-20 released" in l for l in logs))
+        pc.rows = [eng, dict(eng, id="e2", description="Ticket: CB-21\n")] + kids
+        _, paused, logs = tick(pc=pc, state=state)
+        self.assertTrue(paused)
+        self.assertTrue(any("CB-21 released" in l for l in logs))
 
 
 class CheckHostTests(unittest.TestCase):

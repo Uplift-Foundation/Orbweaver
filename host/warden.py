@@ -152,34 +152,34 @@ REFUSAL_MARKER = "GH013"  # "remote: error: GH013: Repository rule violations fo
 
 
 def new_releases(cancelled_ids, state):
-    """Count issues newly cancelled in the fix company: a release, as seen by
-    Paperclip itself rather than reported from the sandbox. The first look only
-    seeds the set (everything already cancelled is history, not a release)."""
+    """Ids newly cancelled since the last look: releases, as seen by Paperclip
+    itself rather than reported from the sandbox. The first look only seeds the
+    set (what is already cancelled is history, not a release)."""
     seen = state.get("cancelled_seen")
     ids = sorted(set(cancelled_ids))
     state["cancelled_seen"] = sorted(set(seen or []) | set(ids))[-500:]
     if seen is None:
-        return 0
-    return len([i for i in ids if i not in seen])
+        return []
+    return [i for i in ids if i not in seen]
 
 
-TICKET_RE = re.compile(r"\ATicket: (CB-\d+)\n?")
+TICKET_RE = re.compile(r"\ATicket: (CB-\d+)(?:\n|\Z)")
 
 
-def release_issue_ids(rows):
-    """Ids of cancelled issues that are engineers' ticket issues. The lead sets
-    an engineer's issue to `cancelled` on release and `done` on merge; the first
-    line of its description is `Ticket: CB-NNN`. An issue whose description is
-    present and lacks that line is not one of those and is ignored. A row with
-    no description field at all cannot be told, so it counts: failing to count a
-    release would blind the brake, and over-counting only pauses early."""
+def release_issues(rows):
+    """(issue id, CB key) for each cancelled engineer ticket issue. The lead
+    sets an engineer's issue to `cancelled` on release and `done` on merge, and
+    writes `Ticket: CB-NNN` as the first line of its description. Helper and QA
+    child tasks are cancelled too when a round fails, and are not releases, so
+    an issue without that first line, or with no description at all, does not
+    count."""
     out = []
     for r in rows:
         if r.get("status") != "cancelled":
             continue
-        d = r.get("description")
-        if d is None or TICKET_RE.match(d):
-            out.append(r["id"])
+        m = TICKET_RE.match(r.get("description") or "")
+        if m:
+            out.append((r["id"], m.group(1)))
     return out
 
 
@@ -246,9 +246,10 @@ class Warden:
         """Releases from Paperclip's own issue states. The spool's `released`
         stays as an extra signal; this one cannot be suppressed from inside
         the sandbox short of not releasing at all."""
-        for _ in range(new_releases(self.pc.cancelled_issue_ids(), self.state)):
+        keys = dict(self.pc.cancelled_issue_ids())
+        for issue_id in new_releases(list(keys), self.state):
             n = self.state["paperclip_releases"] = self.state.get("paperclip_releases", 0) + 1
-            self.log(f"a Paperclip issue was cancelled: release ({n} in a row)")
+            self.log(f"{keys[issue_id]} released (Paperclip issue cancelled; {n} in a row)")
             if n >= RELEASES_IN_A_ROW:
                 self.pause(f"{RELEASES_IN_A_ROW} releases in a row (Paperclip issue states)")
 
@@ -441,7 +442,7 @@ class PaperclipHttp:
     def cancelled_issue_ids(self):
         rows = self.call("GET", f"/api/companies/{self.company}/issues?status=cancelled") or []
         rows = rows if isinstance(rows, list) else rows.get("issues", [])
-        return release_issue_ids(rows)
+        return release_issues(rows)
 
     def recent_run_ids(self):
         return [r["id"] for r in self._runs()][:30]
