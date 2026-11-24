@@ -457,5 +457,35 @@ public class RelayRemotePaperclipTests : IDisposable
         await w.Remote.HandleAsync("ph", [], new InputRequest("r3", Agent, "hello again"));
         Assert.Equal("typed", Code(w, 0));
     }
+
+    // A host that says it is available and then has no thread to give (it lost the race with a disconnect): the same
+    // answers as a desk without the cap for a watch, and send_failed for a message, and nothing is held.
+    private sealed class NoThreadHost : IPaperclipPhoneHost
+    {
+        public bool Available => true;
+        public PaperclipPhoneThread? Acquire(string sessionId, string agentName) => null;
+    }
+
+    [Fact]
+    public async Task A_host_that_is_available_but_has_no_thread_answers_a_watch_with_nothing_and_a_message_with_send_failed()
+    {
+        var sent = new Sent();
+        var remote = new RelayRemote(new RelayRemote.Seams(
+            () => DateTimeOffset.FromUnixTimeSeconds(1794111792), _ => Task.CompletedTask,
+            _ => throw new InvalidOperationException("no transcript for a Paperclip row"),
+            new RelayInput(new RelayInput.Seams(_ => TerminalTyping.Route.None, _ => Task.FromResult<string?>(null), (_, _) => Task.FromResult(false), _ => Task.CompletedTask)),
+            new RelayRemote.LaunchSeams(false, _ => null, _ => true, () => "", (_, _) => (null, null), _ => null),
+            _ => { })
+        { Paperclip = new NoThreadHost() }, sent, new NonceWindow());
+        remote.OnStatuses([(Agent, new SessionStatus { Source = SessionSource.Paperclip, State = "idle", Title = "Atlas" })]);
+
+        await remote.HandleAsync("ph", [], new WatchRequest("r1", Agent, null));
+        await remote.HandleAsync("ph", [], new InputRequest("r2", Agent, "hi"));
+        Assert.Equal(("watching", 0), (sent.Replies[0].Body.GetProperty("code").GetString(), sent.Replies[0].Body.GetProperty("total").GetInt32()));
+        Assert.Equal(("send_failed", "Paperclip is not connected."),
+            (sent.Replies[1].Body.GetProperty("code").GetString(), sent.Replies[1].Body.GetProperty("why").GetString()));
+        Assert.Equal(0, remote.WatchCount);
+        Assert.Empty(sent.Windows);
+    }
 }
 
