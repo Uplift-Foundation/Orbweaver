@@ -171,10 +171,11 @@ namespace Orbweaver
             IReadOnlyList<PaperclipChat.AssignedIssue>? read = null;
             try { read = await _readAssigned(cts.Token).ConfigureAwait(false); }
             catch (OperationCanceledException) { return; }
-            catch (Exception) { return; }   // a failed read leaves "no task", never an exception text
-            if (cts.IsCancellationRequested || read == null) return;
+            catch (Exception) { _picker.SetAssignedFailed(); return; }   // failed: never "none", and never an exception text
+            if (cts.IsCancellationRequested) return;
+            if (read == null) { _picker.SetAssignedFailed(); return; }
             _picker.SetAssigned(read);
-            _feed.Nudge();
+            if (read.Count > 0) _feed.Nudge();   // a task found is worth reading now; none changes nothing to read
         }
 
         private void OnFeed(ChatSnapshot snap) => _post(() => Apply(snap));
@@ -310,7 +311,16 @@ namespace Orbweaver
 
             // No task known is not "no task" while the first assigned-issues read is out: a person who sends within its
             // latency, to an agent whose task has no live, blocked or finished run, would otherwise open a second task.
-            var task = _task ?? await _picker.PickWaitingAsync(_assignedRead, _assignedWait).ConfigureAwait(true);
+            // A read that failed or outran the bound is not "none" (CB-452): the app does not know whether a task exists, so
+            // nothing is opened; the send fails as unreachable and the text stays in the box.
+            var task = _task;
+            if (task is null)
+            {
+                var pick = await _picker.PickForSendAsync(_assignedRead, () => _assignedRead = ReadAssignedOnceAsync(), _assignedWait)
+                    .ConfigureAwait(true);
+                if (!pick.Known) return Fail(UnreachableText);
+                task = pick.Task;
+            }
             PaperclipSent sent;
             try
             {

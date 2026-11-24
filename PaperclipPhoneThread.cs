@@ -125,10 +125,12 @@ namespace Orbweaver
             var cts = _assignedCts = new CancellationTokenSource();
             IReadOnlyList<PaperclipChat.AssignedIssue>? read;
             try { read = await _readAssigned(cts.Token).ConfigureAwait(false); }
-            catch (Exception) { return; }   // cancelled, or failed: no task, and never an exception text
-            if (cts.IsCancellationRequested || read == null) return;
+            catch (OperationCanceledException) { return; }                 // the last holder left: nobody is waiting
+            catch (Exception) { _picker.SetAssignedFailed(); return; }     // failed: never "none", and never an exception text
+            if (cts.IsCancellationRequested) return;
+            if (read == null) { _picker.SetAssignedFailed(); return; }
             _picker.SetAssigned(read);
-            _feed.Nudge();
+            if (read.Count > 0) _feed.Nudge();   // a task found is worth reading now; none changes nothing to read
         }
 
         // The key was refused and the link is Connected again: the feed stopped itself on the 401, so start it
@@ -181,8 +183,15 @@ namespace Orbweaver
 
             PaperclipChat.TaskRef? task;
             lock (_gate) task = _task;
-            // The rung-4 read is made once when the first phone holds the thread; a send before it lands waits for it.
-            task ??= await _picker.PickWaitingAsync(_assignedRead, _assignedWait).ConfigureAwait(false);
+            if (task is null)
+            {
+                // The rung-4 read is made when the first phone holds the thread; a send before it lands waits for it. A read
+                // that failed or outran the bound is not "none": nothing is opened, and the phone is told it could not reach.
+                var pick = await _picker.PickForSendAsync(_assignedRead, () => _assignedRead = ReadAssignedOnceAsync(), _assignedWait)
+                    .ConfigureAwait(false);
+                if (!pick.Known) return (PaperclipSendResult.Failed, PaperclipChatSession.UnreachableText);
+                task = pick.Task;
+            }
 
             PaperclipSent sent;
             try

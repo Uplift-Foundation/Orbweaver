@@ -5,6 +5,7 @@ namespace Orbweaver.Tests;
 
 // CB-447 (frames-v18): a phone's watch and input on a Paperclip row, served by the real PaperclipPhoneThreads
 // over a fake feed and fake actions. No Paperclip, no network, no UI thread.
+[Collection("Settings")]
 public class RelayRemotePaperclipTests : IDisposable
 {
     private const string Agent = "paperclip:3f2a9c4e-6b1d-4e87-a5c3-9d0e7b2f1a64";
@@ -67,7 +68,7 @@ public class RelayRemotePaperclipTests : IDisposable
         {
             ActionsSeam = Actions;
             Host = new PaperclipPhoneThreads(() => Available, target => { var f = new Feed { Target = target }; Feeds.Add(f); return f; },
-                () => ActionsSeam, () => [], () => View, () => PaperclipLink.Connected, (_, _) => Task.FromResult<IReadOnlyList<PaperclipChat.AssignedIssue>?>(null),
+                () => ActionsSeam, () => [], () => View, () => PaperclipLink.Connected, (_, _) => Task.FromResult<IReadOnlyList<PaperclipChat.AssignedIssue>?>(Array.Empty<PaperclipChat.AssignedIssue>()),
                 () => T0);
             Remote = new RelayRemote(new RelayRemote.Seams(
                 () => DateTimeOffset.FromUnixTimeSeconds(1794111792), _ => Task.CompletedTask,

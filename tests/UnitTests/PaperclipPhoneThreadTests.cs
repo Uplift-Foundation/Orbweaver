@@ -3,7 +3,7 @@ using Xunit;
 namespace Orbweaver.Tests;
 
 // CB-447: the shared per-agent thread a phone's watch holds, and the registry that counts its holders.
-[Collection("PaperclipSessions statics")]
+[Collection("Settings")]
 public class PaperclipPhoneThreadTests : IDisposable
 {
     private const string Agent = "3f2a9c4e-6b1d-4e87-a5c3-9d0e7b2f1a64";
@@ -37,7 +37,8 @@ public class PaperclipPhoneThreadTests : IDisposable
     private readonly Feed _feed = new();
     private PaperclipLink _link = PaperclipLink.Connected;
     private PaperclipSessions.ChatView _view = new(Array.Empty<PaperclipApi.RawLiveRun>(), Array.Empty<PaperclipApi.RawRun>(), Array.Empty<PaperclipApi.RawIssue>());
-    private IReadOnlyList<PaperclipChat.AssignedIssue>? _assigned;
+    // What the assigned-issues read answers: [] is "the agent has no assigned task", null is a read that failed.
+    private IReadOnlyList<PaperclipChat.AssignedIssue>? _assigned = Array.Empty<PaperclipChat.AssignedIssue>();
     private int _assignedReads;
     private bool _assignedThrows;
     private PaperclipAgent[] _roster = [];
@@ -261,28 +262,54 @@ public class PaperclipPhoneThreadTests : IDisposable
         Assert.Equal(["comment:i7"], _actions.Sent);       // a comment on the task the read found, and nothing opened
     }
 
+    // The read ANSWERED none: the agent really has no task, so the message opens one.
     [Fact]
-    public async Task A_message_sent_before_the_assigned_read_lands_opens_a_task_only_when_the_read_found_none_or_outlasted_its_bound()
+    public async Task A_read_that_answers_none_lets_the_message_open_a_task()
     {
-        // The read lands with no assigned issue: the agent really has no task, so the message opens one.
         _assigned = [];
         _assignedGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var none = Host().Acquire(Agent, "Atlas")!;
-        var first = none.SendAsync("hello");
+        var t = Host().Acquire(Agent, "Atlas")!;
+        var send = t.SendAsync("hello");
         await Task.Delay(30);
         _assignedGate.SetResult();
-        Assert.Equal(PaperclipSendResult.Sent, (await first).Result);
+        Assert.Equal(PaperclipSendResult.Sent, (await send).Result);
         Assert.Equal([$"open:{Agent}"], _actions.Sent);
+    }
 
-        // The read never lands: the wait is a bound, not a hang, and past it the message opens a task.
-        _actions.Sent.Clear();
-        _assignedGate = new TaskCompletionSource();
-        var slow = Host(TimeSpan.FromMilliseconds(60)).Acquire(Agent + "-b", "Atlas")!;
+    // A read that FAILED (null, or an exception) or outran the bound is not "none": the app does not know whether a task
+    // exists, so nothing is opened and the phone is told it could not reach Paperclip.
+    [Theory]
+    [InlineData("null")]
+    [InlineData("throws")]
+    [InlineData("bound")]
+    public async Task A_read_that_failed_or_outran_its_bound_fails_the_send_and_opens_nothing(string how)
+    {
+        _assigned = null;
+        _assignedThrows = how == "throws";
+        if (how == "bound") _assignedGate = new TaskCompletionSource();
         var started = DateTime.UtcNow;
-        Assert.Equal(PaperclipSendResult.Sent, (await slow.SendAsync("hello")).Result);
+        var t = Host(how == "bound" ? TimeSpan.FromMilliseconds(60) : null).Acquire(Agent, "Atlas")!;
+        var (result, why) = await t.SendAsync("hello");
+        Assert.Equal((PaperclipSendResult.Failed, "Can't reach Paperclip."), (result, why));
+        Assert.Empty(_actions.Sent);                         // no OpenTask, no comment
         Assert.True(DateTime.UtcNow - started < TimeSpan.FromSeconds(2));
-        Assert.Equal([$"open:{Agent}-b"], _actions.Sent);
-        slow.Release();                                    // cancels the gated read
+        Assert.DoesNotContain(t.Current().Rows, r => r.Role == ChatRole.User);
+        t.Release();
+    }
+
+    // The failure is not sticky: the next send reads again, and an answer is acted on.
+    [Fact]
+    public async Task A_failed_read_is_made_again_by_the_next_send()
+    {
+        _assigned = null;
+        var t = Host().Acquire(Agent, "Atlas")!;
+        Assert.Equal(PaperclipSendResult.Failed, (await t.SendAsync("one")).Result);
+        Assert.Empty(_actions.Sent);
+
+        _assigned = [new(new PaperclipChat.TaskRef("i7", "CB-7", "Done earlier", "done"), T0, false)];
+        Assert.Equal(PaperclipSendResult.Sent, (await t.SendAsync("two")).Result);
+        Assert.Equal(["comment:i7"], _actions.Sent);
+        Assert.True(_assignedReads >= 2);                    // the read was made again; how many is a matter of scheduling
     }
 
     [Fact]

@@ -40,24 +40,47 @@ namespace Orbweaver
         // Rung 4's input: read once on open, never polled.
         internal void SetAssigned(IReadOnlyList<PaperclipChat.AssignedIssue> read)
         {
-            lock (_gate) _assigned = read;
+            lock (_gate) { _assigned = read; _state = AssignedState.Answered; }
         }
 
         // How long a send that finds no task waits for the first assigned-issues read before it opens one. The read
         // measured 79 ms for one agent; this is generous, and it is a bound, not a retry.
         internal static readonly TimeSpan DefaultAssignedWait = TimeSpan.FromSeconds(3);
 
-        // The choice for a send. No task known is not "no task" while rung 4 is still being read: an agent whose
-        // only task has no live, blocked or finished run is found only by that read, and a message sent first would
-        // open a second task for it. So wait for the read to finish or fail, bounded, and decide again.
-        internal async Task<PaperclipChat.TaskRef?> PickWaitingAsync(Task? assignedRead, TimeSpan wait)
+        // Whether rung 4's read has answered: Unread until it has, Answered with a list (which may be empty: the
+        // agent really has no assigned task), Failed when it errored, timed out or came back as null.
+        internal enum AssignedState { Unread, Answered, Failed }
+
+        private AssignedState _state;
+
+        internal AssignedState State { get { lock (_gate) return _state; } }
+
+        // The read could not say: Paperclip was unreachable, refused, or the call failed. Never "none".
+        internal void SetAssignedFailed()
+        {
+            lock (_gate) _state = AssignedState.Failed;
+        }
+
+        internal readonly record struct SendPick(PaperclipChat.TaskRef? Task, bool Known);
+
+        // The choice for a send. "No task known" is not "no task": an agent whose only task has no live, blocked or
+        // finished run is found only by rung 4's read. So with no task, wait for that read (started again first if it
+        // failed or was never made), bounded, and decide again. Known is true with a task, or when the read ANSWERED
+        // (none included). A read that failed, or outran the bound, leaves Known false: the app does not know whether
+        // a task exists and the caller must not open one, because on a slow host that is how a duplicate is made.
+        internal async Task<SendPick> PickForSendAsync(Task? assignedRead, Func<Task> restart, TimeSpan wait)
         {
             var task = Pick();
-            if (task != null || assignedRead is not { IsCompleted: false }) return task;
-            using var stop = new CancellationTokenSource();
-            await Task.WhenAny(assignedRead, Task.Delay(wait, stop.Token)).ConfigureAwait(false);
-            stop.Cancel();
-            return Pick();
+            if (task != null) return new(task, true);
+            if (State != AssignedState.Answered && (assignedRead is null || assignedRead.IsCompleted)) assignedRead = restart();
+            if (assignedRead is { IsCompleted: false })
+            {
+                using var stop = new CancellationTokenSource();
+                await Task.WhenAny(assignedRead, Task.Delay(wait, stop.Token)).ConfigureAwait(false);
+                stop.Cancel();
+            }
+            task = Pick();
+            return new(task, task != null || State == AssignedState.Answered);
         }
 
         // The task a message just opened: it is the thread's task until the agent runs on another.

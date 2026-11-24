@@ -3,10 +3,10 @@ using Xunit;
 namespace Orbweaver.Tests;
 
 // CB-447, QA batch 1 item 2: the condition that advertises paperclip_chat, and the caps a phone is sent as it moves.
-// PaperclipSessions' config and actions are process-wide statics; the classes of this collection set and restore them, so
+// PaperclipSessions' config, link and snapshot are process-wide statics, and this suite's Settings collection is the one place that serialises what writes them; the classes of this collection set and restore them, so
 // they must not run beside each other (PaperclipPhoneThreadTests swaps ConfigSource, which turned an actions-less
 // LiveActions into a real one under this class's rule).
-[Collection("PaperclipSessions statics")]
+[Collection("Settings")]
 public class RelayServiceCapsTests : IDisposable
 {
     public void Dispose()
