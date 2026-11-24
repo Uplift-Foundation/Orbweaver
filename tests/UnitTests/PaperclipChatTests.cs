@@ -475,6 +475,18 @@ public class PaperclipChatTests
     }
 
     [Fact]
+    public void The_other_order_terminal_folded_first_then_the_comment_ends_in_the_same_single_row()
+    {
+        var live = Fold(Activity.Empty("r"), Body(Ev(1, "item.completed", new { kind = "agentMessage", text = "It is 51.", channel = "final" }, "m")));
+        var ended = Fold(live, Body(Ev(2, "run.terminal", new { })));
+        var comment = C("a1", "It is 51.", agent: Agent, run: "r", sec: 20);
+        var shown = Merge([], Build(null, Agent, Names, [], ended));                 // terminal first: answer row only
+        shown = Merge(shown, Build(null, Agent, Names, [comment], ended));            // then the comment
+        Assert.Equal(["task", "c:a1"], shown.Select(r => r.Key));
+        Assert.Equal(1, shown.Count(r => r.Text == "It is 51."));
+    }
+
+    [Fact]
     public void A_comment_shown_plain_and_later_learned_to_carry_the_answer_drops_the_answer_row()
     {
         // Different wording (the comment is longer than the final message), so no early take: both show until the

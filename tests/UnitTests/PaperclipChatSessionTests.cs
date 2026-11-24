@@ -164,6 +164,24 @@ public class PaperclipChatSessionTests : IDisposable
     }
 
     [Fact]
+    public void ACommentShownPlainThatLaterCarriesTheAnswerDropsTheAnswerRow_AndTheThreadIsReplacedNotDiffed()
+    {
+        // QA F1: the comment (longer than the final message) is read before run.terminal is folded, so both show;
+        // when the end is seen Merge drops the answer row, which shortens the list, so the session replaces its rows.
+        var (s, f, _) = Make();
+        var answer = new PaperclipChat.Row("r:r1:answer", ChatRole.Assistant, "Done.", T0.AddSeconds(4));
+        var live = PaperclipChat.Activity.Empty("r1") with { Rows = [answer] };
+        var comment = C("2", "Done. And the details.", mine: true, run: "r1", sec: 5);
+        f.Push(Snap("i1", act: live));
+        f.Push(Snap("i1", act: live, cs: comment));
+        Assert.Equal(["Done.", "Done. And the details."], s.History.Skip(1).Select(t => t.Text));
+        var replaced = 0; s.HistoryReplaced += () => replaced++;
+        f.Push(Snap("i1", act: live with { Ended = true }, cs: comment));
+        Assert.Equal(1, replaced);
+        Assert.Equal(["Done. And the details."], s.History.Skip(1).Select(t => t.Text));
+    }
+
+    [Fact]
     public void ATaskChangeReplacesTheThread_AndANullTaskKeepsItsPlace()
     {
         var (s, f, _) = Make();
