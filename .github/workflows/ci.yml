@@ -181,6 +181,15 @@ jobs:
         if: ${{ !cancelled() && matrix.checks }}
         run: python tools/test-require-team-sdlc.py
 
+      # CB-455: the Paperclip bug-fix org package. Pins its YAML against the
+      # three things Paperclip's reader gets wrong, the brakes the plan relies
+      # on, the Bug-only and PR-body rules, and the sandbox profile's deny for
+      # the install lock, each with a negative control. Pure stdlib, no
+      # Paperclip needed.
+      - name: Unit tests (paperclip bugfix-org package)
+        if: ${{ !cancelled() && matrix.checks }}
+        run: python tools/test-paperclip-bugfix-org.py
+
       # CB-291: the team resolver the orbweaver-team skill ships. Real script,
       # real files in a scratch pool; on the Windows leg it runs under Git Bash
       # with Windows-style paths, which is what Claude Code uses there and what

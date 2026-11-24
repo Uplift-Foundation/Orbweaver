@@ -1,0 +1,98 @@
+# Orbweaver Bug Fix - a Paperclip org (CB-455)
+
+This directory is a [Paperclip](https://github.com/paperclipai/paperclip)
+company package: four agents that take open `Bug` tickets from the CB board,
+fix them in their own git worktrees, open PRs against `develop`, have QA review
+them, merge them when both required CI checks are green, and move the ticket.
+The plan and every reason behind a choice here is
+`docs/plans/paperclip-bugfix-org-plan.md`; this file is the setup and the
+honest state of what has been run.
+
+| Agent | Role | Does |
+| --- | --- | --- |
+| Marisol Vandenberg | CTO, lead | selects and claims tickets, plans, merges, moves the ticket, releases it |
+| Hana Moriyama | engineer | fixes one ticket in a worktree, opens the PR |
+| Rafaela Quintero | engineer | the same, on the other ticket |
+| Tamsin Oyelaran | QA | reviews one sha, posts the review comment naming both rids |
+
+The personas are ones the triage org does not use, so no agent draws two orbs.
+Their pictures live in `.profiles-assets/`, which is not checked in.
+
+## Status: not run
+
+**Nothing in this package has been imported into a live Paperclip.** What exists
+is the package, `tools/test-paperclip-bugfix-org.py` (run by CI), and the
+profile change below. Every row of plan appendix A.7 is still to be measured in
+phase 0.
+
+## Measured, assumed, and read from source
+
+| Claim | Label |
+| --- | --- |
+| The YAML has no anchors, no trailing comments and no unquoted colon strings, by a reader of this repo's own | **measured** (the test), not run through Paperclip's reader |
+| `heartbeat.maxConcurrentRuns` and `maxDailyRuns` are fields Paperclip's agent policy reads; `adapter.config.env` takes `{type: plain, value}` bindings; a project's `executionWorkspacePolicy.workspaceStrategy` takes `git_worktree`, `baseRef`, `branchTemplate` | **read from source** (Paperclip 2026.1117.0), not run on an import |
+| `maxDailyRuns` counts assignment wakes | **assumed** |
+| The lead's `claude-opus-5-5` model id is accepted by the connection | **assumed**; the id appears in Paperclip's source, nobody ran it here |
+| `defaultMode: isolated_workspace` with the strategy realises one worktree per issue under the sandbox profile | **assumed** (A.7 row 2) |
+| `git`, `gh` and `dotnet` run unprompted under `approve-all` with the opt-out variables set | **assumed** for a real run; `dotnet build` and four test classes passed in a shell under the profile (plan A.2, **measured**) |
+| The profile's new deny stops a process under the profile creating the lock | **measured** on the MacBook, 2026-11-24: a copy of the rule with the lock's name swapped for a scratch name refused `touch` (`Operation not permitted`) while `touch` of another name in `/private/tmp` succeeded. The live lock path was deliberately not touched, and the live service profile has not been re-rendered, so this says nothing about the running service |
+| The PR body shape in the skill passes `tools/require-team-sdlc.sh` | **measured**: the real hook allowed it, and denied it with the `Installed on` line removed |
+
+## The brakes (plan section 6)
+
+Two tickets per run; routine `coalesce_if_active`; `maxConcurrentRuns: 1`,
+`timeoutSec: 3600` and `maxDailyRuns` (3 for the lead, 6 for each other agent,
+chosen not measured) per agent; two fix rounds and ninety minutes per ticket,
+then release. The warden (host side, not in this package) pauses the company on
+the conditions in plan section 6. `budgetMonthlyCents` is set but is not a
+brake: on a subscription connection spend reads 0.
+
+## Setup on the host
+
+Do the triage org's setup first (`paperclip/triage-org/README.md`): Paperclip
+installed, the AI connection, the Jira connector, the sandbox. Then:
+
+```bash
+paperclipai company import paperclip/bugfix-org --target new --dry-run
+paperclipai company import paperclip/bugfix-org --target new
+```
+
+Then, none of which a package can carry:
+
+1. **Pause the routine** straight after import. It imports active with its
+   schedule enabled, and nothing below is in place yet.
+2. **Sandbox profile.** Re-render `paperclip/triage-org/host/paperclip-service.sb.template`
+   (the command is in the triage README) so the profile gains the deny for
+   `/private/tmp/ow-install.lock`, then restart the service through its launchd
+   job. The org never installs, so it never takes that lock.
+3. **AI connection** bound to each of the four agents, as for the triage org.
+4. **Jira, block first.** Add a tool policy of type `block` naming
+   `addCommentToJiraIssue` and `transitionJiraIssue` and the three non-lead
+   agents, at a priority ahead of the others. Only then finish the connector
+   with the six read actions (`searchJiraIssuesUsingJql`, `getJiraIssue`,
+   `getAccessibleAtlassianResources`, `atlassianUserInfo`,
+   `getVisibleJiraProjects`, `getJiraIssueRemoteIssueLinks`) plus those two for
+   the lead. Check each agent's access afterwards: eight for the lead, six for
+   the others. In that order there is no moment at which a non-lead can comment
+   or move a ticket. Paperclip cannot limit a transition to Bug tickets, so the
+   lead's instructions carry that rule.
+5. **GitHub identity.** The company secret `GITHUB_TOKEN`, written by the warden
+   from the GitHub App described in plan section 2. Never a personal token.
+6. **Build environment.** In each engineer's environment set
+   `NUGET_PACKAGES` to a folder inside the org's own Paperclip directory (the
+   restore cache was 2.2 GB), and `BUGFIX_BUILD_LOCK` to a path in that folder
+   for the one-build-at-a-time lock. Both are absolute paths, so the package
+   cannot carry them. The package sets `AVALONIA_TELEMETRY_OPTOUT=1`,
+   `DOTNET_CLI_TELEMETRY_OPTOUT=1` and `DOTNET_NOLOGO=1` itself.
+7. **Project workspace.** Import creates the project "Orbweaver develop" with a
+   `git_repo` workspace on `develop`. Confirm it exists before the first run,
+   and put the project's id in the lead's instructions if the `create_task`
+   `projectId` is wanted explicitly.
+
+## What the org does not do
+
+Install on any of the three machines (so its PR bodies say `Installed on: none`
+and list what an install would have shown under `## Not verified`); touch the
+mobile repository; fix a bug that needs a real captured prompt, a real Windows
+timing or any observation on an installed app; fix a security ticket; edit a
+workflow file; tag or release; push to `develop` or `main`.

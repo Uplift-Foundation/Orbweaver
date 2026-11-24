@@ -1,0 +1,199 @@
+# Paperclip-specific settings for the package beside this file.
+# Paperclip reads this with its own small YAML reader, and three things it
+# got wrong on `company import --dry-run` (2026.1117.0) shape this file:
+#   - a first draft using a YAML anchor and no schemaVersion lost every
+#     adapter block (which of the two did it was not separated);
+#   - a comment after a value became part of the value ("false  # ...");
+#   - an unquoted string containing a colon was split into a key and a value.
+# So: no anchors, comments on their own line, colon-bearing strings quoted.
+# tools/test-paperclip-bugfix-org.py checks all three.
+schema: paperclip/v1
+schemaVersion: 7
+
+agents:
+  marisol-vandenberg:
+    role: cto
+    adapter:
+      type: paperclip_runner
+      config:
+        model: claude-opus-5-5
+        # Paperclip's own runner, default isolated mode, approve-all: a code
+        # writing agent needs a shell, git, gh and dotnet, and Claude's native
+        # tools have no per-tool filter under approve-all. What contains a run
+        # is the sandbox profile around the service, the per-action Jira
+        # policy and the GitHub App's scope (plan section 2 and 6).
+        acpxPermissionMode: approve-all
+        # One hour is the ceiling for a single run (plan section 6).
+        timeoutSec: 3600
+        env:
+          # Avalonia's build telemetry task resolves the real Application
+          # Support folder, which the sandbox profile denies, so a build
+          # fails without this (measured, plan A.2).
+          AVALONIA_TELEMETRY_OPTOUT:
+            type: plain
+            value: "1"
+          DOTNET_CLI_TELEMETRY_OPTOUT:
+            type: plain
+            value: "1"
+          DOTNET_NOLOGO:
+            type: plain
+            value: "1"
+    runtime:
+      heartbeat:
+        # Woken by the routine and by assignment, never by a timer.
+        enabled: false
+        wakeOnAssignment: true
+        wakeOnDemand: true
+        # One run at a time per agent, and a daily ceiling. Whether the
+        # ceiling counts assignment wakes is assumed, not measured (plan A.7).
+        maxConcurrentRuns: 1
+        maxDailyRuns: 3
+    budgetMonthlyCents: 5000
+  hana-moriyama:
+    role: engineer
+    adapter:
+      type: paperclip_runner
+      config:
+        model: claude-sonnet-5-5
+        # Paperclip's own runner, default isolated mode, approve-all: a code
+        # writing agent needs a shell, git, gh and dotnet, and Claude's native
+        # tools have no per-tool filter under approve-all. What contains a run
+        # is the sandbox profile around the service, the per-action Jira
+        # policy and the GitHub App's scope (plan section 2 and 6).
+        acpxPermissionMode: approve-all
+        # One hour is the ceiling for a single run (plan section 6).
+        timeoutSec: 3600
+        env:
+          # Avalonia's build telemetry task resolves the real Application
+          # Support folder, which the sandbox profile denies, so a build
+          # fails without this (measured, plan A.2).
+          AVALONIA_TELEMETRY_OPTOUT:
+            type: plain
+            value: "1"
+          DOTNET_CLI_TELEMETRY_OPTOUT:
+            type: plain
+            value: "1"
+          DOTNET_NOLOGO:
+            type: plain
+            value: "1"
+    runtime:
+      heartbeat:
+        # Woken by the routine and by assignment, never by a timer.
+        enabled: false
+        wakeOnAssignment: true
+        wakeOnDemand: true
+        # One run at a time per agent, and a daily ceiling. Whether the
+        # ceiling counts assignment wakes is assumed, not measured (plan A.7).
+        maxConcurrentRuns: 1
+        maxDailyRuns: 6
+    budgetMonthlyCents: 5000
+  rafaela-quintero:
+    role: engineer
+    adapter:
+      type: paperclip_runner
+      config:
+        model: claude-sonnet-5-5
+        # Paperclip's own runner, default isolated mode, approve-all: a code
+        # writing agent needs a shell, git, gh and dotnet, and Claude's native
+        # tools have no per-tool filter under approve-all. What contains a run
+        # is the sandbox profile around the service, the per-action Jira
+        # policy and the GitHub App's scope (plan section 2 and 6).
+        acpxPermissionMode: approve-all
+        # One hour is the ceiling for a single run (plan section 6).
+        timeoutSec: 3600
+        env:
+          # Avalonia's build telemetry task resolves the real Application
+          # Support folder, which the sandbox profile denies, so a build
+          # fails without this (measured, plan A.2).
+          AVALONIA_TELEMETRY_OPTOUT:
+            type: plain
+            value: "1"
+          DOTNET_CLI_TELEMETRY_OPTOUT:
+            type: plain
+            value: "1"
+          DOTNET_NOLOGO:
+            type: plain
+            value: "1"
+    runtime:
+      heartbeat:
+        # Woken by the routine and by assignment, never by a timer.
+        enabled: false
+        wakeOnAssignment: true
+        wakeOnDemand: true
+        # One run at a time per agent, and a daily ceiling. Whether the
+        # ceiling counts assignment wakes is assumed, not measured (plan A.7).
+        maxConcurrentRuns: 1
+        maxDailyRuns: 6
+    budgetMonthlyCents: 5000
+  tamsin-oyelaran:
+    role: qa
+    adapter:
+      type: paperclip_runner
+      config:
+        model: claude-sonnet-5-5
+        # Paperclip's own runner, default isolated mode, approve-all: a code
+        # writing agent needs a shell, git, gh and dotnet, and Claude's native
+        # tools have no per-tool filter under approve-all. What contains a run
+        # is the sandbox profile around the service, the per-action Jira
+        # policy and the GitHub App's scope (plan section 2 and 6).
+        acpxPermissionMode: approve-all
+        # One hour is the ceiling for a single run (plan section 6).
+        timeoutSec: 3600
+        env:
+          # Avalonia's build telemetry task resolves the real Application
+          # Support folder, which the sandbox profile denies, so a build
+          # fails without this (measured, plan A.2).
+          AVALONIA_TELEMETRY_OPTOUT:
+            type: plain
+            value: "1"
+          DOTNET_CLI_TELEMETRY_OPTOUT:
+            type: plain
+            value: "1"
+          DOTNET_NOLOGO:
+            type: plain
+            value: "1"
+    runtime:
+      heartbeat:
+        # Woken by the routine and by assignment, never by a timer.
+        enabled: false
+        wakeOnAssignment: true
+        wakeOnDemand: true
+        # One run at a time per agent, and a daily ceiling. Whether the
+        # ceiling counts assignment wakes is assumed, not measured (plan A.7).
+        maxConcurrentRuns: 1
+        maxDailyRuns: 6
+    budgetMonthlyCents: 5000
+
+projects:
+  orbweaver-develop:
+    leadAgentSlug: marisol-vandenberg
+    workspaces:
+      orbweaver:
+        name: Orbweaver
+        sourceType: git_repo
+        repoUrl: "https://github.com/Uplift-Foundation/Orbweaver.git"
+        repoRef: develop
+        defaultRef: develop
+        isPrimary: true
+    executionWorkspacePolicy:
+      enabled: true
+      defaultMode: isolated_workspace
+      allowIssueOverride: false
+      defaultProjectWorkspaceKey: orbweaver
+      workspaceStrategy:
+        # One git worktree per issue, on a branch named for the owner and the
+        # change, never an issue number (CLAUDE.md branching rule). The issue
+        # slug is the change, so the lead titles issues with the change words.
+        type: git_worktree
+        baseRef: origin/develop
+        branchTemplate: "bugfix/pc-{{slug}}"
+
+routines:
+  fix-cb-bugs:
+    concurrencyPolicy: coalesce_if_active
+    catchUpPolicy: skip_missed
+    triggers:
+      - kind: schedule
+        # An hour after the triage org's 09:00 run, weekdays only.
+        cronExpression: "0 10 * * 1-5"
+        timezone: America/Los_Angeles
