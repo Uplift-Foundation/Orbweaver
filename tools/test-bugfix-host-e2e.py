@@ -474,13 +474,13 @@ class World(unittest.TestCase):
         self.assertEqual(sum(1 for m, p, b, o in self.pc.requests if p.endswith("/rotate")), 1)
 
     def test_no_refresh_inside_the_interval(self):
-        self.state["last_mint"] = warden.time.time() - 44 * 60
+        self.state["last_mint"] = warden.time.time() - 9 * 60
         self.assert_untouched(self.run_warden())
         self.assertEqual(self.pc.secrets, [])
-        self.state["last_mint"] = warden.time.time() - 46 * 60
+        self.state["last_mint"] = warden.time.time() - 11 * 60
         if HAVE_OPENSSL:
             self.assert_untouched(self.run_warden())
-            self.assertEqual(len(self.pc.secrets), 1, "after 45 minutes the token is renewed")
+            self.assertEqual(len(self.pc.secrets), 1, "after ten minutes the token is renewed")
 
     def test_a_paused_company_is_not_refreshed_and_its_stragglers_are_cancelled(self):
         self.pc.company["status"] = "paused"
