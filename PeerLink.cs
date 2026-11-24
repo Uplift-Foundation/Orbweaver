@@ -47,8 +47,14 @@ namespace Orbweaver
             // a handshake that blocks its thread and ignores cancellation; null
             // means the real SslStream call.
             Func<SslStream, SslClientAuthenticationOptions, CancellationToken, Task>? ClientHandshake = null,
-            Func<SslStream, SslServerAuthenticationOptions, CancellationToken, Task>? ServerHandshake = null)
+            Func<SslStream, SslServerAuthenticationOptions, CancellationToken, Task>? ServerHandshake = null,
+            // The accept call (CB-343). A test makes one accept throw the way a
+            // transient EMFILE or ECONNABORTED does; null means the listener's own.
+            Func<TcpListener, CancellationToken, ValueTask<TcpClient>>? Accept = null)
         {
+            internal Func<TcpListener, CancellationToken, ValueTask<TcpClient>> AcceptOne =>
+                Accept ?? ((listener, token) => listener.AcceptTcpClientAsync(token));
+
             internal Func<SslStream, SslClientAuthenticationOptions, CancellationToken, Task> AsClient =>
                 ClientHandshake ?? ((tls, options, token) => tls.AuthenticateAsClientAsync(options, token));
 
@@ -450,22 +456,64 @@ namespace Orbweaver
             _ = AcceptLoopAsync(_stopping!.Token);
         }
 
-        [ExcludeFromCodeCoverage]
+        // CB-343: one accept that threw something other than a cancellation (a
+        // transient EMFILE, ECONNABORTED) used to end the loop, and with it every
+        // inbound connection for the rest of the process while outbound dials
+        // carried on. Now it logs, backs off and accepts again; only cancellation
+        // or disposal ends it, and any other end is said in the mirror log.
+        internal static readonly TimeSpan AcceptRetryFirst = TimeSpan.FromMilliseconds(100);
+        internal static readonly TimeSpan AcceptRetryLongest = TimeSpan.FromSeconds(1);
+
+        // Doubling from 100 ms to a one-second ceiling, so a descriptor storm
+        // cannot spin the loop.
+        internal static TimeSpan AcceptRetryDelay(int consecutiveFailures)
+        {
+            if (consecutiveFailures < 1) consecutiveFailures = 1;
+            var ms = AcceptRetryFirst.TotalMilliseconds * Math.Pow(2, Math.Min(consecutiveFailures - 1, 4));
+            return TimeSpan.FromMilliseconds(Math.Min(ms, AcceptRetryLongest.TotalMilliseconds));
+        }
+
+        // Only the first failure of a run is logged, and the one that ends a run
+        // by succeeding says how many were swallowed.
+        internal static bool ShouldLogAcceptFailure(int consecutiveFailures) => consecutiveFailures == 1;
+
         private async Task AcceptLoopAsync(CancellationToken ct)
         {
-            while (!ct.IsCancellationRequested)
+            var listener = _listener;
+            var failures = 0;
+
+            while (listener is not null && !ct.IsCancellationRequested)
             {
                 TcpClient client;
 
                 try
                 {
-                    client = await _listener!.AcceptTcpClientAsync(ct).ConfigureAwait(false);
+                    client = await _seams.AcceptOne(listener, ct).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) { break; }
+                catch (ObjectDisposedException ex)
+                {
+                    // Disposal cancels the token first, so that is the quiet end.
+                    // Anything else means the listener went away under the loop.
+                    if (!ct.IsCancellationRequested)
+                        MirrorLog.Say("peer-listener-ended", $"{ex.GetType().Name}: {ex.Message}");
+                    break;
+                }
                 catch (Exception ex)
                 {
-                    MirrorLog.Say("peer-accept-failed", $"{ex.GetType().Name}: {ex.Message}");
-                    break;
+                    failures++;
+                    if (ShouldLogAcceptFailure(failures))
+                        MirrorLog.Say("peer-accept-failed", $"{ex.GetType().Name}: {ex.Message}; retrying");
+
+                    try { await Task.Delay(AcceptRetryDelay(failures), ct).ConfigureAwait(false); }
+                    catch (OperationCanceledException) { break; }
+                    continue;
+                }
+
+                if (failures > 0)
+                {
+                    MirrorLog.Say("peer-accept-recovered", $"after {failures} failed accepts");
+                    failures = 0;
                 }
 
                 // Task.Run so no synchronous stretch of a handshake can hold
