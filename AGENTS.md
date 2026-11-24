@@ -120,7 +120,7 @@ So the sequence below runs to the end, in one go, by whoever started it:
 2. **Bump `<Version>`** in `Orbweaver.csproj` — the single source of truth the packaging scripts and `release.yml`'s `check-version` gate both parse. **Patch only** (`0.5.0-beta` → `0.5.1-beta`) unless you are told to bump the minor or major.
 3. **Write `.github/release-notes/v<version>.md`**, which the workflow publishes with the tag. Without it the release gets generated notes and a warning.
 4. **Open the PR against `main`** and let CI go green on *both* rids.
-5. **Merge it to `main`.**
+5. **Merge it to `main`.** Use `gh pr merge <n> --merge --admin` once both legs are green. Since CB-455, a ruleset restricts updates of `main` to admins, and GitHub refuses a plain merge with "the base branch policy prohibits the merge" until the admin bypass is asked for explicitly. That refusal is the ruleset working, not a red check. Hotfix PRs into `main` need the same flag (first seen on #369).
 6. **Push the tag** — `git tag -a v<version> <merge-sha> && git push upstream v<version>`. This is the step that actually builds, signs, notarizes and publishes the installers; `release.yml` is tag-driven and nothing before it ships anything.
 7. **Merge `main` back into `develop`**, so the bump and notes are not lost at the next release.
 
