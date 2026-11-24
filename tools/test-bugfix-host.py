@@ -344,8 +344,8 @@ class AuditRuleTests(unittest.TestCase):
 
     def test_mint_due(self):
         self.assertTrue(warden.mint_due({}, 1000, False))
-        self.assertFalse(warden.mint_due({"last_mint": 1000}, 1000 + 44 * 60, False))
-        self.assertTrue(warden.mint_due({"last_mint": 1000}, 1000 + 45 * 60, False))
+        self.assertFalse(warden.mint_due({"last_mint": 1000}, 1000 + 9 * 60, False))
+        self.assertTrue(warden.mint_due({"last_mint": 1000}, 1000 + 10 * 60, False))
         self.assertFalse(warden.mint_due({}, 1000, True), "a paused org is not refreshed")
 
 

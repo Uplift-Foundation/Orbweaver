@@ -183,7 +183,7 @@ A new company, separate from the triage org so it has its own pause switch, secr
 
 ## A.5 Host side (built by the CB-455 team, outside the sandbox)
 
-- **Warden** (`host/warden.py`, a launchd job): mints the installation token every 45 minutes and writes the company secret; dispatches `stress.yml` on request for the org's own PRs; audits merges; pauses the company (§6). Requests reach it as JSON files in a spool folder inside the org's directory, with a fixed schema and a closed list of verbs. It never runs a command an agent wrote and never runs `git` inside an agent's worktree.
+- **Warden** (`host/warden.py`, a launchd job): mints the installation token every ten minutes (a run reads it once, at start, so this leaves at least 45 minutes of an hour-long token) and writes the company secret; dispatches `stress.yml` on request for the org's own PRs; audits merges; pauses the company (§6). Requests reach it as JSON files in a spool folder inside the org's directory, with a fixed schema and a closed list of verbs. It never runs a command an agent wrote and never runs `git` inside an agent's worktree.
 - **App helper** (`host/create-app.py`): the one-shot manifest page (§2).
 - **Rulesets** (`host/rulesets/*.json`, `host/apply-rulesets.sh`).
 - **Profile**: the deny for `/private/tmp/ow-install.lock`.

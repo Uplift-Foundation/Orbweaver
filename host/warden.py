@@ -10,7 +10,7 @@ Paperclip sandbox. Each tick it:
      of verbs) and acts on the ones it recognises;
   2. audits bot merges into develop;
   3. mints a one-hour installation token and writes it into the fix company's
-     GITHUB_TOKEN secret, if the last one is older than 45 minutes and the
+     GITHUB_TOKEN secret, if the last one is older than 10 minutes and the
      company is not paused (a paused org stops being refreshed, so its access
      lapses by itself);
   4. pauses the company on any trigger in plan §6.
@@ -52,7 +52,11 @@ BOT_LOGIN = "orbweaver-bugfix[bot]"
 BRANCH_PREFIX = "bugfix/pc-"
 RIDS = ("osx-arm64", "win-x64")
 REQUIRED_CHECKS = ("build (macos-latest, osx-arm64)", "build (windows-latest, win-x64)")
-MINT_INTERVAL = 45 * 60
+# A run reads GH_TOKEN once, when it starts, and an installation token lives one
+# hour. Minting every ten minutes on a five-minute tick means a run starts with
+# at least 45 minutes of token left; at 45 minutes it could start with ten, and
+# an engineer's push at the end of a long run would be refused.
+MINT_INTERVAL = 10 * 60
 VERBS = ("dispatch_stress", "released", "push_refused")
 CLASS_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]{0,199}$")
 SUITES = ("unit", "integration", "ui")

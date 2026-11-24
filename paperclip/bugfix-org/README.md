@@ -109,8 +109,9 @@ lead actually making that PATCH has not been run.
 ## The brakes (plan section 6)
 
 Two tickets per run; routine `coalesce_if_active`; `maxConcurrentRuns: 1`,
-`timeoutSec: 3600` and `maxDailyRuns` (3 for the lead, 6 for each other agent,
-values chosen, not measured; it defers wakes rather than dropping them, see the table above) per agent; two fix rounds and ninety minutes per ticket,
+`timeoutSec: 3600` and `maxDailyRuns` (12 for the lead, 6 for each other agent;
+the lead started at 3, which cannot finish one ticket, because every helper's
+answer wakes it and one ticket takes about five lead runs; it defers wakes rather than dropping them, see the table above) per agent; two fix rounds and ninety minutes per ticket,
 then release. The warden (host side, not in this package) pauses the company on
 the conditions in plan section 6. `budgetMonthlyCents` is set but is not a
 brake: on a subscription connection spend reads 0.
@@ -154,6 +155,13 @@ Then, none of which a package can carry:
    `/private/tmp/ow-install.lock`, then restart the service through its launchd
    job. The org never installs, so it never takes that lock.
 3. **AI connection** bound to each of the four agents, as for the triage org.
+   **Bind each agent explicitly.** Starting the sign-in with `allAgents: true`
+   did not bind agents that were still `verifying`. Verification then passed
+   anyway, because its probe does not need a binding, and the first real run
+   failed with "Not logged in · Please run /login" (measured 2026-11-24). Set
+   `runtimeConfig.aiConnection` to `{connectionId, grantId, method: "subscription",
+   mode: "shared", provider: "anthropic"}` on every agent, as the triage
+   agents have it, keeping `runtimeConfig.heartbeat`.
    This comes before any run: imported agents arrive `paused` with
    `lifecycleState: verifying` (measured), and verification needs the
    connection. An assignment to a verifying agent queues a run that never
@@ -176,8 +184,33 @@ Then, none of which a package can carry:
    the others. In that order there is no moment at which a non-lead can comment
    or move a ticket. Paperclip cannot limit a transition to Bug tickets, so the
    lead's instructions carry that rule.
+   **On Atlassian's consent page, leave only `read_jira` and `write_jira`
+   ticked** (untick Compass, Confluence, Teamwork Graph and the whole Search
+   group), and check the site says Uplifttech, switching account first if it
+   offers another. With all 11 permissions granted, every call through the
+   connector came back HTTP 400 from `mcp.atlassian.com`, even
+   `atlassianUserInfo`. Re-consented with those two, the grant matched the
+   triage org's six scopes and the same calls answered (measured 2026-11-24).
+   The OAuth callback goes to `127.0.0.1:3100`, so a browser on another machine
+   cannot complete it directly. Catch the callback path there, then replay it on
+   the mini with a board session.
 5. **GitHub identity.** The company secret `GITHUB_TOKEN`, written by the warden
    from the GitHub App described in plan section 2. Never a personal token.
+   **The secret alone does not reach an agent's shell, and nor does binding it
+   as `GH_TOKEN`.** Paperclip uses the company secret only for its own
+   server-side clone and fetch. It also blanks `GH_TOKEN` and `GITHUB_TOKEN` in
+   every run, even when they are bound on the agent. Measured 2026-11-24: bound
+   under those names, `gh` reported no login; bound as `BUGFIX_GH_TOKEN`, the
+   same secret arrived as a `ghs_` token. So bind it into every agent's
+   `adapterConfig.env` as
+   `BUGFIX_GH_TOKEN: {"type": "secret_ref", "secretId": "<GITHUB_TOKEN's id>", "version": "latest"}`.
+   The skill's "GitHub access" section has the one-line prefix that hands it to
+   `gh` and `git`. From an agent run, that prefix pushed `bugfix/pc-probe-push`,
+   was refused GH013 on `feature/pc-probe-refused` and deleted the probe branch.
+   A deliberate GH013 like that is a warden pause trigger, so add the run's id to
+   `scanned_runs` in the warden's `state.json` before its next tick. A run reads
+   the token once, when it starts, which is why the warden mints every ten
+   minutes.
 6. **Build environment.** In each engineer's environment set
    `NUGET_PACKAGES` to a folder inside the org's own Paperclip directory (the
    restore cache was 2.2 GB), `BUGFIX_BUILD_LOCK` to a path in that folder

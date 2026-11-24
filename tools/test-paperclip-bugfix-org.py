@@ -228,7 +228,7 @@ class BrakeTests(unittest.TestCase):
         for old, new, label, in_policy in [
             ("timeoutSec: 3600", "timeoutSec: 7200", "timeout", False),
             ("maxConcurrentRuns: 1", "maxConcurrentRuns: 4", "concurrency", False),
-            ("maxDailyRuns: 3", "maxDailyRuns: 0", "daily runs", False),
+            ("maxDailyRuns: 12", "maxDailyRuns: 0", "daily runs", False),
             ("AVALONIA_TELEMETRY_OPTOUT:", "AVALONIA_TELEMETRY_OPTOUT_X:", "avalonia opt-out", False),
             ("DOTNET_CLI_TELEMETRY_OPTOUT:", "DOTNET_CLI_TELEMETRY_OPTOUT_X:", "dotnet opt-out", False),
             ("concurrencyPolicy: coalesce_if_active", "concurrencyPolicy: always_enqueue", "routine", False),

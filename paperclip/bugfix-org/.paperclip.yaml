@@ -47,8 +47,10 @@ agents:
         # One run at a time per agent, and a daily ceiling that gates
         # assignment wakes (measured). Deferred wakes fire when it resets at
         # UTC midnight or is raised, so the warden's pause is what stops a burst.
+        # The lead is woken by every helper's answer, so one ticket takes about
+        # five lead runs; 3 could not finish one, and 12 covers two tickets.
         maxConcurrentRuns: 1
-        maxDailyRuns: 3
+        maxDailyRuns: 12
     budgetMonthlyCents: 5000
   hana-moriyama:
     role: engineer

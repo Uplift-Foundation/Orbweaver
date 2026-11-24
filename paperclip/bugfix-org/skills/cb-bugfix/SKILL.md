@@ -83,6 +83,26 @@ connector cannot check this; the rule is the control.
 | merged to `develop` | Testing to Done | the merge sha, what was verified and what was not |
 | gave up | back to Refinement | `[bugfix-org] released`, what it learned, why it stopped |
 
+## GitHub access
+
+Your GitHub identity is the `orbweaver-bugfix` App, and its token is in
+`$BUGFIX_GH_TOKEN`. Paperclip blanks `GH_TOKEN` and `GITHUB_TOKEN` in your
+environment, and every shell command starts fresh. So begin **every** command
+that runs `gh`, or that runs `git` against GitHub (`fetch`, `push`, `ls-remote`),
+with:
+
+```
+export GH_TOKEN="$BUGFIX_GH_TOKEN"; export GIT_CONFIG_PARAMETERS="'credential.helper=' 'credential.https://github.com.helper=!gh auth git-credential' 'user.name=orbweaver-bugfix[bot]' 'user.email=360784342+orbweaver-bugfix[bot]@users.noreply.github.com'"; <your command>
+```
+
+That makes `gh` and `git` use the App and sign commits as its bot. Never print
+the token, never write it to a file, and never use any other credential. The
+token lasts at least 45 minutes from the start of your run. If a push or `gh`
+call fails with 401 late in a long run, finish the task, say so, and ask for
+another round: the next run gets a fresh token. A push the rulesets refuse
+(GH013) means you left your lane, which is `bugfix/pc-*` branches and PRs into
+`develop`. Stop there, and say so in your answer.
+
 ## Branch, commits, PR
 
 - Branch `bugfix/pc-<change>`, from `origin/develop`. Named for the change, not
