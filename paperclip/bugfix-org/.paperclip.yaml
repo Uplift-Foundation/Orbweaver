@@ -47,10 +47,11 @@ agents:
         # One run at a time per agent, and a daily ceiling that gates
         # assignment wakes (measured). Deferred wakes fire when it resets at
         # UTC midnight or is raised, so the warden's pause is what stops a burst.
-        # The lead is woken by every helper's answer, so one ticket takes about
-        # five lead runs; 3 could not finish one, and 12 covers two tickets.
+        # The lead is woken by every helper's answer: one ticket took three lead
+        # runs (CB-343). The org runs around the clock, so 120 a day is a runaway
+        # bound, not a throttle.
         maxConcurrentRuns: 1
-        maxDailyRuns: 12
+        maxDailyRuns: 120
     budgetMonthlyCents: 5000
   hana-moriyama:
     role: engineer
@@ -89,7 +90,7 @@ agents:
         # assignment wakes (measured). Deferred wakes fire when it resets at
         # UTC midnight or is raised, so the warden's pause is what stops a burst.
         maxConcurrentRuns: 1
-        maxDailyRuns: 6
+        maxDailyRuns: 48
     budgetMonthlyCents: 5000
   rafaela-quintero:
     role: engineer
@@ -128,7 +129,7 @@ agents:
         # assignment wakes (measured). Deferred wakes fire when it resets at
         # UTC midnight or is raised, so the warden's pause is what stops a burst.
         maxConcurrentRuns: 1
-        maxDailyRuns: 6
+        maxDailyRuns: 48
     budgetMonthlyCents: 5000
   tamsin-oyelaran:
     role: qa
@@ -167,7 +168,7 @@ agents:
         # assignment wakes (measured). Deferred wakes fire when it resets at
         # UTC midnight or is raised, so the warden's pause is what stops a burst.
         maxConcurrentRuns: 1
-        maxDailyRuns: 6
+        maxDailyRuns: 48
     budgetMonthlyCents: 5000
 
 projects:
@@ -193,6 +194,7 @@ routines:
     catchUpPolicy: skip_missed
     triggers:
       - kind: schedule
-        # An hour after the triage org's 09:00 run, weekdays only.
-        cronExpression: "0 10 * * 1-5"
+        # Around the clock, every 30 minutes. The routine coalesces while a pass
+        # is still open, so a new pass starts only after the last one ends.
+        cronExpression: "*/30 * * * *"
         timezone: America/Los_Angeles

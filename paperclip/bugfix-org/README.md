@@ -18,7 +18,7 @@ honest state of what has been run.
 The personas are ones the triage org does not use, so no agent draws two orbs.
 Their pictures live in `.profiles-assets/`, which is not checked in.
 
-## Status: set up on the mini, 2026-11-24; first pilot run next
+## Status: live on the mini around the clock since 2026-11-24
 
 **Every host step below is done on the mini, and each was read back.**
 
@@ -29,7 +29,9 @@ Their pictures live in `.profiles-assets/`, which is not checked in.
 - **Jira:** six read actions for every agent. Comment and transition are for the lead only, behind two `block` policies created before the actions were enabled.
 - **Build env:** set for both engineers.
 
-The routine and its trigger stay off until a pilot run has carried one ticket through.
+**The pilot carried one ticket through on 2026-11-24.** CB-343: claimed 17:33Z, PR #365 opened by the App, QA's review with a broken-on-purpose control, merged by the App at 18:20Z as `9515045`, ticket moved to Done, warden audit clean. That took 47 minutes, one fix round and five agent runs.
+
+**It runs around the clock, on Warren's word.** Since 18:25Z the routine fires every 30 minutes, every day. The run caps are 120 for the lead and 48 for each of the others, and the warden's `max_runs_per_day` is 300. The other warden brakes are unchanged, including the pause after two releases in a row. A paused org stays paused until a person, or the lead of a session working on it, resumes it.
 
 **The App's lane, measured with its own installation token:**
 
@@ -37,7 +39,7 @@ The routine and its trigger stay off until a pilot run has carried one ticket th
 - Creating and deleting `bugfix/pc-fixture-proof` were both accepted.
 - Pushing `feature/pc-fixture-refused` and the tag `pc-fixture-refused` were both refused with GH013.
 
-**Still unrun:** a worktree realised for a real run, `git`, `gh` and `dotnet` inside one, a stress dispatch from a spool request, and the lead's merge and ticket moves. The pilot run measures each of these.
+**Still unrun:** a stress dispatch from a spool request. The pilot's ticket was class 2. A worktree, `git`, `gh` and `dotnet` inside one, and the lead's merge and ticket moves were all measured by the pilot.
 
 **Deviation from the plan:** appendix A.4 lists `tools/check-pr-body.sh`, the
 body rules lifted out of `tools/require-team-sdlc.sh` and called by both. It was
@@ -109,9 +111,11 @@ lead actually making that PATCH has not been run.
 ## The brakes (plan section 6)
 
 Two tickets per run; routine `coalesce_if_active`; `maxConcurrentRuns: 1`,
-`timeoutSec: 3600` and `maxDailyRuns` (12 for the lead, 6 for each other agent;
-the lead started at 3, which cannot finish one ticket, because every helper's
-answer wakes it and one ticket takes about five lead runs; it defers wakes rather than dropping them, see the table above) per agent; two fix rounds and ninety minutes per ticket,
+`timeoutSec: 3600` and `maxDailyRuns` (120 for the lead, 48 for each other
+agent, since the org runs around the clock on Warren's word of 2026-11-24; they
+bound a runaway, they are not a throttle. One ticket, CB-343, took three lead
+runs, one engineer run and one QA run. The lead started at 3, which cannot
+finish one ticket; it defers wakes rather than dropping them, see the table above) per agent; two fix rounds and ninety minutes per ticket,
 then release. The warden (host side, not in this package) pauses the company on
 the conditions in plan section 6. `budgetMonthlyCents` is set but is not a
 brake: on a subscription connection spend reads 0.
