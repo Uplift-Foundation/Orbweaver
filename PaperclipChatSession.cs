@@ -82,6 +82,9 @@ namespace Orbweaver
         private bool _loaded, _live, _refused, _open;
         private DateTime? _wakingSince;
         private CancellationTokenSource? _assignedCts;
+        // The assigned-issues read PanelOpened started, which a send with no known task waits on.
+        private Task? _assignedRead;
+        private readonly TimeSpan _assignedWait;
         private RemoteChatState _state = RemoteChatState.Connecting;
         private string _hint;
 
@@ -92,8 +95,10 @@ namespace Orbweaver
             Func<PaperclipSessions.ChatView>? view = null,
             Func<CancellationToken, Task<IReadOnlyList<PaperclipChat.AssignedIssue>?>>? readAssigned = null,
             Func<PaperclipLink>? link = null,
-            Func<DateTime>? now = null, Action<Action>? post = null, Action<TimeSpan, Action>? schedule = null)
+            Func<DateTime>? now = null, Action<Action>? post = null, Action<TimeSpan, Action>? schedule = null,
+            TimeSpan? assignedWait = null)
         {
+            _assignedWait = assignedWait ?? PaperclipTaskPicker.DefaultAssignedWait;
             _agentId = agentId;
             SessionId = PaperclipScan.KeyFor(agentId);
             DisplayName = string.IsNullOrWhiteSpace(name) ? agentId : name;
@@ -143,7 +148,7 @@ namespace Orbweaver
             _feed.Updated += OnFeed;
             PaperclipSessions.Changed += OnRoster;
             _feed.Opened();
-            _ = ReadAssignedOnceAsync();
+            _assignedRead = ReadAssignedOnceAsync();
         }
 
         public void PanelClosed()
@@ -303,7 +308,9 @@ namespace Orbweaver
             var actions = _actions();
             if (actions is null) return Fail(NotConnectedText);
 
-            var task = _task ?? PickTask();
+            // No task known is not "no task" while the first assigned-issues read is out: a person who sends within its
+            // latency, to an agent whose task has no live, blocked or finished run, would otherwise open a second task.
+            var task = _task ?? await _picker.PickWaitingAsync(_assignedRead, _assignedWait).ConfigureAwait(true);
             PaperclipSent sent;
             try
             {

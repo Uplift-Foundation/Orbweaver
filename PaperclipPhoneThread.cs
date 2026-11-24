@@ -56,17 +56,13 @@ namespace Orbweaver
         // The assigned-issues read Hold() started, which a send with no known task waits on (below).
         private Task? _assignedRead;
 
-        // How long a send that finds no task waits for that read before it opens one. The read measured 79 ms
-        // for one agent; this is generous, and it is a bound, not a retry: past it the message opens a task.
-        internal static readonly TimeSpan DefaultAssignedWait = TimeSpan.FromSeconds(3);
-
         internal PaperclipPhoneThread(
             string agentId, string agentName, IPaperclipChatFeed feed, PaperclipTaskPicker picker,
             Func<IPaperclipActions?> actions, Func<IReadOnlyList<PaperclipAgent>> roster, Func<PaperclipLink> link,
             Func<CancellationToken, Task<IReadOnlyList<PaperclipChat.AssignedIssue>?>> readAssigned,
             Func<DateTime> now, Action<PaperclipPhoneThread> onEmpty, TimeSpan? assignedWait = null)
         {
-            _assignedWait = assignedWait ?? DefaultAssignedWait;
+            _assignedWait = assignedWait ?? PaperclipTaskPicker.DefaultAssignedWait;
             _agentId = agentId;
             _name = agentName;
             _feed = feed;
@@ -185,18 +181,8 @@ namespace Orbweaver
 
             PaperclipChat.TaskRef? task;
             lock (_gate) task = _task;
-            task ??= _picker.Pick();
-
-            // No task known yet is not "no task": rung 4 (the agent's assigned issues) is read once when the first
-            // phone holds the thread, and a message sent before that read lands would open a second task for an
-            // agent that already has one. Wait for it, bounded, and decide again.
-            if (task is null && _assignedRead is { IsCompleted: false } read)
-            {
-                using var stop = new CancellationTokenSource();
-                await Task.WhenAny(read, Task.Delay(_assignedWait, stop.Token)).ConfigureAwait(false);
-                stop.Cancel();
-                task = _picker.Pick();
-            }
+            // The rung-4 read is made once when the first phone holds the thread; a send before it lands waits for it.
+            task ??= await _picker.PickWaitingAsync(_assignedRead, _assignedWait).ConfigureAwait(false);
 
             PaperclipSent sent;
             try

@@ -52,14 +52,18 @@ public class PaperclipChatSessionTests : IDisposable
     private static ChatSnapshot Snap(string? taskId, bool refused = false, PaperclipChat.Activity? act = null, params PaperclipChat.Comment[] cs) =>
         new(taskId is null ? null : TaskOf(taskId), cs, act, refused);
 
+    // A gate the assigned read waits at, when a test wants it to land late; and the session's bound on waiting for it.
+    private TaskCompletionSource? _assignedGate;
+    private TimeSpan? _assignedWait;
+
     private (PaperclipChatSession S, Feed F, Actions A) Make(string name = "Nova", string? url = "https://p/a")
     {
         var f = new Feed();
         var a = new Actions();
         _actions = a;
         var s = new PaperclipChatSession("ag1", name, url, () => f, () => _actions, () => _roster, () => _view,
-            async ct => { _assignedReads++; await Task.Yield(); return _assignedAnswer; },
-            () => _link, () => _now, act => act(), (after, run) => _scheduled.Add((after, run)));
+            async ct => { _assignedReads++; await Task.Yield(); if (_assignedGate is { } gate) await gate.Task.WaitAsync(ct); return _assignedAnswer; },
+            () => _link, () => _now, act => act(), (after, run) => _scheduled.Add((after, run)), _assignedWait);
         s.PanelOpened();
         return (s, f, a);
     }
@@ -625,4 +629,60 @@ public class PaperclipChatSessionTests : IDisposable
         Assert.Null(s.Target().Task);
         Assert.Equal("Message Nova. This opens a new task.", s.ComposerHint);
     }
+
+    // A defect in merged code (CB-443, PR 356): the panel read the agent's assigned issues once on open and a send
+    // decided "no task" without waiting for it, so a person who sent within that read's latency, to an agent whose
+    // only task has no live, blocked or finished run (a done one), opened a second task.
+    [Fact]
+    public async Task A_message_sent_before_the_assigned_read_lands_is_a_comment_on_that_task_not_a_new_task()
+    {
+        _assignedAnswer = [new(TaskOf("i7"), T0, false)];
+        _assignedGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (s, f, a) = Make();
+        Assert.Equal(1, _assignedReads);
+
+        var send = s.SendAsync("one more thing");
+        await Task.Delay(50);
+        Assert.False(send.IsCompleted);                      // waiting on the read, not deciding on no task
+        Assert.Empty(a.Sent);
+
+        _assignedGate.SetResult();
+        Assert.Equal(ChatSendOutcome.Sent, await send);
+        Assert.Equal(["comment:i7:one more thing"], a.Sent);   // a comment on the task the read found; nothing opened
+    }
+
+    [Fact]
+    public async Task A_message_sent_before_the_assigned_read_lands_opens_a_task_when_the_read_found_none_or_outlasted_its_bound()
+    {
+        _assignedAnswer = [];
+        _assignedGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (s, _, a) = Make();
+        var first = s.SendAsync("hello");
+        await Task.Delay(30);
+        _assignedGate.SetResult();
+        Assert.Equal(ChatSendOutcome.Sent, await first);
+        Assert.Equal(["open:ag1:hello"], a.Sent);                // the agent really has no task
+
+        // A read that never lands is a bound, not a hang: past it the message opens a task.
+        _assignedGate = new TaskCompletionSource();
+        _assignedWait = TimeSpan.FromMilliseconds(60);
+        var (slow, _, a2) = Make();
+        var started = DateTime.UtcNow;
+        Assert.Equal(ChatSendOutcome.Sent, await slow.SendAsync("hello"));
+        Assert.True(DateTime.UtcNow - started < TimeSpan.FromSeconds(2));
+        Assert.Equal(["open:ag1:hello"], a2.Sent);
+        slow.PanelClosed();                                      // cancels the gated read
+    }
+
+    [Fact]
+    public async Task A_message_to_an_agent_the_poll_already_knows_the_task_of_does_not_wait_for_the_read()
+    {
+        _view = new([Live("r1", "i1")], [], []);
+        _assignedGate = new TaskCompletionSource();
+        var (s, _, a) = Make();
+        Assert.Equal(ChatSendOutcome.Sent, await s.SendAsync("go"));
+        Assert.Equal(["comment:i1:go"], a.Sent);
+        s.PanelClosed();
+    }
 }
+

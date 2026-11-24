@@ -43,6 +43,23 @@ namespace Orbweaver
             lock (_gate) _assigned = read;
         }
 
+        // How long a send that finds no task waits for the first assigned-issues read before it opens one. The read
+        // measured 79 ms for one agent; this is generous, and it is a bound, not a retry.
+        internal static readonly TimeSpan DefaultAssignedWait = TimeSpan.FromSeconds(3);
+
+        // The choice for a send. No task known is not "no task" while rung 4 is still being read: an agent whose
+        // only task has no live, blocked or finished run is found only by that read, and a message sent first would
+        // open a second task for it. So wait for the read to finish or fail, bounded, and decide again.
+        internal async Task<PaperclipChat.TaskRef?> PickWaitingAsync(Task? assignedRead, TimeSpan wait)
+        {
+            var task = Pick();
+            if (task != null || assignedRead is not { IsCompleted: false }) return task;
+            using var stop = new CancellationTokenSource();
+            await Task.WhenAny(assignedRead, Task.Delay(wait, stop.Token)).ConfigureAwait(false);
+            stop.Cancel();
+            return Pick();
+        }
+
         // The task a message just opened: it is the thread's task until the agent runs on another.
         internal void Pin(PaperclipChat.TaskRef task)
         {
