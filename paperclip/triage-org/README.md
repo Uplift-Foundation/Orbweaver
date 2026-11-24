@@ -23,62 +23,67 @@ Comment on a ticket. Nothing else: no transitions, no field edits, no PRs.
 
 ## Status
 
-**Not running on a schedule, by decision, not by accident.** Every piece of a
-triage run has worked on Paperclip's own runner in its default isolated mode
-(Paperclip 2026.1117.0, Mac mini, 2026-11-23), but only with a person approving
-tool calls as they came. The routine stays paused.
+**Running unattended since 2026-11-24, on the owner's decision.** The routine
+fires on weekdays at 09:00 Pacific on the Mac mini (Paperclip 2026.1117.0,
+Paperclip's own runner, default isolated mode, agents in `approve-all`, the
+service inside the sandbox described below). Only the lead may comment on
+Jira; the other three have six read-only Jira actions and nothing else.
 
-**What worked, measured**
+**What ran, measured on 2026-11-24**
 
-- A Claude subscription connection made through Paperclip's own sign-in, bound
-  to each agent. An agent with no binding fails with "Could not resolve
-  authentication method": the connection existing on the company is not
-  enough.
-- The hand-off with no outside tools: the lead opened a task for each of the
-  three, all four runs succeeded, no approval was asked for.
-- Jira through Paperclip's Jira connector, granted at Atlassian's consent page
-  as Jira read, write and search only, then limited in Paperclip to six
-  read-only actions for all agents. The lead read CB-424 and searched with JQL.
-- The engineer agent reading `origin/develop` from a dedicated local clone
-  mounted as a project workspace, with the file tool only, naming the commit
-  from `.git/HEAD`.
-- One read-only triage of a real ticket, CB-424: three answers and a comment in
-  the skill's format, written into the lead's task and **not posted**.
+- A non-lead agent asked to comment on Jira: the comment tool did not exist
+  for it and nothing was sent.
+- One ticket, start to finish, with no approval: three answers and one comment
+  posted (CB-424, Jira comment 11569), in about two minutes.
+- The schedule: on resume the routine's missed trigger fired by itself and
+  opened the run's task.
+- The first full run: ten tickets, ten comments (CB-336 to CB-378, Jira
+  comments 11570 to 11579), one per ticket, read back from Jira afterwards.
+  Eighteen more waited for the next runs, because a run stops at ten.
 
-**What stops it running unattended**
+**What that first run needed fixing, and why the instructions say what they say**
 
-- In `approve-paperclip` mode the runner auto-approves only Paperclip's own
-  workflow tools. Every connector tool, read-only ones included, and several of
-  Paperclip's own read tools (`load_skill`, `get_task`, `get_workspace`,
-  `list_agents`) wait for a person. For a Claude agent the only choices are
-  allow once, deny and cancel; nothing is remembered for the next run (read
-  from the runner's code).
-- `approve-all` answers every request with allow, with no tool filter, and the
-  `paperclip-runner-workspace-only` sandbox profile belongs to Codex agents, not
-  Claude ones (read from the code, not run). A triage agent reads ticket text
-  anyone can write, so unfiltered shell as the logged-in user is not something
-  to switch on without containing the service first.
-- Until one of those changes, a run needs a person approving its tool calls.
-- Since CB-442 (2026-11-24) that person no longer has to sit in Paperclip's own
-  page: Orbweaver shows each waiting permission prompt on the agent's orb and
-  on the phone, with the command and the task, and answers it with Allow once
-  or Deny. Proven on the Mac mini against this org (an agent's `mkdir` allowed,
-  a second one denied, a read-only `date` raising no prompt). That makes a
-  supervised run practical. It does not make an unattended one: every Jira
-  read is still one approval, on every run.
+It stalled three times before it posted anything, each time on how the org was
+set up, not on Paperclip being down:
 
-**Not done**
+- **The lead cannot read a helper's answer with `get_task`.** Paperclip stores
+  the answer as a comment on the helper's task and `get_task` returns the task
+  without its comments. The lead now reads `GET /api/issues/<id>/comments`
+  through `call_api`, for that one read only, and helpers begin every answer
+  with a short `ANSWER <key>:` block.
+- **A helper that could not answer marked its task blocked**, and a blocked
+  child never wakes the lead. Helpers now always finish; "could not answer" is
+  an answer.
+- **Thirty tasks at once.** One helper run failed with the runner's
+  "Accounting spool changed during recovery; retry required", which Paperclip
+  will not retry, and the lead was holding all ten comments for it. The lead now
+  works three tickets at a time, posts each comment when its three answers are
+  in, and writes "not obtained" for a field whose task failed.
 
-- Posting a comment: `addCommentToJiraIssue` is Off for every agent.
-- The check that an agent's attempt to comment is refused.
-- The lead reading the three answers inside a run: `get_task` returned
-  truncated summaries, so the operator pasted them in for the CB-424 trial.
-- The schedule firing, more than one ticket, a reboot of the host, backups.
+**Known limits**
+
+- Paperclip scans tool results and refused four Jira reads in that run with
+  `prompt_injection_blocked` (finding `secret_exfiltration`); the tickets
+  involved discuss secrets. That filter is left on. The agent says which ticket
+  it could not read under "Not checked".
+- Jira search results are often larger than an agent can take in one piece;
+  the agents narrow the query or page it.
+- Comments are posted under the Atlassian account that granted the connector.
+- `approve-all` has no tool filter for a Claude agent. What contains a run is
+  the sandbox around the service, the six-plus-one Jira actions, and the
+  Atlassian grant, which is Jira read, write and search. An agent that goes
+  wrong can still do whatever that grant and Paperclip's own folder allow.
+- While the lead waits for its helpers, Paperclip shows its task as blocked.
+  That is a wait, not a request for a person.
+- Not tried: a reboot of the host, backups, a week of runs, a run with nothing
+  to triage.
 
 **What was tried and withdrawn.** On 2026-11-22 the org ran once, on CB-416, by
 moving every agent to Paperclip's legacy plain-`claude` adapter with the host's
 Claude login and Jira MCP server lent to it. That was removed; the comment it
-posted on CB-416 is real.
+posted on CB-416 is real. On 2026-11-23 it ran in `approve-paperclip`, where
+every connector call waits for a person; CB-442 made those prompts answerable
+from Orbweaver, and the owner then chose unattended runs instead.
 
 ## Setup on the host
 
@@ -110,7 +115,8 @@ Then, none of which a package can carry:
    the agents need because the runner gives them a file tool and no search
    tool. Run it before each scheduled run (on the mini a launchd job does, at
    08:50 on weekdays).
-5. **Pause the routine.** It imports active with its schedule enabled.
+5. **Pause the routine** until the steps below are done. It imports active
+   with its schedule enabled.
 6. **Contain the service.** `host/paperclip-service.sb.template` is a macOS
    sandbox profile with the account's details left out. Render it once:
    `sed -e "s#__HOME__#$HOME#g" -e "s#__UID__#$(id -u)#g" -e "s#__USER__#$(id -un)#g" host/paperclip-service.sb.template > ~/.paperclip/instances/default/paperclip-service.sb`
@@ -119,6 +125,17 @@ Then, none of which a package can carry:
    `sandbox-exec -f <profile> paperclipai run --instance default`. Keep
    anything of your own (admin logins, session cookies) out of Paperclip's
    folder, because the agents can read that folder.
+
+7. **Let the lead comment, and nobody else.** First add a tool policy of type
+   `block` whose selectors name the `addCommentToJiraIssue` catalog entry and
+   the three non-lead agents (`agentIds`), at a priority ahead of the others.
+   Only then call the connector's finish step again with the six read actions
+   plus `addCommentToJiraIssue`. Check each agent's access afterwards: seven
+   allowed for the lead, six for the others. In that order there is no moment
+   at which everyone can comment.
+8. **Run mode.** The package sets `acpxPermissionMode: approve-all`, which is
+   what lets a run finish with nobody watching. Do not resume the routine in
+   that mode before step 6 is in place.
 
 ## What the sandbox does and does not contain
 

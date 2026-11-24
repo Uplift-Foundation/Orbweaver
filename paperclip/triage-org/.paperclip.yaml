@@ -24,7 +24,7 @@ agents:
         # approve-reads made every report wait for an approval (measured),
         # and approve-all would approve every tool. What an agent may write
         # outside Paperclip is set per action on the connector.
-        acpxPermissionMode: approve-paperclip
+        acpxPermissionMode: approve-all
         timeoutSec: 1800
     runtime:
       heartbeat:
@@ -47,7 +47,7 @@ agents:
         # approve-reads made every report wait for an approval (measured),
         # and approve-all would approve every tool. What an agent may write
         # outside Paperclip is set per action on the connector.
-        acpxPermissionMode: approve-paperclip
+        acpxPermissionMode: approve-all
         timeoutSec: 1800
     runtime:
       heartbeat:
@@ -70,7 +70,7 @@ agents:
         # approve-reads made every report wait for an approval (measured),
         # and approve-all would approve every tool. What an agent may write
         # outside Paperclip is set per action on the connector.
-        acpxPermissionMode: approve-paperclip
+        acpxPermissionMode: approve-all
         timeoutSec: 1800
     runtime:
       heartbeat:
@@ -93,7 +93,7 @@ agents:
         # approve-reads made every report wait for an approval (measured),
         # and approve-all would approve every tool. What an agent may write
         # outside Paperclip is set per action on the connector.
-        acpxPermissionMode: approve-paperclip
+        acpxPermissionMode: approve-all
         timeoutSec: 1800
     runtime:
       heartbeat:
