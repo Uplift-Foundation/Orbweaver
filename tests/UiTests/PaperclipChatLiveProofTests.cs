@@ -20,6 +20,8 @@ namespace Orbweaver.Tests;
 //   ORBWEAVER_PAPERCLIP_LIVE_AGENT         the agent's id (the uuid, without "paperclip:")
 //   ORBWEAVER_PAPERCLIP_LIVE_KEY           a board key from the app's connect flow
 //   ORBWEAVER_PAPERCLIP_LIVE_REVOKED_KEY  a key that has been revoked (the control)
+//   ORBWEAVER_PAPERCLIP_LIVE_TASK_ID      the identifier of the agent's task, e.g. ORB-121 (the task line must name it)
+//   ORBWEAVER_PAPERCLIP_LIVE_TASK_TITLE   that task's title (the task line must name it too)
 //   ORBWEAVER_PAPERCLIP_LIVE_TRANSCRIPT   optional: where the transcript is written
 //                                          (default: TestResults/paperclip-live-transcript.txt in the repo root)
 //
@@ -109,6 +111,8 @@ public class PaperclipChatLiveProofTests : IDisposable
         var agent = Env("_AGENT") ?? throw new InvalidOperationException(Prefix + "_AGENT is not set");
         var key = Env("_KEY") ?? throw new InvalidOperationException(Prefix + "_KEY is not set");
         var revoked = Env("_REVOKED_KEY") ?? throw new InvalidOperationException(Prefix + "_REVOKED_KEY is not set");
+        var taskId = Env("_TASK_ID") ?? throw new InvalidOperationException(Prefix + "_TASK_ID is not set");
+        var taskTitle = Env("_TASK_TITLE") ?? throw new InvalidOperationException(Prefix + "_TASK_TITLE is not set");
         var sessionId = PaperclipScan.KeyFor(agent);
         _panelId = sessionId;
 
@@ -147,6 +151,9 @@ public class PaperclipChatLiveProofTests : IDisposable
         var taskLine = chat.History[0].Text;
         Say($"task line: {taskLine}");
         Assert.NotEqual("No task yet.", taskLine);                   // the agent has a task: the line is its real one
+        Assert.NotEqual("Task", taskLine);                           // CB-453: not the fallback for a task with no fields
+        Assert.Contains(taskId, taskLine, StringComparison.Ordinal);       // the line names the fixture task's identifier...
+        Assert.Contains(taskTitle, taskLine, StringComparison.Ordinal);    // ...and its title
         Assert.Equal(ChatRole.System, chat.History[0].Role);
         foreach (var t in chat.History.Skip(1)) Say($"  row [{t.Role}{(t.IsError ? ", red" : "")}] {Trim(t.Text)}");
 
