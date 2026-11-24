@@ -375,7 +375,9 @@ namespace Orbweaver
             bool NeedRuns = true,
             IReadOnlyList<string>? Degraded = null,
             // CB-442: per running run, what its events said last time and whether that reading is already a tick old.
-            IReadOnlyDictionary<string, (IReadOnlyList<PaperclipApi.RawRuntimeRequest> Requests, bool Stale)>? RuntimeByRun = null)
+            IReadOnlyDictionary<string, (IReadOnlyList<PaperclipApi.RawRuntimeRequest> Requests, bool Stale)>? RuntimeByRun = null,
+            // The last message a per-run events fault logged, so one odd body is one line, not one per tick.
+            string? RuntimeFault = null)
         {
             internal static readonly PollState Initial = new();
         }
@@ -391,7 +393,8 @@ namespace Orbweaver
         // that backs off and, past the grace, says unreachable. Never throws
         // for a transport failure.
         internal static async Task<StepResult> StepAsync(
-            IPaperclipApi api, PaperclipConfig cfg, PollState st, DateTime now, CancellationToken ct)
+            IPaperclipApi api, PaperclipConfig cfg, PollState st, DateTime now, CancellationToken ct,
+            Action<string>? log = null)
         {
             if (!cfg.Enabled)
                 return new StepResult(PollState.Initial with { Link = PaperclipLink.Off, Status = "Paperclip is switched off." }, FastEvery);
@@ -511,15 +514,27 @@ namespace Orbweaver
             // CB-442: a run waiting on a permission prompt has no flag anywhere (measured), so each running run's events
             // are read on the slow tick. A failed read keeps that run's last answer for one tick; a second miss drops it.
             var runtime = st.RuntimeByRun;
+            var fault = st.RuntimeFault;
             if (slow && firstFailure == null && live != null)
             {
                 var seen = new Dictionary<string, (IReadOnlyList<PaperclipApi.RawRuntimeRequest>, bool)>();
                 foreach (var run in live.Where(x => x.Status == "running").DistinctBy(x => x.Id))
                 {
-                    var ev = await api.GetAsync($"/api/heartbeat-runs/{Uri.EscapeDataString(run.Id)}/events?limit=500", ct).ConfigureAwait(false);
-                    if (ev.IsOk)
-                        seen[run.Id] = (PaperclipApi.ParseRuntimeRequests(run.Id, ev.Body)
-                            .Select(r => r with { AgentId = run.AgentId, IssueId = run.IssueId }).ToList(), false);
+                    // Read and parse are one unit: a run whose body throws is treated as a failed read for that run
+                    // only, so one odd body never takes the company's poll down with it.
+                    IReadOnlyList<PaperclipApi.RawRuntimeRequest>? read = null;
+                    try
+                    {
+                        var ev = await api.GetAsync($"/api/heartbeat-runs/{Uri.EscapeDataString(run.Id)}/events?limit=500", ct).ConfigureAwait(false);
+                        if (ev.IsOk)
+                            read = PaperclipApi.ParseRuntimeRequests(run.Id, ev.Body)
+                                .Select(r => r with { AgentId = run.AgentId, IssueId = run.IssueId }).ToList();
+                    }
+                    catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
+                    {
+                        if (StepFailureLine(ex, ref fault) is { } line) log?.Invoke("runtime events read failed " + line);
+                    }
+                    if (read != null) seen[run.Id] = (read, false);
                     else if (runtime != null && runtime.TryGetValue(run.Id, out var prior) && !prior.Stale)
                         seen[run.Id] = (prior.Requests, true);
                 }
@@ -528,7 +543,7 @@ namespace Orbweaver
 
             var stamped = st with
             {
-                RuntimeByRun = runtime,
+                RuntimeByRun = runtime, RuntimeFault = fault,
                 LastFast = fast ? now : st.LastFast,
                 LastSlow = slow ? now : st.LastSlow,
                 Agents = agents, LiveRuns = live, Runs = runs, Approvals = approvals,
@@ -632,7 +647,7 @@ namespace Orbweaver
                 TimeSpan wait;
                 try
                 {
-                    var step = await StepAsync(api, cfg, state, DateTime.UtcNow, ct).ConfigureAwait(false);
+                    var step = await StepAsync(api, cfg, state, DateTime.UtcNow, ct, PaperclipHttp.DefaultLog).ConfigureAwait(false);
                     state = step.Next; wait = step.Wait;
                     lastFailure = null;
                 }

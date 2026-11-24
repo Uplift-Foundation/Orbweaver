@@ -283,4 +283,56 @@ public class PaperclipRuntimeTests
         var cut = PaperclipSessions.StepFailureLine(new Exception(new string('x', 500)), ref last)!;
         Assert.Equal("poll step failed Exception: ".Length + 200, cut.Length);
     }
+
+    // An api whose events read for one run throws, standing in for a body that makes the parser throw.
+    private sealed class ThrowingFor(FakePaperclip inner, string path) : IPaperclipApi
+    {
+        public Task<PaperclipResponse> GetAsync(string p, CancellationToken ct) =>
+            p == path ? throw new InvalidOperationException("odd body") : inner.GetAsync(p, ct);
+        public Task<PaperclipResponse> PostAsync(string p, string b, CancellationToken ct) => inner.PostAsync(p, b, ct);
+    }
+
+    [Fact]
+    public async Task One_run_whose_events_throw_costs_that_run_only_and_is_logged_once()
+    {
+        var api = Api();
+        api.Gets["/api/companies/co/agents"] = FakePaperclip.Ok("[{\"id\":\"ag1\",\"name\":\"L\",\"status\":\"running\"},{\"id\":\"ag2\",\"name\":\"M\",\"status\":\"running\"}]");
+        api.Gets["/api/companies/co/live-runs"] = FakePaperclip.Ok(
+            "[{\"id\":\"run1\",\"agentId\":\"ag1\",\"status\":\"running\"},{\"id\":\"run3\",\"agentId\":\"ag2\",\"status\":\"running\"}]");
+        api.Gets["/api/companies/co/tools/action-requests"] = FakePaperclip.Ok(
+            "{\"actionRequests\":[{\"request\":{\"id\":\"ac9\",\"status\":\"pending\",\"requestedByAgentId\":\"ag1\"},\"toolTitle\":\"Send\"}]}");
+        api.Gets["/api/heartbeat-runs/run3/events?limit=500"] = FakePaperclip.Ok(Events.Replace("r-open", "r-three"));
+        var wrapped = new ThrowingFor(api, EventsPath);
+        var log = new List<string>();
+        var t0 = DateTime.UtcNow;
+        var s1 = await PaperclipSessions.StepAsync(wrapped, Cfg, PaperclipSessions.PollState.Initial, t0, default, log.Add);
+        Assert.Equal(PaperclipLink.Connected, s1.Next.Link);
+        var byAgent = s1.Next.Published!.ToDictionary(a => a.Id, a => a.Needs);
+        Assert.Contains(byAgent["ag2"], n => n.Id == "r-three");              // the other run's request still shows
+        Assert.Contains(byAgent["ag1"], n => n.Kind == "action");             // actions still publish
+        Assert.DoesNotContain(byAgent["ag1"], n => n.Kind == "runtime");      // nothing prior to keep for the odd run
+        var s2 = await PaperclipSessions.StepAsync(wrapped, Cfg, s1.Next, t0.AddSeconds(5), default, log.Add);
+        Assert.Contains(s2.Next.Published!.Single(a => a.Id == "ag2").Needs, n => n.Id == "r-three");
+        Assert.Equal("runtime events read failed poll step failed InvalidOperationException: odd body", Assert.Single(log));
+    }
+
+    [Fact]
+    public async Task A_cancelled_events_read_is_not_swallowed()
+    {
+        using var cts = new CancellationTokenSource();
+        var api = new ThrowingCancel(Api(), EventsPath, cts);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            PaperclipSessions.StepAsync(api, Cfg, PaperclipSessions.PollState.Initial, DateTime.UtcNow, cts.Token));
+    }
+
+    private sealed class ThrowingCancel(FakePaperclip inner, string path, CancellationTokenSource cts) : IPaperclipApi
+    {
+        public Task<PaperclipResponse> GetAsync(string p, CancellationToken ct)
+        {
+            if (p != path) return inner.GetAsync(p, ct);
+            cts.Cancel();
+            throw new OperationCanceledException(ct);
+        }
+        public Task<PaperclipResponse> PostAsync(string p, string b, CancellationToken ct) => inner.PostAsync(p, b, ct);
+    }
 }
