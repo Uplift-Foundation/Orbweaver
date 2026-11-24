@@ -334,4 +334,113 @@ public sealed class PaperclipHttpTests : IDisposable
         Assert.Equal("a", Assert.Single(step.Next.Published!).Id);
         lock (_seen) Assert.All(_seen, s => Assert.Equal("Bearer KEY", s.Auth));
     }
+
+    // ---- CB-445: a picture is bytes, fetched with the key ----
+
+    private static readonly byte[] Png = Convert.FromBase64String(
+        "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAEklEQVR4nGP438DwHx9mGBkKAFPWn4ETg8N3AAAAAElFTkSuQmCC");
+
+    private static Task ReplyBytes(HttpListenerResponse r, int code, byte[] body, string type)
+    {
+        r.StatusCode = code;
+        r.ContentType = type;
+        r.OutputStream.Write(body);
+        return Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task APicture_ComesBackAsTheExactBytes_WithItsType_AndTheKey()
+    {
+        _handler = (_, r) => ReplyBytes(r, 200, Png, "image/png");
+        var res = await new PaperclipHttp(_root, "KEY-1").GetBytesAsync("/api/assets/a1/content", default);
+        Assert.Equal((PaperclipHttpKind.Ok, 200, "image/png"), (res.Kind, res.StatusCode, res.ContentType));
+        Assert.Equal(Png, res.Body);
+        var s = Assert.Single(_seen);
+        Assert.Equal(("GET", "/api/assets/a1/content", "Bearer KEY-1"), (s.Method, s.PathAndQuery, s.Auth));
+    }
+
+    [Fact]
+    public async Task AMissingPicture_IsNotFound_WithNoBody()
+    {
+        _handler = (_, r) => Reply(r, 404, "{\"error\":\"x\"}");
+        var res = await new PaperclipHttp(_root, "KEY").GetBytesAsync("/api/assets/gone/content", default);
+        Assert.Equal((PaperclipHttpKind.NotFound, 404), (res.Kind, res.StatusCode));
+        Assert.Empty(res.Body);
+        Assert.False(res.IsOk);
+    }
+
+    [Fact]
+    public async Task APictureOverTheBound_IsRefused_NotKept()
+    {
+        _handler = (_, r) => ReplyBytes(r, 200, new byte[(int)PaperclipHttp.MaxPictureBytes + 10], "image/png");
+        var res = await new PaperclipHttp(_root, "KEY").GetBytesAsync("/api/assets/big/content", default);
+        Assert.Equal(PaperclipHttpKind.Other, res.Kind);
+        Assert.Empty(res.Body);
+    }
+
+    [Fact]
+    public async Task APictureFetchThatTimesOut_IsATimeout_AndADroppedConnectionIsUnreachable()
+    {
+        _handler = async (_, _) => await Task.Delay(2000);
+        var slow = await new PaperclipHttp(_root, "K", timeout: TimeSpan.FromMilliseconds(150)).GetBytesAsync("/api/assets/a/content", default);
+        Assert.Equal(PaperclipHttpKind.Timeout, slow.Kind);
+
+        var dead = await new PaperclipHttp("http://127.0.0.1:1", "K").GetBytesAsync("/api/assets/a/content", default);
+        Assert.Equal(PaperclipHttpKind.Unreachable, dead.Kind);
+    }
+
+    [Fact]
+    public async Task ACancelledPictureFetch_Throws()
+    {
+        _handler = async (_, _) => await Task.Delay(2000);
+        using var cts = new CancellationTokenSource(100);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            new PaperclipHttp(_root, "K").GetBytesAsync("/api/assets/a/content", cts.Token));
+    }
+
+    [Fact]
+    public async Task ARedirectToAnotherHost_DoesNotCarryTheKeyThere()
+    {
+        var (other, otherRoot) = LoopbackHttp.Start();
+        string? leaked = "unset";
+        var hit = false;
+        _ = Task.Run(async () =>
+        {
+            var ctx = await other.GetContextAsync();
+            hit = true;
+            leaked = ctx.Request.Headers["Authorization"];
+            ctx.Response.StatusCode = 200;
+            ctx.Response.ContentType = "image/png";
+            ctx.Response.OutputStream.Write(Png);
+            ctx.Response.Close();
+        });
+        try
+        {
+            _handler = (_, r) => { r.StatusCode = 302; r.Headers["Location"] = otherRoot + "/stolen.png"; return Task.CompletedTask; };
+            await new PaperclipHttp(_root, "SECRET-KEY").GetBytesAsync("/api/assets/a/content", default);
+            await Task.Delay(200);
+            // Whatever the redirect did, the key must not have reached the other host.
+            Assert.True(hit, "the redirect was not followed, so this proves nothing");
+            Assert.Null(leaked);
+        }
+        finally { other.Stop(); }
+    }
+
+    [Fact]
+    public async Task ThePictureFlow_FromTheAgentsListToAFileOnDisk_ThroughTheRealClient()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "cb445-int-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            _handler = (req, r) => req.Url!.AbsolutePath == "/api/assets/a1/content"
+                ? ReplyBytes(r, 200, Png, "image/png")
+                : Reply(r, 404, "{}");
+            var cache = new PaperclipPictureCache(dir);
+            await cache.SyncAsync(["/api/assets/a1/content", "/api/assets/gone/content"], new PaperclipHttp(_root, "KEY"), default);
+            Assert.Equal(Png, File.ReadAllBytes(cache.FileFor("/api/assets/a1/content")!));
+            Assert.Null(cache.FileFor("/api/assets/gone/content"));
+            lock (_seen) Assert.All(_seen, x => Assert.Equal("Bearer KEY", x.Auth));
+        }
+        finally { try { Directory.Delete(dir, true); } catch (Exception) { } }
+    }
 }

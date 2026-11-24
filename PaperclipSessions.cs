@@ -46,7 +46,9 @@ namespace Orbweaver
         bool Sleeping,
         int? RunPid = null, string? RunSessionId = null,
         long BudgetCapCents = 0, long SpentCents = 0,
-        DateTime? LastRunFinished = null);   // the newest finished run's own finishedAt, for "last run … ago"   // the hover's "$0.26 of $50.00"
+        DateTime? LastRunFinished = null,
+        string? AvatarUrl = null,           // Paperclip's path to the picture (CB-445), a cache key
+        string? AvatarFile = null);         // the cached picture, once fetched; null draws initials   // the newest finished run's own finishedAt, for "last run … ago"   // the hover's "$0.26 of $50.00"
 
     // The poll loop (plan 2.5), shaped after ClaudeCloudSessions: a volatile
     // snapshot replaced whole, a pure StepAsync that takes its transport and
@@ -102,7 +104,7 @@ namespace Orbweaver
                   .Append('|').Append(a.State).Append('|').Append(a.Mark).Append('|').Append(a.MarkReason)
                   .Append('|').Append(a.BudgetPercent).Append('|').Append(a.SpentCents).Append('|').Append(a.Sleeping)
                   .Append('|').Append(a.Task).Append('|').Append(a.Activity).Append('|').Append(a.LastResult)
-                  .Append('|').Append(a.Url);
+                  .Append('|').Append(a.Url).Append('|').Append(a.AvatarFile);
                 foreach (var n in a.Needs) sb.Append('|').Append(n.Kind).Append(':').Append(n.Id).Append(':').Append(n.Title).Append(':').Append(n.Url);
             }
             return sb.ToString();
@@ -394,7 +396,7 @@ namespace Orbweaver
         // for a transport failure.
         internal static async Task<StepResult> StepAsync(
             IPaperclipApi api, PaperclipConfig cfg, PollState st, DateTime now, CancellationToken ct,
-            Action<string>? log = null)
+            Action<string>? log = null, PaperclipPictureCache? pictures = null)
         {
             if (!cfg.Enabled)
                 return new StepResult(PollState.Initial with { Link = PaperclipLink.Off, Status = "Paperclip is switched off." }, FastEvery);
@@ -560,6 +562,14 @@ namespace Orbweaver
                     approvals ?? Array.Empty<PaperclipApi.RawApproval>(), actions ?? Array.Empty<PaperclipApi.RawActionRequest>(),
                     blocked ?? Array.Empty<PaperclipApi.RawIssue>(), tasks, cfg.BaseUrl, st.IssuePrefix, now,
                     runtime?.Values.SelectMany(v => v.Requests).ToList()));
+            // CB-445: the agents' pictures, fetched with the same key. A fetch that fails is initials, and says
+            // nothing to the link: it is not one of the reads that decide Connected.
+            if (agents != null)
+            {
+                var cache = pictures ?? PaperclipPictureCache.Shared;
+                await cache.SyncAsync(agents.Select(a => a.AvatarUrl), api, ct, log).ConfigureAwait(false);
+                composed = composed.Select(a => a with { AvatarFile = cache.FileFor(a.AvatarUrl) }).ToList();
+            }
             var (stamps, _) = PaperclipApi.TrackAwake(st.AwakeStamps ?? new Dictionary<string, DateTime>(), composed, now);
 
             return new StepResult(stamped with
