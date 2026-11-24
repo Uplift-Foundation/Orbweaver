@@ -498,13 +498,70 @@ public partial class ClaudeCloudEventsTests
         await Until(() => chat.StreamEventsSeen == 1);
 
         clock.ReleaseEchoGrace();
-        await Bounded(chat.SendWatchTask, "the send watch");
+        await Until(() => clock.EchoGraceWaits == 2);
 
         Assert.Null(chat.LiveTask);
         Assert.Empty(api.Statuses);
         Assert.Equal(0, Lines(chat, "silent"));
 
         await Close(chat);
+        await Bounded(chat.SendWatchTask, "the send watch");
+    }
+
+    // CB-345. The stream delivers the send's echo and then the socket dies
+    // silently. The echo satisfied the first window; the watch re-arms, and the
+    // next quiet window hands the turn to the poller, which fetches the reply.
+    [Fact]
+    public async Task AStreamThatGoesSilentAfterTheEchoIsPolledBesideInTheNextWindow()
+    {
+        var (chat, api, stream, clock) = ReplyingStream();
+        chat.PanelOpened();
+        var events = await stream.NextOpenAsync();
+
+        await chat.SendAsync("hello");
+        events.TryWrite(Durable(42, "system", "status", status: "requesting"));
+        await Until(() => chat.StreamEventsSeen == 1);
+
+        clock.ReleaseEchoGrace();
+        await Until(() => clock.EchoGraceWaits == 2);
+        Assert.Null(chat.LiveTask);
+
+        clock.ReleaseEchoGrace();
+        await Bounded(chat.SendWatchTask, "the send watch");
+        await Bounded(chat.LiveTask, "the live loop");
+
+        Assert.True(HasReply(chat));
+        Assert.False(chat.CanInterrupt);
+        Assert.NotEmpty(api.Statuses);
+        Assert.Equal(1, Lines(chat, "silent 10s after a send, polling beside it"));
+
+        await Close(chat);
+    }
+
+    // CB-345, the control. A stream that keeps emitting progress in every window
+    // is never handed to the poller.
+    [Fact]
+    public async Task AStreamThatKeepsEmittingProgressIsNeverPolledBeside()
+    {
+        var (chat, api, stream, clock) = ReplyingStream();
+        chat.PanelOpened();
+        var events = await stream.NextOpenAsync();
+
+        await chat.SendAsync("hello");
+        for (var i = 1; i <= 3; i++)
+        {
+            events.TryWrite(Durable(41 + i, "system", "status", status: "requesting"));
+            await Until(() => chat.StreamEventsSeen == i);
+            clock.ReleaseEchoGrace();
+            await Until(() => clock.EchoGraceWaits == i + 1);
+        }
+
+        Assert.Null(chat.LiveTask);
+        Assert.Empty(api.Statuses);
+        Assert.Equal(0, Lines(chat, "silent"));
+
+        await Close(chat);
+        await Bounded(chat.SendWatchTask, "the send watch");
     }
 
     // The stream ended the turn inside the grace: nothing left to watch.

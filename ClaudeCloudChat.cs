@@ -906,7 +906,9 @@ namespace Orbweaver
         }
 
         // Give a trusted stream UnmeasuredStreamEchoGrace to say anything at all
-        // about a send, and poll beside it if it does not.
+        // about a send, and poll beside it if it does not. Each window that did
+        // hear something starts another, until the turn ends: the same watch is
+        // the idle-mid-turn watchdog (CB-345).
         //
         // **Why the stream's own word is not enough.** While it is trusted,
         // nothing else reads the transcript and the roster is not allowed to
@@ -924,23 +926,34 @@ namespace Orbweaver
 
         private async Task WatchSendAsync(string uuid, int eventsAtSend, CancellationToken ct)
         {
-            try
+            while (true)
             {
-                await Delay(UnmeasuredStreamEchoGrace, ct).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
+                try
+                {
+                    await Delay(UnmeasuredStreamEchoGrace, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
 
-            // Nothing to do if the panel closed or the session stopped taking
-            // input, if the turn is already over, or if the stream has already
-            // fallen back, which started polling itself.
-            if (ct.IsCancellationRequested || !_panelOpen || IsReadOnly || !_busy || !StreamLive) return;
+                // Nothing to do if the panel closed or the session stopped taking
+                // input, if the turn is already over, or if the stream has already
+                // fallen back, which started polling itself.
+                if (ct.IsCancellationRequested || !_panelOpen || IsReadOnly || !_busy || !StreamLive) return;
 
-            // The stream said something since the send. It is alive, and it owns
-            // this turn.
-            if (Volatile.Read(ref _streamTurnEvents) != eventsAtSend) return;
+                // The stream said something this window (the send's echo counts).
+                // It is alive for now: watch again, so a socket that dies after
+                // the echo is caught by the next quiet window (CB-345).
+                var seen = Volatile.Read(ref _streamTurnEvents);
+                if (seen != eventsAtSend)
+                {
+                    eventsAtSend = seen;
+                    continue;
+                }
+
+                break;
+            }
 
             Log($"stream {SessionId}: silent {CloudChatLog.Seconds(UnmeasuredStreamEchoGrace)} after a send, polling beside it");
 
