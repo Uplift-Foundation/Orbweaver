@@ -326,6 +326,13 @@ class AuditRuleTests(unittest.TestCase):
         self.assertEqual(warden.audit_merge(True, {}), [])
         self.assertEqual(warden.audit_merge(True, {warden.REQUIRED_CHECKS[0]: None}), [])
 
+    def test_ci_settles_only_when_every_required_check_has_concluded(self):
+        self.assertFalse(warden.ci_settled({}))
+        self.assertFalse(warden.ci_settled({warden.REQUIRED_CHECKS[0]: "success"}))
+        self.assertFalse(warden.ci_settled({n: None for n in warden.REQUIRED_CHECKS}))
+        self.assertTrue(warden.ci_settled({n: "success" for n in warden.REQUIRED_CHECKS}))
+        self.assertTrue(warden.ci_settled({warden.REQUIRED_CHECKS[0]: "failure", warden.REQUIRED_CHECKS[1]: "success"}))
+
     def test_qa_comment_needs_both_rids(self):
         self.assertTrue(warden.has_qa_comment(["x", "osx-arm64 and win-x64 reviewed"]))
         self.assertFalse(warden.has_qa_comment(["osx-arm64 only"]))
@@ -527,6 +534,71 @@ class TickTests(unittest.TestCase):
         pc2 = FakePC()
         _, paused, _ = tick(gh=gh, pc=pc2, state=state)
         self.assertFalse(paused, "an already-audited merge must not re-pause after a human resumes")
+
+    def test_merge_seen_with_ci_pending_stays_pending_then_green_retires_it(self):
+        # CB-460: the first tick after a merge sees the checks queued.
+        gh = FakeGH(merged=[merged_pr()], comments={7: ["osx-arm64 win-x64"]},
+                    checks={"abc": {n: None for n in warden.REQUIRED_CHECKS}})
+        state = {}
+        _, paused, _ = tick(gh=gh, pc=FakePC(), state=state)
+        self.assertFalse(paused)
+        self.assertIn("abc", state["audit_pending"])
+        self.assertNotIn("abc", state["audited"])
+        gh.checks = {"abc": {n: "success" for n in warden.REQUIRED_CHECKS}}
+        _, paused, _ = tick(gh=gh, pc=FakePC(), state=state)
+        self.assertFalse(paused)
+        self.assertEqual(state["audit_pending"], {})
+        self.assertIn("abc", state["audited"])
+
+    def test_merge_seen_with_ci_pending_then_red_pauses(self):
+        # The case CB-460 found live: pending at the first tick, red later.
+        gh = FakeGH(merged=[merged_pr()], comments={7: ["osx-arm64 win-x64"]},
+                    checks={"abc": {n: None for n in warden.REQUIRED_CHECKS}})
+        state = {}
+        _, paused, _ = tick(gh=gh, pc=FakePC(), state=state)
+        self.assertFalse(paused)
+        gh.checks = {"abc": {warden.REQUIRED_CHECKS[0]: "success", warden.REQUIRED_CHECKS[1]: "failure"}}
+        pc = FakePC()
+        _, paused, _ = tick(gh=gh, pc=pc, state=state)
+        self.assertTrue(paused)
+        self.assertIn("CI red", pc.pauses[0])
+        self.assertIn("abc", state["audited"])
+
+    def test_red_merge_does_not_repause_after_a_human_resumes(self):
+        gh = FakeGH(merged=[merged_pr()], comments={7: ["osx-arm64 win-x64"]},
+                    checks={"abc": {warden.REQUIRED_CHECKS[0]: "failure"}})
+        state = {}
+        tick(gh=gh, pc=FakePC(), state=state)
+        _, paused, _ = tick(gh=gh, pc=FakePC(), state=state)
+        self.assertFalse(paused)
+
+    def test_qa_comment_is_read_once_while_ci_is_pending(self):
+        reads = []
+
+        class CountingGH(FakeGH):
+            def comment_bodies(self, n, before):
+                reads.append(n)
+                return ["nope"]
+
+        gh = CountingGH(merged=[merged_pr()], checks={"abc": {}})
+        state = {}
+        pcs = [FakePC(), FakePC(), FakePC()]
+        for pc in pcs:
+            tick(gh=gh, pc=pc, state=state)
+        self.assertEqual(reads, [7])
+        self.assertEqual(len(pcs[0].pauses), 1, "the missing QA comment pauses once")
+        self.assertEqual(pcs[1].pauses + pcs[2].pauses, [])
+
+    def test_ci_that_never_settles_pauses_after_the_limit(self):
+        gh = FakeGH(merged=[merged_pr()], comments={7: ["osx-arm64 win-x64"]}, checks={"abc": {}})
+        state = {}
+        tick(gh=gh, pc=FakePC(), state=state, now=1000)
+        _, paused, _ = tick(gh=gh, pc=FakePC(), state=state, now=1000 + warden.PENDING_CI_LIMIT - 1)
+        self.assertFalse(paused)
+        pc = FakePC()
+        _, paused, _ = tick(gh=gh, pc=pc, state=state, now=1000 + warden.PENDING_CI_LIMIT)
+        self.assertTrue(paused)
+        self.assertIn("never finished", pc.pauses[0])
 
     def test_cost_ceiling_pauses_and_unset_ceiling_does_not(self):
         pc = FakePC(tokens=500)
