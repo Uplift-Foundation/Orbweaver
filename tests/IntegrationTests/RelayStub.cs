@@ -39,6 +39,9 @@ internal sealed class RelayStub : IAsyncDisposable
     // forcing a stuck await sets it.
     internal Func<CancellationToken, Task>? BeforeReply { get; set; }
 
+    // Run just before the listener is closed; only a test forcing a stuck Close sets it.
+    internal Action? BeforeListenerClose { get; set; }
+
     // Deadlines that fired inside a session, where Handle's catch would
     // otherwise end the session silently and the test would fail later at a
     // bare timeout that never mentions the stub. DisposeAsync rethrows the first.
@@ -319,7 +322,9 @@ internal sealed class RelayStub : IAsyncDisposable
         Volatile.Read(ref _current)?.Ws.Abort();
         // Close alone: QA's stack traces were on the Close() after a Stop(),
         // and Close already stops and releases the prefix.
-        _listener.Close();
+        // Run off this thread and bounded: it is a synchronous call that can
+        // wait on a connection that never lets go (CB-378). A timeout names it.
+        await Bounded("the listener's Close", IoDeadline, ct => Task.Run(() => { BeforeListenerClose?.Invoke(); _listener.Close(); }).WaitAsync(ct));
         // Bounded, and a timeout is not swallowed: it names this await (CB-337).
         try { await Bounded("the accept loop's exit", IoDeadline, ct => _accept.WaitAsync(ct)); }
         catch (TimeoutException) { throw; }
