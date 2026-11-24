@@ -245,6 +245,20 @@ public sealed class PaperclipPicturesTests : IDisposable
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Cache().SyncAsync([Asset], api, cts.Token));
     }
 
+    private sealed class JsonOnlyApi : IPaperclipApi
+    {
+        public Task<PaperclipResponse> GetAsync(string path, CancellationToken ct) => throw new NotSupportedException();
+        public Task<PaperclipResponse> PostAsync(string path, string jsonBody, CancellationToken ct) => throw new NotSupportedException();
+    }
+
+    [Fact]
+    public async Task AnApiThatSpeaksOnlyJson_AnswersAPictureRequestWithNoPicture()
+    {
+        var r = await ((IPaperclipApi)new JsonOnlyApi()).GetBytesAsync(Asset, default);
+        Assert.False(r.IsOk);
+        Assert.Empty(r.Body);
+    }
+
     private sealed class CancellingApi(CancellationTokenSource cts) : IPaperclipApi
     {
         public Task<PaperclipResponse> GetAsync(string path, CancellationToken ct) => throw new NotSupportedException();

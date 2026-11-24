@@ -379,6 +379,23 @@ public sealed class PaperclipHttpTests : IDisposable
     }
 
     [Fact]
+    public async Task APictureThatSaysItIsOverTheBound_IsRefusedFromItsHeader()
+    {
+        _handler = (_, r) =>
+        {
+            r.StatusCode = 200;
+            r.ContentType = "image/png";
+            r.ContentLength64 = PaperclipHttp.MaxPictureBytes + 10;
+            r.OutputStream.Write(new byte[16]);
+            r.Abort();
+            return Task.CompletedTask;
+        };
+        var res = await new PaperclipHttp(_root, "KEY").GetBytesAsync("/api/assets/big/content", default);
+        Assert.Equal(PaperclipHttpKind.Other, res.Kind);
+        Assert.Empty(res.Body);
+    }
+
+    [Fact]
     public async Task APictureFetchThatTimesOut_IsATimeout_AndADroppedConnectionIsUnreachable()
     {
         _handler = async (_, _) => await Task.Delay(2000);
