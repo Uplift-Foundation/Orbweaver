@@ -348,5 +348,63 @@ public class PaperclipChatFeedTests
         await feed.TickAsync(true, default);
         Assert.True(Assert.Single(got).NeedsReconnect);
     }
+
+    // The live proof: a live run's task resolves from the poll with a title and no identifier or status, and the line lost
+    // both the moment the run started. Any blank field is read for now, and the poll's own fields stand where the read is silent.
+    [Fact]
+    public async Task A_live_runs_task_that_arrives_with_a_title_only_ends_with_identifier_title_and_status_in_the_line()
+    {
+        var titleOnly = new PaperclipChat.TaskRef("is-9", "", "CB-447 phone e2e fixture", "");
+        var (feed, api, got, _) = Rig(new ChatTarget("a", titleOnly, "run-1", true));
+        api.Gets["/api/issues/is-9/comments"] = FakePaperclip.Ok("[]");
+        api.Gets["/api/heartbeat-runs/run-1/events?afterSeq=0&limit=500"] = FakePaperclip.Ok("[]");
+        api.Gets["/api/issues/is-9"] = FakePaperclip.Ok("{\"id\":\"is-9\",\"identifier\":\"ORB-122\",\"title\":\"CB-447 phone e2e fixture\",\"status\":\"in_progress\"}");
+        await feed.TickAsync(true, default);
+
+        var task = got[^1].Task!;
+        Assert.Equal(("ORB-122", "CB-447 phone e2e fixture", "in_progress"), (task.Identifier, task.Title, task.Status));
+        Assert.Equal("ORB-122 CB-447 phone e2e fixture · in progress", PaperclipChat.TaskLine(task));
+
+        await feed.TickAsync(true, default);                                       // the run is live, nothing moved: no read per tick
+        Assert.Equal(1, IssueReads(api, "is-9"));
+    }
+
+    [Fact]
+    public async Task A_read_that_fails_keeps_the_polls_title_and_a_read_that_is_silent_on_a_field_keeps_the_polls_value()
+    {
+        var titleOnly = new PaperclipChat.TaskRef("is-9", "", "Polled title", "");
+        var (feed, api, got, _) = Rig(new ChatTarget("a", titleOnly, null, false));
+        api.Gets["/api/issues/is-9/comments"] = FakePaperclip.Ok("[]");
+        api.Gets["/api/issues/is-9"] = FakePaperclip.Status(PaperclipHttpKind.ServerError, 500);
+        await feed.TickAsync(true, default);
+        Assert.Equal("Polled title", got[^1].Task!.Title);                         // the failed read costs the line nothing it had
+
+        var (silent, api2, got2, _) = Rig(new ChatTarget("a", titleOnly, null, false));
+        api2.Gets["/api/issues/is-9/comments"] = FakePaperclip.Ok("[]");
+        api2.Gets["/api/issues/is-9"] = FakePaperclip.Ok("{\"id\":\"is-9\",\"identifier\":\"ORB-122\"}");   // no title, no status
+        await silent.TickAsync(true, default);
+        Assert.Equal(("ORB-122", "Polled title", ""), (got2[^1].Task!.Identifier, got2[^1].Task!.Title, got2[^1].Task!.Status));
+
+        // An answer with nothing at all is final: the poll's task stands and is not read again.
+        var (empty, api3, got3, _) = Rig(new ChatTarget("a", titleOnly, null, false), TimeSpan.Zero);
+        api3.Gets["/api/issues/is-9/comments"] = FakePaperclip.Ok("[]");
+        api3.Gets["/api/issues/is-9"] = FakePaperclip.Ok("{\"id\":\"is-9\"}");
+        for (var i = 0; i < 3; i++) await empty.TickAsync(true, default);
+        Assert.Equal("Polled title", got3[^1].Task!.Title);
+        Assert.Equal(1, IssueReads(api3, "is-9"));
+    }
+
+    // The control: a fully named task causes no issue read, however many ticks.
+    [Fact]
+    public async Task A_fully_named_task_causes_no_issue_read()
+    {
+        var full = new PaperclipChat.TaskRef("is-9", "ORB-122", "Named", "in_progress");
+        var (feed, api, got, _) = Rig(new ChatTarget("a", full, "run-1", true));
+        api.Gets["/api/issues/is-9/comments"] = FakePaperclip.Ok("[]");
+        api.Gets["/api/heartbeat-runs/run-1/events?afterSeq=0&limit=500"] = FakePaperclip.Ok("[]");
+        for (var i = 0; i < 3; i++) await feed.TickAsync(true, default);
+        Assert.Equal(0, IssueReads(api, "is-9"));
+        Assert.Equal("ORB-122 Named · in progress", PaperclipChat.TaskLine(got[^1].Task!));
+    }
 }
 
