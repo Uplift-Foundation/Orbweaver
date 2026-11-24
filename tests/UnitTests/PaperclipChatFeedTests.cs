@@ -210,4 +210,73 @@ public class PaperclipChatFeedTests
         Assert.Equal(2, got[^1].Comments.Count);               // the next tick read again and recovered
         Assert.Equal(3, api.Calls.Count(c => c.EndsWith("/comments")));
     }
+
+    // CB-453: the task a finished run names is an id to the poll (it maps blocked and in-progress issues alone), so the
+    // task line read exactly "Task". The feed reads the issue itself once and keeps it.
+    private static readonly PaperclipChat.TaskRef IdOnly = new("is-9", "", "", "");
+    private const string Issue9 = "{\"id\":\"is-9\",\"identifier\":\"ORB-121\",\"title\":\"CB-443 live proof fixture\",\"status\":\"done\"}";
+
+    [Fact]
+    public async Task A_finished_task_the_poll_holds_no_title_for_is_read_once_and_its_line_names_it()
+    {
+        var (feed, api, got, _) = Rig(new ChatTarget("a", IdOnly, null, false));
+        api.Gets["/api/issues/is-9/comments"] = FakePaperclip.Ok("[]");
+        api.Gets["/api/issues/is-9"] = FakePaperclip.Ok(Issue9);
+        await feed.TickAsync(true, default);
+
+        var task = Assert.Single(got).Task!;
+        Assert.Equal(("is-9", "ORB-121", "CB-443 live proof fixture", "done"), (task.Id, task.Identifier, task.Title, task.Status));
+        Assert.Equal("ORB-121 CB-443 live proof fixture · done", PaperclipChat.TaskLine(task));
+        Assert.NotEqual("Task", PaperclipChat.TaskLine(task));
+        Assert.Equal("ORB-121 CB-443 live proof fixture · done", PaperclipChat.Build(task, "a", new Dictionary<string, string>(), [], null)[0].Text);
+
+        // Kept: a later tick makes no second read of the issue and raises nothing.
+        await feed.TickAsync(true, default);
+        Assert.Single(got);
+        Assert.Equal(1, api.Calls.Count(c => c.EndsWith("/api/issues/is-9", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task A_task_whose_title_the_poll_already_holds_is_not_read_again()
+    {
+        var (feed, api, got, _) = Rig(new ChatTarget("a", T1, null, false));
+        api.Gets["/api/issues/is-1/comments"] = FakePaperclip.Ok("[]");
+        await feed.TickAsync(true, default);
+        Assert.Equal("CB-1", Assert.Single(got).Task!.Identifier);
+        Assert.DoesNotContain(api.Calls, c => c.EndsWith("/api/issues/is-1", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_failed_or_unreadable_issue_read_leaves_the_id_only_task_and_is_tried_again_next_tick()
+    {
+        var (feed, api, got, _) = Rig(new ChatTarget("a", IdOnly, null, false));
+        api.Gets["/api/issues/is-9/comments"] = FakePaperclip.Ok("[]");
+        api.Gets["/api/issues/is-9"] = FakePaperclip.Status(PaperclipHttpKind.ServerError, 500);
+        await feed.TickAsync(true, default);
+        Assert.Equal("", Assert.Single(got).Task!.Title);
+
+        api.Gets["/api/issues/is-9"] = FakePaperclip.Ok("not json");                 // unreadable
+        await feed.TickAsync(true, default);
+        api.Gets["/api/issues/is-9"] = FakePaperclip.Ok("{\"id\":\"someone-else\",\"title\":\"x\"}");   // another issue's body
+        await feed.TickAsync(true, default);
+        api.Gets["/api/issues/is-9"] = FakePaperclip.Ok("{\"id\":\"is-9\"}");        // no title and no identifier: nothing to show
+        await feed.TickAsync(true, default);
+        Assert.Single(got);
+
+        api.Gets["/api/issues/is-9"] = FakePaperclip.Ok(Issue9);                      // Paperclip answers: the line is filled
+        await feed.TickAsync(true, default);
+        Assert.Equal("ORB-121", got[^1].Task!.Identifier);
+        Assert.Equal(5, api.Calls.Count(c => c.EndsWith("/api/issues/is-9", StringComparison.Ordinal)));   // one read per tick until it answered
+    }
+
+    [Fact]
+    public async Task A_refused_key_on_the_issue_read_is_reconnect()
+    {
+        var (feed, api, got, _) = Rig(new ChatTarget("a", IdOnly, null, false));
+        api.Gets["/api/issues/is-9/comments"] = FakePaperclip.Ok("[]");
+        api.Gets["/api/issues/is-9"] = FakePaperclip.Status(PaperclipHttpKind.Other, 401);
+        await feed.TickAsync(true, default);
+        Assert.True(Assert.Single(got).NeedsReconnect);
+    }
 }
+

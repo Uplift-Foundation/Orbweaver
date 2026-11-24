@@ -63,6 +63,7 @@ namespace Orbweaver
                 _cts = new CancellationTokenSource();
                 _taskId = null; _comments = Array.Empty<PaperclipChat.Comment>(); _activity = null;
                 _lastLive = _readOnce = _needsReconnect = _published = false; _commentsAt = DateTime.MinValue;
+                _details.Clear(); _shownTask = null;
                 var ct = _cts.Token;
                 _ = Task.Run(() => LoopAsync(ct));
             }
@@ -104,9 +105,11 @@ namespace Orbweaver
             var t = _target();
             var taskId = t.Task?.Id;
             string? curTask; IReadOnlyList<PaperclipChat.Comment> curComments; PaperclipChat.Activity? curActivity;
+            PaperclipChat.TaskRef? shownTask;
             bool lastLive, readOnce, reconnect;
             lock (_gate)
             {
+                shownTask = _shownTask;
                 curTask = _taskId; curComments = _comments; curActivity = _activity;
                 lastLive = _lastLive; readOnce = _readOnce; reconnect = _needsReconnect;
             }
@@ -118,6 +121,17 @@ namespace Orbweaver
                 lastLive = readOnce = false; changed = true;
                 comments = true;
             }
+
+            // CB-453: the task a finished run or an assigned issue names is only an id to the poll, which maps blocked and
+            // in-progress issues alone, so its line read "Task". Read the issue itself, once per task, and keep it.
+            var task = t.Task;
+            if (task is { } named && string.IsNullOrWhiteSpace(named.Title))
+            {
+                var (filled, refused) = await FilledAsync(named, ct).ConfigureAwait(false);
+                task = filled;
+                if (refused && !reconnect) { reconnect = true; changed = true; }
+            }
+            if (!Equals(task, shownTask)) changed = true;
 
             var commentsRead = false;
             if (taskId != null && comments)
@@ -162,17 +176,33 @@ namespace Orbweaver
             lock (_gate)
             {
                 if (ct.IsCancellationRequested) return;
-                _taskId = taskId; _comments = curComments; _activity = curActivity;
+                _taskId = taskId; _comments = curComments; _activity = curActivity; _shownTask = task;
                 _lastLive = lastLive; _readOnce = readOnce; _needsReconnect = reconnect;
                 if (commentsRead) _commentsAt = DateTime.UtcNow;
                 // The first tick always raises, so a panel opened on an agent with no task still hears "no task".
                 if (changed || !_published)
                 {
                     _published = true;
-                    raise = new ChatSnapshot(t.Task, curComments, curActivity, reconnect);
+                    raise = new ChatSnapshot(task, curComments, curActivity, reconnect);
                 }
             }
             if (raise != null && !ct.IsCancellationRequested) Updated?.Invoke(raise);
+        }
+
+        private readonly Dictionary<string, PaperclipChat.TaskRef> _details = new();
+        private PaperclipChat.TaskRef? _shownTask;
+
+        // One issue's own fields (`GET /api/issues/{id}`), cached per task. A failed or unreadable read keeps the
+        // id-only task and is tried again next tick (not cached); a 401 or 403 says reconnect.
+        private async Task<(PaperclipChat.TaskRef Task, bool Refused)> FilledAsync(PaperclipChat.TaskRef named, CancellationToken ct)
+        {
+            lock (_gate) if (_details.TryGetValue(named.Id, out var known)) return (known, false);
+            var res = await _api.GetAsync($"/api/issues/{Uri.EscapeDataString(named.Id)}", ct).ConfigureAwait(false);
+            if (Refused(res)) return (named, true);
+            if (!res.IsOk || PaperclipChat.ParseTask(res.Body) is not { } read || read.Id != named.Id
+                || (read.Title.Length == 0 && read.Identifier.Length == 0)) return (named, false);
+            lock (_gate) _details[named.Id] = read;
+            return (read, false);
         }
 
         // The rows of issues?assigneeAgentId=<agent>, for the task rung that is read once on open (plan 2.2).

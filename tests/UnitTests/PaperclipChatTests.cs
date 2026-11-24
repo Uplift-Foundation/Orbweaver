@@ -713,4 +713,20 @@ public class PaperclipMessageActionsTests
         Assert.Equal(PaperclipActions.AgentGoneWhy, gone.Outcome.Why);
         Assert.Equal(PaperclipActionResult.Refused, (await a.OpenTaskAsync("ag-1", " ", default)).Outcome.Result);
     }
+
+    // CB-453: one issue read on its own, for the task line.
+    [Fact]
+    public void ParseTask_reads_an_issue_or_one_wrapped_under_issue_and_nothing_else()
+    {
+        const string body = "{\"id\":\"i1\",\"identifier\":\"ORB-121\",\"title\":\"Fixture\",\"status\":\"done\"}";
+        Assert.Equal(new PaperclipChat.TaskRef("i1", "ORB-121", "Fixture", "done"), PaperclipChat.ParseTask(body));
+        Assert.Equal(new PaperclipChat.TaskRef("i1", "ORB-121", "Fixture", "done"), PaperclipChat.ParseTask("{\"issue\":" + body + "}"));
+        Assert.Equal(new PaperclipChat.TaskRef("i2", "", "", ""), PaperclipChat.ParseTask("{\"id\":\"i2\"}"));
+        Assert.Null(PaperclipChat.ParseTask("{\"title\":\"no id\"}"));
+        Assert.Null(PaperclipChat.ParseTask("[]"));
+        Assert.Null(PaperclipChat.ParseTask("not json"));
+        Assert.Null(PaperclipChat.ParseTask("  "));
+        Assert.Null(PaperclipChat.ParseTask(null));
+    }
 }
+
