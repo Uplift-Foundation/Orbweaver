@@ -781,7 +781,7 @@ namespace Orbweaver
             // It does not stop a turn: closing a window should not cancel work
             // somebody asked for. Concrete type, following the RemoteControl
             // precedent below — one caller does not earn an interface.
-            if (_session is ClaudeCloudChatSession previousCloud) previousCloud.PanelClosed();
+            if (_session is IRemoteChatPanelLifetime previousLife) previousLife.PanelClosed();
 
             if (_session is IRemoteChatMachine wasNamed) wasNamed.MachineChanged -= OnMachineChanged;
 
@@ -930,7 +930,7 @@ namespace Orbweaver
 
             // Somebody is looking, which is what licenses the one transcript read
             // the session makes when a turn finishes (busy to idle on the roster).
-            if (session is ClaudeCloudChatSession cloud) cloud.PanelOpened();
+            if (session is IRemoteChatPanelLifetime life) life.PanelOpened();
 
             // "Nova — wtvamp" is built as name plus place, so it splits back
             // into the two lines the header now has. A name with no place (an
@@ -1075,14 +1075,14 @@ namespace Orbweaver
             // link to nothing sitting beside it.
             _readOnlyUrl = readOnly ? (session as IRemoteChatReadOnly)?.ReplyUrl : null;
             ReadOnlyLink.IsVisible = _readOnlyUrl is not null;
-            ReadOnlyLink.Text = _readOnlyUrl is null ? "" : "Open in your browser";
+            ReadOnlyLink.Text = _readOnlyUrl is null ? "" : ReplyLabelFor(session);
 
             // A live session has the same address and needs the same way to it
             // (CB-199 hid the link along with the box). One link at a time: this
             // one while the composer is up, ReadOnlyLink's while it is not.
             _sessionUrl = SessionLinkUrl(session);
             SessionLink.IsVisible = _sessionUrl is not null;
-            SessionLink.Text = _sessionUrl is null ? "" : "Open in your browser";
+            SessionLink.Text = _sessionUrl is null ? "" : ReplyLabelFor(session);
 
             ApplyStop(session);
             ApplyInbound(session);
@@ -1533,6 +1533,9 @@ namespace Orbweaver
         // has one and is not read-only. Pure so each arm is a unit case. A
         // session that is not IRemoteChatReadOnly has no address to offer, and a
         // read-only one gets its link from the read-only box instead.
+        internal static string ReplyLabelFor(IRemoteChatSession? session) =>
+            session is IRemoteChatReplyLabel { ReplyLabel: { Length: > 0 } label } ? label : "Open in your browser";
+
         internal static string? SessionLinkUrl(IRemoteChatSession? session) =>
             session is IRemoteChatReadOnly { IsReadOnly: false, ReplyUrl: { Length: > 0 } url } ? url : null;
 

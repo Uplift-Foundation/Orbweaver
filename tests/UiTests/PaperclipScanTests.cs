@@ -211,17 +211,18 @@ public class PaperclipScanTests : IDisposable
         var s = Orbs(m)["paperclip:x"].LastStatus!;
         Assert.Equal(OrbPresence.NeedsInput, s.Presence);
         Assert.Equal("http://127.0.0.1:3100/EX/approvals/p1", s.Url);
-        Assert.True(ClickRouting.OpensInABrowser(s));
+        Assert.False(ClickRouting.OpensInABrowser(s)); // CB-443: the click opens the panel; the amber flyout still comes first
         Assert.Equal(new[] { "Hire QA" }, s.HoverLines.ToArray());
     }
 
     [AvaloniaFact]
-    public void APaperclipOrbNeverBuildsAChatSession()
+    public void APaperclipOrbBuildsAPaperclipChatSession_CB443()
     {
         Publish(PaperclipLink.Connected, Team());
         var m = Manager();
         m.ScanAndUpdate();
-        Assert.Null(m.RemoteChatFor("paperclip:x"));
+        // CB-421 said null (the click was a browser); CB-443 gives the agent a panel.
+        Assert.IsType<PaperclipChatSession>(m.RemoteChatFor("paperclip:x"));
     }
 
     // ---- one orb per agent ----

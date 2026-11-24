@@ -2,17 +2,16 @@ using Xunit;
 
 namespace Orbweaver.Tests;
 
-// CB-421: a Paperclip agent has no terminal to focus and no chat to open, so a
-// click is a browser, exactly as a cloud session's is. True even with no
-// address, deliberately: falling through would send the click hunting a pane
-// for a conversation that has never been on this disk.
+// CB-421 sent a Paperclip click to a browser. CB-443 gives the agent a panel (its
+// current task's thread), so the click no longer opens a browser: the panel
+// carries "Open in Paperclip", and so does the orb's menu.
 public class PaperclipClickRoutingTests
 {
     [Fact]
-    public void APaperclipOrbOpensInABrowser()
+    public void APaperclipOrbOpensItsPanelNotABrowser()
     {
-        Assert.True(ClickRouting.OpensInABrowser(new SessionStatus { Source = SessionSource.Paperclip }));
-        Assert.True(ClickRouting.OpensInABrowser(new SessionStatus { Source = SessionSource.Paperclip, Url = "" }));
+        Assert.False(ClickRouting.OpensInABrowser(new SessionStatus { Source = SessionSource.Paperclip }));
+        Assert.False(ClickRouting.OpensInABrowser(new SessionStatus { Source = SessionSource.Paperclip, Url = "https://p/x" }));
     }
 
     [Fact]
