@@ -39,6 +39,7 @@ public class PaperclipChatSessionTests : IDisposable
     private IPaperclipActions? _actions;
     private IReadOnlyList<PaperclipChat.AssignedIssue>? _assignedAnswer;
     private int _assignedReads;
+    private readonly List<(TimeSpan After, Action Run)> _scheduled = new();
 
     private static readonly PaperclipSessions.ChatView Empty = new(
         Array.Empty<PaperclipApi.RawLiveRun>(), Array.Empty<PaperclipApi.RawRun>(), Array.Empty<PaperclipApi.RawIssue>());
@@ -58,7 +59,7 @@ public class PaperclipChatSessionTests : IDisposable
         _actions = a;
         var s = new PaperclipChatSession("ag1", name, url, () => f, () => _actions, () => _roster, () => _view,
             async ct => { _assignedReads++; await Task.Yield(); return _assignedAnswer; },
-            () => _link, () => _now, act => act());
+            () => _link, () => _now, act => act(), (after, run) => _scheduled.Add((after, run)));
         s.PanelOpened();
         return (s, f, a);
     }
@@ -458,5 +459,122 @@ public class PaperclipChatSessionTests : IDisposable
         Assert.Equal(200, s.History.Count);
         Assert.Equal("m199", s.History[^1].Text);
         Assert.Equal("m1", s.History[1].Text);
+    }
+
+    // QA B1: the sent message of a no-task send is the task's description, not a comment, so the thread
+    // for the new task has no row for it; the first snapshot after the send must not wipe the bubble.
+    [Fact]
+    public void ANoTaskSendsBubbleSurvivesTheFirstSnapshotOfTheTaskItOpened()
+    {
+        var (s, f, _) = Make();
+        f.Push(Snap(null));
+        Assert.Equal(ChatSendOutcome.Sent, s.SendAsync("please start on the login bug").Result);
+        var replaced = 0; s.HistoryReplaced += () => replaced++;
+
+        f.Push(Snap("i9"));   // the new task, no comments yet
+        Assert.Equal(0, replaced);
+        Assert.Contains(s.History, t => t.Role == ChatRole.User && t.Text == "please start on the login bug");
+        Assert.Contains("CB-1", s.History[0].Text);   // the task row now names the task
+
+        f.Push(Snap("i9", cs: C("a1", "On it.", mine: true, sec: 5)));
+        Assert.Equal(3, s.History.Count);
+        Assert.Equal("On it.", s.History[^1].Text);
+    }
+
+    // QA B2: a run that starts and ends between two ticks is never seen live; the agent's own comment
+    // newer than the send is the proof it woke, so the box must not later say it has not.
+    [Fact]
+    public void AnAgentReplyEndsWakingEvenWhenNoLiveRunWasSeen()
+    {
+        var (s, f, _) = Make();
+        f.Push(Snap("i1"));
+        s.SendAsync("go").Wait();
+        f.Push(Snap("i1", cs: C("a1", "Done.", mine: true, sec: 5)));
+        _now = T0.AddSeconds(45);
+        f.Push(Snap("i1", cs: C("a1", "Done.", mine: true, sec: 5)));
+        Assert.Equal("Message Nova. It wakes to read it.", s.ComposerHint);
+    }
+
+    [Fact]
+    public void ARunsRowNewerThanTheSendAlsoEndsWaking_AndAnOlderCommentDoesNot()
+    {
+        var (s, f, _) = Make();
+        f.Push(Snap("i1"));
+        s.SendAsync("go").Wait();
+        // An agent comment from before the send proves nothing.
+        f.Push(Snap("i1", cs: C("old", "earlier", mine: true, sec: -30)));
+        Assert.Equal("Waking Nova…", s.ComposerHint);
+        var act = PaperclipChat.Activity.Empty("r1") with { Rows = [new("r:r1:t:a", ChatRole.System, "Bash: ls", T0.AddSeconds(3))] };
+        f.Push(Snap("i1", act: act, cs: C("old", "earlier", mine: true, sec: -30)));
+        Assert.Equal("Message Nova. It wakes to read it.", s.ComposerHint);
+    }
+
+    // QA B3: nothing ticks at 30 s when the read is unchanged, so a one-shot rewords the box.
+    [Fact]
+    public void ASendSchedulesTheThirtySecondRewording()
+    {
+        var (s, f, _) = Make();
+        f.Push(Snap("i1"));
+        var changes = 0; s.ComposerHintChanged += () => changes++;
+        s.SendAsync("go").Wait();
+        var (after, run) = Assert.Single(_scheduled);
+        Assert.True(after > PaperclipChat.WakeGrace);
+        Assert.Equal("Waking Nova…", s.ComposerHint);
+        var before = changes;
+
+        _now = T0.AddSeconds(31);
+        run();
+        Assert.Equal("Nova hasn't woken yet. Wake it from the orb's menu.", s.ComposerHint);
+        Assert.Equal(before + 1, changes);
+    }
+
+    // QA B4: the feed's thread asks for the target while the UI thread sends and applies.
+    [Fact]
+    public void TheTargetCanBeAskedFromAnotherThreadWhileTheUiThreadSendsAndApplies()
+    {
+        var (s, f, a) = Make();
+        _view = new([Live("r1", "i1")], [Done("r0", "i1", 1)], []);
+        var stop = false;
+        var reader = Task.Run(() => { while (!stop) { var t = s.Target(); Assert.NotNull(t.Task); } });
+        for (var i = 0; i < 300; i++)
+        {
+            f.Push(Snap("i1", cs: C("c" + i, "m" + i, sec: i)));
+            s.SendAsync("x" + i).Wait();
+        }
+        stop = true;
+        reader.Wait();
+        Assert.Equal(300, a.Sent.Count);
+    }
+
+    // QA B7: the feed stops itself on a 401; once the person reconnects and the link is Connected
+    // again, the panel starts it over instead of staying frozen until it is closed and reopened.
+    [Fact]
+    public void ReconnectingUnfreezesAPanelThatWasLeftOpen()
+    {
+        var (s, f, _) = Make();
+        f.Push(Snap("i1", refused: true));
+        Assert.True(s.IsReadOnly);
+        Assert.Equal("Reconnect to Paperclip", s.ComposerHint);
+        var flips = 0; s.ReadOnlyChanged += () => flips++;
+
+        _roster = [Agent()];
+        PaperclipSessions.Publish(_roster, PaperclipLink.Connected, "Connected");
+
+        Assert.False(s.IsReadOnly);
+        Assert.Equal(1, flips);
+        Assert.Equal(new[] { "opened", "closed", "opened" }, f.Calls);
+        Assert.Equal("Message Nova. It wakes to read it.", s.ComposerHint);
+
+        // A roster change that is not a reconnect leaves a healthy feed alone.
+        _roster = [Agent(state: "generating")];
+        PaperclipSessions.Publish(_roster, PaperclipLink.Connected, "Connected 2");
+        Assert.Equal(new[] { "opened", "closed", "opened" }, f.Calls);
+
+        // And a key that is still refused while the link says NeedsReconnect stays frozen.
+        f.Push(Snap("i1", refused: true));
+        _link = PaperclipLink.NeedsReconnect;
+        PaperclipSessions.Publish(_roster, PaperclipLink.NeedsReconnect, "Reconnect");
+        Assert.True(s.IsReadOnly);
+        Assert.Equal(new[] { "opened", "closed", "opened" }, f.Calls);
     }
 }

@@ -113,4 +113,82 @@ public class PaperclipChatWiringTests : IDisposable
         Assert.Empty(PaperclipSessions.CurrentChatView.Runs);
         PaperclipSessions.SetChatViewForTests(new([], [], []));
     }
+
+    // QA B5/B6. A click is GoToSession's chain: needs panel, browser, Claude Desktop, then the chat
+    // panel for anything that is not a local CLI. The orb is not clicked (the end of that chain for
+    // anything unrecognised is TerminalFocuser); each link is asked directly instead.
+    private static SessionStatus Orb(string state, OrbPresence presence, params PaperclipNeed[] needs) => new()
+    {
+        Source = SessionSource.Paperclip, State = state, Title = "Atlas", Cwd = "", Presence = presence,
+        PaperclipAgentId = "a1", PaperclipAgentStatus = "idle", Needs = needs, Url = "http://p/CB/agents/a1",
+    };
+
+    private static readonly PaperclipNeed Hire = new("approval", "ap1", "Hire: QA engineer", "http://p/CB/approvals/ap1");
+    private static readonly PaperclipNeed Tool = new("action", "ac1", "Run deploy tool", "http://p/CB/inbox/requests");
+    private static readonly PaperclipNeed Stuck = new("blocked", "i1", "Blocked: CB-4 Ship it", "http://p/CB/issues/i1");
+
+    [AvaloniaTheory]
+    [InlineData("approval")]
+    [InlineData("action")]
+    public void AnAmberOrbWithSomethingToAnswerStillOpensTheNeedsPanelAndNotTheChat(string kind)
+    {
+        PaperclipSessions.SetLinkForTests(PaperclipLink.Connected, "Connected.");
+        var status = Orb("waiting", OrbPresence.NeedsInput, kind == "approval" ? Hire : Tool);
+        var orb = new OrbWindow("paperclip:amber-" + kind);
+        orb.UpdateFrom(status);
+        orb.Show();
+        try
+        {
+            // Asked first in the chain, so the chat is never reached.
+            Assert.True(orb.TryOpenNeedsPanel());
+            Assert.True(PaperclipNeedsPanel.IsOpen);
+        }
+        finally
+        {
+            if (PaperclipNeedsPanel.IsOpen)
+                ((PaperclipNeedsPanel)typeof(PaperclipNeedsPanel).GetField("_instance",
+                    BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!).Close();
+            orb.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void ABlockedOnlyAmberOrbSkipsTheNeedsPanelAndEveryLaterArmSoItLandsOnTheChat()
+    {
+        PaperclipSessions.SetLinkForTests(PaperclipLink.Connected, "Connected.");
+        var status = Orb("waiting", OrbPresence.NeedsInput, Stuck);
+        var orb = new OrbWindow("paperclip:blocked-only");
+        orb.UpdateFrom(status);
+
+        Assert.False(orb.TryOpenNeedsPanel());
+        Assert.False(ClickRouting.OpensInABrowser(status));
+        Assert.False(ClickRouting.OpensClaudeDesktop(status));
+        Assert.False(status.IsLocalCli);   // so GoToSession reaches TryOpenRemoteChat
+
+        // ...which asks the manager for the session, and the manager always has one for this orb.
+        PaperclipSessions.SetSnapshotForTests([A("a1")]);
+        OrbweaverSettings.PaperclipEnabled = true;
+        SessionManager.PaperclipFeedFactory = _ => new PaperclipChatPanelTests.FakeFeed();
+        var m = Manager();
+        m.ScanAndUpdate();
+        Assert.IsType<PaperclipChatSession>(m.RemoteChatFor("paperclip:a1"));
+    }
+
+    [AvaloniaFact]
+    public void OpenInPaperclipIsOnTheOrbMenuWhetherTheAgentIsAsleepWorkingOrAmber()
+    {
+        PaperclipSessions.SetLinkForTests(PaperclipLink.Connected, "Connected.");
+        foreach (var (state, presence, needs) in new (string, OrbPresence, PaperclipNeed[])[]
+        {
+            ("idle", OrbPresence.Present, []),
+            ("generating", OrbPresence.Present, []),
+            ("waiting", OrbPresence.NeedsInput, [Hire]),
+            ("waiting", OrbPresence.NeedsInput, [Stuck]),
+        })
+        {
+            var orb = new OrbWindow("paperclip:menu-" + state + Guid.NewGuid());
+            orb.UpdateFrom(Orb(state, presence, needs));
+            Assert.True(orb.OpenPaperclipVisible, state + " " + presence);
+        }
+    }
 }
