@@ -1,0 +1,63 @@
+(version 1)
+; Containment for the Paperclip service and everything it starts (its agents).
+; Deny-list on top of allow-default: the service needs the network, its own
+; folder, the system toolchains and temp space; it has no business in the rest
+; of this user's home, in other sessions' sockets, or starting things outside
+; itself.
+(allow default)
+
+; The user's home, except Paperclip's own folder and the launcher shim.
+(deny file-read* file-write* (subpath "__HOME__"))
+; The runner opens the home directory itself while resolving paths (measured:
+; a run fails with EPERM without it). That exposes the names in the home
+; folder, not the contents of anything in it.
+(allow file-read* (literal "__HOME__"))
+(allow file-read-metadata
+  (literal "__HOME__")
+  (literal "__HOME__/.local")
+  (literal "__HOME__/.local/bin"))
+(allow file-read* (literal "__HOME__/.local/bin/paperclipai"))
+; Before a run, the runner inspects the Claude settings files in every
+; directory above the workspace for ambient hooks and plugins, and treats a
+; file it cannot open as a setup failure (measured). The host's settings file
+; holds hook definitions and no credentials; the agents get its contents and
+; nothing else in that folder.
+(allow file-read-metadata (literal "__HOME__/.claude"))
+(allow file-read*
+  (literal "__HOME__/.claude/settings.json")
+  (literal "__HOME__/.claude/settings.local.json"))
+(allow file-read* file-write* (subpath "__HOME__/.paperclip"))
+
+; Paperclip's own login and service definition are readable by the service,
+; but an agent has no need to change how the service is launched.
+(deny file-write* (literal "__HOME__/.paperclip/instances/default/paperclip-service.sb"))
+
+; Other sessions on this machine: terminal multiplexer sockets, the agent
+; message sockets, the ssh agent, and other tools' scratch space.
+(deny file-read* file-write* network-outbound
+  (subpath "/private/tmp/tmux-__UID__")
+  (subpath "/private/tmp/cc-socks")
+  (regex #"^/private/var/run/com\.apple\.launchd\.[^/]+/Listeners")
+  (regex #"^/private/tmp/com\.apple\.launchd\.[^/]+/Listeners"))
+
+; Claude Code keeps per-project scratch space under one shared folder. The
+; agents' own Claude processes need theirs (a run fails at startup without the
+; folder: "EEXIST ... mkdir /tmp/claude-__UID__", measured), so the folder itself
+; is visible and the entries for projects under Paperclip's own directory are
+; usable; every other session's scratch space stays closed.
+(deny file-read* file-write* (subpath "/private/tmp/claude-__UID__"))
+(allow file-read* (literal "/private/tmp/claude-__UID__"))
+(allow file-read* file-write*
+  (regex #"^/private/tmp/claude-__UID__/-Users-__USER__--paperclip"))
+
+; Other volumes and other users.
+(deny file-read* file-write* (subpath "/Volumes") (subpath "/Users/Shared"))
+
+; No starting jobs through launchd, no opening apps through LaunchServices
+; (which would run them outside this sandbox), no scripting other apps, and signals only
+; to processes inside this sandbox.
+(deny job-creation)
+(deny lsopen)
+(deny appleevent-send)
+(deny signal)
+(allow signal (target same-sandbox))
