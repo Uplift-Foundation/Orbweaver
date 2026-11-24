@@ -193,7 +193,7 @@ public class InstallPingTests
 
     // ---- the sender ----------------------------------------------------------
 
-    private sealed class Settings : IInstallPingSettings
+    private sealed class PingSettings : IInstallPingSettings
     {
         public bool Enabled { get; set; } = true;
         public string? InstallId { get; set; }
@@ -201,7 +201,7 @@ public class InstallPingTests
         public bool Internal { get; set; }
     }
 
-    private sealed class Http : IInstallPingHttp
+    private sealed class PingHttp : IInstallPingHttp
     {
         public List<(string Url, string Json, string UserAgent)> Posts = [];
         public (int, string) Answer = (200, "{\"cache\":\"x\"}");
@@ -215,16 +215,16 @@ public class InstallPingTests
         }
     }
 
-    private sealed class Rig
+    private sealed class PingRig
     {
-        public Settings S = new();
-        public Http H = new();
+        public PingSettings S = new();
+        public PingHttp H = new();
         public DateTimeOffset Now = Noon;
         public List<string> Log = [];
         public Dictionary<string, string?> Env = [];
         public InstallPingSender Sender;
 
-        public Rig() => Sender = new InstallPingSender(S, H, () => Now, Log.Add,
+        public PingRig() => Sender = new InstallPingSender(S, H, () => Now, Log.Add,
             k => Env.TryGetValue(k, out var v) ? v : null,
             "1.0.7", "macos", "arm64", "http://fixture");
     }
@@ -232,7 +232,7 @@ public class InstallPingTests
     [Fact]
     public async Task ADueInstallSendsOnceAndStampsTheDay()
     {
-        var r = new Rig();
+        var r = new PingRig();
         await r.Sender.TrySendAsync();
 
         var post = Assert.Single(r.H.Posts);
@@ -250,7 +250,7 @@ public class InstallPingTests
     [Fact]
     public async Task TheSecondCheckTheSameDaySendsNothing()
     {
-        var r = new Rig();
+        var r = new PingRig();
         await r.Sender.TrySendAsync();
         r.Now = Noon.AddHours(5);
         await r.Sender.TrySendAsync();
@@ -264,7 +264,7 @@ public class InstallPingTests
     [Fact]
     public async Task TheInstallIdIsMintedOnceAndReused()
     {
-        var r = new Rig();
+        var r = new PingRig();
         await r.Sender.TrySendAsync();
         var first = r.S.InstallId;
         r.Now = Noon.AddDays(1);
@@ -280,7 +280,7 @@ public class InstallPingTests
     [Fact]
     public async Task AnExistingIdIsSentAsIs()
     {
-        var r = new Rig();
+        var r = new PingRig();
         r.S.InstallId = "kept";
         await r.Sender.TrySendAsync();
         Assert.Equal("kept", JsonNode.Parse(r.H.Posts[0].Json)!["payload"]!["id"]!.GetValue<string>());
@@ -289,7 +289,7 @@ public class InstallPingTests
     [Fact]
     public async Task EverySkipPathMakesZeroHttpCallsAndMintsNoId()
     {
-        foreach (var arrange in new Action<Rig>[]
+        foreach (var arrange in new Action<PingRig>[]
         {
             r => r.S.Enabled = false,
             r => r.Env["ORBWEAVER_INSTALL_PING"] = "0",
@@ -298,7 +298,7 @@ public class InstallPingTests
             r => r.S.LastPing = Noon.AddHours(-1),
         })
         {
-            var r = new Rig();
+            var r = new PingRig();
             arrange(r);
             var before = r.S.InstallId;
             await r.Sender.TrySendAsync();
@@ -310,7 +310,7 @@ public class InstallPingTests
     [Fact]
     public async Task ARefusedAnswerDoesNotStampTheDayAndIsLogged()
     {
-        var r = new Rig();
+        var r = new PingRig();
         r.H.Answer = (200, "{\"beep\":\"boop\"}");
         await r.Sender.TrySendAsync();
         Assert.Null(r.S.LastPing);
@@ -325,7 +325,7 @@ public class InstallPingTests
     [Fact]
     public async Task AThrowingTransportIsSwallowedLoggedAndNotStamped()
     {
-        var r = new Rig();
+        var r = new PingRig();
         r.H.Throw = new HttpRequestException("no route");
         await r.Sender.TrySendAsync(); // must not throw
         Assert.Null(r.S.LastPing);
@@ -335,12 +335,12 @@ public class InstallPingTests
     [Fact]
     public async Task InternalFromTheEnvironmentOrTheSettingUsesTheInternalName()
     {
-        var viaEnv = new Rig();
+        var viaEnv = new PingRig();
         viaEnv.Env["ORBWEAVER_INTERNAL"] = "1";
         await viaEnv.Sender.TrySendAsync();
         Assert.Equal("install-ping-internal", JsonNode.Parse(viaEnv.H.Posts[0].Json)!["payload"]!["name"]!.GetValue<string>());
 
-        var viaSetting = new Rig();
+        var viaSetting = new PingRig();
         viaSetting.S.Internal = true;
         await viaSetting.Sender.TrySendAsync();
         Assert.Equal("install-ping-internal", JsonNode.Parse(viaSetting.H.Posts[0].Json)!["payload"]!["name"]!.GetValue<string>());
@@ -348,7 +348,7 @@ public class InstallPingTests
 
     // ---- UpdateChecker's afterCheck hook -------------------------------------
 
-    private sealed class Feed : IReleaseFeed
+    private sealed class PingFeed : IReleaseFeed
     {
         public Exception? Throw;
         public Task<IReadOnlyList<UpdateRelease>> FetchAsync(bool includePrerelease, CancellationToken ct)
@@ -359,7 +359,7 @@ public class InstallPingTests
         }
     }
 
-    private sealed class UpdSettings : IUpdateSettings
+    private sealed class PingUpdSettings : IUpdateSettings
     {
         public bool AutoCheck { get; set; } = true;
         public bool IncludePrerelease { get; set; }
@@ -367,16 +367,16 @@ public class InstallPingTests
         public DateTimeOffset? LastCheck { get; set; }
     }
 
-    private sealed class NoTimer : IDisposable { public void Dispose() { } }
+    private sealed class PingNoTimer : IDisposable { public void Dispose() { } }
 
-    private static UpdateChecker Checker(Feed feed, Func<Task>? after, List<string> log) =>
-        new(feed, new UpdSettings(), "1.0.3", () => Noon, log.Add, (_, _) => new NoTimer(), after);
+    private static UpdateChecker Checker(PingFeed feed, Func<Task>? after, List<string> log) =>
+        new(feed, new PingUpdSettings(), "1.0.3", () => Noon, log.Add, (_, _) => new PingNoTimer(), after);
 
     [Fact]
     public async Task TheHookRunsAfterAnUpToDateCheck()
     {
         var ran = new TaskCompletionSource();
-        using var c = Checker(new Feed(), () => { ran.SetResult(); return Task.CompletedTask; }, []);
+        using var c = Checker(new PingFeed(), () => { ran.SetResult(); return Task.CompletedTask; }, []);
         await c.CheckNowAsync();
         await ran.Task.WaitAsync(TimeSpan.FromSeconds(5));
     }
@@ -385,7 +385,7 @@ public class InstallPingTests
     public async Task TheHookRunsEvenWhenTheCheckFailed()
     {
         var ran = new TaskCompletionSource();
-        var feed = new Feed { Throw = new InvalidOperationException("rate limited") };
+        var feed = new PingFeed { Throw = new InvalidOperationException("rate limited") };
         using var c = Checker(feed, () => { ran.SetResult(); return Task.CompletedTask; }, []);
         var result = await c.CheckNowAsync();
         Assert.Equal(UpdateCheckOutcome.Failed, result.Outcome);
@@ -398,8 +398,8 @@ public class InstallPingTests
         var log = new List<string>();
         var logged = new TaskCompletionSource();
         Action<string> sink = l => { lock (log) log.Add(l); if (l.Contains("install ping hook threw")) logged.TrySetResult(); };
-        using var c = new UpdateChecker(new Feed(), new UpdSettings(), "1.0.3", () => Noon, sink,
-            (_, _) => new NoTimer(), () => throw new InvalidOperationException("boom"));
+        using var c = new UpdateChecker(new PingFeed(), new PingUpdSettings(), "1.0.3", () => Noon, sink,
+            (_, _) => new PingNoTimer(), () => throw new InvalidOperationException("boom"));
         var result = await c.CheckNowAsync();
         Assert.Equal(UpdateCheckOutcome.UpToDate, result.Outcome);
         await logged.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -409,9 +409,9 @@ public class InstallPingTests
     public async Task AFaultingHookTaskIsLoggedToo()
     {
         var logged = new TaskCompletionSource();
-        using var c = new UpdateChecker(new Feed(), new UpdSettings(), "1.0.3", () => Noon,
+        using var c = new UpdateChecker(new PingFeed(), new PingUpdSettings(), "1.0.3", () => Noon,
             l => { if (l.Contains("faulted")) logged.TrySetResult(); },
-            (_, _) => new NoTimer(), async () => { await Task.Yield(); throw new InvalidOperationException("faulted"); });
+            (_, _) => new PingNoTimer(), async () => { await Task.Yield(); throw new InvalidOperationException("faulted"); });
         await c.CheckNowAsync();
         await logged.Task.WaitAsync(TimeSpan.FromSeconds(5));
     }
@@ -420,7 +420,7 @@ public class InstallPingTests
     public async Task AHookThatNeverFinishesDoesNotHoldTheCheck()
     {
         var never = new TaskCompletionSource();
-        using var c = Checker(new Feed(), () => never.Task, []);
+        using var c = Checker(new PingFeed(), () => never.Task, []);
         var result = await c.CheckNowAsync().WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(UpdateCheckOutcome.UpToDate, result.Outcome);
     }
@@ -428,7 +428,7 @@ public class InstallPingTests
     [Fact]
     public async Task NoHookIsANoOp()
     {
-        using var c = Checker(new Feed(), null, []);
+        using var c = Checker(new PingFeed(), null, []);
         Assert.Equal(UpdateCheckOutcome.UpToDate, (await c.CheckNowAsync()).Outcome);
     }
 }

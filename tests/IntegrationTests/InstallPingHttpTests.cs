@@ -95,7 +95,7 @@ public sealed class InstallPingHttpTests : IDisposable
         await http.PostJsonAsync(_root + "/api/send", "{}", "ua", default);
     }
 
-    private sealed class Settings : IInstallPingSettings
+    private sealed class PingSettings : IInstallPingSettings
     {
         public bool Enabled => true;
         public string? InstallId { get; set; }
@@ -103,14 +103,14 @@ public sealed class InstallPingHttpTests : IDisposable
         public bool Internal => false;
     }
 
-    private static InstallPingSender Sender(Settings s, IInstallPingHttp http, string root, List<string> log) =>
+    private static InstallPingSender Sender(PingSettings s, IInstallPingHttp http, string root, List<string> log) =>
         new(s, http, () => DateTimeOffset.UtcNow, log.Add, _ => null, "1.0.7", "macos", "arm64", root);
 
     [Fact]
     public async Task TheSenderStampsOnlyAfterARealAcceptedAnswer()
     {
         _answer = r => Reply(r, 200, "{\"cache\":\"x\"}");
-        var s = new Settings();
+        var s = new PingSettings();
         var log = new List<string>();
         using var http = new HttpInstallPingHttp();
         await Sender(s, http, _root, log).TrySendAsync();
@@ -126,7 +126,7 @@ public sealed class InstallPingHttpTests : IDisposable
     {
         var (dead, deadRoot) = LoopbackHttp.Start();
         dead.Close(); // nothing listens on this port any more
-        var s = new Settings();
+        var s = new PingSettings();
         var log = new List<string>();
         using var http = new HttpInstallPingHttp(TimeSpan.FromSeconds(5));
 
@@ -140,7 +140,7 @@ public sealed class InstallPingHttpTests : IDisposable
     public async Task AServerErrorIsLoggedAndNotStamped()
     {
         _answer = r => Reply(r, 500, "oops");
-        var s = new Settings();
+        var s = new PingSettings();
         var log = new List<string>();
         using var http = new HttpInstallPingHttp();
         await Sender(s, http, _root, log).TrySendAsync();

@@ -12,11 +12,11 @@ namespace Orbweaver
     // test of BuildBody's key set rather than a sentence.
     internal static class InstallPing
     {
-        // PLACEHOLDERS until CB-466-infra's Umami is live: the host and the app
-        // website's UUID. A ping to the placeholder fails quietly (logged, day not
-        // stamped), which is the designed behaviour for an unreachable backend.
-        internal const string DefaultBaseUrl = "https://analytics.orbweaver.invalid";
-        internal const string WebsiteId = "00000000-0000-0000-0000-000000000000";
+        // The Uplift-run Umami (v3.5.0, per CB-466-infra) and the app's own website
+        // UUID, separate from the site's so app pings never pollute site stats. An
+        // unreachable host fails quietly (logged, day not stamped).
+        internal const string DefaultBaseUrl = "https://analytics.uplifttech.org";
+        internal const string WebsiteId = "79fdc897-5ee9-4203-8141-d7ec20c821ed";
 
         internal const string EventName_ = "install-ping";
         internal const string InternalEventName = "install-ping-internal";
