@@ -354,9 +354,13 @@ namespace Orbweaver
             return line.Length <= 80 ? line : line[..80];
         }
 
-        internal string RefusalText(PaperclipOutcome o) => o.Result switch
+        internal string RefusalText(PaperclipOutcome o) => RefusalFor(o, DisplayName);
+
+        // The sentence for a send Paperclip did not take. Static so a phone's send (CB-447) says exactly what
+        // the panel's does.
+        internal static string RefusalFor(PaperclipOutcome o, string agentName) => o.Result switch
         {
-            PaperclipActionResult.NeedsReconnect => $"Reconnect to Paperclip to message {DisplayName}.",
+            PaperclipActionResult.NeedsReconnect => $"Reconnect to Paperclip to message {agentName}.",
             PaperclipActionResult.Unreachable => UnreachableText,
             _ => string.IsNullOrWhiteSpace(o.Why) ? RefusedText : o.Why!,
         };

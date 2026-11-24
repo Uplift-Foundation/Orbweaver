@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Orbweaver
 {
@@ -23,6 +25,16 @@ namespace Orbweaver
             _agentId = agentId;
             _view = view;
             _roster = roster;
+        }
+
+        // The live read behind rung 4: this agent's assigned issues, through the feed's own client. Null while
+        // Paperclip is off, and null when the read failed, so "none" and "could not ask" stay apart.
+        internal static async Task<IReadOnlyList<PaperclipChat.AssignedIssue>?> ReadAssignedLiveAsync(string agentId, CancellationToken ct)
+        {
+            var live = PaperclipSessions.LiveChatApi();
+            return live is { } l
+                ? await PaperclipChatFeed.ReadAssignedAsync(l.Api, l.CompanyId, agentId, ct).ConfigureAwait(false)
+                : null;
         }
 
         // Rung 4's input: read once on open, never polled.

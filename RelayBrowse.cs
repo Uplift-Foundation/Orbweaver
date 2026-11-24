@@ -560,7 +560,23 @@ namespace Orbweaver
 
         // CB-404: frames-v13 adds run_options; the names are byte-sorted.
         // CB-434: frames-v17 adds resume (list_sessions and a resume launch), byte-sorted between them.
-        internal static readonly string Caps = CapsFrame("list_dir", SessionFrames.Cap, RunFrames.Cap);
+        internal static readonly string Caps = CapsFor(paperclipChat: false);
+
+        // CB-447: frames-v18 adds paperclip_chat while Paperclip is connected, byte-sorted among the others
+        // ("list_dir" < "paperclip_chat" < SessionFrames.Cap < RunFrames.Cap). The caps frame is re-sent every
+        // scan and the link drops an unchanged one, so connecting or disconnecting Paperclip flips the name
+        // with nothing else to wire.
+        internal const string PaperclipChatCap = "paperclip_chat";
+
+        internal static string CapsFor(bool paperclipChat)
+        {
+            var names = new List<string> { "list_dir" };
+            if (paperclipChat) names.Add(PaperclipChatCap);
+            names.Add(SessionFrames.Cap);
+            names.Add(RunFrames.Cap);
+            names.Sort(StringComparer.Ordinal);
+            return CapsFrame(names.ToArray());
+        }
 
         internal static string CapsFrame(params string[] names) =>
             new CanonicalJson().Str("t", "caps").Array("caps", names.Select(CanonicalJson.Quote)).ToString();

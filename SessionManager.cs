@@ -4050,13 +4050,7 @@ namespace Orbweaver
             chat = new PaperclipChatSession(
                 agentId, status.Title, status.Url, () => PaperclipFeedFactory(() => chat!.Target()),
                 () => PaperclipSessions.Actions,
-                readAssigned: async ct =>
-                {
-                    var live = PaperclipSessions.LiveChatApi();
-                    return live is { } l
-                        ? await PaperclipChatFeed.ReadAssignedAsync(l.Api, l.CompanyId, agentId, ct).ConfigureAwait(false)
-                        : null;
-                });
+                readAssigned: ct => PaperclipTaskPicker.ReadAssignedLiveAsync(agentId, ct));
             _paperclipChats[sessionId] = chat;
             return chat;
         }

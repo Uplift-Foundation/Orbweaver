@@ -38,8 +38,11 @@ public class RelayV4RuleTests
             RelayReplies.Err("r", RelayReplies.NotAtPrompt, "s"));
         Assert.Equal(6, RelayReplies.OkCodes.Length);
         // 18 from v4, plus v5's unknown_image (CB-321), the launch account's unknown_account and
-        // frames-v11's four folder-picker codes (CB-339), and frames-v13's three set_run codes (CB-404).
-        Assert.Equal(29, RelayReplies.ErrCodes.Length);
+        // frames-v11's four folder-picker codes (CB-339), frames-v13's three set_run codes (CB-404), frames-v17's
+        // two resume codes and frames-v18's send_failed (CB-447), which carries why.
+        Assert.Equal(30, RelayReplies.ErrCodes.Length);
+        Assert.Equal("""{"t":"err","ref":"r","code":"send_failed","session_id":"s","why":"Can't reach Paperclip."}""",
+            RelayReplies.Err("r", RelayReplies.SendFailed, "s", "Can't reach Paperclip."));
         Assert.Contains(RelayReplies.ForbiddenPath, RelayReplies.ErrCodes);
         Assert.Contains(RelayReplies.UnknownAccount, RelayReplies.ErrCodes);
     }
