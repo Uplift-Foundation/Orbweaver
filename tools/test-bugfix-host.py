@@ -638,6 +638,22 @@ class PaperclipSignalTests(unittest.TestCase):
         self.assertFalse(warden.log_shows_refusal(None))
 
 
+class ReleaseIssueTests(unittest.TestCase):
+    def test_only_engineer_ticket_issues_count(self):
+        rows = [
+            {"id": "a", "status": "cancelled", "description": "Ticket: CB-12\nfix the flake"},
+            {"id": "b", "status": "cancelled", "description": "Fix open CB bugs (routine)"},
+            {"id": "c", "status": "done", "description": "Ticket: CB-13\n"},
+            {"id": "d", "status": "cancelled", "description": "see Ticket: CB-14 below"},
+            {"id": "e", "status": "cancelled"},
+            {"id": "f", "status": "cancelled", "description": "Ticket: CB-15"},
+        ]
+        self.assertEqual(warden.release_issue_ids(rows), ["a", "e", "f"])
+
+    def test_nothing_cancelled_is_no_release(self):
+        self.assertEqual(warden.release_issue_ids([]), [])
+
+
 class CheckHostTests(unittest.TestCase):
     GOOD = {"enableIsolatedWorkspaces": True, "enableWorktreeRunExecution": True,
             "enableIsolatedWorkspacesByDefault": False}

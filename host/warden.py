@@ -163,6 +163,26 @@ def new_releases(cancelled_ids, state):
     return len([i for i in ids if i not in seen])
 
 
+TICKET_RE = re.compile(r"\ATicket: (CB-\d+)\n?")
+
+
+def release_issue_ids(rows):
+    """Ids of cancelled issues that are engineers' ticket issues. The lead sets
+    an engineer's issue to `cancelled` on release and `done` on merge; the first
+    line of its description is `Ticket: CB-NNN`. An issue whose description is
+    present and lacks that line is not one of those and is ignored. A row with
+    no description field at all cannot be told, so it counts: failing to count a
+    release would blind the brake, and over-counting only pauses early."""
+    out = []
+    for r in rows:
+        if r.get("status") != "cancelled":
+            continue
+        d = r.get("description")
+        if d is None or TICKET_RE.match(d):
+            out.append(r["id"])
+    return out
+
+
 def log_shows_refusal(text):
     return REFUSAL_MARKER in (text or "")
 
@@ -421,7 +441,7 @@ class PaperclipHttp:
     def cancelled_issue_ids(self):
         rows = self.call("GET", f"/api/companies/{self.company}/issues?status=cancelled") or []
         rows = rows if isinstance(rows, list) else rows.get("issues", [])
-        return [i["id"] for i in rows if i.get("status") == "cancelled"]
+        return release_issue_ids(rows)
 
     def recent_run_ids(self):
         return [r["id"] for r in self._runs()][:30]

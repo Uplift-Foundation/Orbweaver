@@ -29,7 +29,8 @@ The lead runs each step; none of it is run by the tests.
 
 A Paperclip pause only defers new assignments; a run in flight keeps going (measured in
 phase 0). So while the company is paused, every tick cancels its queued and running runs and
-sets its in-progress issues to `blocked`. The warden never resumes the company; a person or
+sets its in-progress issues to `blocked`. Parking them as `blocked` makes the paused org's
+orbs go amber on the desktop; that is intended, because a warden pause needs a person. The warden never resumes the company; a person or
 the CB-455 lead does. `max_runs_per_day` is the run brake because Paperclip's
 `heartbeat.maxDailyRuns` is timer-only and does not bound assignment wakes.
 
@@ -41,7 +42,7 @@ write to directly:
 
 | Trigger | Source | Notes |
 | --- | --- | --- |
-| Two releases in a row | Newly `cancelled` issues in the fix company, read from Paperclip each tick | The lead's release step must set the engineer's Paperclip task to `cancelled`. The first tick only records what is already cancelled. A merge resets the count. The spool's `released` is a second, separate counter; the two are not added. |
+| Two releases in a row | Newly `cancelled` engineer issues in the fix company (description starts `Ticket: CB-NNN`), read from Paperclip each tick | The lead sets the engineer's issue to `cancelled` on release and `done` on merge (its instructions; the PATCH has not been run). A row with no description field at all is counted, since not counting would blind the brake. The first tick only records what is already cancelled. A merge resets the count. The spool's `released` is a second, separate counter; the two are not added. |
 | Bot merge with no QA comment, red CI on a bot merge | GitHub | Known limit: the bot and the QA agent comment as the same GitHub identity, so "a QA comment" means any comment or review before the merge naming both rids. The warden cannot tell QA's comment from the lead's. |
 | Run cap, token ceiling | Paperclip runs and costs APIs | Off until set in `warden.json`. |
 | GitHub refused a push | The text `GH013` (GitHub's ruleset-refusal error) in a run's log, each run read once. The spool's `push_refused` is an extra signal. | **Not fully observable.** A refusal that never reaches a run log (a push the agent ran quietly, or the log truncated at 200 KB) is not seen. The idea of comparing a `bugfix/pc-*` branch's remote head against a "push attempt" in the issue was not built: Paperclip records no structured push attempt to compare against. |
