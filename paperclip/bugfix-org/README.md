@@ -221,7 +221,10 @@ Then, none of which a package can carry:
    restore cache was 2.2 GB), `BUGFIX_BUILD_LOCK` to a path in that folder
    for the one-build-at-a-time lock, and `BUGFIX_SPOOL` to the warden's
    `spool` folder from `warden.json`, which is where the skill tells an engineer
-   to write a stress request. Without `BUGFIX_SPOOL` a flaky-test fix has no
+   to write a stress request. Give `BUGFIX_SPOOL` to the lead and QA as well: the
+   pilot's lead read its absence in its own environment as "stress runs are
+   unavailable" and skipped every flaky-test ticket for that reason
+   (2026-11-24). Without `BUGFIX_SPOOL` a flaky-test fix has no
    way to get its 30-run proof, because the warden reads requests only from
    the spool. Both are absolute paths, so the package
    cannot carry them. The package sets `AVALONIA_TELEMETRY_OPTOUT=1`,
