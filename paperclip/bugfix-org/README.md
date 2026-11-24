@@ -236,6 +236,17 @@ Then, none of which a package can carry:
    with `branchTemplate` `bugfix/pc-{{slug}}`. Run by QA on 2026-11-24 against
    the existing company and read back as expected. `defaultProjectWorkspaceId`
    did not need setting: the imported `git_repo` workspace was already primary.
+9. **Persona pictures.** The import leaves each agent with Paperclip's generated
+   avatar, and Orbweaver draws whatever picture Paperclip holds, so the orbs
+   show generic avatars until the personas' own pictures are uploaded. Use the
+   safe-for-work `<slug>.png` from `.profiles-assets/<slug>/`, never the
+   `-nsfw` one. Paperclip caps an avatar at 512 KB and the source files are
+   1.2–1.5 MB, so scale each to 512 px first (`sips -Z 512 -s format png`), then
+   `PUT /api/companies/<id>/agents/<agent id>/avatar` with
+   `{"imageBase64": "<base64 of the png>"}`. Read the agent back: `avatarUrl`
+   should be `/api/assets/<id>/content`, not `/api/agent-avatars/...`. Done for
+   all four on 2026-11-24. The MacBook's Orbweaver fetched the new pictures on
+   its next roster poll.
 
 ## What the org does not do
 
