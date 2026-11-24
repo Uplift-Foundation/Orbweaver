@@ -44,8 +44,9 @@ agents:
         enabled: false
         wakeOnAssignment: true
         wakeOnDemand: true
-        # One run at a time per agent, and a daily ceiling. Whether the
-        # ceiling counts assignment wakes is assumed, not measured (plan A.7).
+        # One run at a time per agent, and a daily ceiling. The ceiling
+        # appears to cap only timer heartbeats, which are off here, so it is
+        # probably no brake at all; the warden's own count is (see the README).
         maxConcurrentRuns: 1
         maxDailyRuns: 3
     budgetMonthlyCents: 5000
@@ -82,8 +83,9 @@ agents:
         enabled: false
         wakeOnAssignment: true
         wakeOnDemand: true
-        # One run at a time per agent, and a daily ceiling. Whether the
-        # ceiling counts assignment wakes is assumed, not measured (plan A.7).
+        # One run at a time per agent, and a daily ceiling. The ceiling
+        # appears to cap only timer heartbeats, which are off here, so it is
+        # probably no brake at all; the warden's own count is (see the README).
         maxConcurrentRuns: 1
         maxDailyRuns: 6
     budgetMonthlyCents: 5000
@@ -120,8 +122,9 @@ agents:
         enabled: false
         wakeOnAssignment: true
         wakeOnDemand: true
-        # One run at a time per agent, and a daily ceiling. Whether the
-        # ceiling counts assignment wakes is assumed, not measured (plan A.7).
+        # One run at a time per agent, and a daily ceiling. The ceiling
+        # appears to cap only timer heartbeats, which are off here, so it is
+        # probably no brake at all; the warden's own count is (see the README).
         maxConcurrentRuns: 1
         maxDailyRuns: 6
     budgetMonthlyCents: 5000
@@ -158,13 +161,19 @@ agents:
         enabled: false
         wakeOnAssignment: true
         wakeOnDemand: true
-        # One run at a time per agent, and a daily ceiling. Whether the
-        # ceiling counts assignment wakes is assumed, not measured (plan A.7).
+        # One run at a time per agent, and a daily ceiling. The ceiling
+        # appears to cap only timer heartbeats, which are off here, so it is
+        # probably no brake at all; the warden's own count is (see the README).
         maxConcurrentRuns: 1
         maxDailyRuns: 6
     budgetMonthlyCents: 5000
 
 projects:
+  # No executionWorkspacePolicy here on purpose: the CLI sends every
+  # existing-company import through Paperclip's agent-safe route, which refuses
+  # one ("Safe import does not allow project ... executionWorkspacePolicy",
+  # measured 2026-11-24). The git_worktree policy is host/project-workspace-policy.json,
+  # applied after import with `paperclipai project update` (see the README).
   orbweaver-develop:
     leadAgentSlug: marisol-vandenberg
     workspaces:
@@ -175,18 +184,6 @@ projects:
         repoRef: develop
         defaultRef: develop
         isPrimary: true
-    executionWorkspacePolicy:
-      enabled: true
-      defaultMode: isolated_workspace
-      allowIssueOverride: false
-      defaultProjectWorkspaceKey: orbweaver
-      workspaceStrategy:
-        # One git worktree per issue, on a branch named for the owner and the
-        # change, never an issue number (CLAUDE.md branching rule). The issue
-        # slug is the change, so the lead titles issues with the change words.
-        type: git_worktree
-        baseRef: origin/develop
-        branchTemplate: "bugfix/pc-{{slug}}"
 
 routines:
   fix-cb-bugs:

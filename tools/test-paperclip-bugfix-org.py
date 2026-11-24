@@ -28,6 +28,7 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PKG = os.path.join(HERE, "..", "paperclip", "bugfix-org")
+POLICY = os.path.join(PKG, "host", "project-workspace-policy.json")
 PROFILE = os.path.join(HERE, "..", "paperclip", "triage-org", "host", "paperclip-service.sb.template")
 AGENTS = {
     "marisol-vandenberg": "cto",
@@ -130,8 +131,9 @@ def parse(text):
     return root
 
 
-def brakes(cfg):
-    """Everything wrong with the brakes in a parsed config, as strings."""
+def brakes(cfg, policy):
+    """Everything wrong with the brakes in a parsed config and the project
+    workspace policy JSON, as strings."""
     bad = []
     agents = cfg.get("agents", {})
     if set(agents) != set(AGENTS):
@@ -154,9 +156,9 @@ def brakes(cfg):
                 bad.append(f"{slug}: {var} is not 1")
         if a.get("role") != AGENTS.get(slug):
             bad.append(f"{slug}: role is {a.get('role')!r}")
-    proj = cfg.get("projects", {}).get("orbweaver-develop", {})
-    pol = proj.get("executionWorkspacePolicy", {})
-    strat = pol.get("workspaceStrategy", {})
+    strat = policy.get("workspaceStrategy", {})
+    if policy.get("enabled") is not True or policy.get("defaultMode") != "isolated_workspace":
+        bad.append("workspace policy is not an enabled isolated workspace")
     if strat.get("type") != "git_worktree":
         bad.append(f"workspace strategy is {strat.get('type')!r}")
     if not str(strat.get("branchTemplate", "")).startswith("bugfix/pc-"):
@@ -202,27 +204,45 @@ class BrakeTests(unittest.TestCase):
     def setUp(self):
         self.text = read(".paperclip.yaml")
         self.cfg = parse(self.text)
+        self.policy_text = read("host", "project-workspace-policy.json")
+        self.policy = json.loads(self.policy_text)
 
     def test_every_brake_is_present(self):
-        self.assertEqual(brakes(self.cfg), [])
+        self.assertEqual(brakes(self.cfg, self.policy), [])
+
+    def test_yaml_stays_clean_for_the_agent_safe_import_route(self):
+        # The CLI sends every existing-company import through the agent-safe
+        # route, which refuses a project executionWorkspacePolicy (measured in
+        # a dry run), so the policy lives in host/ and the YAML must not have one.
+        self.assertNotIn("executionWorkspacePolicy", self.text.replace("# ", "").split("projects:")[1].split("orbweaver-develop:")[1])
+        for forbidden in ("setupCommand", "cleanupCommand", "executionWorkspaceSettings", "assigneeAdapterOverrides"):
+            self.assertNotIn(forbidden + ":", self.text)
+        # Control: the check does notice one.
+        bad = self.text.replace("    leadAgentSlug: marisol-vandenberg\n",
+                                "    leadAgentSlug: marisol-vandenberg\n    executionWorkspacePolicy:\n      enabled: true\n")
+        self.assertIn("executionWorkspacePolicy:", bad.split("orbweaver-develop:")[1])
+        self.assertEqual(self.text.count("kind: schedule"), 1)
 
     def test_each_brake_fails_when_removed_or_loosened(self):
-        # Negative control per brake, on a copy of the real file.
-        for old, new, label in [
-            ("timeoutSec: 3600", "timeoutSec: 7200", "timeout"),
-            ("maxConcurrentRuns: 1", "maxConcurrentRuns: 4", "concurrency"),
-            ("maxDailyRuns: 3", "maxDailyRuns: 0", "daily runs"),
-            ("AVALONIA_TELEMETRY_OPTOUT:", "AVALONIA_TELEMETRY_OPTOUT_X:", "avalonia opt-out"),
-            ("DOTNET_CLI_TELEMETRY_OPTOUT:", "DOTNET_CLI_TELEMETRY_OPTOUT_X:", "dotnet opt-out"),
-            ("type: git_worktree", "type: project_primary", "workspace strategy"),
-            ("bugfix/pc-{{slug}}", "feature/{{slug}}", "branch template"),
-            ("baseRef: origin/develop", "baseRef: origin/main", "base ref"),
-            ("concurrencyPolicy: coalesce_if_active", "concurrencyPolicy: always_enqueue", "routine"),
-            ("enabled: false", "enabled: true", "heartbeat timer"),
+        # Negative control per brake, on a copy of the real file it lives in.
+        for old, new, label, in_policy in [
+            ("timeoutSec: 3600", "timeoutSec: 7200", "timeout", False),
+            ("maxConcurrentRuns: 1", "maxConcurrentRuns: 4", "concurrency", False),
+            ("maxDailyRuns: 3", "maxDailyRuns: 0", "daily runs", False),
+            ("AVALONIA_TELEMETRY_OPTOUT:", "AVALONIA_TELEMETRY_OPTOUT_X:", "avalonia opt-out", False),
+            ("DOTNET_CLI_TELEMETRY_OPTOUT:", "DOTNET_CLI_TELEMETRY_OPTOUT_X:", "dotnet opt-out", False),
+            ("concurrencyPolicy: coalesce_if_active", "concurrencyPolicy: always_enqueue", "routine", False),
+            ("enabled: false", "enabled: true", "heartbeat timer", False),
+            ('"git_worktree"', '"project_primary"', "workspace strategy", True),
+            ("bugfix/pc-{{slug}}", "feature/{{slug}}", "branch template", True),
+            ('"origin/develop"', '"origin/main"', "base ref", True),
         ]:
             with self.subTest(label):
-                self.assertIn(old, self.text)
-                self.assertTrue(brakes(parse(self.text.replace(old, new, 1))), label)
+                src = self.policy_text if in_policy else self.text
+                self.assertIn(old, src)
+                mutated = src.replace(old, new, 1)
+                cfg, pol = (self.cfg, json.loads(mutated)) if in_policy else (parse(mutated), self.policy)
+                self.assertTrue(brakes(cfg, pol), label)
 
     def test_agent_set_is_a_lead_two_engineers_and_qa(self):
         roles = sorted(a["role"] for a in self.cfg["agents"].values())

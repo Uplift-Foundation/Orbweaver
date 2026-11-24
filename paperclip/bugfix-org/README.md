@@ -34,12 +34,30 @@ its manifest, every field survived: each agent's role, title, `reportsTo` (the
 three non-leads to marisol-vandenberg), model, `approve-all`, `timeoutSec: 3600`,
 the three `env` bindings, `maxConcurrentRuns: 1` and the per-agent
 `maxDailyRuns`; the `cb-bugfix` skill on each; the project's `git_repo`
-workspace on `develop` and its `git_worktree` policy with `baseRef`
-`origin/develop` and `branchTemplate` `bugfix/pc-{{slug}}`; the routine as
+workspace on `develop` and, while the policy was still in the YAML, its
+`git_worktree` policy with `baseRef` `origin/develop` and `branchTemplate`
+`bugfix/pc-{{slug}}` (see the next paragraph for why it left); the routine as
 `coalesce_if_active`, `skip_missed` and a `0 10 * * 1-5` Pacific trigger, imported
 **enabled** (hence setup step 1). Nothing was dropped or misread, so no field
 needed changing. This says the package parses; it does not say a real import,
 a worktree or a run works.
+
+**Same dry run against the existing company, measured 2026-11-24**
+(`--target existing -C f6845723-4ffd-4fab-bedc-db07c47b5bba`, the fixture company
+being renamed "Orbweaver Bug Fix"). The first attempt **failed**:
+`errors: ["Safe import does not allow project orbweaver-develop executionWorkspacePolicy."]`.
+The CLI sends every existing-company import through Paperclip's agent-safe
+route, which refuses a project's `executionWorkspacePolicy` (and workspace
+`setupCommand`/`cleanupCommand`, task `executionWorkspaceSettings` and
+`assigneeAdapterOverrides`, and non-schedule routine triggers); a `--target new`
+import goes through the board route and had accepted it. So the worktree policy
+moved out of `.paperclip.yaml` into `host/project-workspace-policy.json`, applied
+after import (setup step 8). With that change both targets dry-run clean:
+`errors: []`, `warnings: []`, the four agents, project and routine all `create`,
+the agents with the same fields as above; the existing-company run reports the
+company action as `none`, as it should. The policy JSON itself matches the
+`projectExecutionWorkspacePolicySchema` keys in Paperclip's source; applying it
+has **not** been run.
 
 ## Measured, assumed, and read from source
 
@@ -75,14 +93,29 @@ then release. The warden (host side, not in this package) pauses the company on
 the conditions in plan section 6. `budgetMonthlyCents` is set but is not a
 brake: on a subscription connection spend reads 0.
 
+## Prerequisites the package cannot set
+
+Measured by QA on the mini's live Paperclip on 2026-11-24 (not by me):
+
+- **`GIT_CONFIG_GLOBAL`** must point at an empty file in the service's launchd
+  environment, here `~/.paperclip/instances/default/gitconfig`. Without it any
+  `git_repo` workspace checkout fails under the sandbox profile.
+- **Two instance flags, `enableIsolatedWorkspaces` and
+  `enableWorktreeRunExecution`, must be on.** `git_worktree` does nothing
+  without them. Both are on now.
+- **The import goes into the existing company "Orbweaver Bug Fix"**, not a new
+  one, because a company's AI connection cannot be shared between companies and
+  the sign-in is a browser step. Use `--target existing -C <company id>`. The
+  package does not assume a new company; see the dry runs above.
+
 ## Setup on the host
 
 Do the triage org's setup first (`paperclip/triage-org/README.md`): Paperclip
 installed, the AI connection, the Jira connector, the sandbox. Then:
 
 ```bash
-paperclipai company import paperclip/bugfix-org --target new --dry-run
-paperclipai company import paperclip/bugfix-org --target new
+paperclipai company import paperclip/bugfix-org --target existing -C <company id> --dry-run
+paperclipai company import paperclip/bugfix-org --target existing -C <company id>
 ```
 
 Then, none of which a package can carry:
@@ -116,6 +149,10 @@ Then, none of which a package can carry:
    `git_repo` workspace on `develop`. Confirm it exists before the first run,
    and put the project's id in the lead's instructions if the `create_task`
    `projectId` is wanted explicitly.
+8. **Worktree policy.** Apply it to that project (the import route refuses it):
+   `paperclipai project update orbweaver-develop -C <company id> --execution-workspace-policy-json "$(cat paperclip/bugfix-org/host/project-workspace-policy.json)"`,
+   then read the project back to confirm `workspaceStrategy` is `git_worktree`
+   with `branchTemplate` `bugfix/pc-{{slug}}`. Not yet run.
 
 ## What the org does not do
 
