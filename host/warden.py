@@ -57,7 +57,7 @@ REQUIRED_CHECKS = ("build (macos-latest, osx-arm64)", "build (windows-latest, wi
 # at least 45 minutes of token left; at 45 minutes it could start with ten, and
 # an engineer's push at the end of a long run would be refused.
 MINT_INTERVAL = 10 * 60
-VERBS = ("dispatch_stress", "released", "push_refused")
+VERBS = ("dispatch_stress", "released", "push_refused", "rerun_failed")
 CLASS_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]{0,199}$")
 SUITES = ("unit", "integration", "ui")
 MAX_N = 50
@@ -90,6 +90,11 @@ def parse_request(raw):
         if suite not in SUITES:
             return None, "suite must be one of " + "/".join(SUITES)
         return {"verb": verb, "pr": pr, "test_class": cls, "n": n, "suite": suite}, None
+    if verb == "rerun_failed":
+        pr = req.get("pr")
+        if not (isinstance(pr, int) and not isinstance(pr, bool) and pr > 0):
+            return None, "pr must be a positive integer"
+        return {"verb": verb, "pr": pr}, None
     if verb == "released":
         t = req.get("ticket")
         if not (isinstance(t, str) and re.fullmatch(r"CB-\d{1,6}", t)):
@@ -119,6 +124,38 @@ def dispatch_problem(pr):
         return f"head branch lacks the {BRANCH_PREFIX} prefix"
     if ((pr.get("base") or {}).get("ref")) != "develop":
         return "PR does not target develop"
+    return None
+
+
+# A rerun of a red CI run's failed jobs (CB-465). The org's App holds Actions
+# read only, so it cannot rerun a job itself; a flake in a test its change does
+# not touch then cost a whole ticket (CB-387). The warden reruns on request, at
+# most once per head sha: a second red at the same sha is real, and a flake
+# cannot be retried until it passes.
+MAX_RERUNS_PER_SHA = 1
+RED_CONCLUSIONS = ("failure", "cancelled", "timed_out")
+
+
+def rerun_problem(pr, run, reruns):
+    """Why the warden must NOT rerun this PR's CI (None = go). `run` is the
+    latest CI workflow run at the PR's head, or None; `reruns` maps a head sha
+    to the reruns already made there. Same lane as a stress dispatch."""
+    why = dispatch_problem(pr)
+    if why:
+        return why
+    sha = (pr.get("head") or {}).get("sha")
+    if not sha:
+        return "PR head has no sha"
+    if reruns.get(sha, 0) >= MAX_RERUNS_PER_SHA:
+        return f"already reran once at {sha[:9]}; a second red there is real"
+    if run is None:
+        return "no CI run at the PR's head"
+    if run.get("head_sha") != sha:
+        return "the latest CI run is not at the PR's head"
+    if run.get("status") != "completed":
+        return "CI is still running"
+    if run.get("conclusion") not in RED_CONCLUSIONS:
+        return f"CI is not red ({run.get('conclusion')})"
     return None
 
 
@@ -280,6 +317,30 @@ class Warden:
                 self.pause(f"{RELEASES_IN_A_ROW} tickets released in a row")
         elif v == "push_refused":
             self.pause("GitHub refused a bot push on a ruleset")
+        elif v == "rerun_failed":
+            self.rerun_failed(req["pr"])
+
+    def rerun_failed(self, n):
+        """Rerun the failed jobs of PR n's latest CI run, once per head sha
+        (CB-465). A refusal is logged and never pauses: asking is not a fault."""
+        reruns = self.state.setdefault("reruns", {})
+        try:
+            pr = self.gh.get_pr(n)
+            sha = ((pr or {}).get("head") or {}).get("sha")
+            run = self.gh.latest_ci_run(sha) if sha and not dispatch_problem(pr) else None
+        except (subprocess.CalledProcessError, OSError, ValueError, KeyError) as e:
+            return self.log(f"rerun for PR {n} unreadable: {type(e).__name__}")
+        why = rerun_problem(pr, run, reruns)
+        if why:
+            return self.log(f"refused rerun for PR {n}: {why}")
+        try:
+            self.gh.rerun_failed(run["id"])
+        except (subprocess.CalledProcessError, OSError) as e:
+            return self.log(f"rerun for PR {n} failed: {type(e).__name__}")
+        reruns[sha] = reruns.get(sha, 0) + 1
+        while len(reruns) > 200:
+            reruns.pop(next(iter(reruns)))
+        self.log(f"reran failed jobs of CI run {run['id']} for PR {n} at {sha[:9]}")
 
     def stop_work(self):
         """A pause only defers new assignments: a run in flight keeps going
@@ -424,6 +485,17 @@ class GhCli:
         _run(["gh", "api", "-X", "POST", f"repos/{REPO}/actions/workflows/stress.yml/dispatches",
               "-f", f"ref={ref}", "-f", f"inputs[test_class]={test_class}",
               "-f", f"inputs[n]={n}", "-f", f"inputs[suite]={suite}"])
+
+    def latest_ci_run(self, sha):
+        """The newest run of ci.yml at this sha from a pull_request, or None."""
+        data = self.api(f"repos/{REPO}/actions/runs?head_sha={sha}&event=pull_request&per_page=30") or {}
+        runs = [r for r in data.get("workflow_runs", [])
+                if str(r.get("path", "")).endswith("/ci.yml") or r.get("name") == "CI"]
+        runs.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+        return runs[0] if runs else None
+
+    def rerun_failed(self, run_id):
+        _run(["gh", "api", "-X", "POST", f"repos/{REPO}/actions/runs/{int(run_id)}/rerun-failed-jobs"])
 
     def merged_bot_prs(self):
         prs = self.api(f"repos/{REPO}/pulls?state=closed&base=develop&sort=updated&direction=desc&per_page=30")

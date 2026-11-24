@@ -359,10 +359,17 @@ class AuditRuleTests(unittest.TestCase):
 # ---------------------------------------------------------------- warden tick
 
 class FakeGH:
-    def __init__(self, prs=None, merged=(), comments=None, checks=None):
+    def __init__(self, prs=None, merged=(), comments=None, checks=None, runs=None):
         self.prs, self.merged = prs or {}, list(merged)
         self.comments, self.checks = comments or {}, checks or {}
         self.dispatched = []
+        self.runs, self.reran = runs or {}, []
+
+    def latest_ci_run(self, sha):
+        return self.runs.get(sha)
+
+    def rerun_failed(self, run_id):
+        self.reran.append(run_id)
 
     def get_pr(self, n):
         return self.prs.get(n)
@@ -378,6 +385,91 @@ class FakeGH:
 
     def check_conclusions(self, sha):
         return self.checks.get(sha, {})
+
+
+# ---------------------------------------------------------------- reruns (CB-465)
+
+def head_pr(sha="s1", **over):
+    pr = good_pr(head={"ref": "bugfix/pc-fix-flake", "repo": {"full_name": warden.REPO}, "sha": sha})
+    pr.update(over)
+    return pr
+
+
+def ci_run(sha="s1", status="completed", conclusion="failure", run_id=99):
+    return {"id": run_id, "name": "CI", "head_sha": sha, "status": status, "conclusion": conclusion}
+
+
+class RerunRuleTests(unittest.TestCase):
+    def test_a_red_run_at_the_head_of_a_bot_pr_may_be_rerun(self):
+        for concl in warden.RED_CONCLUSIONS:
+            self.assertIsNone(warden.rerun_problem(head_pr(), ci_run(conclusion=concl), {}), concl)
+
+    def test_refusals_name_their_reason(self):
+        cases = {
+            "not the org's": (head_pr(user={"login": "wtvamp"}), ci_run(), {}, "not opened by the bug-fix App"),
+            "closed": (head_pr(state="closed"), ci_run(), {}, "not open"),
+            "already reran": (head_pr(), ci_run(), {"s1": 1}, "already reran"),
+            "no run": (head_pr(), None, {}, "no CI run"),
+            "run at another sha": (head_pr(), ci_run(sha="old"), {}, "not at the PR's head"),
+            "still running": (head_pr(), ci_run(status="in_progress", conclusion=None), {}, "still running"),
+            "green": (head_pr(), ci_run(conclusion="success"), {}, "not red"),
+            "no head sha": (good_pr(), ci_run(), {}, "no sha"),
+        }
+        for label, (pr, run, reruns, why) in cases.items():
+            self.assertIn(why, warden.rerun_problem(pr, run, reruns) or "", label)
+
+    def test_parse_accepts_a_pr_and_refuses_anything_else(self):
+        self.assertEqual(warden.parse_request('{"verb":"rerun_failed","pr":7}')[0], {"verb": "rerun_failed", "pr": 7})
+        for raw in ('{"verb":"rerun_failed"}', '{"verb":"rerun_failed","pr":0}',
+                    '{"verb":"rerun_failed","pr":true}', '{"verb":"rerun_failed","pr":"7"}'):
+            self.assertIsNone(warden.parse_request(raw)[0], raw)
+
+
+class RerunTickTests(unittest.TestCase):
+    REQ = {"verb": "rerun_failed", "pr": 7}
+
+    def test_reruns_once_per_head_sha_and_a_new_sha_may_again(self):
+        gh = FakeGH(prs={7: head_pr("s1")}, runs={"s1": ci_run("s1", run_id=99)})
+        state = {}
+        _, paused, logs = tick(gh=gh, state=state, requests=[self.REQ])
+        self.assertFalse(paused)
+        self.assertEqual(gh.reran, [99])
+        self.assertEqual(state["reruns"], {"s1": 1})
+        self.assertTrue(any("reran failed jobs of CI run 99 for PR 7" in l for l in logs))
+        _, paused, logs = tick(gh=gh, state=state, requests=[self.REQ])
+        self.assertEqual(gh.reran, [99], "a second red at the same sha is real")
+        self.assertTrue(any("already reran" in l for l in logs))
+        self.assertFalse(paused, "a refused rerun never pauses")
+        gh.prs[7], gh.runs["s2"] = head_pr("s2"), ci_run("s2", run_id=100)
+        tick(gh=gh, state=state, requests=[self.REQ])
+        self.assertEqual(gh.reran, [99, 100])
+
+    def test_a_refused_rerun_is_logged_and_runs_nothing(self):
+        gh = FakeGH(prs={7: head_pr(user={"login": "human"})}, runs={"s1": ci_run()})
+        _, paused, logs = tick(gh=gh, requests=[self.REQ])
+        self.assertEqual(gh.reran, [])
+        self.assertFalse(paused)
+        self.assertTrue(any("refused rerun for PR 7" in l for l in logs))
+
+    def test_a_failed_gh_call_is_logged_and_not_counted(self):
+        class Boom(FakeGH):
+            def rerun_failed(self, run_id):
+                raise subprocess.CalledProcessError(1, "gh")
+
+        gh = Boom(prs={7: head_pr()}, runs={"s1": ci_run()})
+        state = {}
+        _, _, logs = tick(gh=gh, state=state, requests=[self.REQ])
+        self.assertTrue(any("rerun for PR 7 failed" in l for l in logs))
+        self.assertEqual(state.get("reruns"), {})
+
+    def test_an_unreadable_pr_or_run_is_logged_not_raised(self):
+        class Boom(FakeGH):
+            def latest_ci_run(self, sha):
+                raise subprocess.CalledProcessError(1, "gh")
+
+        _, paused, logs = tick(gh=Boom(prs={7: head_pr()}), requests=[self.REQ])
+        self.assertFalse(paused)
+        self.assertTrue(any("unreadable" in l for l in logs))
 
 
 class FakeMinter:

@@ -174,6 +174,24 @@ which suites ran and what was confirmed against what is assumed, and ends
 comment exists, both required checks are green at the sha it names, and the PR
 head is still that sha.
 
+## A red check your change did not cause
+
+When a required check is red only on a test outside your change's footprint
+(another area, a timing test you did not touch, a class with a flaky-test
+ticket such as CB-461 or CB-463), ask the warden to rerun the failed jobs. Do
+not push to retry. Write one file, `$BUGFIX_SPOOL/rerun-<PR number>.json`,
+holding exactly `{"verb": "rerun_failed", "pr": <PR number>}`.
+
+The warden reruns the failed jobs of the PR's latest CI run within five
+minutes. It does this once per head sha, and only for a completed red run;
+anything else it refuses, and logs why. Name the failing test in the PR body as
+a suspected flake.
+
+A rerun is not a fix round. If the rerun is red again at the same sha, the
+failure is real for this PR: fix it in a round, or release the ticket. A new
+push gets a fresh rerun. The lead does the same before releasing a ticket over
+a red check.
+
 ## Limits
 
 Two fix rounds per ticket, ninety minutes from the claim, one rebase onto

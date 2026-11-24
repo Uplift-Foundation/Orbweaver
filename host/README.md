@@ -45,11 +45,22 @@ write to directly:
 | Two releases in a row | Newly `cancelled` engineer issues in the fix company (description starts `Ticket: CB-NNN`), read from Paperclip each tick | The lead sets the engineer's issue to `cancelled` on release and `done` on merge (its instructions; the PATCH has not been run). A cancelled issue without that first line (a QA or helper child task) is not a release; each release is logged with its CB key. Measured by QA: cancelled rows in the listing do carry `description`, so the next line is the rare path. A newly cancelled row that has no `description` field is read in full with `GET /api/issues/<id>`; if even that has none, the warden logs `release signal unreadable` and pauses, rather than skipping it or counting it blindly. The first tick only records what is already cancelled. A merge resets the count. The spool's `released` is a second, separate counter; the two are not added. |
 | Bot merge with no QA comment, red CI on a bot merge | GitHub | Known limit: the bot and the QA agent comment as the same GitHub identity, so "a QA comment" means any comment or review before the merge naming both rids. The warden cannot tell QA's comment from the lead's. |
 | Run cap, token ceiling | Paperclip runs and costs APIs | Off until set in `warden.json`. |
-| GitHub refused a push | The text `GH013` (GitHub's ruleset-refusal error) in a run's log, each run read once. The spool's `push_refused` is an extra signal. | **Not fully observable.** A refusal that never reaches a run log (a push the agent ran quietly, or the log truncated at 200 KB) is not seen. The idea of comparing a `bugfix/pc-*` branch's remote head against a "push attempt" in the issue was not built: Paperclip records no structured push attempt to compare against. |
+| GitHub refused a push | git's ruleset-refusal output in a run's log, `remote: error: GH013: Repository rule violations` or `(push declined due to repository rule violations)`, each run read once. The bare code alone is not a refusal: the lead's instructions quote it (CB-462). The spool's `push_refused` is an extra signal. | **Not fully observable.** A refusal that never reaches a run log (a push the agent ran quietly, or the log truncated at 200 KB) is not seen. The idea of comparing a `bugfix/pc-*` branch's remote head against a "push attempt" in the issue was not built: Paperclip records no structured push attempt to compare against. |
 
 Only the Paperclip and GitHub reads above were checked against Paperclip's source; the
 instance-settings read was also run live (read-only) and matches `check_host.py`'s shape.
 QA has since read the issues listing and the run-log shape live (read-only); the cancel route, the pause PATCH, `blocked` and the secret calls have not been run.
+
+## Reruns (CB-465)
+
+The org's App holds Actions read only, so it cannot rerun a CI job. A flake in
+a test its change does not touch therefore cost CB-387 its ticket. The spool
+verb `{"verb": "rerun_failed", "pr": N}` asks the warden to do it with the
+host's `gh` login: `POST /actions/runs/<id>/rerun-failed-jobs` on the newest
+`ci.yml` run at the PR's head. The lane is the stress dispatch's (the org's own
+open `bugfix/pc-*` PR from this repository, into develop). The run must be
+completed red, at most once per head sha (`state["reruns"]`). A refusal is
+logged and never pauses.
 
 ## Deletes
 
