@@ -346,6 +346,52 @@ public class InstallPingTests
         Assert.Equal("install-ping-internal", JsonNode.Parse(viaSetting.H.Posts[0].Json)!["payload"]!["name"]!.GetValue<string>());
     }
 
+    private sealed class GatedHttp : IInstallPingHttp
+    {
+        public int Calls;
+        public TaskCompletionSource Release = new();
+        public Task<(int Status, string Body)> PostJsonAsync(string url, string json, string userAgent, CancellationToken ct)
+        {
+            Interlocked.Increment(ref Calls);
+            return Release.Task.ContinueWith(_ => (200, "{}"));
+        }
+    }
+
+    [Fact]
+    public async Task TwoSendsAtOnceMakeOnePostAndALaterOneIsStillAllowed()
+    {
+        var s = new PingSettings();
+        var http = new GatedHttp();
+        var sender = new InstallPingSender(s, http, () => Noon, _ => { }, _ => null, "1", "macos", "arm64", "http://f");
+
+        var first = sender.TrySendAsync();
+        await sender.TrySendAsync(); // joins nothing: skipped while the first is in flight
+        Assert.Equal(1, http.Calls);
+        http.Release.SetResult();
+        await first;
+        Assert.Equal(Noon, s.LastPing);
+
+        // The guard is released afterwards: next day sends again.
+        var later = new InstallPingSender(s, http, () => Noon.AddDays(1), _ => { }, _ => null, "1", "macos", "arm64", "http://f");
+        await later.TrySendAsync();
+        Assert.Equal(2, http.Calls);
+    }
+
+    [Fact]
+    public async Task ATogglePulledDuringTheRequestIsNotStampedAfterwards()
+    {
+        var s = new PingSettings();
+        var http = new GatedHttp();
+        var sender = new InstallPingSender(s, http, () => Noon, _ => { }, _ => null, "1", "macos", "arm64", "http://f");
+
+        var send = sender.TrySendAsync();
+        s.Enabled = false; // the user switched it off mid-flight
+        http.Release.SetResult();
+        await send;
+
+        Assert.Null(s.LastPing);
+    }
+
     // ---- UpdateChecker's afterCheck hook -------------------------------------
 
     private sealed class PingFeed : IReleaseFeed

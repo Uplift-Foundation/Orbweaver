@@ -179,6 +179,11 @@ namespace Orbweaver
         private readonly Func<string, string?> _env;
         private readonly string _version, _os, _arch, _baseUrl;
 
+        // One send at a time: the ping runs after a check, fire and forget, and the
+        // day is only stamped once the answer is back, so an automatic check and a
+        // manual click inside the HTTP bound would both pass Decide and both post.
+        private readonly SemaphoreSlim _busy = new(1, 1);
+
         internal InstallPingSender(IInstallPingSettings settings, IInstallPingHttp http,
             Func<DateTimeOffset> now, Action<string> log, Func<string, string?> env,
             string version, string os, string arch, string baseUrl)
@@ -189,6 +194,7 @@ namespace Orbweaver
 
         internal async Task TrySendAsync(CancellationToken ct = default)
         {
+            if (!await _busy.WaitAsync(0, CancellationToken.None).ConfigureAwait(false)) return;
             try
             {
                 var now = _now();
@@ -209,14 +215,23 @@ namespace Orbweaver
                 var (status, body) = await _http.PostJsonAsync(
                     $"{_baseUrl}/api/send", json, InstallPing.UserAgent(_version, _os, _arch), ct).ConfigureAwait(false);
 
+                // Re-read the setting: a toggle flipped off while the request was in
+                // flight has already deleted the ID and stamp, and writing the day back
+                // would silence the ping after the user switches it on again.
                 if (InstallPing.Accepted(status, body))
-                    _settings.LastPing = now;
+                {
+                    if (_settings.Enabled) _settings.LastPing = now;
+                }
                 else
                     _log($"install ping not accepted (HTTP {status}); will try again at the next check.");
             }
             catch (Exception ex)
             {
                 _log($"install ping failed: {ex.Message}");
+            }
+            finally
+            {
+                _busy.Release();
             }
         }
     }
