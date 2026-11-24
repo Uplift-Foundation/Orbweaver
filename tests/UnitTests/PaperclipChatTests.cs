@@ -428,6 +428,41 @@ public class PaperclipChatTests
     }
 
     [Fact]
+    public void A_system_notice_and_an_unknown_author_type_are_quiet_system_lines_never_a_bubble()
+    {
+        // the shape of the measured notice: authorType "system", no agent, no user, no run
+        var parsed = ParseComments("[{\"id\":\"s\",\"body\":\"Paperclip cannot safely continue\",\"authorType\":\"system\",\"createdAt\":\"2026-11-24T04:17:26Z\"},"
+            + "{\"id\":\"x\",\"body\":\"from a new kind\",\"authorType\":\"bot\",\"authorUserId\":\"u\",\"createdAt\":\"2026-11-24T04:17:27Z\"}]");
+        Assert.Equal("system", parsed[0].AuthorType);
+        var rows = Build(null, Agent, Names, parsed, null);
+        Assert.Equal([ChatRole.System, ChatRole.System, ChatRole.System], rows.Select(r => r.Role));
+        Assert.Equal("Paperclip cannot safely continue", rows[1].Text);
+        Assert.Equal("from a new kind", rows[2].Text);
+    }
+
+    [Fact]
+    public void A_comment_replaces_the_answer_only_once_the_run_has_ended_and_only_if_it_is_the_runs_last()
+    {
+        var spoke = Body(Ev(1, "run.result.proposed", new { summary = "Answer." }));
+        var live = Fold(Activity.Empty("r"), spoke);
+        var ended = Fold(live, Body(Ev(2, "run.terminal", new { })));
+        Assert.False(live.Ended);
+        Assert.True(ended.Ended);
+        var last = C("last", "Answer.", agent: Agent, run: "r", sec: 20);
+        // run still live: a comment carrying its id is not yet its answer
+        Assert.Contains(Build(null, Agent, Names, [last], live), r => r.Key == AnswerKey("r"));
+        // ended: the last comment of the run takes the place
+        var done = Build(null, Agent, Names, [last], ended);
+        Assert.DoesNotContain(done, r => r.Key == AnswerKey("r"));
+        Assert.Equal(AnswerKey("r"), done.Single(r => r.Key == "c:last").Replaces);
+        // an earlier (interim) comment of the same run does not; the last one still does
+        var interim = C("interim", "Working on it.", agent: Agent, run: "r", sec: 5);
+        var both = Build(null, Agent, Names, [interim, last], ended);
+        Assert.Null(both.Single(r => r.Key == "c:interim").Replaces);
+        Assert.Equal(AnswerKey("r"), both.Single(r => r.Key == "c:last").Replaces);
+    }
+
+    [Fact]
     public void Every_text_is_cut_at_8000_bytes_on_a_character_boundary()
     {
         var big = new string('a', 7990) + "éééééé";       // 2-byte letters straddle the limit

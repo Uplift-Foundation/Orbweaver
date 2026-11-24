@@ -143,6 +143,7 @@ public class PaperclipChatSessionTests : IDisposable
         var (s, f, _) = Make();
         var act = PaperclipChat.Activity.Empty("r1") with
         {
+            Ended = true,   // a comment stands for the answer only once the run has ended (measured shape, CB-443)
             Rows =
             [
                 new("r:r1:t:a", ChatRole.System, "Bash: git status", T0.AddSeconds(2)),

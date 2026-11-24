@@ -31,7 +31,7 @@ namespace Orbweaver
         // A bubble the session raised from a send whose answer carried no readable id. Merge adopts it.
         internal const string LocalPrefix = "u:";
 
-        internal sealed record Comment(string Id, string Body, string? AuthorAgentId, string? AuthorUserId, string? RunId, DateTime? At);
+        internal sealed record Comment(string Id, string Body, string? AuthorAgentId, string? AuthorUserId, string? RunId, DateTime? At, string? AuthorType = null);
         internal sealed record TaskRef(string Id, string Identifier, string Title, string Status);
         // Replaces names a shown row this one takes the place of (a comment that carries a run's answer
         // replaces that run's answer row, so the bubble never doubles and never jumps).
@@ -51,7 +51,7 @@ namespace Orbweaver
                 if (string.IsNullOrEmpty(id) || body == null) continue;
                 if (Str(e, "deletedAt") != null) continue;
                 list.Add(new Comment(id, body, NonEmpty(Str(e, "authorAgentId")), NonEmpty(Str(e, "authorUserId")),
-                    NonEmpty(Str(e, "createdByRunId")), Time(Str(e, "createdAt"))));
+                    NonEmpty(Str(e, "createdByRunId")), Time(Str(e, "createdAt")), NonEmpty(Str(e, "authorType"))));
             }
             // Stable: equal or missing times keep the order the server gave, reversed to oldest first.
             list.Reverse();
@@ -122,6 +122,9 @@ namespace Orbweaver
             internal IReadOnlySet<string> Hidden { get; init; } = new HashSet<string>();
             internal string? FinalText { get; init; }
             internal string? Summary { get; init; }
+            // run.terminal has been seen: the run is over, so its last comment is its answer. ASSUMED, not seen:
+            // an interim comment posted mid-run (the one measured run posted a single comment, the answer).
+            internal bool Ended { get; init; }
 
             internal static Activity Empty(string runId) => new(runId, 0, Array.Empty<Row>());
         }
@@ -136,7 +139,7 @@ namespace Orbweaver
             var rows = soFar.Rows.ToList();
             var tools = soFar.Tools.ToDictionary(k => k.Key, v => v.Value, StringComparer.Ordinal);
             var hidden = new HashSet<string>(soFar.Hidden, StringComparer.Ordinal);
-            var finalText = soFar.FinalText; var summary = soFar.Summary;
+            var finalText = soFar.FinalText; var summary = soFar.Summary; var ended = soFar.Ended;
             var runId = soFar.RunId; var last = soFar.LastSeq;
             var answerAt = rows.FirstOrDefault(r => r.Key == AnswerKey(runId))?.At;
 
@@ -151,6 +154,8 @@ namespace Orbweaver
                 last = Math.Max(last, e.Seq);
                 var type = Str(e.E, "eventType");
                 var at = Time(Str(e.E, "createdAt")) ?? DateTime.MinValue;
+                // The real run's terminal event carries a payload the reducer cannot rely on; its type is enough.
+                if (type == "run.terminal") { ended = true; continue; }
                 if (!e.E.TryGetProperty("payload", out var pl) || pl.ValueKind != JsonValueKind.Object
                     || !pl.TryGetProperty("prpEvent", out var prp) || prp.ValueKind != JsonValueKind.Object) continue;
                 var p = prp.TryGetProperty("payload", out var ip) && ip.ValueKind == JsonValueKind.Object ? ip : default;
@@ -200,7 +205,7 @@ namespace Orbweaver
                     }
                 }
             }
-            return soFar with { LastSeq = last, Rows = rows, Tools = tools, Hidden = hidden, FinalText = finalText, Summary = summary };
+            return soFar with { LastSeq = last, Rows = rows, Tools = tools, Hidden = hidden, FinalText = finalText, Summary = summary, Ended = ended };
 
             static string seqKey(long seq) => "seq" + seq.ToString(CultureInfo.InvariantCulture);
         }
@@ -226,10 +231,17 @@ namespace Orbweaver
             var body = new List<Row>();
             var answerKey = activity == null ? null : AnswerKey(activity.RunId);
             var answerTaken = false;
+            // Only the run's LAST comment, and only once the run has ended, can stand for its answer.
+            var lastOfRun = activity is { Ended: true }
+                ? comments.Where(x => x.RunId == activity.RunId && x.AuthorAgentId == agentId).OrderBy(x => x.At ?? DateTime.MinValue).LastOrDefault()
+                : null;
             foreach (var c in comments)
             {
                 ChatRole role; string text = c.Body;
-                if (c.AuthorAgentId == agentId) role = ChatRole.Assistant;
+                // Paperclip's own notices (authorType "system", measured) and any author type this build does
+                // not know are a quiet System line, never a bubble from either side.
+                if (c.AuthorType is not (null or "agent" or "user")) role = ChatRole.System;
+                else if (c.AuthorAgentId == agentId) role = ChatRole.Assistant;
                 else if (c.AuthorAgentId == null && c.AuthorUserId != null) role = ChatRole.User;
                 else if (c.AuthorAgentId != null)
                 {
@@ -237,8 +249,8 @@ namespace Orbweaver
                     text = (agentNames.TryGetValue(c.AuthorAgentId, out var n) && !string.IsNullOrWhiteSpace(n) ? n : "Another agent") + ": " + c.Body;
                 }
                 else role = ChatRole.System;
-                var takes = answerKey != null && c.RunId == activity!.RunId && role == ChatRole.Assistant
-                    && activity.Rows.Any(r => r.Key == answerKey);
+                var takes = answerKey != null && ReferenceEquals(c, lastOfRun) && role == ChatRole.Assistant
+                    && activity!.Rows.Any(r => r.Key == answerKey);
                 answerTaken |= takes;
                 body.Add(new Row(CommentKey(c.Id), role, Cap(text), c.At ?? DateTime.MinValue, false, takes ? answerKey : null));
             }
