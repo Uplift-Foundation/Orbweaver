@@ -141,6 +141,19 @@ def audit_merge(has_qa, ci):
     return reasons
 
 
+def ci_settled(ci):
+    """True once every required check on a merge commit has a conclusion.
+    Until then the merge stays pending: CI takes longer than a tick, so a
+    merge seen with its checks queued has not been audited yet (CB-460)."""
+    return all(ci.get(n) is not None for n in REQUIRED_CHECKS)
+
+
+# A bot merge whose required checks have not concluded this long after the
+# warden first saw it is itself a reason to pause: something stopped CI, and
+# the org should not keep merging on top of an unknown develop.
+PENDING_CI_LIMIT = 6 * 60 * 60
+
+
 def next_release_state(state, event):
     """Counter of consecutive releases; a merge breaks the run."""
     n = state.get("consecutive_releases", 0)
@@ -322,17 +335,36 @@ class Warden:
                 self.pause(f"merge audit unreadable {n} ticks in a row")
 
     def audit(self):
+        """Audit bot merges into develop. The QA comment and the release-counter
+        reset happen once, when a merge is first seen. CI is re-read every tick
+        until both required checks have concluded: the first tick after a merge
+        almost always sees them queued, and marking the merge audited then
+        meant a red develop never paused the org (CB-460)."""
         seen = set(self.state.setdefault("audited", []))
+        pending = dict(self.state.get("audit_pending", {}))
         for pr in self.gh.merged_bot_prs():
             sha = pr["merge_commit_sha"]
-            if sha in seen:
+            if sha in seen or sha in pending:
                 continue
-            seen.add(sha)
             self.state["consecutive_releases"] = next_release_state(self.state, "merged")
             self.state["paperclip_releases"] = 0
             qa = has_qa_comment(self.gh.comment_bodies(pr["number"], before=pr["merged_at"]))
-            for r in audit_merge(qa, self.gh.check_conclusions(sha)):
+            for r in audit_merge(qa, {}):
                 self.pause(f"PR {pr['number']}: {r}")
+            pending[sha] = {"pr": pr["number"], "since": self.now}
+        for sha, entry in list(pending.items()):
+            ci = self.gh.check_conclusions(sha)
+            red = audit_merge(True, ci)
+            for r in red:
+                self.pause(f"PR {entry['pr']}: {r}")
+            if red or ci_settled(ci):
+                del pending[sha]
+                seen.add(sha)
+            elif self.now - entry.get("since", self.now) >= PENDING_CI_LIMIT:
+                self.pause(f"PR {entry['pr']}: develop CI never finished on a bot merge")
+                del pending[sha]
+                seen.add(sha)
+        self.state["audit_pending"] = pending
         self.state["audited"] = sorted(seen)[-200:]
 
     def tick(self, requests):
