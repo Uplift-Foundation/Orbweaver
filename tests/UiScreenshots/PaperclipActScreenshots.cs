@@ -45,6 +45,16 @@ public class PaperclipActScreenshots : IDisposable
     }
 
     [AvaloniaFact]
+    public void ARuntimePermissionOffersAllowOnceAndDeny()
+    {
+        var need = new PaperclipNeed("runtime", "rq1", "Bash: Create probe directory", "http://127.0.0.1:3100/CB/agents/atlas",
+            Tool: "Bash", RunId: "run1", TurnId: "t1");
+        var p = Panel(Status("waiting", OrbPresence.NeedsInput, "running", need));
+        Assert.Equal(("Allow once", "Deny"), (p.RowFor("rq1")!.ApproveButton!.Content, p.RowFor("rq1")!.DeclineButton!.Content));
+        ScreenshotHelper.Capture(p, "paperclip-act-flyout-runtime.png");
+    }
+
+    [AvaloniaFact]
     public void ABlockedTaskShowsOnlyTheLink()
     {
         var p = Panel(Status("waiting", OrbPresence.NeedsInput, "idle", Stuck));

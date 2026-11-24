@@ -1,0 +1,14 @@
+[
+ {"seq":1,"eventType":"tool.execution.started","payload":{"prpEvent":{"turnId":"t1","itemId":"i1","payload":{"name":"Bash","readOnly":true}}}},
+ {"seq":2,"eventType":"tool.execution.started","payload":{"prpEvent":{"turnId":"t1","itemId":"i2","payload":{"name":"Bash","readOnly":false}}}},
+ {"seq":3,"eventType":"runtime_request.created","payload":{"prpEvent":{"turnId":"t1","itemId":"i2","payload":{"request":{"requestId":"r-open","requestKind":"permission_approval","type":"permission","prompt":"Create probe directory","status":"pending","choices":[{"key":"accept","label":"Allow once"},{"key":"decline","label":"Deny"},{"key":"cancel","label":"Cancel"}],"details":{"toolCallId":"c1"}}}}}},
+ {"seq":4,"eventType":"runtime_request.created","payload":{"prpEvent":{"turnId":"t1","itemId":"i3","payload":{"request":{"requestId":"r-done","requestKind":"permission_approval","prompt":"Old one","choices":[{"key":"accept"},{"key":"decline"}]}}}}},
+ {"seq":5,"eventType":"runtime_request.resolved","payload":{"prpEvent":{"turnId":"t1","itemId":"i3","payload":{"request":{"requestId":"r-done"}}}}},
+ {"seq":6,"eventType":"runtime_request.created","payload":{"prpEvent":{"turnId":"t2","itemId":"i4","payload":{"request":{"requestId":"r-admin","requestKind":"instance_admin_approval","prompt":"Admin thing","choices":[{"key":"accept"},{"key":"decline"}]}}}}},
+ {"seq":7,"eventType":"runtime_request.created","payload":{"prpEvent":{"turnId":"t2","itemId":"i5","payload":{"request":{"requestId":"r-cancel-only","requestKind":"permission_approval","prompt":"No deny","choices":[{"key":"accept"}]}}}}},
+ {"seq":8,"eventType":"runtime_request.created","payload":{"prpEvent":{"turnId":"t2","itemId":"i6","payload":{"request":{"requestId":"r-late","requestKind":"permission_approval","prompt":"Created after cancel in file order","choices":[{"key":"accept"},{"key":"decline"}]}}}}},
+ {"seq":9,"eventType":"runtime_request.cancelled","payload":{"prpEvent":{"turnId":"t2","itemId":"i6","payload":{"requestId":"r-late"}}}},
+ {"seq":10,"eventType":"agent.message","payload":{}},
+ {"eventType":"runtime_request.expired","payload":{"requestId":"nobody"}},
+ {"seq":11,"eventType":"runtime_request.created","payload":{"prpEvent":{"turnId":"t2","itemId":"i7","payload":{"request":{"prompt":"no id"}}}}}
+]

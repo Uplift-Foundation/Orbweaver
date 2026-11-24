@@ -179,3 +179,24 @@ As reported by QA and the lead, on a real Windows PC against the LAN Paperclip (
 - `HttpClient` retries an idempotent `GET` once on a connection closed before
   any response. A fixture that accepts only one connection turns that retry
   into a five-second timeout, which looks like a hung server and is not.
+
+## Runtime permission prompts (CB-442)
+
+Measured 2026-11-24 on the mini's Paperclip 2026.1117.0, one run of an agent in `approve-paperclip` mode, loopback. Everything under "Measured" was seen on that run; everything under "Assumed" was not.
+
+**Measured**
+
+- A board API key from the app's own connect flow may resolve a request: `POST /api/heartbeat-runs/{runId}/runtime-requests/{requestId}/resolve` answered 200 `{"accepted":true,"commandId":…}` in 68 ms. Paired controls on the same request: no auth, 403 "Board access required"; the same call again, 409 "This runtime request is stale or is no longer pending."; the run's events then carried `runtime_request.resolved`.
+- Nothing marks a waiting run without reading its events: with a request pending, the heartbeat-runs row and the live-runs row both had `livenessState`, `nextAction` and `currentToolName` null.
+- `GET /api/heartbeat-runs/{id}/events?limit=500` took 8 to 34 ms for 46 to 92 events.
+- A created event: top-level `eventType`, `seq`, and `payload.prpEvent = { turnId, itemId, payload: { request: { requestId, requestKind: "permission_approval", type: "permission", prompt, choices: [accept "Allow once", decline "Deny", cancel "Cancel"], details: { toolCallId } } } }`. The tool's name is on the `tool.execution.started` event sharing `prpEvent.itemId` (`payload.name`); the command text is not on it.
+- Resolve body: `{"resolution":{"action":"accept"|"decline"},"requestKind":"permission_approval","turnId":"<turnId>"}`.
+- Not every call prompts: a read-only shell command ran with no request; `mkdir` raised one.
+
+**Assumed (not measured)**
+
+- Where a `resolved` / `cancelled` / `expired` event carries its `requestId`: the parser looks under `prpEvent.payload.request`, `prpEvent.payload`, then `payload`. Only a `resolved` event was seen.
+- Polling cost over a LAN or on a long run; 403 as the answer to a key that was valid a minute ago (mapped to "reconnect", not seen).
+- Whether `cancelled` and `expired` events are shaped like `resolved`.
+
+**What Orbweaver does:** on the 4 s tick it reads the events of each `running` live run, keeps requests whose latest event is `created`, and shows one per agent as a `runtime` need ("Bash: Create probe directory"), answerable with "Allow once" / "Deny" in the flyout and on the phone (same option keys, different labels). Only `permission_approval` with accept and decline choices is answerable; anything else links to Paperclip. A failed events read keeps that run's last answer for one tick.

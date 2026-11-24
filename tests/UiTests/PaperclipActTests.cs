@@ -96,6 +96,33 @@ public class PaperclipActTests : IDisposable
         Assert.Equal("Hire: QA engineer", Texts(rig.Panel.RowFor("ap1")!).First());
     }
 
+    private static readonly PaperclipNeed Runtime = new("runtime", "rq1", "Bash: Create probe directory", "http://p/CB/agents/atlas",
+        Tool: "Bash", RunId: "run1", TurnId: "t1");
+    private static readonly PaperclipNeed RuntimeLinkOnly = new("runtime", "rq2", "Admin thing", "http://p/CB/agents/atlas", Tool: "Permission");
+
+    [AvaloniaFact]
+    public async Task A_runtime_permission_reads_Allow_once_and_Deny_and_answers_through_the_seam()
+    {
+        var rig = new Rig();
+        rig.Panel.Present(Amber(Runtime, RuntimeLinkOnly));
+        var row = rig.Panel.RowFor("rq1")!;
+        Assert.Equal(("Allow once", "Deny"), (row.ApproveButton!.Content, row.DeclineButton!.Content));
+        Assert.Null(rig.Panel.RowFor("rq2")!.ApproveButton);   // another kind: the link only
+        await Click(row, true, rig);
+        Assert.Equal(["approve rq1"], rig.Actions.Calls);
+        Assert.Equal("Allowed once.", rig.Panel.FooterText);
+    }
+
+    [AvaloniaFact]
+    public async Task Denying_a_runtime_permission_says_Denied()
+    {
+        var rig = new Rig();
+        rig.Panel.Present(Amber(Runtime));
+        await Click(rig.Panel.RowFor("rq1")!, false, rig);
+        Assert.Equal(["decline rq1"], rig.Actions.Calls);
+        Assert.Equal("Denied.", rig.Panel.FooterText);
+    }
+
     private static IEnumerable<string> Texts(PaperclipNeedsPanel.NeedRow row) =>
         ((StackPanel)row.Card.Child!).Children.OfType<TextBlock>().Select(t => t.Text ?? "");
 

@@ -70,6 +70,23 @@ public sealed class PaperclipActionsWireTests : IDisposable
     }
 
     [Theory]
+    [InlineData(true, "accept")]
+    [InlineData(false, "decline")]
+    public async Task A_runtime_permission_posts_its_resolution_to_the_run_and_a_stale_one_is_already_decided(bool approve, string action)
+    {
+        _reply = _ => (200, "{\"accepted\":true}");
+        var need = new PaperclipNeed("runtime", "rq-1", "Bash: x", "u", RunId: "run-1", TurnId: "turn-1");
+        Assert.True((await Actions().DecideAsync(need, approve, default)).IsDone);
+        var s = Assert.Single(_seen);
+        Assert.Equal(("POST", "/api/heartbeat-runs/run-1/runtime-requests/rq-1/resolve", "Bearer KEY-1",
+            "{\"resolution\":{\"action\":\"" + action + "\"},\"requestKind\":\"permission_approval\",\"turnId\":\"turn-1\"}"),
+            (s.Method, s.Path, s.Auth, s.Body));
+        // Paired negative: the measured 409 for a request no longer pending is not a success.
+        _reply = _ => (409, "{\"error\":\"This runtime request is stale or is no longer pending.\"}");
+        Assert.Equal(PaperclipActionResult.AlreadyDecided, (await Actions().DecideAsync(need, approve, default)).Result);
+    }
+
+    [Theory]
     [InlineData("wake", "/api/agents/a-1/wakeup", "{\"source\":\"on_demand\"}")]
     [InlineData("pause", "/api/agents/a-1/pause", "{}")]
     [InlineData("resume", "/api/agents/a-1/resume", "{}")]

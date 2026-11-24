@@ -15,7 +15,7 @@ namespace Orbweaver
 
     internal enum PaperclipLink { Off, Connecting, Connected, NeedsReconnect, Unreachable }
 
-    // One thing that needs a person. Kind is "approval", "action" or "blocked".
+    // One thing that needs a person. Kind is "approval", "action", "runtime" or "blocked".
     internal sealed record PaperclipNeed(
         string Kind,
         string Id,
@@ -28,7 +28,10 @@ namespace Orbweaver
         DateTime? ExpiresAt = null,
         // CB-428: what a phone's prompt calls it ("Hire", "Budget override", "Strategy", "Approval",
         // "Tool action"). Null on a need no prompt is minted for.
-        string? Tool = null);
+        string? Tool = null,
+        // CB-442: a runtime permission request is answered on its run, with the turn it was raised in.
+        string? RunId = null,
+        string? TurnId = null);
 
     internal sealed record PaperclipAgent(
         string Id, string Name, string Role, string Title,
@@ -370,7 +373,9 @@ namespace Orbweaver
             PaperclipLink Link = PaperclipLink.Connecting,
             string Status = "Connecting to Paperclip…",
             bool NeedRuns = true,
-            IReadOnlyList<string>? Degraded = null)
+            IReadOnlyList<string>? Degraded = null,
+            // CB-442: per running run, what its events said last time and whether that reading is already a tick old.
+            IReadOnlyDictionary<string, (IReadOnlyList<PaperclipApi.RawRuntimeRequest> Requests, bool Stale)>? RuntimeByRun = null)
         {
             internal static readonly PollState Initial = new();
         }
@@ -503,8 +508,27 @@ namespace Orbweaver
                 }
             }
 
+            // CB-442: a run waiting on a permission prompt has no flag anywhere (measured), so each running run's events
+            // are read on the slow tick. A failed read keeps that run's last answer for one tick; a second miss drops it.
+            var runtime = st.RuntimeByRun;
+            if (slow && firstFailure == null && live != null)
+            {
+                var seen = new Dictionary<string, (IReadOnlyList<PaperclipApi.RawRuntimeRequest>, bool)>();
+                foreach (var run in live.Where(x => x.Status == "running").DistinctBy(x => x.Id))
+                {
+                    var ev = await api.GetAsync($"/api/heartbeat-runs/{Uri.EscapeDataString(run.Id)}/events?limit=500", ct).ConfigureAwait(false);
+                    if (ev.IsOk)
+                        seen[run.Id] = (PaperclipApi.ParseRuntimeRequests(run.Id, ev.Body)
+                            .Select(r => r with { AgentId = run.AgentId }).ToList(), false);
+                    else if (runtime != null && runtime.TryGetValue(run.Id, out var prior) && !prior.Stale)
+                        seen[run.Id] = (prior.Requests, true);
+                }
+                runtime = seen;
+            }
+
             var stamped = st with
             {
+                RuntimeByRun = runtime,
                 LastFast = fast ? now : st.LastFast,
                 LastSlow = slow ? now : st.LastSlow,
                 Agents = agents, LiveRuns = live, Runs = runs, Approvals = approvals,
@@ -519,7 +543,8 @@ namespace Orbweaver
                 : PaperclipApi.Compose(new PaperclipApi.ComposeInput(
                     agents, live ?? Array.Empty<PaperclipApi.RawLiveRun>(), runs ?? Array.Empty<PaperclipApi.RawRun>(),
                     approvals ?? Array.Empty<PaperclipApi.RawApproval>(), actions ?? Array.Empty<PaperclipApi.RawActionRequest>(),
-                    blocked ?? Array.Empty<PaperclipApi.RawIssue>(), tasks, cfg.BaseUrl, st.IssuePrefix, now));
+                    blocked ?? Array.Empty<PaperclipApi.RawIssue>(), tasks, cfg.BaseUrl, st.IssuePrefix, now,
+                    runtime?.Values.SelectMany(v => v.Requests).ToList()));
             var (stamps, _) = PaperclipApi.TrackAwake(st.AwakeStamps ?? new Dictionary<string, DateTime>(), composed, now);
 
             return new StepResult(stamped with

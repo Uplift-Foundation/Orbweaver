@@ -76,6 +76,31 @@ public class PaperclipPromptsTests
     private static PaperclipNeed Approval(string id = "a1f0c9d2-0b3e-4f55-8d6a-9e7c1b2a3d44", string title = "Hire a research agent", string tool = "Hire") =>
         new("approval", id, title, "http://pc/approvals/" + id, Tool: tool);
     private static PaperclipNeed Action(string id = "7c4e2b90-5d1a-4a6f-b3c8-0f9e8d7c6b5a") => new("action", id, "Send email", "http://pc/requests", Tool: "Tool action");
+    private static PaperclipNeed Runtime(string id = "rq-1") =>
+        new("runtime", id, "Bash: Create probe directory", "http://pc/agents/x", Tool: "Bash", RunId: "run1", TurnId: "t1");
+
+    [Fact]
+    public async Task A_runtime_permission_is_a_prompt_labelled_Allow_once_and_Deny_under_the_usual_keys_and_answers_through_the_seam()
+    {
+        await Poll(Agent(needs: Runtime()));
+        var (_, _, prompt, push) = Assert.Single(_sent.Prompts);
+        var j = JsonDocument.Parse(prompt).RootElement;
+        Assert.Equal("Bash", j.GetProperty("tool").GetString());
+        Assert.Equal([("approve", "Allow once"), ("decline", "Deny")],
+            j.GetProperty("options").EnumerateArray().Select(o => (o.GetProperty("key").GetString()!, o.GetProperty("label").GetString()!)).ToArray());
+        Assert.NotNull(push);
+        await Answer(AnswerTo(action: "approve"));
+        Assert.Equal(["approve runtime rq-1"], _act.Calls);
+        Assert.Single(_sent.Resolved);
+    }
+
+    [Fact]
+    public async Task A_runtime_permission_the_build_cannot_answer_mints_no_prompt()
+    {
+        await Poll(Agent(needs: Runtime() with { RunId = null, TurnId = null }));
+        Assert.Empty(_sent.Prompts);
+    }
+
     private static PaperclipNeed Blocked() => new("blocked", "issue-1", "Blocked: CB-1 x", "http://pc/issues/1");
 
     private static PaperclipAgent Agent(string id = AgentId, string name = "Ledger bot", string role = "accountant", params PaperclipNeed[] needs) =>

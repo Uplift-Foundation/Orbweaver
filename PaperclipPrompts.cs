@@ -72,6 +72,17 @@ namespace Orbweaver
             new PromptOption(DeclineKey, "Decline", OptionKinds.Deny, null),
         ];
 
+        // CB-442: a runtime permission prompt is Paperclip's own "Allow once" / "Deny"; the keys stay the same, so
+        // AnswerGate and the phone's answer path need no change, only the words on the buttons differ.
+        internal static readonly IReadOnlyList<PromptOption> RuntimeOptions =
+        [
+            new PromptOption(ApproveKey, "Allow once", OptionKinds.Approve, null),
+            new PromptOption(DeclineKey, "Deny", OptionKinds.Deny, null),
+        ];
+
+        internal static IReadOnlyList<PromptOption> OptionsFor(PaperclipNeed need) =>
+            need.Kind == "runtime" ? RuntimeOptions : Options;
+
         // frames-v16 prompt.stable_id: base64url SHA-256 of "orbweaver-paperclip-v1\n" kind "\n" id.
         internal static string ScreenHash(string kind, string itemId) =>
             RelayCrypto.Base64Url(SHA256.HashData(Encoding.UTF8.GetBytes("orbweaver-paperclip-v1\n" + kind + "\n" + itemId)));
@@ -108,7 +119,7 @@ namespace Orbweaver
                     var sid = PaperclipScan.KeyPrefix + a.Id;
                     // "blocked" has no yes or no; the stand-in need for an agent whose status is
                     // pending_approval carries no id to approve.
-                    var needs = a.Needs.Where(n => n.Kind is "approval" or "action" && n.Id != "pending" && !string.IsNullOrEmpty(n.Id))
+                    var needs = a.Needs.Where(n => (n.Kind is "approval" or "action" || n.Kind == "runtime" && PaperclipActions.Answerable(n)) && n.Id != "pending" && !string.IsNullOrEmpty(n.Id))
                         .OrderBy(n => n.CreatedAt ?? DateTime.MaxValue).ThenBy(n => n.Id, StringComparer.Ordinal).ToList();
                     foreach (var n in needs) wanted.Add(Key(n.Kind, n.Id));
                     if (roster.Contains(sid)) { rows.Add(sid); byAgent.Add((sid, a, needs)); }
@@ -189,11 +200,12 @@ namespace Orbweaver
             var requestId = RelayLink.Ulid(now);
             var expires = ExpiryFor(now, need);
             var hash = ScreenHash(need.Kind, need.Id);
-            var tool = need.Tool ?? (need.Kind == "action" ? "Tool action" : "Approval");
+            var tool = need.Tool ?? (need.Kind == "action" ? "Tool action" : need.Kind == "runtime" ? "Permission" : "Approval");
+            var options = OptionsFor(need);
             var preview = PreviewOf(need, agent);
-            var prompt = PromptFrames.Prompt(requestId, sid, "permission", MirrorProtocol.CliPaperclip, tool, preview, Options, hash, expires);
+            var prompt = PromptFrames.Prompt(requestId, sid, "permission", MirrorProtocol.CliPaperclip, tool, preview, options, hash, expires);
             var label = $"{agent.Name} on {_machine}";
-            var push = withPush ? PromptFrames.FitPush(requestId, sid, label, tool, need.Title, preview, expires, Options, hash) : null;
+            var push = withPush ? PromptFrames.FitPush(requestId, sid, label, tool, need.Title, preview, expires, options, hash) : null;
             var live = new Live
             {
                 Pending = new PendingPrompt(requestId, sid, "permission", hash, expires, false, [ApproveKey, DeclineKey]),

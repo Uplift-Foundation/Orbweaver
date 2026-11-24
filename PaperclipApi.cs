@@ -55,6 +55,16 @@ namespace Orbweaver
             string Id, string? AgentId, string? Summary,
             string? Preview = null, DateTime? CreatedAt = null, DateTime? ExpiresAt = null);
 
+        // CB-442: one pending runtime permission prompt read off a run's events. AgentId is filled by the poll
+        // (the run's agent), not by the parser. RequestKind "permission_approval" with accept and decline
+        // among its choices is the only kind this build answers; Answerable says so.
+        internal sealed record RawRuntimeRequest(
+            string RunId, string RequestId, string? TurnId, string? Prompt, string? ToolName,
+            string? RequestKind, bool CanAccept, bool CanDecline, DateTime? CreatedAt = null, string? AgentId = null)
+        {
+            internal bool Answerable => RequestKind == "permission_approval" && CanAccept && CanDecline && !string.IsNullOrEmpty(TurnId);
+        }
+
         internal sealed record RawIssue(
             string Id, string Identifier, string Title, string Status,
             string? AssigneeAgentId, string? BlockerState = null);
@@ -240,6 +250,58 @@ namespace Orbweaver
             return i < 0 ? name : NonEmpty(name[(i + 1)..]);
         }
 
+        // The requests of one run still waiting: for each requestId the latest event (by seq, else file order)
+        // among created / resolved / cancelled / expired, kept when that is `created`. The `status` inside a
+        // created event is not current state (plan: CB-442). The tool's name is not on the request: it is
+        // on the tool.execution.started event sharing the prpEvent itemId.
+        internal static IReadOnlyList<RawRuntimeRequest> ParseRuntimeRequests(string runId, string? eventsJson)
+        {
+            var rows = EventRows(eventsJson);
+            var tools = new Dictionary<string, string>(StringComparer.Ordinal);
+            var latest = new Dictionary<string, (long Order, RawRuntimeRequest? Open, string? ItemId)>(StringComparer.Ordinal);
+            long n = 0;
+            foreach (var e in rows)
+            {
+                n++;
+                var type = Str(e, "eventType");
+                var order = e.TryGetProperty("seq", out _) ? Num(e, "seq") : n;
+                if (!e.TryGetProperty("payload", out var pl) || !pl.TryGetProperty("prpEvent", out var prp)
+                    || prp.ValueKind != JsonValueKind.Object) continue;
+                var itemId = Str(prp, "itemId");
+                var inner = prp.TryGetProperty("payload", out var ip) && ip.ValueKind == JsonValueKind.Object ? ip : default;
+                if (type == "tool.execution.started")
+                {
+                    if (itemId != null && NonEmpty(Str(inner, "name")) is { } name) tools[itemId] = name;
+                    continue;
+                }
+                if (type is not ("runtime_request.created" or "runtime_request.resolved" or "runtime_request.cancelled" or "runtime_request.expired"))
+                    continue;
+                var req = inner.ValueKind == JsonValueKind.Object && inner.TryGetProperty("request", out var q) && q.ValueKind == JsonValueKind.Object ? q : default;
+                var id = NonEmpty(Str(req, "requestId")) ?? NonEmpty(Str(inner, "requestId")) ?? NonEmpty(Str(pl, "requestId"));
+                if (id == null) continue;
+                if (latest.TryGetValue(id, out var prev) && prev.Order > order) continue;
+                if (type != "runtime_request.created") { latest[id] = (order, null, null); continue; }
+                var keys = new HashSet<string>();
+                if (req.ValueKind == JsonValueKind.Object && req.TryGetProperty("choices", out var ch) && ch.ValueKind == JsonValueKind.Array)
+                    foreach (var c in ch.EnumerateArray()) if (Str(c, "key") is { } k) keys.Add(k);
+                latest[id] = (order, new RawRuntimeRequest(runId, id, NonEmpty(Str(prp, "turnId")),
+                    Limit(NonEmpty(Str(req, "prompt")), PreviewLimit), null, NonEmpty(Str(req, "requestKind")),
+                    keys.Contains("accept"), keys.Contains("decline"), Time(Str(e, "createdAt"))), itemId);
+            }
+            return latest.Values.Where(v => v.Open != null)
+                .Select(v => v.ItemId != null && tools.TryGetValue(v.ItemId, out var t) ? v.Open! with { ToolName = t } : v.Open!).ToList();
+        }
+
+        private static IReadOnlyList<JsonElement> EventRows(string? json)
+        {
+            var rows = Rows(json);
+            if (rows.Count > 0) return rows;
+            var root = Root(json);
+            if (root != null && root.Value.TryGetProperty("events", out var arr) && arr.ValueKind == JsonValueKind.Array)
+                return arr.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.Object).Select(e => e.Clone()).ToList();
+            return Array.Empty<JsonElement>();
+        }
+
         internal static IReadOnlyList<RawIssue> ParseIssues(string? json) =>
             Rows(json).Select(r =>
             {
@@ -329,7 +391,8 @@ namespace Orbweaver
             IReadOnlyList<RawActionRequest> Actions,     // pending only
             IReadOnlyList<RawIssue> BlockedIssues,
             IReadOnlyDictionary<string, string> TaskTitles, // issueId -> title
-            string BaseUrl, string IssuePrefix, DateTime Now);
+            string BaseUrl, string IssuePrefix, DateTime Now,
+            IReadOnlyList<RawRuntimeRequest>? Runtime = null);   // CB-442, pending only, AgentId filled
 
         internal static IReadOnlyList<PaperclipAgent> Compose(ComposeInput c)
         {
@@ -359,6 +422,17 @@ namespace Orbweaver
                 Add(Resolve(a.AgentId),
                     new PaperclipNeed("action", a.Id, a.Summary ?? "Tool action",
                         RequestsUrl(c.BaseUrl, c.IssuePrefix), a.Preview, a.CreatedAt, a.ExpiresAt, Tool: "Tool action"));
+            // CB-442: a runtime permission prompt. Titled "<tool>: <what the tool call is>"; one that this build
+            // cannot answer (another kind, no accept / decline) still shows, without a run or turn, so it links only.
+            foreach (var r in c.Runtime ?? Array.Empty<RawRuntimeRequest>())
+            {
+                var what = r.Prompt ?? "Permission";
+                var title = r.ToolName != null ? r.ToolName + ": " + what : what;
+                Add(Resolve(r.AgentId),
+                    new PaperclipNeed("runtime", r.RequestId, title, AgentUrl(c.BaseUrl, c.IssuePrefix, r.AgentId ?? ""),
+                        null, r.CreatedAt, Tool: r.ToolName ?? "Permission",
+                        RunId: r.Answerable ? r.RunId : null, TurnId: r.Answerable ? r.TurnId : null));
+            }
             foreach (var i in c.BlockedIssues)
             {
                 // An unassigned blocked issue is nobody's orb to light. Paperclip's
