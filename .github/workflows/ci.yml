@@ -149,6 +149,13 @@ jobs:
         if: ${{ !cancelled() && matrix.checks }}
         run: python tools/test-bugfix-host.py
 
+      # CB-455: the same host side against loopback stand-ins for Paperclip and the
+      # GitHub App API and stub gh/dotnet scripts, every pause trigger beside its
+      # control. POSIX only; the cases skip themselves on the Windows leg.
+      - name: End-to-end tests (bug-fix org host side)
+        if: ${{ !cancelled() && matrix.checks }}
+        run: python tools/test-bugfix-host-e2e.py
+
       # CB-256: no unrecorded "Claude Buddy" may reappear. The tests prove the
       # checker; the second step runs it on this tree against the exact-count
       # allow-list in tools/brand-allowlist.txt.

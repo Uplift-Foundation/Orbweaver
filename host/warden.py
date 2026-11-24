@@ -58,6 +58,7 @@ CLASS_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]{0,199}$")
 SUITES = ("unit", "integration", "ui")
 MAX_N = 50
 RELEASES_IN_A_ROW = 2
+AUDIT_FAILURES_BEFORE_PAUSE = 3
 DEFAULT_DIR = os.path.expanduser("~/.config/orbweaver-bugfix")
 
 
@@ -241,7 +242,10 @@ class Warden:
             why = dispatch_problem(pr)
             if why:
                 return self.log(f"refused dispatch for PR {req['pr']}: {why}")
-            self.gh.dispatch_stress(pr["head"]["ref"], req["test_class"], req["n"], req["suite"])
+            try:
+                self.gh.dispatch_stress(pr["head"]["ref"], req["test_class"], req["n"], req["suite"])
+            except (subprocess.CalledProcessError, OSError) as e:
+                return self.log(f"dispatch for PR {req['pr']} failed: {type(e).__name__}")
             self.log(f"dispatched stress.yml for PR {req['pr']} {req['test_class']} x{req['n']}")
         elif v == "released":
             self.state["consecutive_releases"] = next_release_state(self.state, "released")
@@ -298,6 +302,19 @@ class Warden:
                 self.pause(f"run {run_id[:8]} log shows GitHub refusing a push (GH013)")
         self.state["scanned_runs"] = sorted(scanned)[-500:]
 
+    def safe_audit(self):
+        """A GitHub outage must not stop the tick (no pause, no token refresh,
+        no run cancelling), but a brake that stays blind is no brake: three
+        failed audits in a row pause the company."""
+        try:
+            self.audit()
+            self.state["audit_failures"] = 0
+        except (subprocess.CalledProcessError, OSError, ValueError, KeyError) as e:
+            n = self.state["audit_failures"] = self.state.get("audit_failures", 0) + 1
+            self.log(f"merge audit unreadable ({type(e).__name__}); {n} in a row")
+            if n >= AUDIT_FAILURES_BEFORE_PAUSE:
+                self.pause(f"merge audit unreadable {n} ticks in a row")
+
     def audit(self):
         seen = set(self.state.setdefault("audited", []))
         for pr in self.gh.merged_bot_prs():
@@ -316,7 +333,7 @@ class Warden:
         for req in requests:
             self.handle(req)
         self.watch_releases()
-        self.audit()
+        self.safe_audit()
         self.watch_push_refusals()
         why = cost_problem(self.pc.tokens_today(), self.cfg.get("token_ceiling"))
         if why:
@@ -348,11 +365,8 @@ def _run(cmd, **kw):
 class GhCli:
     """GitHub via the host's own `gh` login."""
 
-    def api(self, path, method="GET", fields=None):
-        cmd = ["gh", "api", "-X", method, path]
-        for k, v in (fields or {}).items():
-            cmd += ["-f", f"{k}={v}"]
-        out = _run(cmd)
+    def api(self, path, method="GET"):
+        out = _run(["gh", "api", "-X", method, path])
         return json.loads(out) if out.strip() else None
 
     def get_pr(self, n):
@@ -389,8 +403,8 @@ def b64url(b):
 
 
 class AppMinter:
-    def __init__(self, app_dir, now=time.time):
-        self.dir, self.now = app_dir, now
+    def __init__(self, app_dir, now=time.time, api="https://api.github.com"):
+        self.dir, self.now, self.api = app_dir, now, api
 
     def jwt(self, app_id):
         t = int(self.now())
@@ -402,7 +416,7 @@ class AppMinter:
 
     def _call(self, jwt, path, method="GET", body=None):
         req = urllib.request.Request(
-            "https://api.github.com" + path, method=method,
+            self.api + path, method=method,
             data=json.dumps(body).encode() if body is not None else None,
             headers={"Authorization": f"Bearer {jwt}", "Accept": "application/vnd.github+json"})
         with urllib.request.urlopen(req, timeout=30) as r:
@@ -537,9 +551,13 @@ def run_once(config_path):
         logf.write(f"{dt.datetime.now(dt.timezone.utc).isoformat()} {msg}\n")
         logf.flush()
 
-    w = Warden(cfg, GhCli(), AppMinter(d), PaperclipHttp(cfg["paperclip_login"], cfg["company_id"]),
+    w = Warden(cfg, GhCli(), AppMinter(d, api=cfg.get("github_api", "https://api.github.com")),
+               PaperclipHttp(cfg["paperclip_login"], cfg["company_id"]),
                state, time.time(), log)
-    paused = w.tick(read_spool(cfg["spool"], log))
+    try:
+        paused = w.tick(read_spool(cfg["spool"], log))
+    finally:
+        logf.close()
     tmp = state_path + ".tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:

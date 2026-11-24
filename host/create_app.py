@@ -98,9 +98,14 @@ def convert(github_api, code, opener=urllib.request.urlopen):
 
 
 def write_private(path, data):
-    """Create `path` at 0600 from the first byte (no chmod-after window)."""
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-    fd = os.open(path, flags, 0o600)
+    """Create `path` at 0600 from the first byte. An existing file is removed
+    first: O_TRUNC would keep its old mode (say 0644) until the chmod, leaving
+    the new key readable for that moment."""
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w") as f:
         f.write(data)
     os.chmod(path, 0o600)
