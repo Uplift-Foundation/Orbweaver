@@ -13,11 +13,29 @@ namespace Orbweaver.Tests;
 /// Windows PC). This test puts the test host in the app's state (no console,
 /// no standard handles), reads a windowless child's console with the real
 /// WindowsConsoleRead.Read, and requires the handles to be null again
-/// afterwards. Before the fix they held the dead console's handles. Windows
-/// only; the test host's own handles and console are put back however it ends.
+/// afterwards. Before the fix they held the dead console's handles. The test
+/// host's own handles and console are put back however it ends.
+///
+/// Windows only, and skipped in CI. On the GitHub windows-latest runner the
+/// test host cannot get into the console-less state: AttachConsole on the
+/// child still fails with error 5 after FreeConsole (CI at 3da391e). So the
+/// evidence for this test is the Windows PC run, where it passes on the fix
+/// and fails on 339eaefca with Expected [0, 0, 0], Actual [1196, 1412, 1436].
+/// Run it on a Windows desktop with `dotnet test tests/IntegrationTests
+/// --filter FullyQualifiedName~WindowsConsoleStdHandlesTests`.
 /// </summary>
 public class WindowsConsoleStdHandlesTests
 {
+    private sealed class DesktopWindowsFact : FactAttribute
+    {
+        public DesktopWindowsFact()
+        {
+            if (!OperatingSystem.IsWindows()) Skip = "a Windows console behaviour";
+            else if (string.Equals(Environment.GetEnvironmentVariable("CI"), "true", StringComparison.OrdinalIgnoreCase))
+                Skip = "the CI runner's test host cannot detach from its console (AttachConsole error 5 at 3da391e); proven on the Windows PC instead";
+        }
+    }
+
     [DllImport("kernel32.dll")] private static extern IntPtr GetStdHandle(int which);
     [DllImport("kernel32.dll")] private static extern bool SetStdHandle(int which, IntPtr handle);
     [DllImport("kernel32.dll")] private static extern bool FreeConsole();
@@ -26,7 +44,7 @@ public class WindowsConsoleStdHandlesTests
 
     private static readonly int[] Ids = { -10, -11, -12 };
 
-    [Fact]
+    [DesktopWindowsFact]
     public void A_console_read_leaves_a_console_less_process_with_no_standard_handles()
     {
         if (!OperatingSystem.IsWindows()) return;
