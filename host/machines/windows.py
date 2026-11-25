@@ -23,8 +23,10 @@ outlive the ssh session, which the timeout cannot prevent.
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
+import time
 
 from host.machines.base import MachineError, RunResult, default_sh
 
@@ -32,7 +34,17 @@ REMOTE_DIR = "orbweaver-machines"
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "windows.ps1")
 ARTIFACT = "unsigned-win-x64"
 STAMP_RE = re.compile(r"^\d+\.\d+\.\d+[^+\s]*\+([0-9a-fA-F]{7,40})\s*$", re.M)
-INSTALL_TIMEOUT = 15 * 60
+# CB-475: how long one remote install or restore may hold the ssh call. The
+# work itself takes about a minute; ssh to this PC can then stay open for many
+# more after the script has finished (seen one install in two on 2026-11-25),
+# and while it does the runner holds /tmp/ow-install.lock. So the call is cut
+# off here and the script's own record of the outcome is read instead.
+INSTALL_TIMEOUT = 4 * 60
+RESTORE_TIMEOUT = 3 * 60
+# After a cut-off, how long to keep looking for the outcome record of an
+# action that may genuinely still be running, before calling it failed.
+DONE_GRACE = 60
+DONE_POLL = 10
 
 
 def parse_stamp(text):
@@ -69,6 +81,8 @@ class WindowsMachine:
         self.local_dir = os.path.join(cfg.get("state_dir", "/tmp"), "windows")
         self.sh = sh or default_sh
         self._script_pushed = False
+        self.new_nonce = lambda: secrets.token_hex(8)
+        self.sleep = time.sleep
 
     # -- plumbing
 
@@ -98,9 +112,47 @@ class WindowsMachine:
 
     def _ps(self, action, *args, log=None, timeout=120):
         self._push_script(log)
-        return self._call(self._ssh_argv("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                                         "-File", f"{REMOTE_DIR}/ow-machine.ps1", "-Action", action, *args),
-                          log, timeout=timeout, what=f"windows.ps1 {action}")
+        nonce = self.new_nonce()
+        what = f"windows.ps1 {action}"
+        argv = self._ssh_argv("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                              "-File", f"{REMOTE_DIR}/ow-machine.ps1", "-Action", action, *args, "-Nonce", nonce)
+        try:
+            r = self.sh(argv, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            # The local ssh has been killed by now. Whether the action finished
+            # is what the script wrote, not what the channel did (CB-475).
+            if log:
+                log(f"{what}: ssh still open after {timeout} s; reading the script's own outcome")
+            return self._outcome(action, nonce, what, log)
+        if log:
+            log(f"{what}: exit {r.returncode}")
+        if r.returncode != 0:
+            raise MachineError(f"{what} exited {r.returncode}: {_tail(r.stderr or r.stdout)}")
+        return r.stdout
+
+    def _outcome(self, action, nonce, what, log):
+        """The result done-<action>.txt records for this call's nonce. Polled
+        for DONE_GRACE seconds, since an action cut off while genuinely slow
+        may still finish; a stale record from an earlier call never counts."""
+        waited = 0
+        while True:
+            try:
+                r = self.sh(self._ssh_argv("cat", f"{REMOTE_DIR}/done-{action}.txt"), timeout=30)
+                text = r.stdout if r.returncode == 0 else ""
+            except subprocess.TimeoutExpired:
+                text = ""
+            head, _, rest = (text or "").partition("\n")
+            if head.strip() == f"{nonce} ok":
+                if log:
+                    log(f"{what}: finished (recorded by the script)")
+                return rest
+            if head.strip() == f"{nonce} failed":
+                raise MachineError(f"{what} failed: {_tail(rest)}")
+            if waited >= DONE_GRACE:
+                raise MachineError(f"{what} did not finish: ssh was cut off after its timeout "
+                                   f"and the script recorded no outcome within {DONE_GRACE} s more")
+            self.sleep(DONE_POLL)
+            waited += DONE_POLL
 
     def _gh_json(self, path, log):
         return json.loads(self._call(["gh", "api", path], log, what=f"gh api {path}") or "null")
@@ -138,7 +190,7 @@ class WindowsMachine:
         log(self._ps("install", "-Setup", f"{REMOTE_DIR}/setup.exe", log=log, timeout=INSTALL_TIMEOUT).strip())
 
     def restore(self, log):
-        log(self._ps("restore", log=log, timeout=INSTALL_TIMEOUT).strip())
+        log(self._ps("restore", log=log, timeout=RESTORE_TIMEOUT).strip())
 
     def run(self, command, timeout_s):
         try:
