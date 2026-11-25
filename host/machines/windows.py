@@ -35,17 +35,19 @@ SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "windows.ps1")
 ARTIFACT = "unsigned-win-x64"
 STAMP_RE = re.compile(r"^\d+\.\d+\.\d+[^+\s]*\+([0-9a-fA-F]{7,40})\s*$", re.M)
 # CB-475: how long one remote action may hold the ssh call. QA measured a real
-# install at 10-25 s and a restore at about 5 s; ssh to this PC can then stay open for many
-# more after the script has finished (seen one install in two on 2026-11-25),
-# and while it does the runner holds /tmp/ow-install.lock. So the call is cut
-# off here and the script's own record of the outcome is read instead.
-INSTALL_TIMEOUT = 2 * 60
-RESTORE_TIMEOUT = 90
+# install at 10-25 s and a restore at about 5 s; ssh to this PC can then stay
+# open for many minutes after the script has finished (one install in two on
+# 2026-11-25) while the runner holds /tmp/ow-install.lock. _ps therefore reads
+# the script's own outcome record every DONE_POLL s while ssh is open and
+# returns as soon as it appears; these caps only bound an action that never
+# records one, so a stuck install costs at most INSTALL_TIMEOUT + DONE_GRACE.
+INSTALL_TIMEOUT = 90
+RESTORE_TIMEOUT = 60
 STEP_TIMEOUT = 60
 # After a cut-off, how long to keep looking for the outcome record of an
 # action that may genuinely still be running, before calling it failed.
-DONE_GRACE = 60
-DONE_POLL = 10
+DONE_GRACE = 30
+DONE_POLL = 5
 
 
 def parse_stamp(text):
@@ -75,7 +77,7 @@ def _tail(text, n=800):
 class WindowsMachine:
     name = "windows"
 
-    def __init__(self, cfg, sh=None):
+    def __init__(self, cfg, sh=None, spawn=None):
         mc = (cfg.get("machines") or {}).get("windows") or {}
         self.host = mc.get("ssh", "windows")
         self.repo = cfg.get("repo", "Uplift-Foundation/Orbweaver")
@@ -84,6 +86,10 @@ class WindowsMachine:
         self._script_pushed = False
         self.new_nonce = lambda: secrets.token_hex(8)
         self.sleep = time.sleep
+        self.clock = time.monotonic
+        self.spawn = spawn or (lambda argv: subprocess.Popen(
+            argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, errors="replace"))
 
     # -- plumbing
 
@@ -112,46 +118,88 @@ class WindowsMachine:
         self._script_pushed = True
 
     def _ps(self, action, *args, log=None, timeout=STEP_TIMEOUT):
+        """Run one windows.ps1 action and return its output.
+
+        CB-475: ssh to this PC can stay open long after the script is done,
+        holding the install lock. So the call is not simply waited on: every
+        DONE_POLL seconds while ssh is still open, done-<action>.txt is read
+        over a second, short ssh, and the moment it holds this call's nonce the
+        outcome is taken from it and the hung ssh is killed. `timeout` caps an
+        action that never records anything; after it, the record is looked
+        for DONE_GRACE seconds more before the action is called unfinished.
+        """
         self._push_script(log)
         nonce = self.new_nonce()
         what = f"windows.ps1 {action}"
         argv = self._ssh_argv("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
                               "-File", f"{REMOTE_DIR}/ow-machine.ps1", "-Action", action, *args, "-Nonce", nonce)
-        try:
-            r = self.sh(argv, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            # The local ssh has been killed by now. Whether the action finished
-            # is what the script wrote, not what the channel did (CB-475).
-            if log:
-                log(f"{what}: ssh still open after {timeout} s; reading the script's own outcome")
-            return self._outcome(action, nonce, what, log)
-        if log:
-            log(f"{what}: exit {r.returncode}")
-        if r.returncode != 0:
-            raise MachineError(f"{what} exited {r.returncode}: {_tail(r.stderr or r.stdout)}")
-        return r.stdout
-
-    def _outcome(self, action, nonce, what, log):
-        """The result done-<action>.txt records for this call's nonce. Polled
-        for DONE_GRACE seconds, since an action cut off while genuinely slow
-        may still finish; a stale record from an earlier call never counts."""
-        waited = 0
+        proc = self.spawn(argv)
+        started = self.clock()
         while True:
             try:
-                r = self.sh(self._ssh_argv("cat", f"{REMOTE_DIR}/done-{action}.txt"), timeout=30)
-                text = r.stdout if r.returncode == 0 else ""
+                out, err = proc.communicate(timeout=DONE_POLL)
+                break
             except subprocess.TimeoutExpired:
-                text = ""
-            head, _, rest = (text or "").partition("\n")
-            if head.strip() == f"{nonce} ok":
+                pass
+            recorded = self._record(action, nonce)
+            if recorded is not None:
+                self._kill(proc)
                 if log:
-                    log(f"{what}: finished (recorded by the script)")
-                return rest
-            if head.strip() == f"{nonce} failed":
-                raise MachineError(f"{what} failed: {_tail(rest)}")
+                    log(f"{what}: finished after {self.clock() - started:.0f} s (recorded by the script); "
+                        "its ssh was still open and has been closed")
+                return self._recorded(what, recorded)
+            if self.clock() - started >= timeout:
+                self._kill(proc)
+                if log:
+                    log(f"{what}: timed out after {timeout} s with no outcome recorded; "
+                        f"looking for one {DONE_GRACE} s more")
+                return self._outcome(action, nonce, what, log, timeout)
+        if log:
+            log(f"{what}: exit {proc.returncode} after {self.clock() - started:.0f} s")
+        if proc.returncode != 0:
+            raise MachineError(f"{what} exited {proc.returncode}: {_tail(err or out)}")
+        return out
+
+    @staticmethod
+    def _kill(proc):
+        proc.kill()
+        try:
+            proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+
+    def _record(self, action, nonce):
+        """(state, text) from done-<action>.txt when it is this call's, else None."""
+        try:
+            r = self.sh(self._ssh_argv("cat", f"{REMOTE_DIR}/done-{action}.txt"), timeout=15)
+            text = r.stdout if r.returncode == 0 else ""
+        except subprocess.TimeoutExpired:
+            text = ""
+        head, _, rest = (text or "").partition("\n")
+        word = head.strip().split(" ")
+        if len(word) == 2 and word[0] == nonce and word[1] in ("ok", "failed"):
+            return word[1], rest
+        return None
+
+    @staticmethod
+    def _recorded(what, recorded):
+        state, text = recorded
+        if state == "failed":
+            raise MachineError(f"{what} failed: {_tail(text)}")
+        return text
+
+    def _outcome(self, action, nonce, what, log, timeout):
+        """After the cut-off: the record, if it appears within DONE_GRACE."""
+        waited = 0
+        while True:
+            recorded = self._record(action, nonce)
+            if recorded is not None:
+                if log:
+                    log(f"{what}: finished (recorded by the script) after the cut-off")
+                return self._recorded(what, recorded)
             if waited >= DONE_GRACE:
-                raise MachineError(f"{what} did not finish: ssh was cut off after its timeout "
-                                   f"and the script recorded no outcome within {DONE_GRACE} s more")
+                raise MachineError(f"{what} timed out after {timeout} s and recorded no outcome "
+                                   f"within {DONE_GRACE} s more")
             self.sleep(DONE_POLL)
             waited += DONE_POLL
 

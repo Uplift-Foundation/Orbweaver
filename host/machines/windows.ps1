@@ -65,7 +65,9 @@ function Write-Done($state, $text) {
 }
 # A run of this script cut off by the runner may still be going (CB-475): an
 # install or restore must not race one. Any other powershell running this
-# script, and any installer it started, is stopped first.
+# script, and any installer it started, is stopped first. That includes a run
+# a person started by hand, which is accepted: one install at a time is the
+# install lock's rule anyway.
 function Stop-EarlierRuns {
   $me = $PID
   Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
