@@ -565,6 +565,9 @@ namespace Orbweaver
             return null;
         }
 
+        // Seam so a test can say a pid has exited without a real process.
+        internal static Func<int, bool> PidIsRunning { get; set; } = ProcessLiveness.IsRunning;
+
         // The one link back from a SessionStatus to a SessionRegistry.Entry.
         //
         // **SessionStatus carries the pid the hook wrote, never Claude
@@ -582,9 +585,6 @@ namespace Orbweaver
         //
         // Excluded from coverage along with the rest of LiveSeams: it scans
         // a real registry directory and checks a real process table.
-        // Seam so a test can say a pid has exited without a real process.
-        internal static Func<int, bool> PidIsRunning { get; set; } = ProcessLiveness.IsRunning;
-
         [ExcludeFromCodeCoverage]
         internal static SessionRegistry.Entry? RegistryEntryFor(SessionStatus status)
         {
