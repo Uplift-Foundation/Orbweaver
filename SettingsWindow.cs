@@ -2596,6 +2596,9 @@ namespace Orbweaver
                 Row("Include prerelease versions",
                     Switch(OrbweaverSettings.IncludePrereleaseUpdates, OnPrereleaseToggled),
                     "Offers beta builds as well as full releases."),
+                Row("Share an anonymous install count",
+                    Switch(OrbweaverSettings.InstallPingEnabled, OnInstallPingToggled),
+                    InstallPingRowText),
                 Row("Check now", checkNow),
                 NoteRow(_updateStatus)
             };
@@ -2644,6 +2647,16 @@ namespace Orbweaver
         }
 
         internal void OnPrereleaseToggled(bool on) => OrbweaverSettings.IncludePrereleaseUpdates = on;
+
+        // CB-466. Off also forgets the install ID (the setting does that); nothing
+        // needs telling, because the sender reads the setting at send time.
+        internal void OnInstallPingToggled(bool on) => OrbweaverSettings.InstallPingEnabled = on;
+
+        internal static string InstallPingRowText =>
+            $"About once a day, with the update check, {Brand.DisplayName} sends a random install ID, "
+            + "its version and your system type (for example macOS arm64), so we can count how many "
+            + "installs are in use. Nothing about you, your files or your sessions is sent. With this "
+            + "off, nothing is sent.";
 
         internal void OnForgetSkippedUpdate()
         {

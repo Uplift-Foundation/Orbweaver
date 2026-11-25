@@ -19,8 +19,14 @@ is only proven by handing it one:
                   checksum of the ORIGINAL, so the download must be rejected
     --drop-sums-entry   leave the asset out of SHA256SUMS.txt
     --no-sums     404 on SHA256SUMS.txt
+    --bot         answer POST /api/send the way Umami answers a bot ({"beep":"boop"}
+                  with a 200), so "the app does not stamp the day" can be seen
     --prerelease  mark the release as a prerelease (and put it only in the list
                   endpoint, as GitHub's /latest never returns one)
+
+CB-466: it also stands in for Umami. POST /api/send prints the body it received
+and a Umami-shaped answer, and --ping-log FILE appends each body to FILE. Point
+the app at it with ORBWEAVER_INSTALL_PING_URL=http://127.0.0.1:8765.
 
 Standard library only, binds 127.0.0.1 only.
 """
@@ -42,6 +48,8 @@ def main() -> int:
     ap.add_argument("--tamper", action="store_true")
     ap.add_argument("--drop-sums-entry", action="store_true")
     ap.add_argument("--no-sums", action="store_true")
+    ap.add_argument("--bot", action="store_true")
+    ap.add_argument("--ping-log", help="append each POST /api/send body to this file")
     args = ap.parse_args()
 
     files = {os.path.basename(p): p for p in args.asset}
@@ -84,6 +92,19 @@ def main() -> int:
                 if name in served:
                     return self._send(200, served[name], "application/octet-stream")
             self._send(404, b'{"message":"Not Found"}', "application/json")
+
+        def do_POST(self) -> None:  # noqa: N802
+            length = int(self.headers.get("Content-Length") or 0)
+            body = self.rfile.read(length).decode("utf-8", "replace")
+            sys.stderr.write(f"POST {self.path} UA={self.headers.get('User-Agent')} {body}\n")
+            if not self.path.split("?")[0].rstrip("/").endswith("/api/send"):
+                return self._send(404, b'{"message":"Not Found"}', "application/json")
+            if args.ping_log:
+                with open(args.ping_log, "a", encoding="utf-8") as f:
+                    f.write(body + "\n")
+            if args.bot:
+                return self._send(200, b'{"beep":"boop"}', "application/json")
+            self._send(200, b'{"cache":"x","sessionId":"s","visitId":"v"}', "application/json")
 
         def log_message(self, *_):  # request lines are printed above
             pass

@@ -123,6 +123,8 @@ namespace Orbweaver
             // and Save() would then throw adding it twice.
             "autoCheckForUpdates", "includePrereleaseUpdates", "skippedUpdateVersion",
             "lastUpdateCheckUtc", "lastRunVersion",
+            // CB-466, the anonymous install count. All four, for the same reason.
+            "installPingEnabled", "installId", "lastInstallPingUtc", "internalInstall",
             "newChatRecentFolders", "newChatLastCli", "newChatLastProfile",
             "newChatLastProfiles",
             "newChatResumeModes",
@@ -587,6 +589,21 @@ namespace Orbweaver
             // ISO-8601 round-trip text rather than a typed value so a hand-edited
             // or garbled entry degrades to "never checked" instead of failing Load.
             public string? LastUpdateCheckUtc { get; set; }
+
+            // CB-466. On by default, disclosed in the README and Settings. Turning it
+            // off deletes InstallId and LastInstallPingUtc (see InstallPingEnabled).
+            public bool InstallPingEnabled { get; set; } = true;
+
+            // Random, minted at the first ping, never at load. Null until then.
+            public string? InstallId { get; set; }
+
+            // ISO-8601 text, same reasoning as LastUpdateCheckUtc.
+            public string? LastInstallPingUtc { get; set; }
+
+            // Hidden, no UI: marks this machine as ours so its pings are counted as
+            // install-ping-internal. A GUI app launched by launchd or the Dock never
+            // sees a shell's environment, so the env var alone cannot do this.
+            public bool InternalInstall { get; set; }
 
             // The version that was running at the last launch; the post-update
             // notice compares it to the current one to know an update just landed.
@@ -1803,6 +1820,52 @@ namespace Orbweaver
             }
         }
 
+        // CB-466. Switching the count off forgets who we were: opting back in starts
+        // with a fresh ID, so nothing links the two periods.
+        public static bool InstallPingEnabled
+        {
+            get { Load(); lock (Gate) return _model.InstallPingEnabled; }
+            set
+            {
+                Load();
+                lock (Gate)
+                {
+                    _model.InstallPingEnabled = value;
+                    if (!value) { _model.InstallId = null; _model.LastInstallPingUtc = null; }
+                }
+                Save();
+            }
+        }
+
+        public static string? InstallId
+        {
+            get { Load(); lock (Gate) return _model.InstallId; }
+            set { Load(); lock (Gate) _model.InstallId = string.IsNullOrWhiteSpace(value) ? null : value; Save(); }
+        }
+
+        public static DateTimeOffset? LastInstallPingUtc
+        {
+            get
+            {
+                Load();
+                lock (Gate)
+                    return DateTimeOffset.TryParse(_model.LastInstallPingUtc, null,
+                        System.Globalization.DateTimeStyles.RoundtripKind, out var at) ? at : null;
+            }
+            set
+            {
+                Load();
+                lock (Gate) _model.LastInstallPingUtc = value?.UtcDateTime.ToString("O");
+                Save();
+            }
+        }
+
+        public static bool InternalInstall
+        {
+            get { Load(); lock (Gate) return _model.InternalInstall; }
+            set { Load(); lock (Gate) _model.InternalInstall = value; Save(); }
+        }
+
         public static string? LastRunVersion
         {
             get { Load(); lock (Gate) return _model.LastRunVersion; }
@@ -2819,6 +2882,10 @@ namespace Orbweaver
                         IncludePrereleaseUpdates = Bool(root["includePrereleaseUpdates"], false),
                         SkippedUpdateVersion = Text(root["skippedUpdateVersion"]),
                         LastUpdateCheckUtc = Text(root["lastUpdateCheckUtc"]),
+                        InstallPingEnabled = Bool(root["installPingEnabled"], true),
+                        InstallId = Text(root["installId"]),
+                        LastInstallPingUtc = Text(root["lastInstallPingUtc"]),
+                        InternalInstall = Bool(root["internalInstall"], false),
                         LastRunVersion = Text(root["lastRunVersion"]),
                         ToggleOrbsHotkey = Text(root["toggleOrbsHotkey"]),
                         NewChatHotkey = Text(root["newChatHotkey"]),
@@ -3273,6 +3340,14 @@ namespace Orbweaver
                         _unknownKeys[key] = node?.DeepClone();
                     }
 
+                    // CB-466: opted out means no ID kept, however the key got to false
+                    // (a hand edit as much as the toggle, which clears them itself).
+                    if (!model.InstallPingEnabled)
+                    {
+                        model.InstallId = null;
+                        model.LastInstallPingUtc = null;
+                    }
+
                     _model = model;
                 }
                 catch (Exception ex)
@@ -3596,6 +3671,10 @@ namespace Orbweaver
                         ["includePrereleaseUpdates"] = _model.IncludePrereleaseUpdates,
                         ["skippedUpdateVersion"] = _model.SkippedUpdateVersion,
                         ["lastUpdateCheckUtc"] = _model.LastUpdateCheckUtc,
+                        ["installPingEnabled"] = _model.InstallPingEnabled,
+                        ["installId"] = _model.InstallId,
+                        ["lastInstallPingUtc"] = _model.LastInstallPingUtc,
+                        ["internalInstall"] = _model.InternalInstall,
                         ["lastRunVersion"] = _model.LastRunVersion,
                         ["toggleOrbsHotkey"] = _model.ToggleOrbsHotkey,
                         ["newChatHotkey"] = _model.NewChatHotkey,

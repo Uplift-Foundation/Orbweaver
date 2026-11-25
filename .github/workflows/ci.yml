@@ -59,6 +59,13 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# CB-466: nothing a workflow launches may count as a real install. The suites
+# never reach the ping (see InstallPingSingleSiteTests); this covers any step that
+# starts a built app, and marks it ours if it somehow does.
+env:
+  ORBWEAVER_INSTALL_PING: "0"
+  ORBWEAVER_INTERNAL: "1"
+
 jobs:
   # One job definition; which suites each instance runs is in the matrix below.
   suite:

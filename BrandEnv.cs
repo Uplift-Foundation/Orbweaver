@@ -109,6 +109,14 @@ namespace Orbweaver
         // never sit in an environment. CI must never set it.
         internal const string PaperclipLive = "PAPERCLIP_LIVE";
 
+        // CB-466, the anonymous install count. INSTALL_PING=0/off/false disables it
+        // whatever the setting says; INTERNAL=1 marks the install as ours; and
+        // INSTALL_PING_URL replaces the analytics base URL (a fixture in a test),
+        // the same shape as UPDATE_FEED_URL. None had an older spelling.
+        internal const string InstallPing = "INSTALL_PING";
+        internal const string InternalInstall = "INTERNAL";
+        internal const string InstallPingUrl = "INSTALL_PING_URL";
+
         internal static readonly IReadOnlyList<string> All =
         [
             SettingsDir, LogDir, StatusRoot, BundleRoot, ProfileRoot,
@@ -119,6 +127,7 @@ namespace Orbweaver
             ProbeScopes, ProbeCaps, ProbeAllowResolve,
             UpdateFeedUrl, UpdateCurrentVersion, NetworkTests, KeychainTests, RelayUrl, RelayTestHooks, ActivityLog,
             HookLookupTimeoutDs, PaperclipLive,
+            InstallPing, InternalInstall, InstallPingUrl,
         ];
 
         // Pure: the environment is a parameter, so the precedence is a test
