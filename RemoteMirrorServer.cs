@@ -565,6 +565,9 @@ namespace Orbweaver
             return null;
         }
 
+        // Seam so a test can say a pid has exited without a real process.
+        internal static Func<int, bool> PidIsRunning { get; set; } = ProcessLiveness.IsRunning;
+
         // The one link back from a SessionStatus to a SessionRegistry.Entry.
         //
         // **SessionStatus carries the pid the hook wrote, never Claude
@@ -587,9 +590,9 @@ namespace Orbweaver
         {
             if (status.SessionPid <= 0) return null;
 
-            foreach (var entry in SessionRegistry.Scan(ClaudeConfigRoots.AllWithDiscovered()))
+            foreach (var entry in SessionRegistry.ScanCached(ClaudeConfigRoots.AllWithDiscovered()))
             {
-                if (entry.Pid == status.SessionPid && ProcessLiveness.IsRunning(entry.Pid)) return entry;
+                if (entry.Pid == status.SessionPid && PidIsRunning(entry.Pid)) return entry;
             }
 
             return null;
