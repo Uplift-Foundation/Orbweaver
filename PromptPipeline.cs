@@ -283,6 +283,10 @@ namespace Orbweaver
             var preview = form is not null ? QuestionPreview(form) : login is not null ? LoginPreview(login)
                 : fp.Overlay ? OverlayPreview(fp.Preview) : string.Join("\n", fp.Preview);
             var tool = login is not null ? LoginTool : form is null && !fp.Overlay ? ToolOf(fp.Preview) : "";
+            // CB-429: a plan-approval dialog names no tool and shows the phone only its
+            // question; the plan is what is being approved, so it leads the preview.
+            if (kind == "permission" && tool.Length == 0 && PlanOf(status.TranscriptPath) is { } plan)
+                preview = plan + "\n\n" + preview;
             // frames-v7-questions: what else the question takes, from the screen,
             // so the phone never has to guess. Neither on a question that went
             // out with nothing to answer.
@@ -378,6 +382,11 @@ namespace Orbweaver
         // "Bash command" → Bash (Claude Code); Codex's "Would you like to run
         // the following command?" → Bash; anything else names no tool.
         private static readonly Regex ToolLine = new(@"^(?<t>[A-Z][A-Za-z]*) (?:command|file)$", RegexOptions.CultureInvariant);
+
+        private static string? PlanOf(string? transcriptPath) =>
+            !string.IsNullOrEmpty(transcriptPath) && File.Exists(transcriptPath)
+                ? AskFormTranscript.PendingPlan(TranscriptReader.TailLines(transcriptPath))
+                : null;
 
         internal static string ToolOf(IReadOnlyList<string> preview)
         {
