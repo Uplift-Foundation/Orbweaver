@@ -122,7 +122,8 @@ public class RelayAccountsTests
     public void A_windows_claude_account_rides_the_cmd_line_and_a_codex_one_rides_the_process()
     {
         var claude = NewChatCommand.ConsoleStartInfoForAccount(NewChatCli.ClaudeCode, @"C:\bin\claude.exe", @"C:\w", ["--model", "opus"], ".claude-uplift")!;
-        Assert.Equal(["cmd.exe", "/k", "set \"CLAUDE_CONFIG_DIR=.claude-uplift\" && \"C:\\bin\\claude.exe\" --model opus"], claude.ArgumentList);
+        Assert.Empty(claude.ArgumentList);
+        Assert.Equal("cmd.exe /k set \"CLAUDE_CONFIG_DIR=.claude-uplift\" && \"C:\\bin\\claude.exe\" --model opus", claude.Arguments);
         Assert.True(claude.UseShellExecute);
 
         var codex = NewChatCommand.ConsoleStartInfoForAccount(NewChatCli.Codex, @"C:\bin\codex.exe", @"C:\w", ["--", "fix it"], @"C:\Users\me\.codex-b", viaCmd: false)!;
@@ -139,5 +140,48 @@ public class RelayAccountsTests
     public void A_windows_value_cmd_would_read_as_syntax_is_not_carried_that_way(string configDir, string exe, string arg)
     {
         Assert.Null(NewChatCommand.ConsoleStartInfoForAccount(NewChatCli.ClaudeCode, exe, @"C:\w", [arg], configDir));
+    }
+
+    // What Windows builds for a child: Arguments verbatim when set, otherwise each
+    // ArgumentList entry quoted by the MSVCRT / CommandLineToArgvW rules.
+    internal static string FinalCommandLine(System.Diagnostics.ProcessStartInfo start)
+    {
+        if (start.ArgumentList.Count == 0) return start.Arguments;
+        return string.Join(" ", start.ArgumentList.Select(QuoteForArgv));
+    }
+
+    private static string QuoteForArgv(string a)
+    {
+        if (a.Length > 0 && a.IndexOfAny([' ', '\t', '"']) < 0) return a;
+        var sb = new System.Text.StringBuilder("\"");
+        var slashes = 0;
+        foreach (var c in a)
+        {
+            if (c == '\\') { slashes++; continue; }
+            if (c == '"') { sb.Append('\\', slashes * 2 + 1).Append('"'); }
+            else sb.Append('\\', slashes).Append(c);
+            slashes = 0;
+        }
+        return sb.Append('\\', slashes * 2).Append('"').ToString();
+    }
+
+    [Fact]
+    public void The_command_line_windows_receives_has_no_escaped_quote_for_a_named_account()
+    {
+        var line = FinalCommandLine(NewChatCommand.ConsoleStartInfoForAccount(NewChatCli.ClaudeCode,
+            @"C:\Program Files\Claude\claude.exe", @"C:\w", ["--model", "opus"], @"C:\Users\a b\.claude-sundaysky")!);
+        Assert.DoesNotContain("\\\"", line);
+        Assert.Equal("cmd.exe /k set \"CLAUDE_CONFIG_DIR=C:\\Users\\a b\\.claude-sundaysky\" && \"C:\\Program Files\\Claude\\claude.exe\" --model opus", line);
+    }
+
+    [Fact]
+    public void The_command_line_windows_receives_for_the_default_account_and_for_codex_env()
+    {
+        var plain = FinalCommandLine(NewChatCommand.ConsoleStartInfo(@"C:\Program Files\Claude\claude.exe", @"C:\w", ["--model", "opus"]));
+        Assert.Equal("cmd.exe /k \"C:\\Program Files\\Claude\\claude.exe\" --model opus", plain);
+
+        var codex = NewChatCommand.ConsoleStartInfoForAccount(NewChatCli.Codex, @"C:\Program Files\Codex\codex.exe", @"C:\w", ["--", "fix it"], @"C:\Users\a b\.codex-b", viaCmd: false)!;
+        Assert.Equal("\"C:\\Program Files\\Codex\\codex.exe\" -- \"fix it\"", FinalCommandLine(codex));
+        Assert.Equal(@"C:\Users\a b\.codex-b", codex.Environment["CODEX_HOME"]);
     }
 }
