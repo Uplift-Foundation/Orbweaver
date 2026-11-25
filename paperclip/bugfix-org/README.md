@@ -178,6 +178,44 @@ Then, none of which a package can carry:
    `PATCH /api/agents/<id>` `{"adapterConfig": {"provider": "acpx", "acpxAgent": "claude"}}`
    (a merge; it keeps the env bindings), then `POST /api/agents/<id>/lifecycle/retry`.
    All four reached `ready` within a minute.
+3a. **Pool the Claude subscriptions (CB-468).** Connect every subscription
+   the org may use. Each one is a separate sign-in, and only one sign-in can be
+   pending at a time. Then route agents through pools instead of pinning each
+   to one account:
+   - **Usage comes from the host.** Paperclip's own usage-aware mode can't see
+     these accounts: its Claude sign-in (`claude setup-token`) grants
+     `user:inference` only, and the usage API answers 403 to that (all four
+     accounts measured `permission_denied`). `host/pool_usage.py` asks each
+     account's own Claude Code login instead, the same `get_usage` request
+     Orbweaver's account orbs use, and writes
+     `~/.paperclip/instances/default/pool-usage.json`. Map each connection to
+     its login in `~/.config/orbweaver-bugfix/pool-accounts.json`
+     (`configDir: null` is the default login), then install
+     `host/launchd/org.uplift.orbweaver-bugfix-pool-usage.plist`, which runs
+     every five minutes. Match logins to connections by the account's
+     organization in each `.claude.json`, not by the folder name.
+   - **The router is our plugin.** Paperclip ships no router. Copy
+     `host/pool-router/` to `~/.paperclip/plugins-local/orbweaver-pool-router/`,
+     which is inside the sandbox where the service can read it. Link
+     `node_modules/@paperclipai/plugin-sdk` there to
+     `~/.paperclip/cli/current/node_modules/@paperclipai/plugin-sdk`. Then
+     `PATCH /api/instance/settings/experimental {"enableAiConnectionRouters": true}`
+     and `POST /api/plugins/install {"packageName": "<that folder>", "isLocalPath": true}`.
+     It should report `ready`.
+   - **Two pools, one per model**, because a member's profile carries the
+     model: `POST /api/companies/<id>/ai-connection-pools` with
+     `pluginKey: "orbweaver.pool-router"`, `mode: "usage_aware"`,
+     `thresholdPercent: 90` and one member per account, each with
+     `profile: {provider: "acpx", acpxAgent: "claude", model}`. Bind each agent
+     with `runtimeConfig.aiConnection = {mode: "router", connectionId: <pool id>}`.
+   - **What it does.** For each new task the router skips any account at or
+     over 90% on its 5-hour or weekly window (or a model-scoped window for its
+     own model). It picks the least loaded of the rest, and accounts within ten
+     points of each other take turns. Paperclip pins the task to that account,
+     so a session never switches accounts mid-task. A pinned task keeps its
+     account until a window is actually reached. When every account is over,
+     the task waits for the earliest reset. A reading over 30 minutes old
+     counts as unknown: that account ranks last but stays usable.
 4. **Jira, block first.** Add a tool policy of type `block` naming
    `addCommentToJiraIssue` and `transitionJiraIssue` and the three non-lead
    agents, at a priority ahead of the others. Only then finish the connector

@@ -407,5 +407,17 @@ class SandboxProfileTests(unittest.TestCase):
         self.assertNotRegex(text, r"deny file-read\*[^\n]*ow-install\.lock")
 
 
+@unittest.skipUnless(shutil.which("node"), "needs node")
+class PoolRouterTests(unittest.TestCase):
+    """CB-468: the connection-pool router's own suite, run with node's test runner."""
+
+    def test_the_router_suite_passes(self):
+        p = subprocess.run(["node", "--test", os.path.join(HERE, "test-pool-router.mjs")],
+                           capture_output=True, text=True, timeout=120)
+        self.assertEqual(p.returncode, 0, p.stdout[-3000:] + p.stderr[-2000:])
+        self.assertRegex(p.stdout, r"(?m)^\S* ?pass [1-9]")
+        self.assertRegex(p.stdout, r"(?m)^\S* ?fail 0$")
+
+
 if __name__ == "__main__":
     unittest.main()
