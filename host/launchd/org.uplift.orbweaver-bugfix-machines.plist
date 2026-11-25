@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The bug-fix org's machine runner (CB-470). Install by copying to
+     ~/Library/LaunchAgents/ with __REPO__ replaced by a checkout of develop,
+     writing ~/.config/orbweaver-bugfix/machines.json (host/README.md), then
+     launchctl bootstrap gui/$(id -u) <plist>. It runs as the logged-in user on
+     the mini, outside the Paperclip sandbox, because it holds the ssh keys, the
+     gh login and the install lock the sandbox must not.
+
+     Every minute rather than the warden's five: an agent waiting on a
+     machine_run answer is waiting on this interval, and an idle tick is one
+     directory listing. launchd never starts a job while its last run is still
+     going, so an install that takes twenty minutes simply delays the next tick. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>org.uplift.orbweaver-bugfix-machines</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>__REPO__/host/machines/runner.py</string>
+    <string>run-once</string>
+  </array>
+  <!-- launchd's own PATH has no gh (measured for the warden, 2026-11-24). -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>StartInterval</key><integer>60</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardErrorPath</key><string>/tmp/orbweaver-bugfix-machines.err</string>
+  <key>StandardOutPath</key><string>/tmp/orbweaver-bugfix-machines.out</string>
+</dict>
+</plist>

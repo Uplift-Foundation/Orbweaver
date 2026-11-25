@@ -156,6 +156,14 @@ jobs:
         if: ${{ !cancelled() && matrix.checks }}
         run: python tools/test-bugfix-host.py
 
+      # CB-470: the machine runner (spool rules, hold, cap, restore) and its
+      # Windows seam, against fake machines, a fake gh and a fake clock. No
+      # ssh and no machine; the run_once file-level cases skip on Windows,
+      # where the runner (which lives on the mini) never runs.
+      - name: Unit tests (bug-fix org machine runner)
+        if: ${{ !cancelled() && matrix.checks }}
+        run: python tools/test-bugfix-machines.py
+
       # CB-455: the same host side against loopback stand-ins for Paperclip and the
       # GitHub App API and stub gh/dotnet scripts, every pause trigger beside its
       # control. POSIX only; the cases skip themselves on the Windows leg.
