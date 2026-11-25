@@ -317,9 +317,10 @@ class InstructionTests(unittest.TestCase):
             doc = read("agents", slug, "AGENTS.md")
             self.assertNotIn("ow-install.lock", doc)
         skill = read("skills", "cb-bugfix", "SKILL.md")
-        self.assertIn("Install on any machine (so never take `/tmp/ow-install.lock`", skill)
+        self.assertIn("Install on any machine yourself", skill)
+        self.assertIn("never take `/tmp/ow-install.lock`", skill)
         for slug in ("hana-moriyama", "rafaela-quintero"):
-            self.assertIn("never install anything on a machine", read("agents", slug, "AGENTS.md"))
+            self.assertIn("never install anything on a machine yourself", read("agents", slug, "AGENTS.md"))
 
 
 def find_bash():
@@ -368,8 +369,13 @@ class PrBodyShapeTests(unittest.TestCase):
     def test_template_in_the_skill_is_allowed_by_the_real_hook(self):
         self.assertEqual(hook_decision(self.shape()), "allow")
 
-    def test_template_says_installed_on_none(self):
-        self.assertRegex(self.shape(), r"(?m)^Installed on: none\.")
+    def test_template_asks_for_machines_used_or_none_with_a_reason(self):
+        self.assertRegex(self.shape(), r"(?m)^Installed on: <each of windows, mini, macbook")
+        self.assertIn('or "none" and why', self.shape())
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        for verb in ("machine_install", "machine_run", "machine_release"):
+            self.assertIn('{"verb": "%s"' % verb, skill)
+        self.assertIn("at most 45 minutes", skill)
 
     def test_hook_denies_the_template_with_each_part_removed(self):
         # Negative controls against the same hook, so a hook that allowed

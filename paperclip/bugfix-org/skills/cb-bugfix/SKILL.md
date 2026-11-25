@@ -45,12 +45,107 @@ then the oldest. At most **two tickets per run**.
 2. **Logic bugs with a testable seam.** Proof: a test that fails before the fix
    and passes after, plus CI green on both rids.
 
-Leave alone, and say why if asked: a bug that needs a real captured prompt, a
-timing on a real Windows install, or any observation on an installed app; a
-security fix; anything in the mobile repository (`Orbweaver-Mobile`); a ticket a
-human team holds. The class comes from the summary and the triage comment, and
-you re-classify when you read the code: a ticket that turns out to need a real
-machine is released.
+3. **Bugs whose proof needs a real machine** (an install, an observation on the
+   running app, a timing on a real Windows PC). These are yours now, through the
+   machines runner: see **Real machines** below. Proof: the test or observation
+   that shows the bug, then the same one on the fixed build installed on the
+   machines it concerns, plus CI green on both rids.
+
+Leave alone, and say why if asked: a bug that needs a real captured prompt; a
+change to `.github/workflows/` (you may not edit it); a security fix; anything
+in the mobile repository (`Orbweaver-Mobile`); a ticket a human team holds. The
+class comes from the summary and the triage comment, and you re-classify when
+you read the code: a ticket that turns out to need one of those is released. A
+ticket that needs only a machine is not released for that reason.
+
+## Real machines
+
+Three real machines exist: `windows` (the Windows PC), `mini` (the Mac mini this
+org runs on) and `macbook`. You cannot install on them or run anything on them.
+A runner outside your sandbox does it for you when you ask by writing a file.
+You never hold a key, never run `ssh`, and never touch `/tmp/ow-install.lock`;
+the runner takes it.
+
+**When to ask:** only when the proof needs it, after the PR is open and CI has
+built that sha (the Windows build is CI's `unsigned-win-x64` artifact for the
+PR's head sha; the Mac build is made and signed by the runner, which takes
+longer). Ask for the machines the bug concerns, not all three by habit.
+
+**One PR holds the machines at a time, for at most 45 minutes.** While you hold
+them the three machines run your PR's build, not the one a person installed, so
+be quick and always finish with `machine_release`, which puts back exactly what
+was installed before. If you forget, the runner restores and releases at 45
+minutes by itself, but a person was without their build for that long.
+
+**How to ask.** The spool folder is `machine-spool` in the same company folder as
+`$BUGFIX_SPOOL`; the results are in `machine-results` beside it:
+
+```
+SPOOL="$(dirname "$BUGFIX_SPOOL")/machine-spool"
+RESULTS="$(dirname "$BUGFIX_SPOOL")/machine-results"
+```
+
+Write each request as one file named `<id>.json`, where `<id>` is yours to
+choose: 1 to 40 characters of `a-z`, `0-9` and `-`, never reused (for example
+`pr412-install`, `pr412-run1`, `pr412-release`). Write it under another name and
+rename it into place so the runner never reads half a file:
+`printf '%s' '<json>' > "$SPOOL/<id>.json.tmp" && mv "$SPOOL/<id>.json.tmp" "$SPOOL/<id>.json"`.
+The `pr` is the PR number, an integer. Fields other than the ones shown, an unknown
+verb and an unknown machine are all refused.
+
+1. Install the PR's build, on one or more of `windows`, `mini`, `macbook`.
+   `sha` must be the PR's current head (`gh pr view <n> --json headRefOid`):
+
+```
+{"verb": "machine_install", "id": "pr412-install", "pr": 412, "sha": "<full 40-character head sha>", "machines": ["windows", "mini"]}
+```
+
+2. Run a command on one machine, only after step 1 succeeded for it. `command` is
+   up to 4000 characters, `timeout_s` up to 600:
+
+```
+{"verb": "machine_run", "id": "pr412-run1", "pr": 412, "machine": "mini", "command": "<one shell command>", "timeout_s": 120}
+```
+
+3. Release, always, whether the proof worked or not:
+
+```
+{"verb": "machine_release", "id": "pr412-release", "pr": 412}
+```
+
+**Reading the result.** The runner looks at the spool every minute or so (the
+exact interval is in `host/README.md`). When it has dealt with a request,
+`$RESULTS/<id>/` holds `result.json`, `stdout.txt` and `stderr.txt`. If the
+folder has not appeared after ten minutes, count it as a failed round; an
+install of a Mac build can take longer than that, so give `machine_install` the
+time `host/README.md` says it takes before deciding. Every result has `id`,
+`verb`, `pr`, `ok`, `refused`, `started_at` and `finished_at`.
+
+- `ok: true` is success. Read the rest.
+- `ok: false` with `refused` set means the runner did **nothing** and `refused` is
+  one sentence saying why (for example the sha is not the PR's head, the PR is not
+  yours, another PR holds the machines, or you have no hold). Fix what it names
+  and send a new request with a new `id`. Do not resend the same request
+  unchanged.
+- `ok: false` with `refused: null` means the work started and failed. Read
+  `machines.<name>.error`.
+- `machine_install` and `machine_release` add `hold_expires_at` and `machines`,
+  an object keyed by machine name, each
+  `{"ok": ..., "installed_commit": ..., "previous_commit": ..., "error": ...}`.
+  Your install worked on a machine when its `ok` is true and `installed_commit`
+  starts with your sha; `previous_commit` is what a person had there, which a
+  release must put back (check that after `machine_release`, `installed_commit`
+  equals the earlier `previous_commit`).
+- `machine_run` adds `machine`, `exit_code` (null if the command never ran),
+  `timed_out`, `stdout_truncated` and `stderr_truncated`. The output is in
+  `stdout.txt` and `stderr.txt`; truncated means you read only the start, so ask
+  for a narrower command.
+
+**If a request is refused or fails and you cannot finish your proof**, send
+`machine_release` anyway, say in the PR body what you could not confirm, and
+release the ticket if the proof was the point of it. Never work around a refusal
+(another path, another machine, an edited request): the refusals are the rules,
+and every request and result is logged for the lead.
 
 ## Claiming and releasing
 
@@ -158,10 +253,16 @@ with its merged-count line>
 <what an install on a real machine would have shown; Windows behaviour not
 reproduced; any added line the tests cannot reach, named with the reason>
 
-Installed on: none. This org cannot reach the three machines (MacBook, Mac mini, Windows PC).
+Installed on: <each of windows, mini, macbook you used, with the commit the
+machine reported and what you saw there; or "none" and why this fix needed no
+machine>
 ```
 
-The title carries the CB key. Say only what was run: a PR that claims more than
+The `Installed on:` line says what the runner reported, not what you expect:
+`Installed on: mini and windows at <sha>; macbook not used (the bug is
+Windows-only). Ran <command> on windows, exit 0, saw <line>.` A machine you did
+not use is named as not used, with the reason. The title carries the CB key. Say
+only what was run: a PR that claims more than
 was tested costs more than one that admits a gap.
 
 ## QA and merge
@@ -200,7 +301,9 @@ PRs open at once.
 
 ## Never
 
-Install on any machine (so never take `/tmp/ow-install.lock`; the sandbox denies
-it anyway). Push to `develop`, `main` or another team's branch. Create a tag or
+Install on any machine yourself, or run `ssh` or anything else that reaches
+one: only the machines runner does that, when you write it a request (**Real
+machines**). So never take `/tmp/ow-install.lock` (the sandbox denies it
+anyway). Push to `develop`, `main` or another team's branch. Create a tag or
 a release. Edit `.github/workflows/`. Paste a secret, a token, a home path or a
 hostname into a PR, comment or commit.
