@@ -102,7 +102,8 @@ namespace Orbweaver
             var to = all.IndexOf("Quicksafetycheck", StringComparison.Ordinal);
             if (from < 0 || to < from) return false;
             var shown = all[(from + Heading.Replace(" ", "").Length)..to];
-            static string Trim(string p) => p.Length > 1 ? p.TrimEnd('/') : p;
+            // CB-476: a Windows folder can arrive with a trailing backslash.
+            static string Trim(string p) => p.Length > 1 ? p.TrimEnd('/', '\\') : p;
             bool Is(string? folder)
             {
                 var wanted = Regex.Replace(folder ?? "", @"\s+", "");

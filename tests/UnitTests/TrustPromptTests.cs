@@ -28,7 +28,19 @@ public class TrustPromptTests
         { "hooks-w80-no", TrustScreens.HooksFolder, "No", true },
         { "hooks-w80-yes", TrustScreens.HooksFolder, "Yes", true },
         { "hooks-w32-no", TrustScreens.HooksFolder, "No", true },
+        { "conhost-home-w120-no", TrustScreens.WindowsHome, "No", true },
+        { "conhost-home-w120-yes", TrustScreens.WindowsHome, "Yes", true },
     };
+
+    // CB-476: a Windows folder asked for with a trailing backslash is the folder
+    // the console shows; a different folder is not, whatever its spelling.
+    [Fact]
+    public void A_windows_folder_binds_with_or_without_its_trailing_backslash_and_only_that_folder()
+    {
+        var want = new TrustPrompt.Reading(TrustPrompt.Kind.Answerable, TrustPrompt.Option.No, true);
+        Assert.Equal(want, Read(TrustScreens.ConsoleOnNo, TrustScreens.WindowsHome + "\\"));
+        Assert.Equal(TrustPrompt.Kind.Unanswerable, Read(TrustScreens.ConsoleOnNo, @"C:\Users\warre\proj").Kind);
+    }
 
     [Theory]
     [MemberData(nameof(Real))]
