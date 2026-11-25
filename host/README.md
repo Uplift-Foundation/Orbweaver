@@ -75,3 +75,73 @@ NDJSON of `{ts, stream, chunk}`; the warden joins the chunks before searching fo
 run that never started (cancelled by a cap) answers 404 and is read as "no log", never as a
 fault. Any other error reading a log is logged and the run is retried next tick; it neither
 pauses nor stops the tick.
+
+## The machines runner (CB-470)
+
+The org's agents cannot hold an ssh key, install a build or touch the Windows PC, the
+mini or the MacBook, and for most bugs that is right. For a bug whose proof needs a real
+machine, `host/machines/runner.py` does it from outside the sandbox. A launchd job runs
+`run-once` every 60 seconds as the logged-in user. The org asks with files; nothing else
+reaches the machines. The agent-facing rules are the **Real machines** section of
+`paperclip/bugfix-org/skills/cb-bugfix/SKILL.md`.
+
+**The three verbs.** `machine_install` takes `/tmp/ow-install.lock` on the mini, keeps aside
+what is installed on each named machine, installs the PR's build at `sha` and confirms the
+stamped commit. `machine_run` runs one command on one machine the PR holds.
+`machine_release` puts back exactly what was there, confirms it and drops the lock.
+Requests are `<id>.json` files in `<company>/machine-spool/`; each is answered by a folder
+`<company>/machine-results/<id>/` holding `result.json`, `stdout.txt` and `stderr.txt`,
+and the request moves to `machine-spool/done/` (or `bad/` when it has no usable `id`).
+The runner creates the spool and results folders if they are missing. The sandbox profile
+already lets agents write the first and read the second, because it allows all of
+`~/.paperclip`, so nothing in it changes.
+
+**What it refuses**, each written to `result.json` as `status: "refused"` with a one-line
+`reason` and nothing touched: a PR that is not open, not written by an allowed author or
+whose head is not `sha`; a second PR while one holds the machines; a `machine_run` without
+a hold, on an unlisted machine, or after the PR's head moved since the install; any unknown
+verb, field or machine, and an `id` outside `[a-z0-9-]{1,40}`. A hold ends on
+`machine_release` or after 45 minutes, when the runner restores and releases by itself.
+
+**Config:** `~/.config/orbweaver-bugfix/machines.json`. Only `company_dir` is required.
+
+| key | default | meaning |
+| --- | --- | --- |
+| `company_dir` | none | the folder that holds `bugfix-spool` |
+| `allowed_authors` | `["app/orbweaver-bugfix"]` | PR authors as `gh pr view` spells them |
+| `hold_cap_s` | `2700` | the hold cap, 45 minutes; set it low to test the cap |
+| `lock_path` | `/tmp/ow-install.lock` | the install lock every team on the mini takes |
+| `log_path` | `~/.config/orbweaver-bugfix/machines.log` | the audit log |
+| `state_dir` | `~/.config/orbweaver-bugfix/machines` | the hold and what to restore |
+| `repo` | `Uplift-Foundation/Orbweaver` | where PRs are read |
+| `machines` | windows (ssh `windows`), mini, macbook (ssh `mbp`) | only listed machines are available |
+
+**The log.** Every request, its machine, its PR, every command and its exit code, and every
+refusal is appended to `machines.log`. The launchd job's own output is in
+`/tmp/orbweaver-bugfix-machines.out` and `.err`.
+
+**Deploy.** Run each step by hand; none is run by a test.
+
+1. Write `machines.json` with at least `company_dir`.
+2. Copy `host/launchd/org.uplift.orbweaver-bugfix-machines.plist` to `~/Library/LaunchAgents/`
+   with `__REPO__` replaced by a checkout of `develop` outside `~/.paperclip`.
+3. `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/org.uplift.orbweaver-bugfix-machines.plist`.
+4. Check by hand, no agent: `/usr/bin/python3 <repo>/host/machines/runner.py run-once`
+   exits 0 with an empty spool.
+5. Update the live skill and the engineers' and lead's instructions in Paperclip (the skill
+   file, then each agent's instructions bundle) so agents learn the verbs.
+
+**Risks the decision accepted (CB-470).** A command the org writes runs as the host user on
+the Windows PC, the mini and the MacBook. The org's unreviewed code is signed and
+notarized under the Developer ID, so a Mac can install it before merge. While a PR holds
+the machines they run that PR's build, not the one a person installed; the runner puts the
+previous build back on release, and by itself at the cap. The bounds are the rules above:
+the org's own PRs only, at their current head, one at a time, at most 45 minutes, every
+command logged.
+
+**Windows commands** run in the PC's ssh shell, which is Git Bash: use
+`powershell -Command ...` for PowerShell and avoid bare `/FLAG` arguments. A Windows install
+needs CI to have uploaded the `unsigned-win-x64` artifact for that sha first.
+
+**Measured time of the signed Mac build:** not yet recorded here; it comes from the Mac
+install work on this ticket (`host/machines/mac.py`) and replaces this line.

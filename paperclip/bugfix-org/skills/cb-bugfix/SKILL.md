@@ -113,33 +113,52 @@ verb and an unknown machine are all refused.
 {"verb": "machine_release", "id": "pr412-release", "pr": 412}
 ```
 
-**Reading the result.** The runner looks at the spool every minute or so (the
-exact interval is in `host/README.md`). When it has dealt with a request,
-`$RESULTS/<id>/` holds `result.json`, `stdout.txt` and `stderr.txt`. If the
-folder has not appeared after ten minutes, count it as a failed round; an
-install of a Mac build can take longer than that, so give `machine_install` the
-time `host/README.md` says it takes before deciding. Every result has `id`,
-`verb`, `pr`, `ok`, `refused`, `started_at` and `finished_at`.
+**Reading the result.** The runner looks at the spool about once a minute and
+answers requests in the order they arrived. When it has dealt with one,
+`$RESULTS/<id>/` holds `result.json`, `stdout.txt` and `stderr.txt` (all three,
+always; the text files are empty except for `machine_run`). A request with an
+`id` that does not match the pattern is never answered, and an `id` you already
+used is not answered a second time, so choose a new one each time. If the folder
+has not appeared ten minutes after a `machine_run` or `machine_release`, count
+it as a failed round. A `machine_install` of a Mac build is slow and holds up
+every request behind it; give it the time `host/README.md` measures before you
+decide it is lost.
 
-- `ok: true` is success. Read the rest.
-- `ok: false` with `refused` set means the runner did **nothing** and `refused` is
-  one sentence saying why (for example the sha is not the PR's head, the PR is not
-  yours, another PR holds the machines, or you have no hold). Fix what it names
-  and send a new request with a new `id`. Do not resend the same request
-  unchanged.
-- `ok: false` with `refused: null` means the work started and failed. Read
-  `machines.<name>.error`.
-- `machine_install` and `machine_release` add `hold_expires_at` and `machines`,
-  an object keyed by machine name, each
-  `{"ok": ..., "installed_commit": ..., "previous_commit": ..., "error": ...}`.
-  Your install worked on a machine when its `ok` is true and `installed_commit`
-  starts with your sha; `previous_commit` is what a person had there, which a
-  release must put back (check that after `machine_release`, `installed_commit`
-  equals the earlier `previous_commit`).
-- `machine_run` adds `machine`, `exit_code` (null if the command never ran),
-  `timed_out`, `stdout_truncated` and `stderr_truncated`. The output is in
-  `stdout.txt` and `stderr.txt`; truncated means you read only the start, so ask
-  for a narrower command.
+Every `result.json` has `id`, `verb`, `pr`, `finished_at` and a `status` that is
+one of three words. Act on `status`; `reason` is a sentence for you to read, not
+text to match.
+
+- `"ok"`: it worked, `reason` is null. Read the rest.
+- `"refused"`: the runner did **nothing**, and `reason` says why (for example the
+  sha is not the PR's head, the PR is not the org's, another session holds the
+  install lock, the PR holds no machines, or the PR's head moved since the
+  install). Fix what it names and send a new request with a new `id`. Do not
+  resend the same request unchanged.
+- `"failed"`: the work started and did not finish; `reason` says what. A failed
+  `machine_install` has already put back what it touched and released the lock.
+
+Every result that falls under a hold also has `hold_expires_at`. The rest
+depends on the verb:
+
+- `machine_install` adds `machines`, keyed by machine name, each
+  `{"before": <build stamp that was there>, "installed": <stamp now>, "status": "ok" | "failed", "error": ...}`
+  (`error` appears only on a failure). It worked on a machine when its `status`
+  is `ok`; `installed` is then your sha. Keep `before`: it is what the release
+  must put back. The 45 minutes start when the install finishes. If the PR's
+  head moves while you hold the machines, a `machine_run` is refused until you
+  send `machine_install` again at the new head; that does not need a release
+  first and does not restart the clock. A Windows install needs CI to have
+  uploaded the `unsigned-win-x64` artifact for that sha; before that it fails
+  with a reason saying so, so wait for CI and ask again.
+- `machine_run` adds `machine`, `exit_code` (null if it timed out) and
+  `timed_out`. The output is in `stdout.txt` and `stderr.txt`. A Windows command
+  runs in Git Bash over ssh: write `powershell -Command "..."` for PowerShell and
+  avoid bare `/FLAG` arguments.
+- `machine_release` adds `restore`, keyed by machine name, each
+  `{"want": <stamp it should be>, "got": <stamp now>, "status": "ok" | "failed"}`.
+  Released means every machine's `status` is `ok` (so `got` equals `want`). A
+  release works even after the PR merged or closed. If the hold had already hit
+  its 45 minutes, the runner restored by itself and the release says so.
 
 **If a request is refused or fails and you cannot finish your proof**, send
 `machine_release` anyway, say in the PR body what you could not confirm, and
