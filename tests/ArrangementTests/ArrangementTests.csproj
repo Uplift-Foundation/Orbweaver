@@ -17,7 +17,7 @@
          to the cross-major-version MissingMethodException that forced that
          pin elsewhere — kept in step anyway so one Avalonia version doesn't
          silently drift across the repo. -->
-    <PackageReference Include="Avalonia" Version="12.1.1" />
+    <PackageReference Include="Avalonia" Version="12.2.0" />
   </ItemGroup>
 
   <ItemGroup>

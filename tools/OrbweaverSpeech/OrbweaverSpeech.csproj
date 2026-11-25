@@ -63,7 +63,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="KokoroSharp.CPU" Version="0.8.4" />
+    <PackageReference Include="KokoroSharp.CPU" Version="0.8.5" />
   </ItemGroup>
 
   <!-- CB-200: the contract stamp beside the executable - what this engine can

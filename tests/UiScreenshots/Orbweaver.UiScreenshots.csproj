@@ -49,7 +49,7 @@
     <SelfContained>true</SelfContained>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.2" />
     <!-- This suite's coverage now counts. It runs on the Microsoft Testing
          Platform like tests/UiTests, so it collects the same way — through that
          platform's own coverage switch rather than a VSTest data collector,
@@ -91,23 +91,23 @@
          MissingMethodException until this was pinned down to match what
          Avalonia.Headless.XUnit was actually built against. -->
     <PackageReference Include="xunit.v3" Version="3.2.2" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.1" />
     <!-- 12.x, not the 11.3.20 patch bump every other Avalonia package here
          uses: the concurrent-FontManager-access race captured on
          AppBuilder.WarmUpFontManager below (AvaloniaUI/Avalonia#21269) was
          fixed upstream but explicitly never backported to 11.3.x
          (backported-12.0.x only). A patch bump could not reach it; only a
          major-version jump can. -->
-    <PackageReference Include="Avalonia" Version="12.1.1" />
-    <PackageReference Include="Avalonia.Headless" Version="12.1.1" />
-    <PackageReference Include="Avalonia.Headless.XUnit" Version="12.1.1" />
-    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.1" />
+    <PackageReference Include="Avalonia" Version="12.2.0" />
+    <PackageReference Include="Avalonia.Headless" Version="12.2.0" />
+    <PackageReference Include="Avalonia.Headless.XUnit" Version="12.2.0" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.2.0" />
     <!-- Explicit, not just transitive: Orbweaver.csproj's Avalonia.Desktop
          11.3.7 pulls in Avalonia.Skia 11.3.7 too, and that older Skia
          backend's FontManagerImpl doesn't implement members the newer core
          interface declares — the same kind of cross-version mismatch the
          11.3.20 bump hit, now one major version further. -->
-    <PackageReference Include="Avalonia.Skia" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Skia" Version="12.2.0" />
   </ItemGroup>
   <ItemGroup>
     <!-- CB-306: the real commands.list and /status card, as constants. -->
