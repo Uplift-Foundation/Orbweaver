@@ -16,6 +16,7 @@ namespace Orbweaver.Tests;
 // mean anything. The fixtures below are copied from this machine's rollouts on
 // 2 Sep 2026, per the repo's rule that fixtures come from captures rather than
 // from memory.
+[Collection("Settings")]
 public class CodexUsageScanTests : IDisposable
 {
     private readonly string _root = Path.Combine(
@@ -301,12 +302,60 @@ public class CodexUsageScanTests : IDisposable
     // The switch is off by default, and off means no reading rather than an
     // empty one — the distinction AccountOrbs.Apply's keep-stale rule depends
     // on to tell "not asked" from "asked and failed".
+    //
+    // CB-451: the switch is process-wide, and HeadlessUsageSettingsTests points
+    // it at a file with codexAccountUsageEnabled true. This test therefore
+    // points settings at an empty directory of its own rather than trusting
+    // whatever the last test left, and the class is in the Settings collection
+    // so none of those writers can run beside it.
     [Fact]
     public void TheSwitchBeingOffMeansNoReadingsAtAll()
     {
-        Assert.False(OrbweaverSettings.CodexAccountUsageEnabled);
+        OffMeansNoReadings();
+    }
 
-        Assert.Empty(new CodexUsagePoller().Read());
+    // The same, after a writer has left the switch on, which is the interleaving
+    // CI hit on osx-arm64 (run 45330452977).
+    [Fact]
+    public void TheSwitchBeingOffMeansNoReadings_EvenAfterAnotherTestLeftItOn()
+    {
+        var was = Environment.GetEnvironmentVariable("ORBWEAVER_SETTINGS_DIR");
+        var left = Path.Combine(_root, "left-on");
+        Directory.CreateDirectory(left);
+        File.WriteAllText(Path.Combine(left, "settings.json"), """{ "codexAccountUsageEnabled": true }""");
+        try
+        {
+            Environment.SetEnvironmentVariable("ORBWEAVER_SETTINGS_DIR", left);
+            OrbweaverSettings.ReloadForTests();
+            Assert.True(OrbweaverSettings.CodexAccountUsageEnabled);
+
+            OffMeansNoReadings();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("ORBWEAVER_SETTINGS_DIR", was);
+            OrbweaverSettings.ReloadForTests();
+        }
+    }
+
+    private void OffMeansNoReadings()
+    {
+        var was = Environment.GetEnvironmentVariable("ORBWEAVER_SETTINGS_DIR");
+        var fresh = Path.Combine(_root, "settings-off");
+        Directory.CreateDirectory(fresh);
+        try
+        {
+            Environment.SetEnvironmentVariable("ORBWEAVER_SETTINGS_DIR", fresh);
+            OrbweaverSettings.ReloadForTests();
+
+            Assert.False(OrbweaverSettings.CodexAccountUsageEnabled);
+            Assert.Empty(new CodexUsagePoller().Read());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("ORBWEAVER_SETTINGS_DIR", was);
+            OrbweaverSettings.ReloadForTests();
+        }
     }
 
     // ---- CB-85: live first, rollout when live says nothing ----------------
