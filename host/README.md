@@ -109,9 +109,15 @@ verb, field or machine, and an `id` outside `[a-z0-9-]{1,40}`. Every answer has 
 timeout, and a failure after work started is `ok: false` with `refused: null`. A hold ends on
 `machine_release` or after 45 minutes, when the runner restores and releases by itself.
 
-**When a restore fails twice** the runner writes `machine-results/NEEDS-ATTENTION.json` and
-refuses every install until a person has put the machines right and deleted that file. An
-agent that meets the refusal reports it on its task and does not retry.
+**When a restore fails twice**, or the runner's `state.json` cannot be read (it is kept aside
+as `state.json.unreadable-<epoch>`), the runner writes `machine-results/NEEDS-ATTENTION.json`
+holding `reason`, `at`, `machine`, `should_have`, `has` and `error`. Every `machine_install`
+is then refused with "the machines need a person first: <path> says <reason>; installs are
+refused until it is deleted". A person puts the machine right and deletes the file. An agent
+that meets the refusal reports it on its task and does not retry.
+
+**A known limit:** a Windows `machine_run` that times out is cut off on the mini, and a
+process it started on the PC may keep running. The cap is 600 s.
 
 **Config:** `~/.config/orbweaver-bugfix/machines.json`. Only `company_dir` is required.
 

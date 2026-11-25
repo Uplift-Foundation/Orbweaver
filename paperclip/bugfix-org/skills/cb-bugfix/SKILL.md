@@ -143,9 +143,9 @@ sentence for you to read, never text to match.
   `stderr.txt` and the per-machine `error`. A failed `machine_install` has
   already put back what it touched and released the lock.
 
-**If the refusal says the install is blocked for a person to look at** (the
-runner writes `machine-results/NEEDS-ATTENTION.json` when a restore failed twice,
-and refuses every install until a person deletes it), do not retry and do not
+**If the refusal begins "the machines need a person first"** (the runner writes
+`machine-results/NEEDS-ATTENTION.json` when a restore failed twice or its state
+was unreadable, and refuses every install until a person deletes it), do not retry and do not
 send another install. Report it on your task, send `machine_release` once, and
 finish what you can without a machine.
 
@@ -171,7 +171,8 @@ What else a result carries depends on the verb:
   `stderr.txt`, cut at 1 MiB per stream; truncated means you read only the start,
   so ask for a narrower command. A Windows command runs in Git Bash over ssh:
   write `powershell -Command "..."` for PowerShell and avoid bare `/FLAG`
-  arguments. `machine_run` is refused if the machines are held by a different PR.
+  arguments. A command that times out may leave a process running on the PC, so
+  keep commands short and self-ending. `machine_run` is refused if the machines are held by a different PR.
 - A release works even after the PR merged or closed. If the 45 minutes had
   already passed, the runner restored by itself, and the release answers
   `ok: true` and says so in `stdout.txt`.
