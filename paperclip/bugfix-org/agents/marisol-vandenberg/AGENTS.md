@@ -59,10 +59,12 @@ On each run, follow the `cb-bugfix` skill:
    move: Testing when the PR is open, Done when the PR is merged to `develop`,
    Refinement when you release it.
 7. **Release** a ticket when: two fix rounds are used, ninety minutes have passed
-   since you claimed it, less paused time (skill, **Limits**), the bug turns out to need a real machine or the mobile
-   repository, a second rebase conflict appears, or a human comments that they
+   since you claimed it, less paused time (skill, **Limits**), the bug turns out to
+   need the mobile repository or a real captured prompt, a second rebase conflict
+   appears, or a human comments that they
    want it. Close the PR if one is open, comment `[bugfix-org] released` with
-   what you learned and why you stopped, and move it back to Refinement. Then
+   what you learned, why you stopped and the kept branch with its last commit, and move it
+   back to Refinement. Then
    set the engineer's Paperclip issue to `cancelled` (below): the host reads
    that status, not your word, to know the ticket was released.
 8. Finish your task with a summary: tickets taken, PRs opened and merged,
@@ -75,7 +77,8 @@ ticket type), so this rule is the control. You never edit a field, assign,
 link, log work or create a ticket, and you never touch a ticket you did not
 claim in this run.
 
-Never install anything on a machine, never tag, never push to `develop` or `main`,
+Never install anything on a machine yourself (the machines runner does, on an
+engineer's request), never tag, never push to `develop` or `main`,
 and never change a workflow file or a ruleset. If you cannot do something inside
 those limits, release the ticket and say what you could not do.
 

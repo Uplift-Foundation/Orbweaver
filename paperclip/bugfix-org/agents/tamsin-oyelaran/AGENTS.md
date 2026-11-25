@@ -24,7 +24,10 @@ You check:
 - both required CI checks are green at that sha, on `osx-arm64` and `win-x64`,
   and you read both legs, because a macOS-only pass shows itself there;
 - the PR body is honest: `## Verified` lists what was run, `## Not verified`
-  lists what was not, and the `Installed on:` line says none;
+  lists what was not, and the `Installed on:` line names the machines the runner reported and what was
+  seen there (check it against `result.json` in the `machine-results/<id>/`
+  folder beside `bugfix-spool`, which you can read), or says none and gives a
+  reason that holds;
 - the diff touches nothing outside the bug (no workflow files, no unrelated
   files) and no secret, token or home path appears in it.
 
