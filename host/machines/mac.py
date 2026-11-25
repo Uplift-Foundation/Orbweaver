@@ -247,7 +247,10 @@ def install_script(dmg, sha):
     return _common() + r'''
 DMG=%(dmg)s
 SHA=%(sha)s
-MNT="$(mktemp -d /tmp/ow-bugfix-dmg.XXXXXX)"
+# Under the test's scratch root when it sets one: there the stub hdiutil's
+# "mount" is a plain copy that detach cannot empty, so the trap's rmdir fails
+# and /tmp kept one folder per test install (394 on the mini in a day).
+MNT="$(mktemp -d "${OW_MACHINES_TEST_ROOT:-}/tmp/ow-bugfix-dmg.XXXXXX")"
 cleanup() {
   hdiutil detach -quiet "$MNT" >/dev/null 2>&1; rmdir "$MNT" 2>/dev/null
   case "$DMG" in /tmp/ow-bugfix-*) rm -f "$DMG" ;; esac  # the copy put() made

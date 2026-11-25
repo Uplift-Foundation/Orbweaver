@@ -286,7 +286,8 @@ class InstallScripts(unittest.TestCase):
         self.home = os.path.join(self.tmp, "home")
         self.bin = os.path.join(self.tmp, "bin")
         self.state = os.path.join(self.tmp, "state")
-        for d in (self.root + "/Applications", self.home, self.bin, self.state):
+        self.tmp_before = self.fixture_mounts_in_tmp()
+        for d in (self.root + "/Applications", self.root + "/tmp", self.home, self.bin, self.state):
             os.makedirs(d)
         for name, body in (("hdiutil", STUB_HDIUTIL), ("codesign", STUB_CODESIGN),
                            ("launchctl", STUB_LAUNCHCTL), ("open", STUB_OPEN),
@@ -307,6 +308,31 @@ class InstallScripts(unittest.TestCase):
         self.m = mac.MacMachine("mini", {"state_dir": self.state}, sh=self.sh)
         self.lines = []
 
+    @staticmethod
+    def fixture_mounts_in_tmp():
+        """ow-bugfix-dmg.* folders in the real /tmp holding this suite's stub
+        app (its TEAM marker): what a leaking run leaves. A real install's
+        mount point, which the runner may be making meanwhile, never has one."""
+        found = set()
+        for name in os.listdir("/private/tmp"):
+            if name.startswith("ow-bugfix-dmg.") and os.path.isfile(
+                    os.path.join("/private/tmp", name, "Orbweaver.app", "TEAM")):
+                found.add(name)
+        return found
+
+    def test_the_real_mount_point_is_unchanged_without_the_test_root(self):
+        r = subprocess.run(["/bin/bash", "-c", 'echo "${OW_MACHINES_TEST_ROOT:-}/tmp/ow-bugfix-dmg.XXXXXX"'],
+                           capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"})
+        self.assertEqual(r.stdout.strip(), "/tmp/ow-bugfix-dmg.XXXXXX")
+        self.assertIn('mktemp -d "${OW_MACHINES_TEST_ROOT:-}/tmp/ow-bugfix-dmg.XXXXXX"',
+                      mac.install_script("/x.dmg", SHA_NEW))
+
+    def test_an_install_mounts_inside_the_scratch_root(self):
+        self.install_old()
+        self.install(SHA_NEW)
+        self.assertTrue(any(n.startswith("ow-bugfix-dmg.") for n in os.listdir(self.root + "/tmp")))
+        self.assertEqual(self.fixture_mounts_in_tmp() - self.tmp_before, set())
+
     def cleanup(self):
         # Only processes this test started: the copies of sleep under our root.
         out = subprocess.run(["ps", "-axo", "pid=,comm="], capture_output=True, text=True).stdout
@@ -318,6 +344,8 @@ class InstallScripts(unittest.TestCase):
                 except (ProcessLookupError, ValueError):
                     pass
         shutil.rmtree(self.tmp, ignore_errors=True)
+        leaked = self.fixture_mounts_in_tmp() - self.tmp_before
+        self.assertEqual(leaked, set(), "the test left fixture mount folders in /tmp")
 
     def sh(self, argv, timeout=None, input=None):
         if argv[0] == "gh":
