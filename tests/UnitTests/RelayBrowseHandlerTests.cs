@@ -148,12 +148,17 @@ public class RelayBrowseHandlerTests
         Assert.DoesNotContain(h.Log, l => l.Contains("secret"));
 
         var slow = new Harness(timeout: TimeSpan.FromMilliseconds(50));
+        // The read is held until the test has seen the reply, so it can never finish before the
+        // timeout is observed, however starved the runner's thread pool is (CB-461).
         var gate = new ManualResetEventSlim();
-        slow.Fs.OnRead = _ => { gate.Wait(TimeSpan.FromSeconds(5)); return null; };
-        await slow.Ask("R2", "/Users/dev/Source");
-        gate.Set();
-        Assert.Equal("unreadable", slow.Code(0));
-        Assert.Contains(slow.Log, l => l == "list_dir R2 TimeoutException");
+        slow.Fs.OnRead = _ => { gate.Wait(); return null; };
+        try
+        {
+            await slow.Ask("R2", "/Users/dev/Source");
+            Assert.Equal("unreadable", slow.Code(0));
+            Assert.Contains(slow.Log, l => l == "list_dir R2 TimeoutException");
+        }
+        finally { gate.Set(); }
     }
 
     [Fact]
