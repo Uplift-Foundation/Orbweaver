@@ -138,6 +138,7 @@ namespace Orbweaver
         // other session's entry.
         internal static IReadOnlyList<Entry> Scan(IReadOnlyList<string> configRoots)
         {
+            Interlocked.Increment(ref _walksMade);
             var found = new List<Entry>();
 
             foreach (var root in configRoots)
@@ -186,6 +187,11 @@ namespace Orbweaver
         // never mistaken for live because callers re-check the pid on every
         // lookup rather than trusting the cached row.
         internal static readonly TimeSpan ScanHeldFor = TimeSpan.FromSeconds(2);
+
+        // Every call of Scan, whoever made it. Counted inside Scan so a test can
+        // tell how many walks a build cost on the old path as well as the new.
+        private static int _walksMade;
+        internal static int WalksMade => Volatile.Read(ref _walksMade);
 
         // Seams so a test can count walks and move the clock without sleeping.
         internal static Func<DateTime> Now { get; set; } = () => DateTime.UtcNow;
