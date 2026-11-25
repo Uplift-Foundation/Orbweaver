@@ -435,8 +435,19 @@ class MacMachine:
         except ValueError:
             raise MachineError(f"{what}: gh did not return JSON")
 
+    # Per route. QA's MacBook proof on b758f80 lost the first two copies to a
+    # transient "No route to host / lost connection", which scp reports as
+    # exit 1, not ssh's 255, so one retry per route, and every route is tried.
+    PUT_ATTEMPTS = 2
+
     def _put(self, path, log):
-        """The DMG where this Mac can mount it: the mini reads it in place."""
+        """The DMG where this Mac can mount it: the mini reads it in place.
+
+        A failed copy is retried once on the same route, then the next route is
+        tried, whatever scp's exit code. After each failure the partial file is
+        removed on the MacBook over that route (best effort), so a lost
+        connection does not leave 70 MB in its /tmp.
+        """
         if self.local:
             return path
         remote = "/tmp/ow-bugfix-" + os.path.basename(path)
@@ -444,13 +455,17 @@ class MacMachine:
         for route in self.routes:
             # scp spells ssh's -p as -P; a route is ssh arguments then a host.
             args = ["-P" if a == "-p" else a for a in route[:-1]]
-            last = self._sh(["scp", "-q", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
-                            + args + [path, f"{route[-1]}:{remote}"], 600)
-            log(f"scp DMG via {' '.join(route)}: exit {last.returncode}")
-            if last.returncode == 0:
-                return remote
-            if last.returncode != 255:
-                break
+            for attempt in range(1, self.PUT_ATTEMPTS + 1):
+                last = self._sh(["scp", "-q", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
+                                + args + [path, f"{route[-1]}:{remote}"], 600)
+                log(f"scp DMG via {' '.join(route)} (attempt {attempt}): exit {last.returncode}")
+                if last.returncode == 0:
+                    return remote
+                rm = self._sh(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
+                              + route + ["rm -f " + shlex.quote(remote)], 30)
+                log(f"rm partial DMG via {' '.join(route)}: exit {rm.returncode}")
+                if last.returncode == 255:
+                    break  # ssh cannot connect on this route: go to the next one
         raise MachineError(f"{self.name}: copying the DMG failed: {_tail(last.stderr) or 'timed out'}")
 
     # -- the seam

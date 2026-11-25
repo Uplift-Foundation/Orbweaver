@@ -184,22 +184,44 @@ class SshRoutes(unittest.TestCase):
         r = m.run("x", 1)
         self.assertEqual((r.exit_code, r.stdout, r.timed_out), (None, "part", True))
 
-    def test_put_scps_over_the_route_that_answers(self):
-        m, calls = self.machine([255, 0])
-        lines = []
-        remote = m._put("/x/Orbweaver-1.0.13-osx-arm64.dmg", lines.append)
-        self.assertEqual(remote, "/tmp/ow-bugfix-Orbweaver-1.0.13-osx-arm64.dmg")
-        self.assertEqual(calls[0][0], "scp")
-        self.assertEqual(calls[0][-1], "mbp:" + remote)
-        self.assertIn("-P", calls[1])  # scp spells the port -P
-        self.assertNotIn("-p", calls[1])
-        self.assertEqual(calls[1][-1], "warrenthompson@localhost:" + remote)
+    def scps(self, calls):
+        return [c for c in calls if c[0] == "scp"]
 
-    def test_put_refuses_when_copy_fails(self):
-        m, calls = self.machine([1])
+    def rms(self, calls):
+        return [c for c in calls if c[0] == "ssh" and c[-1].startswith("rm -f /tmp/ow-bugfix-")]
+
+    def test_put_scps_over_the_route_that_answers(self):
+        m, calls = self.machine([255, 0, 0])  # scp mbp fails to connect, rm, tunnel scp ok
+        remote = m._put("/x/Orbweaver-1.0.13-osx-arm64.dmg", lambda _: None)
+        self.assertEqual(remote, "/tmp/ow-bugfix-Orbweaver-1.0.13-osx-arm64.dmg")
+        scps = self.scps(calls)
+        self.assertEqual(len(scps), 2)  # no second try on a route ssh cannot reach
+        self.assertEqual(scps[0][-1], "mbp:" + remote)
+        self.assertIn("-P", scps[1])  # scp spells the port -P
+        self.assertNotIn("-p", scps[1])
+        self.assertEqual(scps[1][-1], "warrenthompson@localhost:" + remote)
+
+    def test_put_retries_a_dropped_copy_once_and_cleans_up(self):
+        # QA's MacBook proof: exit 1 "lost connection", then success.
+        m, calls = self.machine([1, 0, 0])  # scp fails, rm, scp ok
+        self.assertEqual(m._put("/x/a.dmg", lambda _: None), "/tmp/ow-bugfix-a.dmg")
+        self.assertEqual([c[-1] for c in self.scps(calls)], ["mbp:/tmp/ow-bugfix-a.dmg"] * 2)
+        self.assertEqual(len(self.rms(calls)), 1)
+        self.assertEqual(self.rms(calls)[0][-2], "mbp")
+
+    def test_put_first_copy_ok_needs_no_cleanup(self):
+        m, calls = self.machine([0])  # control
+        m._put("/x/a.dmg", lambda _: None)
+        self.assertEqual((len(self.scps(calls)), len(self.rms(calls))), (1, 0))
+
+    def test_put_moves_to_the_tunnel_after_two_failures_and_then_refuses(self):
+        # scp1, rm, scp1, rm on mbp; then the same on the tunnel; all fail
+        m, calls = self.machine([1, 0, 1, 0, 1, 0, 1, 0])
         with self.assertRaisesRegex(base.MachineError, "copying the DMG failed"):
             m._put("/x/a.dmg", lambda _: None)
-        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(self.scps(calls)), 4)
+        self.assertEqual(len(self.rms(calls)), 4)
+        self.assertIn("2222", self.scps(calls)[2])
 
     def test_the_mini_is_local(self):
         calls = []
