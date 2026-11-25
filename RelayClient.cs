@@ -363,7 +363,7 @@ namespace Orbweaver
         // ---- what the UI sees ------------------------------------------------
 
         private Status _state = Status.Off;
-        internal Status State { get { lock (_gate) return _state; } }
+        internal Status State { get { lock (_gate) return _state; } private set { lock (_gate) _state = value; } }
         internal string? LastError { get; private set; }
 
         internal event Action<Status> StateChanged = delegate { };
