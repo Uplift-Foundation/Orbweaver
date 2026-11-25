@@ -229,6 +229,17 @@ case "$1" in
 esac
 exit 0
 '''
+STUB_SPCTL = r'''#!/bin/bash
+B="${@: -1}"
+[ -f "$B/UNNOTARIZED" ] && { echo "$B: rejected" >&2; exit 3; }
+echo "$B: accepted"; exit 0
+'''
+# Real ditto, except a source carrying DITTOFAIL copies part of itself and
+# fails, as a full disk or a dropped volume would.
+STUB_DITTO = r'''#!/bin/bash
+if [ -f "$1/DITTOFAIL" ]; then mkdir -p "$2/Contents"; exit 1; fi
+exec /usr/bin/ditto "$@"
+'''
 STUB_LAUNCHCTL = r'''#!/bin/bash
 echo "$*" >> "$STUB_LOG"
 if [ "$1" = list ]; then [ -f "$STUB_KEEPALIVE" ]; exit $?; fi
@@ -256,7 +267,8 @@ class InstallScripts(unittest.TestCase):
         for d in (self.root + "/Applications", self.home, self.bin, self.state):
             os.makedirs(d)
         for name, body in (("hdiutil", STUB_HDIUTIL), ("codesign", STUB_CODESIGN),
-                           ("launchctl", STUB_LAUNCHCTL), ("open", STUB_OPEN)):
+                           ("launchctl", STUB_LAUNCHCTL), ("open", STUB_OPEN),
+                           ("spctl", STUB_SPCTL), ("ditto", STUB_DITTO)):
             p = os.path.join(self.bin, name)
             with open(p, "w") as f:
                 f.write(body)
@@ -297,7 +309,7 @@ class InstallScripts(unittest.TestCase):
 
     # fixtures
 
-    def make_bundle(self, path, sha, team=mac.TEAM_ID, badsig=False):
+    def make_bundle(self, path, sha, team=mac.TEAM_ID, badsig=False, marks=()):
         macos = os.path.join(path, "Contents", "MacOS")
         os.makedirs(macos)
         exe = os.path.join(macos, "Orbweaver")
@@ -309,8 +321,8 @@ class InstallScripts(unittest.TestCase):
             f.write(b"\x00MZjunk\x00" + (f"1.0.13+{sha}".encode() if sha else b"") + b"\x00tail")
         with open(os.path.join(path, "TEAM"), "w") as f:
             f.write(team)
-        if badsig:
-            open(os.path.join(path, "BADSIG"), "w").close()
+        for mark in (("BADSIG",) if badsig else ()) + tuple(marks):
+            open(os.path.join(path, mark), "w").close()
 
     def cache_build(self, sha, pr=12, stamp=None, **kw):
         """A downloaded build as signed_build() leaves one, so install() takes
@@ -381,6 +393,50 @@ class InstallScripts(unittest.TestCase):
         self.assertEqual(self.m.installed_commit(), SHA_OLD)
         self.assertTrue(self.pids(), "the running app was stopped for a refused DMG")
 
+    def test_install_refuses_an_app_gatekeeper_rejects(self):
+        self.install_old()
+        before = self.pids()
+        with self.assertRaisesRegex(base.MachineError, "spctl refused"):
+            self.install(SHA_NEW, marks=("UNNOTARIZED",))
+        self.assertEqual(self.m.installed_commit(), SHA_OLD)
+        self.assertEqual(self.pids(), before)  # not even stopped
+
+    def test_a_failed_copy_leaves_the_running_app_alone(self):
+        self.install_old()
+        before = self.pids()
+        with self.assertRaisesRegex(base.MachineError, "ditto into /Applications failed"):
+            self.install(SHA_NEW, marks=("DITTOFAIL",))
+        self.assertEqual(self.m.installed_commit(), SHA_OLD)
+        self.assertEqual(self.pids(), before)  # same process: never stopped
+        self.assertFalse(os.path.exists(self.app + ".incoming"))  # no half copy left behind
+
+    def test_a_failure_after_the_stop_relaunches_what_is_installed(self):
+        # The swap's first rename fails, after the copy is staged and the app
+        # stopped: the one point where a failure could leave nothing running.
+        self.install_old()
+        self.cache_build(SHA_NEW)
+        real = self.sh
+
+        def sh(argv, timeout=None, input=None):
+            if argv[:2] == ["/bin/bash", "-c"] and "hdiutil" in argv[2]:
+                argv = ["/bin/bash", "-c", argv[2].replace(
+                    'mv "$APP" "$APP.outgoing" ||', 'false ||')]
+            return real(argv, timeout, input)
+        m = mac.MacMachine("mini", {"state_dir": self.state}, sh=sh)
+        with self.assertRaisesRegex(base.MachineError, "could not move the installed app"):
+            m.install(12, SHA_NEW, self.log)
+        self.assertEqual(self.m.installed_commit(), SHA_OLD)
+        self.assertEqual(len(self.pids()), 1, "the old app was left stopped")
+        self.assertIn("open -a " + self.app, self.stub_log())
+
+    def test_a_failed_install_deletes_the_e2e_branch(self):
+        self.install_old()
+        with self.assertRaises(base.MachineError):
+            self.install(SHA_NEW, team="ADHOC0000")
+        self.assertEqual(self.gh_calls[-1][-1],
+                         "repos/Uplift-Foundation/Orbweaver/git/refs/heads/e2e/bugfix-pr-12")
+        self.assertEqual(self.gh_calls[-1][1:4], ["api", "-X", "DELETE"])
+
     def test_install_refuses_a_bad_signature(self):
         self.install_old()
         with self.assertRaisesRegex(base.MachineError, "codesign"):
@@ -414,6 +470,17 @@ class InstallScripts(unittest.TestCase):
         self.m.restore(self.log)
         self.assertEqual(self.m.installed_commit(), SHA_OLD)
         self.assertIn("mini: nothing kept aside, nothing to restore", self.lines)
+
+    def test_restore_puts_back_a_signed_but_unnotarized_build(self):
+        # Measured 2026-11-25: the build on both Macs (1.0.12) is Developer ID
+        # signed but spctl rejects it as unnotarized. Gatekeeper's verdict is
+        # for what comes in, never for what goes back, or no restore of those
+        # machines could succeed.
+        self.make_bundle(self.app, SHA_OLD, marks=("UNNOTARIZED",))
+        self.install(SHA_NEW)
+        self.m.restore(self.log)
+        self.assertEqual(self.m.installed_commit(), SHA_OLD)
+        self.assertEqual(len(self.pids()), 1)
 
     def test_restore_refuses_when_the_kept_bundle_is_gone(self):
         self.install_old()
@@ -449,6 +516,7 @@ class InstallScripts(unittest.TestCase):
         log = self.stub_log()
         self.assertIn("open -a " + self.app, log)
         self.assertNotIn("load ", log.replace("unload", ""))
+        self.assertEqual(len(self.pids()), 1)  # exactly one instance
 
     def test_install_refuses_bad_args_before_touching_anything(self):
         self.install_old()
@@ -456,6 +524,27 @@ class InstallScripts(unittest.TestCase):
             self.m.install(12, "nope", self.log)
         self.assertEqual(self.m.installed_commit(), SHA_OLD)
         self.assertEqual(self.gh_calls, [])
+
+
+class RemoteTimeout(unittest.TestCase):
+    """The MacBook is Warren's own machine: a command past its limit must die
+    there, not only lose its ssh session (lead's ruling). The kill itself is
+    proved for real in RunCommand; this pins that the ssh route sends the
+    command inside that same wrapper rather than bare."""
+
+    def test_macbook_command_goes_out_inside_the_far_side_timeout(self):
+        sent = []
+        m = mac.MacMachine("macbook", {}, sh=lambda a, timeout=None, input=None: (sent.append((a, timeout)), done(a))[1])
+        m.run("make test", 42)
+        argv, backstop = sent[0]
+        remote = argv[-1]
+        self.assertTrue(remote.startswith("/bin/bash -c "))
+        self.assertIn("setpgrp", remote)
+        self.assertIn('kill "KILL", -$pid', remote)
+        self.assertIn(" 42 /bin/bash -c ", remote)
+        self.assertIn("make test", remote)
+        self.assertGreater(backstop, 42)  # ours fires only if the Mac never answers
+        self.assertEqual(argv[0], "ssh")
 
 
 # ---------------------------------------------------------------- signed build

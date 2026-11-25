@@ -9,6 +9,7 @@ log, and the stamp checks before and after. This file is the seam for `mini`
     install(pr, sha, log)      fetch the PR's signed build, keep the installed
                                app aside, put the new one in /Applications
     restore(log)               put the kept app back; delete e2e/bugfix-pr-<n>
+                               (a failed install deletes it too)
     run(command, timeout_s)    -> RunResult
     installed_commit()         the 40-hex commit stamped in Orbweaver.dll
 
@@ -33,12 +34,15 @@ e2e/ branch to delete.
 How an install can go wrong, and what each step below is for (all of these
 have happened by hand, see the lead's notes for CB-289/341/406):
   * the bundle vanished for a minute when an ssh session dropped between
-    `rm -rf` and the copy: the new bundle is copied next to the old one first
-    and swapped in with two renames, and the whole swap runs as one script on
-    the Mac, so a dropped connection cannot stop it half way;
-  * a half-copied bundle that codesign rejected: the DMG's app is verified
-    (signature, Team ID, stamped commit) before /Applications is touched, and
-    the installed one again afterwards;
+    `rm -rf` and the copy: the new bundle is copied next to the old one while
+    the old one still runs, and only then is the app stopped and the copy
+    swapped in with two renames; the whole thing runs as one script on the
+    Mac, so a dropped connection cannot stop it half way, and any failure
+    after the stop relaunches whatever is in /Applications;
+  * a half-copied bundle that codesign rejected: a failed copy now never
+    reaches /Applications, and the DMG's app is verified (signature, Team ID,
+    Gatekeeper's notarization verdict, stamped commit) before anything is
+    touched, and the installed one again afterwards;
   * a check that compared the host stub, which is the same in every build: the
     commit is read from Contents/MacOS/Orbweaver.dll, where the build stamps it
     into the informational version (`1.0.13+<sha>`);
@@ -175,7 +179,18 @@ EXE="$APP/Contents/MacOS/Orbweaver"
 BUNDLE_ID=%(bundle)s
 KEEP="$HOME/Library/LaunchAgents/$BUNDLE_ID.plist"
 ASIDE=%(aside)s
-fail() { echo "RESULT error=$*"; exit 1; }
+# A failure after this script stopped the app relaunches whatever is in
+# /Applications now (the old app, if the swap never happened), so a refused
+# install never leaves Warren's machine without a running Orbweaver.
+fail() {
+  echo "RESULT error=$*"
+  if [ -n "${STOPPED:-}" ] && [ -d "$APP" ] && [ -z "$(pids)" ]; then
+    if [ -n "${KEEP_LOADED:-}" ] && [ -f "$KEEP" ]; then launchctl load "$KEEP" >/dev/null 2>&1
+    else env -u CLAUDE_CONFIG_DIR open -a "$APP" >/dev/null 2>&1; fi
+    echo "relaunched what is at $APP after the failure"
+  fi
+  exit 1
+}
 stamp() { LC_ALL=C grep -ao '%(grep)s' "$1/Contents/MacOS/Orbweaver.dll" 2>/dev/null | sed 's/.*+//' | sort -u; }
 pids() { ps -axo pid=,uid=,comm= | awk -v u="$(id -u)" -v e="$EXE" '$2==u && substr($0, index($0,$3))==e {print $1}'; }
 stop_app() {
@@ -187,12 +202,15 @@ stop_app() {
   [ -n "$P" ] && kill -TERM $P 2>/dev/null
   for _ in $(seq 1 50); do [ -z "$(pids)" ] && break; sleep 0.2; done
   P="$(pids)"; [ -n "$P" ] && kill -KILL $P 2>/dev/null && sleep 1
+  STOPPED=1
   [ -z "$(pids)" ] || fail "the running app (pid $(pids | tr '\n' ' ')) survived SIGKILL"
   echo "stopped: ${WAS_RUNNING:-nothing running}"
 }
-swap_in() {  # $1 = verified bundle to put at $APP
+stage() {  # $1 = verified bundle; copied next to $APP while the app still runs
   rm -rf "$APP.incoming"
-  ditto "$1" "$APP.incoming" || fail "ditto into /Applications failed"
+  ditto "$1" "$APP.incoming" || { rm -rf "$APP.incoming"; fail "ditto into /Applications failed; the installed app was not touched"; }
+}
+swap_in() {  # the staged copy becomes $APP: two renames, nothing copied
   rm -rf "$APP.outgoing"
   if [ -d "$APP" ]; then mv "$APP" "$APP.outgoing" || fail "could not move the installed app out of the way"; fi
   mv "$APP.incoming" "$APP" || { [ -d "$APP.outgoing" ] && mv "$APP.outgoing" "$APP"; fail "could not move the new app into place"; }
@@ -213,6 +231,9 @@ verify_signed() {  # $1 = bundle
   codesign --verify --deep --strict "$1" 2>&1 || fail "codesign --verify refused $1"
   TEAM="$(codesign -dv "$1" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
   [ "$TEAM" = %(team)s ] || fail "$1 is signed by team '${TEAM:-none}', not %(team)s"
+}
+verify_notarized() {  # $1 = bundle; Gatekeeper's own verdict, as a user's Mac would give it
+  spctl -a -t exec -vv "$1" 2>&1 || fail "spctl refused $1: not a notarized Developer ID app"
 }
 '''
 
@@ -236,6 +257,7 @@ hdiutil attach -nobrowse -readonly -noverify -quiet -mountpoint "$MNT" "$DMG" ||
 NEW="$MNT/Orbweaver.app"
 [ -d "$NEW" ] || fail "the DMG holds no Orbweaver.app"
 verify_signed "$NEW"
+verify_notarized "$NEW"
 [ "$(stamp "$NEW")" = "$SHA" ] || fail "the DMG's app is stamped '$(stamp "$NEW" | tr '\n' ' ')', not $SHA"
 mkdir -p "$ASIDE" || fail "could not create the aside folder"
 if [ -f "$ASIDE/previous.commit" ]; then
@@ -250,8 +272,9 @@ else
   printf 'none\n' > "$ASIDE/previous.commit"
 fi
 echo "RESULT previous=$(cat "$ASIDE/previous.commit")"
+stage "$NEW"
 stop_app
-swap_in "$NEW"
+swap_in
 verify_signed "$APP"
 [ "$(stamp "$APP")" = "$SHA" ] || fail "installed app is stamped '$(stamp "$APP" | tr '\n' ' ')', not $SHA"
 start_app
@@ -272,8 +295,9 @@ if [ "$PREV" = none ]; then
   exit 0
 fi
 [ -d "$ASIDE/Orbweaver.app" ] || fail "previous.commit says $PREV but no bundle is kept aside"
+stage "$ASIDE/Orbweaver.app"
 stop_app
-swap_in "$ASIDE/Orbweaver.app"
+swap_in
 codesign --verify --deep --strict "$APP" 2>&1 || fail "codesign --verify refused the restored app"
 GOT="$(stamp "$APP")"
 [ "${GOT:-unstamped}" = "$PREV" ] || fail "restored app is stamped '$GOT', expected $PREV"
@@ -440,8 +464,15 @@ class MacMachine:
 
     def install(self, pr, sha, log):
         check_args(pr, sha)
-        dmg = self.signed_build(pr, sha, log)
-        res = self._script(install_script(self._put(dmg, log), sha), log, "install")
+        try:
+            dmg = self.signed_build(pr, sha, log)
+            res = self._script(install_script(self._put(dmg, log), sha), log, "install")
+        except MachineError:
+            # Lead's ruling: the e2e/ branch goes on a failed install too, not
+            # only on release. Directly by PR, since a build that failed has
+            # no record for release_build() to read.
+            self._delete_branch(pr, log)
+            raise
         log(f"{self.name}: installed {res.get('commit')}, pid {res.get('pid', '?').strip()}, "
             f"kept aside {res.get('previous')}")
 
@@ -559,9 +590,12 @@ class MacMachine:
         Mac's restore, so the second finds it gone, which is fine. The DMG
         stays until the next build replaces it. Never raises."""
         rec = self._record()
-        if not rec or not rec.get("pr"):
-            return
-        branch = e2e_branch(rec["pr"])
+        if rec and rec.get("pr"):
+            self._delete_branch(rec["pr"], log)
+
+    def _delete_branch(self, pr, log):
+        """Delete e2e/bugfix-pr-<pr>; already gone is fine. Never raises."""
+        branch = e2e_branch(pr)
         r = self._gh(["api", "-X", "DELETE", f"repos/{self.repo}/git/refs/heads/{branch}"],
                      log, f"delete {branch}")
         gone = "Reference does not exist" in (r.stderr or "") + (r.stdout or "") \
