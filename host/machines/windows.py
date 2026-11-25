@@ -28,7 +28,7 @@ import shutil
 import subprocess
 import time
 
-from host.machines.base import MachineError, RunResult, default_sh
+from host.machines.base import SSH_KEEPALIVE, MachineError, RunResult, default_sh
 
 REMOTE_DIR = "orbweaver-machines"
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "windows.ps1")
@@ -94,7 +94,7 @@ class WindowsMachine:
     # -- plumbing
 
     def _ssh_argv(self, *remote):
-        return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", self.host] + list(remote)
+        return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", *SSH_KEEPALIVE, self.host] + list(remote)
 
     def _call(self, argv, log=None, timeout=120, what=None):
         try:
@@ -113,7 +113,7 @@ class WindowsMachine:
         if self._script_pushed:
             return
         self._call(self._ssh_argv("mkdir", "-p", REMOTE_DIR), log, what="ssh mkdir")
-        self._call(["scp", "-q", "-o", "BatchMode=yes", SCRIPT, f"{self.host}:{REMOTE_DIR}/ow-machine.ps1"],
+        self._call(["scp", "-q", "-o", "BatchMode=yes", *SSH_KEEPALIVE, SCRIPT, f"{self.host}:{REMOTE_DIR}/ow-machine.ps1"],
                    log, what="scp windows.ps1")
         self._script_pushed = True
 
@@ -233,7 +233,7 @@ class WindowsMachine:
     def install(self, pr, sha, log):
         setup = self.download(sha, log)
         self._push_script(log)
-        self._call(["scp", "-q", "-o", "BatchMode=yes", setup, f"{self.host}:{REMOTE_DIR}/setup.exe"],
+        self._call(["scp", "-q", "-o", "BatchMode=yes", *SSH_KEEPALIVE, setup, f"{self.host}:{REMOTE_DIR}/setup.exe"],
                    log, timeout=600, what="scp setup.exe")
         log(self._ps("keep", log=log).strip())
         log(self._ps("install", "-Setup", f"{REMOTE_DIR}/setup.exe", log=log, timeout=INSTALL_TIMEOUT).strip())

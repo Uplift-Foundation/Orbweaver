@@ -71,6 +71,11 @@ DEFAULTS = {
     "lock_wait_s": 10 * 60,
     # Per stream, for machine_run's stdout.txt and stderr.txt.
     "max_output_bytes": 1024 * 1024,
+    # All three, as host/README.md has always said. With no default, a config
+    # holding only company_dir ran with no machines at all, and the org's
+    # first real request was refused "not available on this runner: windows"
+    # (CB-475 follow-up, a deploy defect).
+    "machines": {"windows": {}, "mini": {}, "macbook": {}},
 }
 MACHINES = ("windows", "mini", "macbook")
 ID_RE = re.compile(r"[a-z0-9-]{1,40}")
@@ -830,9 +835,15 @@ def run_once(config_path, clock=time.time, gh=None, machines=None, lock=None, sl
         attention.write({"reason": "the runner's state file was unreadable and may have held a live hold",
                          "at": iso(clock()), "kept_at": aside})
         state = {}
+    ms = machines if machines is not None else make_machines(cfg)
+    # Logged when the set changes, and every tick while it is empty, so a
+    # runner that can reach nothing says so instead of refusing in silence.
+    names = sorted(ms)
+    if not names or state.get("machines_logged") != names:
+        log("machines on this runner: " + (", ".join(names) if names else "NONE (check machines.json)"))
+        state["machines_logged"] = names
     runner = Runner(cfg, gh or GhCli(cfg["repo"]), lock or DirLock(cfg["lock_path"], clock),
-                    machines if machines is not None else make_machines(cfg),
-                    state, clock, log, lambda s: save_state(state_path, s), sleep, attention)
+                    ms, state, clock, log, lambda s: save_state(state_path, s), sleep, attention)
     try:
         for rid, result, out, err in runner.tick(read_spool(spool, results, log)):
             if not write_result(results, rid, result, out, err):
