@@ -46,6 +46,9 @@ internal static class TestBootstrap
         // before any static constructor can run.
         Environment.SetEnvironmentVariable("ORBWEAVER_NO_CREDENTIAL_STORE", "1");
 
+        // CB-466: no suite ever sends the anonymous install ping.
+        Environment.SetEnvironmentVariable("ORBWEAVER_INSTALL_PING", "0");
+
         // The floor under CrashLog.Directory, and the reason forgetting to
         // isolate it is now harmless rather than a race.
         //

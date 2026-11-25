@@ -1,0 +1,16 @@
+{
+  "name": "other branches: restricted to admins (bugfix org)",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "include": ["~ALL"],
+      "exclude": ["refs/heads/bugfix/pc-*", "refs/heads/develop", "refs/heads/main", "refs/heads/screenshots"]
+    }
+  },
+  "bypass_actors": [
+    { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" },
+    { "actor_id": 29110, "actor_type": "Integration", "bypass_mode": "always" }
+  ],
+  "rules": [ { "type": "creation" }, { "type": "update" }, { "type": "deletion" } ]
+}

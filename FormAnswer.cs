@@ -174,8 +174,20 @@ namespace Orbweaver
             if (from >= 0)
             {
                 for (var i = 0; i < Math.Abs(to - from); i++)
+                {
+                    // CB-405: the form can close between presses; an arrow then
+                    // lands on the idle prompt (a team-footer row). Read again
+                    // before every one and press only into the same form.
+                    var (now, nowScreen) = await ReadWithScreenAsync(capture, status).ConfigureAwait(false);
+                    if (now is null || now.Fingerprint != prompt.Fingerprint)
+                    {
+                        diagnose?.Invoke(ReadBackDiagnosis("step", now, nowScreen, prompt.FreeTextKey!, null,
+                            now?.Fingerprint == prompt.Fingerprint));
+                        return MirrorProtocol.ErrTypeFailed;
+                    }
                     if (await PressAsync(press, status, to > from ? "Down" : "Up").ConfigureAwait(false) is { } failed)
                         return failed;
+                }
             }
             // CB-327: a form taller than the pane, its cursor on a row that
             // scrolled away, so there is nothing to count arrows from. Measured on

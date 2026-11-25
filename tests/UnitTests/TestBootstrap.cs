@@ -40,6 +40,9 @@ internal static class TestBootstrap
         // before any static constructor can run.
         Environment.SetEnvironmentVariable("ORBWEAVER_NO_CREDENTIAL_STORE", "1");
 
+        // CB-466: no suite ever sends the anonymous install ping.
+        Environment.SetEnvironmentVariable("ORBWEAVER_INSTALL_PING", "0");
+
         // The floor under CrashLog.Directory (CB-285). Every ClaudeCloudChatSession
         // writes its decisions to cloud-chat.log there unless a test hands it its
         // own Log, and this assembly builds sessions that do not — so, left unset,

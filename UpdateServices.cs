@@ -107,7 +107,20 @@ namespace Orbweaver
         [ExcludeFromCodeCoverage]
         internal static void Start()
         {
-            var checker = UpdateChecker.Create(Log);
+            // CB-466: the one construction site of the real ping HTTP class. Suites
+            // never reach Start (the headless lifetime skips it), and a source-scan
+            // test pins that this stays the only place.
+            var pingUrl = BrandEnv.Get(BrandEnv.InstallPingUrl);
+            if (InstallPing.OverrideWarning(pingUrl) is { } pingWarning) Log(pingWarning);
+            var pinger = new InstallPingSender(
+                new OrbweaverInstallPingSettings(), new HttpInstallPingHttp(),
+                TimeProvider.System.GetUtcNow, Log, Environment.GetEnvironmentVariable,
+                NeuralSpeech.EngineVersion,
+                InstallPing.OsName(OperatingSystem.IsWindows(), OperatingSystem.IsMacOS()),
+                InstallPing.ArchName(System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture),
+                InstallPing.ResolveBaseUrl(pingUrl));
+
+            var checker = UpdateChecker.Create(Log, afterCheck: () => pinger.TrySendAsync());
             Checker = checker;
 
             checker.PendingChanged += () => Dispatcher.UIThread.Post(() => TrayController.Instance?.Refresh());

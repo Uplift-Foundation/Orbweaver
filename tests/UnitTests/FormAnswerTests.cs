@@ -73,6 +73,36 @@ public class FormAnswerTests
         Assert.Equal(new[] { "my own answer" }, pane.Typed);
     }
 
+    // CB-405: the form closes after the first Down. The second arrow would land
+    // on the idle prompt (a team-footer row), so it is not pressed, and nothing
+    // is typed and no Enter goes out.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AFormThatClosesMidNavigationStopsTheArrows(bool replacedByAnotherForm)
+    {
+        var pane = new Pane(PaneFixtures.QaFormQ1);
+        var said = new List<string>();
+        pane.AfterPress = k => k == "Down" ? (replacedByAnotherForm ? PaneFixtures.TeamLeadNarrowForm : PaneFixtures.MacPromptAfterEsc) : null;
+
+        Assert.Equal(MirrorProtocol.ErrTypeFailed,
+            await FormAnswer.AnswerAsync(Status, pane.Capture, pane.Press, pane.Type, pane.Fp, "3", null, "my own answer", said.Add));
+        Assert.Equal(new[] { "Down" }, pane.Pressed);
+        Assert.Empty(pane.Typed);
+        Assert.StartsWith("readback stage=step read=" + (replacedByAnotherForm ? "form same-form=0" : "none same-form=0"), Assert.Single(said));
+    }
+
+    // The same refusal without a diagnose callback still presses nothing more.
+    [Fact]
+    public async Task AFormThatClosesMidNavigationStopsWithoutADiagnoseCallback()
+    {
+        var pane = new Pane(PaneFixtures.QaFormQ1);
+        pane.AfterPress = k => k == "Down" ? PaneFixtures.MacPromptAfterEsc : null;
+
+        Assert.Equal(MirrorProtocol.ErrTypeFailed, await pane.Answer("3", text: "my own answer"));
+        Assert.Equal(new[] { "Down" }, pane.Pressed);
+    }
+
     // Enter only after the row reads back as the text: a cursor that never
     // reached the row, or text that never showed, stops before Enter.
     // CB-406, end to end on the real team-lead captures: a long answer wraps
@@ -135,7 +165,8 @@ public class FormAnswerTests
     public async Task AFormThatVanishesBeforeTheRowIsReachedIsDiagnosedAsNoneRead()
     {
         var pane = new Pane(PaneFixtures.QaFormQ1);
-        pane.AfterPress = k => k == "Down" ? PaneFixtures.MacPromptAfterEsc : null;
+        var downs = 0;
+        pane.AfterPress = k => k == "Down" && ++downs == 2 ? PaneFixtures.MacPromptAfterEsc : null;
         var said = new List<string>();
 
         Assert.Equal(MirrorProtocol.ErrTypeFailed,

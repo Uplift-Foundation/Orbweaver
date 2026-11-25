@@ -18,6 +18,13 @@ on:
 permissions:
   contents: read
 
+# CB-466: nothing a workflow launches may count as a real install. The suites
+# never reach the ping (see InstallPingSingleSiteTests); this covers any step that
+# starts a built app, and marks it ours if it somehow does.
+env:
+  ORBWEAVER_INSTALL_PING: "0"
+  ORBWEAVER_INTERNAL: "1"
+
 jobs:
   # Runs first and gates everything else. A tag whose number disagrees with the
   # csproj would ship installers named one version while reporting another in

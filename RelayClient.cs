@@ -814,6 +814,21 @@ namespace Orbweaver
     {
         internal const int MaxFrame = 64 * 1024;
 
+        // How long a best-effort close may take before it is given up on
+        // (CB-378): a peer that never answers must not hold the reconnect
+        // loop or a dispose. Cancelling the close aborts the socket.
+        internal static readonly TimeSpan CloseTimeout = TimeSpan.FromSeconds(5);
+
+        // A close that fails, or times out, is given up quietly: it is
+        // best-effort, and the socket is disposed next either way.
+        internal static async Task CloseBounded(Func<CancellationToken, Task> close, TimeSpan timeout)
+        {
+            using var cts = new CancellationTokenSource(timeout);
+            try { await close(cts.Token).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is WebSocketException or ObjectDisposedException
+                                       || (ex is OperationCanceledException && cts.IsCancellationRequested)) { }
+        }
+
         public async Task<IRelaySocket> ConnectAsync(Uri uri, CancellationToken token)
         {
             var ws = new ClientWebSocket();
@@ -856,14 +871,8 @@ namespace Orbweaver
                 }
             }
 
-            // The catch is for a socket that died between the state check and
-            // the close — a race no test can schedule, so it is excluded.
-            [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
-            private async Task CloseQuietly(WebSocketCloseStatus status)
-            {
-                try { await ws.CloseOutputAsync(status, null, CancellationToken.None).ConfigureAwait(false); }
-                catch (Exception ex) when (ex is WebSocketException or ObjectDisposedException) { }
-            }
+            private Task CloseQuietly(WebSocketCloseStatus status) =>
+                CloseBounded(ct => ws.CloseOutputAsync(status, null, ct), CloseTimeout);
 
             public async ValueTask DisposeAsync()
             {

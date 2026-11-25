@@ -40,7 +40,7 @@ namespace Orbweaver.Tests
         [Fact]
         public void TheListHoldsThirtyTwoDistinctVariables()
         {
-            Assert.Equal(32, BrandEnv.All.Count);
+            Assert.Equal(35, BrandEnv.All.Count);
             Assert.Equal(BrandEnv.All.Count, BrandEnv.All.Distinct().Count());
         }
 

@@ -275,5 +275,94 @@ class RealWorkflows(unittest.TestCase):
         self.assertEqual(problems, [])
 
 
+def inert_problems(name, text):
+    """Rules for a workflow that must stay inert (stress.yml, CB-455).
+
+    It runs code from a branch the bug-fix org wrote, so it may hold no secret,
+    no write permission, only be started by hand, never persist the checkout
+    credential, and never put a dispatch input inside a `run:` line (the input
+    is typed by whoever dispatches; reaching it through env keeps it out of the
+    shell's parser).
+    """
+    out = []
+    if re.search(r"secrets\.", text):
+        out.append(f"{name}: references secrets.*")
+    if re.search(r"(?m)^\s*(contents|pull-requests|actions|checks|statuses|id-token|packages):\s*write", text) \
+            or "write-all" in text:
+        out.append(f"{name}: holds a write permission")
+    triggers = re.search(r"(?m)^on:\n((?:[ ]+.*\n|\n)+)", text)
+    keys = set(re.findall(r"(?m)^  (\w+):", triggers.group(1))) if triggers else set()
+    if keys != {"workflow_dispatch"}:
+        out.append(f"{name}: triggers are {sorted(keys)}, not only workflow_dispatch")
+    for m in re.finditer(r"(?ms)^\s+- uses: actions/checkout@\S+\n(.*?)(?=^\s+- |\Z)", text):
+        if "persist-credentials: false" not in m.group(1):
+            out.append(f"{name}: checkout persists credentials")
+    if not re.search(r"actions/checkout@", text):
+        out.append(f"{name}: no checkout found; is the check blind?")
+    in_run = False
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if re.match(r"^(- )?run:", stripped):
+            in_run = True
+            if "${{" in stripped and "inputs." in stripped:
+                out.append(f"{name}: dispatch input interpolated into run:")
+            if stripped.rstrip() in ("run: |", "run: >", "- run: |"):
+                continue
+            in_run = False
+            continue
+        if in_run:
+            if raw.startswith(" " * 10) or not stripped:
+                if "inputs." in stripped and "${{" in stripped:
+                    out.append(f"{name}: dispatch input interpolated into run:")
+            else:
+                in_run = False
+    return out
+
+
+INERT_GOOD = """name: S
+on:
+  workflow_dispatch:
+    inputs:
+      x:
+        type: string
+permissions:
+  contents: read
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: go
+        env:
+          X: ${{ inputs.x }}
+        run: echo "$X"
+"""
+
+
+class InertWorkflow(unittest.TestCase):
+    def test_good_control_passes(self):
+        self.assertEqual(inert_problems("g.yml", INERT_GOOD), [])
+
+    def test_each_violation_is_caught(self):
+        cases = {
+            "secret": INERT_GOOD.replace("X: ${{ inputs.x }}", "X: ${{ secrets.T }}"),
+            "write": INERT_GOOD.replace("contents: read", "contents: write"),
+            "pr trigger": INERT_GOOD.replace("on:\n  workflow_dispatch:", "on:\n  pull_request:\n  workflow_dispatch:"),
+            "persist": INERT_GOOD.replace("          persist-credentials: false\n", ""),
+            "inline input": INERT_GOOD.replace('run: echo "$X"', 'run: echo ${{ inputs.x }}'),
+            "block input": INERT_GOOD.replace('run: echo "$X"', 'run: |\n          echo ${{ inputs.x }}'),
+        }
+        for label, text in cases.items():
+            self.assertTrue(inert_problems("b.yml", text), label)
+
+    def test_stress_yml_is_inert(self):
+        path = os.path.join(WORKFLOWS, "stress.yml")
+        self.assertTrue(os.path.exists(path), "stress.yml missing")
+        with open(path, encoding="utf-8") as fh:
+            self.assertEqual(inert_problems("stress.yml", fh.read()), [])
+
+
 if __name__ == "__main__":
     sys.exit(0 if unittest.main(exit=False).result.wasSuccessful() else 1)

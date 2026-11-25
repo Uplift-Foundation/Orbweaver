@@ -2,6 +2,16 @@
 
 # Orbweaver
 
+**Know which agent needs you.** A small glowing orb for every AI coding session, floating on top of the work you are already doing. The one that needs you turns amber. Agent teams are drawn as teams: a lead, and its members linked to it by arrows.
+
+**[Website](https://orbweaver.uplifttech.org/?utm_source=github&utm_medium=readme&utm_campaign=readme-hero)** · **[Download](https://github.com/Uplift-Foundation/Orbweaver/releases/latest)** · Windows 10/11 and macOS (Apple silicon and Intel)
+
+<p align="center"><img src="docs/brand/readme/readme-hero.png" width="860" alt="Illustration of Orbweaver on a desktop: four orbs float over an editor and a browser, one amber because that session needs the user, the rest violet or slate."></p>
+
+<p align="center"><img src="docs/brand/readme/readme-team.png" width="420" alt="Illustration of an agent team: a lead orb named Planner with three smaller member orbs, MenuUX, Narrative and Tests, each joined to the lead by a dashed arrow."></p>
+
+<p align="center"><sub>Illustrations from <a href="https://orbweaver.uplifttech.org/?utm_source=github&utm_medium=readme&utm_campaign=readme-hero">the website</a>, drawn to illustrate the app. They are not screenshots of the running app.</sub></p>
+
 *Formerly Claude Buddy.* If you are looking for Claude Buddy, this is it: same app, new name.
 
 One tiny always-on-top orb per running Claude Code session, stacked in the
@@ -2129,6 +2139,8 @@ An upgrade over a copy installed before the rename stays in `Programs\ClaudeBudd
 ### Updating
 
 Orbweaver checks GitHub for a newer release about once a day, and **Check for updates…** in the menu-bar/tray menu checks on demand. When one is found the menu item becomes **Update to <version> available…** and a small notice shows the release notes with **Install & restart**, **Later** and **Skip this version**. Nothing is downloaded until you choose Install. Settings → **Updates** turns the daily check off (no network call is made at all while it is off), opts in to prerelease versions, and shows the version you skipped with a way to forget it.
+
+**Anonymous install count.** So we can tell how many copies of Orbweaver are in use, the app sends one small ping about once a day, alongside the update check. It contains exactly four things: a random install ID that Orbweaver generates on your machine (not derived from your hardware, your account or anything else), the app version, your operating system (macOS or Windows) and CPU type (arm64 or x64). It never contains user names, host names, file paths, session content or anything from your agents. The ping goes to an analytics server run by Uplift Foundation; like any web request it arrives from your IP address, which is not stored with the ping. Turn it off in Settings → **Updates** → **Share an anonymous install count**, or set `ORBWEAVER_INSTALL_PING=0` or `DO_NOT_TRACK=1`. Turning it off also deletes the install ID. If automatic update checks are off, no ping is sent either.
 
 What Install does: it downloads the installer for your platform, checks it against the release's `SHA256SUMS.txt`, and refuses on any mismatch. On macOS it also requires the downloaded app to pass `codesign --verify --deep --strict`, to be signed by Uplift Foundation's Team ID, and to pass Gatekeeper's `spctl --assess`, then swaps it into `/Applications` and relaunches it. On Windows it runs the setup silently and the setup relaunches the app. The Windows installer is not code-signed, so the checksum is the only check and it comes from the same GitHub release as the installer — that is the same level of assurance as downloading it by hand, not more.
 
