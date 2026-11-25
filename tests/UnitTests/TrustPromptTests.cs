@@ -32,6 +32,8 @@ public class TrustPromptTests
         { "conhost-home-w120-yes", TrustScreens.WindowsHome, "Yes", true },
         { "conhost-plain-w120-no", TrustScreens.WindowsPlain, "No", false },
         { "conhost-plain-w120-yes", TrustScreens.WindowsPlain, "Yes", false },
+        { "conhost-unicode-home-w120-no", TrustScreens.WindowsHome, "No", true },
+        { "conhost-unicode-home-w120-yes", TrustScreens.WindowsHome, "Yes", true },
     };
 
     // CB-476: a Windows folder binds however a launch spells it (case, either

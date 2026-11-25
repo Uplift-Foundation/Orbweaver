@@ -32,4 +32,10 @@ internal static class TrustScreens
     internal const string WindowsPlain = @"C:\Users\warre\tmp-cb476";
     internal static string ConsoleOnNo => Read("conhost-home-w120-no");
     internal static string ConsoleOnYes => Read("conhost-home-w120-yes");
+
+    // The same home-folder screen from a conhost started over ssh (session 0) and
+    // read with the same algorithm: there Claude Code draws ❯ and ⚠, not > and ‼.
+    // Both shapes are real, so both are pinned.
+    internal static string UnicodeConsoleOnNo => Read("conhost-unicode-home-w120-no");
+    internal static string UnicodeConsoleOnYes => Read("conhost-unicode-home-w120-yes");
 }

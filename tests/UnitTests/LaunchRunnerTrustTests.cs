@@ -129,10 +129,15 @@ public class LaunchRunnerTrustTests
         Assert.Empty(d.Presses);
     }
 
-    [Fact]
-    public async Task Windows_answers_down_then_enter_on_the_console_and_waits_for_the_check_in()
+    // The logged-on console draws ">" (bryn's captures); an ssh-started one draws ❯.
+    // The answer path must see the marker move to Yes on both before it presses Enter.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Windows_answers_down_then_enter_on_the_console_and_waits_for_the_check_in(bool unicode)
     {
-        var d = Console(n => n == 0 || n == 1 ? TrustScreens.ConsoleOnNo : TrustScreens.ConsoleOnYes);
+        var (no, yes) = unicode ? (TrustScreens.UnicodeConsoleOnNo, TrustScreens.UnicodeConsoleOnYes) : (TrustScreens.ConsoleOnNo, TrustScreens.ConsoleOnYes);
+        var d = Console(n => n == 0 || n == 1 ? no : yes);
         d.OnPress = key => { if (key == "Enter") d.ChecksIn("new", LaunchRunnerTests.Status(cwd: TrustScreens.WindowsHome)); };
 
         var outcome = await d.Runner().AnswerTrustAsync(Home(), new LaunchRunner.HeldTrust("con:42", new HashSet<string>(), true));
