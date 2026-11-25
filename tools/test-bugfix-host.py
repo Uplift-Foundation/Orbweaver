@@ -925,6 +925,122 @@ REAL_LOG = {"runId": "r1", "store": "local_file", "logRef": "x/r1.ndjson",
                        '{"ts":"2026-11-24T10:00:01Z","stream":"stderr","chunk":"13: Repository rule violations found\\n"}\n'}
 
 
+class PauseWindowTests(unittest.TestCase):
+    """CB-472: a pause does not stop a ticket's ninety minutes, so a release
+    soon after a pause is not counted toward two in a row."""
+
+    def test_windows_open_on_the_first_paused_tick_and_close_on_the_first_active_one(self):
+        w = warden.note_pause_state([], False, 100)
+        self.assertEqual(w, [])
+        w = warden.note_pause_state(w, True, 200)
+        w = warden.note_pause_state(w, True, 500)  # still paused: same window
+        self.assertEqual(w, [{"paused_at": 200, "resumed_at": None}])
+        w = warden.note_pause_state(w, False, 800)
+        w = warden.note_pause_state(w, False, 1100)
+        self.assertEqual(w, [{"paused_at": 200, "resumed_at": 800}])
+        w = warden.note_pause_state(w, True, 1400)
+        self.assertEqual(len(w), 2)
+
+    def test_only_the_last_twenty_are_kept(self):
+        w = []
+        for i in range(30):
+            w = warden.note_pause_state(w, True, i * 10)
+            w = warden.note_pause_state(w, False, i * 10 + 5)
+        self.assertEqual(len(w), 20)
+        self.assertEqual(w[0]["paused_at"], 100)
+
+    def test_paused_within_the_ticket_window(self):
+        T = warden.TICKET_WINDOW
+        now = 100_000
+        self.assertTrue(warden.paused_within([{"paused_at": now - 10, "resumed_at": None}], now))
+        self.assertTrue(warden.paused_within([{"paused_at": now - T - 600, "resumed_at": now - T}], now))
+        self.assertFalse(warden.paused_within([{"paused_at": now - T - 600, "resumed_at": now - T - 1}], now))
+        self.assertFalse(warden.paused_within([], now))
+        self.assertFalse(warden.paused_within([{"paused_at": now + 5, "resumed_at": None}], now))
+
+    def test_the_warden_records_its_own_pause_and_the_resume(self):
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state, now=1000)
+        pc.cancelled_issues = [R("x"), R("y")]
+        self.assertTrue(tick(pc=pc, state=state, now=1300)[1])
+        self.assertEqual(state["pauses"], [{"paused_at": 1300, "resumed_at": None}])
+        pc.paused = False  # a person resumes
+        tick(pc=pc, state=state, now=1600)
+        self.assertEqual(state["pauses"], [{"paused_at": 1300, "resumed_at": 1600}])
+
+    def test_a_pause_by_someone_else_is_recorded_when_seen(self):
+        state = {}
+        tick(pc=FakePC(paused=True), state=state, now=5000)
+        self.assertEqual(state["pauses"], [{"paused_at": 5000, "resumed_at": None}])
+
+    def test_releases_after_a_pause_are_not_counted_control_without_one_still_pauses(self):
+        # The 2026-11-25 shape: a pause, a resume, then two releases forced by
+        # the clocks that kept running through it.
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state, now=0)
+        pc.paused = True
+        tick(pc=pc, state=state, now=300)
+        pc.paused = False
+        tick(pc=pc, state=state, now=2700)
+        pc.cancelled_issues = [R("a", 461), R("b", 432)]
+        _, paused, logs = tick(pc=pc, state=state, now=3000)
+        self.assertFalse(paused)
+        self.assertEqual(state.get("paperclip_releases", 0), 0)
+        self.assertEqual(sum("not counted: the company was paused during this ticket's window" in l
+                             for l in logs), 2)
+        # Control: once the window has passed, two releases pause as before.
+        later = 2700 + warden.TICKET_WINDOW + 1
+        pc.cancelled_issues += [R("c", 500), R("d", 501)]
+        _, paused, logs = tick(pc=pc, state=state, now=later)
+        self.assertTrue(paused)
+        self.assertTrue(any("CB-501 released" in l and "2 in a row" in l for l in logs))
+
+    def test_one_per_pass_still_holds_across_an_uncounted_release(self):
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state, now=0)
+        state["pauses"] = [{"paused_at": 100, "resumed_at": 200}]
+        pc.cancelled_issues = [R("r1", 415, parentId="pass1")]
+        tick(pc=pc, state=state, now=300)
+        self.assertEqual(state.get("paperclip_releases", 0), 0)
+        # The pass's second engineer issue, seen after the window: still one release, already handled.
+        pc.cancelled_issues.append(R("r2", 415, parentId="pass1"))
+        _, _, logs = tick(pc=pc, state=state, now=300 + warden.TICKET_WINDOW + 200)
+        self.assertEqual(state.get("paperclip_releases", 0), 0)
+        self.assertTrue(any("CB-415 already counted" in l for l in logs))
+
+    def test_pauses_file_is_written_as_iso_and_skipped_by_the_spool_reader(self):
+        with tempfile.TemporaryDirectory() as d:
+            warden.write_pauses(d, [{"paused_at": 0, "resumed_at": 60}, {"paused_at": 120, "resumed_at": None}])
+            path = os.path.join(d, "pauses.json")
+            with open(path) as f:
+                self.assertEqual(json.load(f), [
+                    {"paused_at": "1970-01-01T00:00:00Z", "resumed_at": "1970-01-01T00:01:00Z"},
+                    {"paused_at": "1970-01-01T00:02:00Z", "resumed_at": None}])
+            if os.name != "nt":
+                self.assertEqual(os.stat(path).st_mode & 0o777, 0o644)
+            logs = []
+            self.assertEqual(warden.read_spool(d, logs.append), [])
+            self.assertTrue(os.path.exists(path), "pauses.json is not a request and stays put")
+            self.assertEqual(logs, [])
+            warden.write_pauses(d, [])
+            with open(path) as f:
+                self.assertEqual(json.load(f), [])
+
+    def test_the_tick_publishes_the_file_and_a_write_failure_does_not_stop_the_pause(self):
+        with tempfile.TemporaryDirectory() as d:
+            state, pc = {}, FakePC(paused=True)
+            tick(pc=pc, state=state, cfg={"spool": d}, now=0)
+            with open(os.path.join(d, "pauses.json")) as f:
+                self.assertEqual(json.load(f), [{"paused_at": "1970-01-01T00:00:00Z", "resumed_at": None}])
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state, now=0)
+        pc.cancelled_issues = [R("x"), R("y")]
+        _, paused, logs = tick(pc=pc, state=state, cfg={"spool": "/nonexistent/spool"}, now=300)
+        self.assertTrue(paused)
+        self.assertEqual(pc.pauses and len(pc.pauses), 1)
+        self.assertTrue(any("pauses.json not written" in l for l in logs))
+
+
 class RunLogTests(unittest.TestCase):
     def test_parses_the_measured_shape_and_joins_chunks(self):
         text = warden.run_log_text(REAL_LOG)

@@ -64,6 +64,11 @@ MAX_N = 50
 RELEASES_IN_A_ROW = 2
 AUDIT_FAILURES_BEFORE_PAUSE = 3
 DEFAULT_DIR = os.path.expanduser("~/.config/orbweaver-bugfix")
+# A ticket's time limit in the org (skill). A release seen within this long of
+# any pause may have been caused by the pause, not by the ticket (CB-472).
+TICKET_WINDOW = 90 * 60
+PAUSES_FILE = "pauses.json"
+PAUSES_KEPT = 20
 
 
 # ---------------------------------------------------------------- pure rules
@@ -280,6 +285,31 @@ def runs_problem(count, cap):
     return f"{count} runs started today, cap {cap}" if count > cap else None
 
 
+def note_pause_state(windows, paused, now):
+    """Pause windows [{paused_at, resumed_at}] (epoch seconds) after a tick
+    that saw the company `paused` or not. A window opens on the first tick that
+    sees a pause, whoever made it, and closes on the first tick that sees the
+    company active again, so both ends are within one tick of the truth."""
+    windows = [dict(w) for w in windows]
+    open_ = windows and windows[-1].get("resumed_at") is None
+    if paused and not open_:
+        windows.append({"paused_at": now, "resumed_at": None})
+    elif not paused and open_:
+        windows[-1]["resumed_at"] = now
+    return windows[-PAUSES_KEPT:]
+
+
+def paused_within(windows, now, span=TICKET_WINDOW):
+    """True when any pause window overlaps the `span` seconds before now. A
+    ninety-minute limit does not stop while the company is paused, so a
+    release seen soon after a pause may be the pause's doing (CB-472)."""
+    for w in windows:
+        resumed = w.get("resumed_at")
+        if w["paused_at"] <= now and (resumed is None or resumed >= now - span):
+            return True
+    return False
+
+
 def mint_due(state, now, paused):
     if paused:
         return False
@@ -379,10 +409,27 @@ class Warden:
                 if parent:
                     counted.append([key, parent])
                     del counted[:-50]
+                # Checked after the pass is recorded, so a second engineer
+                # issue of the same pass seen later is still deduplicated.
+                if paused_within(self.state.get("pauses", []), self.now):
+                    self.log(f"{key} released, not counted: the company was paused during this "
+                             f"ticket's window (issue {issue_id[:8]})")
+                    continue
                 n = self.state["paperclip_releases"] = self.state.get("paperclip_releases", 0) + 1
                 self.log(f"{key} released (Paperclip issue cancelled; {n} in a row)")
                 if n >= RELEASES_IN_A_ROW:
                     self.pause(f"{RELEASES_IN_A_ROW} releases in a row (Paperclip issue states)")
+
+    def note_pauses(self, paused):
+        """Record this tick's pause state (CB-472), counting a pause the tick
+        is about to make, and publish the windows to the org. Failing to write
+        the file must never stop the tick before it pauses."""
+        self.state["pauses"] = note_pause_state(self.state.get("pauses", []), paused, self.now)
+        if self.cfg.get("spool"):
+            try:
+                write_pauses(self.cfg["spool"], self.state["pauses"])
+            except OSError as e:
+                self.log(f"{PAUSES_FILE} not written: {type(e).__name__}")
 
     def watch_push_refusals(self):
         """GitHub's ruleset refusal text in a run's log means an agent tried to
@@ -461,6 +508,7 @@ class Warden:
         if why:
             self.pause(why)
         paused = self.pc.is_paused()
+        self.note_pauses(paused or bool(self.pause_reasons))
         if self.pause_reasons and not paused:
             self.pc.pause("; ".join(self.pause_reasons))
             paused = True
@@ -652,6 +700,8 @@ def read_spool(spool, log):
     for sub in ("done", "bad"):
         os.makedirs(os.path.join(spool, sub), exist_ok=True)
     for path in sorted(glob.glob(os.path.join(spool, "*.json"))):
+        if os.path.basename(path) == PAUSES_FILE:
+            continue  # the warden's own answer to the org, not a request
         try:
             with open(path) as f:
                 raw = f.read(4096)
@@ -665,6 +715,27 @@ def read_spool(spool, log):
             log(f"dropped {os.path.basename(path)}: {why}")
         os.replace(path, os.path.join(spool, dest, os.path.basename(path)))
     return out
+
+
+def iso(t):
+    return dt.datetime.fromtimestamp(t, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def write_pauses(spool, windows):
+    """<spool>/pauses.json for the sandboxed lead: the same windows as UTC
+    ISO strings, oldest first. Written whole and renamed into place so a
+    reader never sees half a file, 0644 because the org only reads it."""
+    rows = [{"paused_at": iso(w["paused_at"]),
+             "resumed_at": None if w.get("resumed_at") is None else iso(w["resumed_at"])}
+            for w in windows]
+    path = os.path.join(spool, PAUSES_FILE)
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    with os.fdopen(fd, "w") as f:
+        json.dump(rows, f, indent=1)
+        f.write("\n")
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
 
 
 def run_once(config_path):
