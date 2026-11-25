@@ -293,7 +293,7 @@ public class InstallPingTests
         {
             r => r.S.Enabled = false,
             r => r.Env["ORBWEAVER_INSTALL_PING"] = "0",
-            r => r.Env["CLAUDE_BUDDY_INSTALL_PING"] = "off",
+            r => r.Env["ORBWEAVER_INSTALL_PING"] = "off",
             r => r.Env["DO_NOT_TRACK"] = "1",
             r => r.S.LastPing = Noon.AddHours(-1),
         })
