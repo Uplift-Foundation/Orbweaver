@@ -11,7 +11,10 @@
 #   -Action restore   put the kept folder back exactly, start the app, drop it
 param(
   [Parameter(Mandatory = $true)][ValidateSet('stamp', 'keep', 'install', 'restore')][string]$Action,
-  [string]$Setup
+  [string]$Setup,
+  # CB-475: names this call in done-<action>.txt, so the runner can tell this
+  # call's result from an earlier one's.
+  [string]$Nonce = ''
 )
 $ErrorActionPreference = 'Stop'
 $App = Join-Path $env:LOCALAPPDATA 'Programs\Orbweaver'
@@ -51,7 +54,47 @@ function Copy-Mirror($from, $to) {
   $global:LASTEXITCODE = 0
 }
 
-switch ($Action) {
+# CB-475: ssh to this PC can stay open for minutes after the script has
+# finished (seen after installs and restores that start the app; cause not
+# diagnosed). So the outcome is also written to done-<action>.txt beside this
+# script, first line "<nonce> ok" or "<nonce> failed", then the output. When
+# ssh hangs, the runner cuts it off and reads this instead of waiting.
+$Done = Join-Path (Split-Path -Parent $PSCommandPath) "done-$Action.txt"
+function Write-Done($state, $text) {
+  if ($Nonce) { [IO.File]::WriteAllText($Done, "$Nonce $state`n$text") }
+}
+# A run of this script cut off by the runner may still be going (CB-475): an
+# install or restore must not race one. Any other powershell running this
+# script, and any installer it started, is stopped first. That includes a run
+# a person started by hand, which is accepted: one install at a time is the
+# install lock's rule anyway.
+function Stop-EarlierRuns {
+  $me = $PID
+  Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
+    Where-Object { $_.ProcessId -ne $me -and $_.CommandLine -match 'ow-machine\.ps1' } |
+    ForEach-Object {
+      Get-CimInstance Win32_Process -Filter "ParentProcessId=$($_.ProcessId)" |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+      Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# Test seam for the real-machine proof (CB-475), inert unless a person creates
+# stall-<action>.txt beside this script on the PC: "before <s>" sleeps before
+# the work (a genuinely stuck action), "after <s>" sleeps after the outcome is
+# recorded (the observed hang: work done, channel still open). One-shot: the
+# file is deleted when read.
+$Stall = Join-Path (Split-Path -Parent $PSCommandPath) "stall-$Action.txt"
+$StallWhen, $StallFor = '', 0
+if (Test-Path $Stall) {
+  $StallWhen, $StallFor = ((Get-Content $Stall -Raw).Trim() -split '\s+')
+  Remove-Item $Stall -Force
+}
+
+try {
+if ($Action -in 'install', 'restore') { Stop-EarlierRuns }
+if ($StallWhen -eq 'before') { Start-Sleep -Seconds ([int]$StallFor) }
+$Out = & { switch ($Action) {
   'stamp' { Get-Stamp }
   'keep' {
     # Once per hold: a second install for a new head must not keep aside the
@@ -83,4 +126,11 @@ switch ($Action) {
     Start-App
     "restored $(Get-Stamp)"
   }
+} }
+} catch {
+  Write-Done 'failed' $_.Exception.Message
+  throw
 }
+Write-Done 'ok' (($Out | Out-String).Trim())
+$Out
+if ($StallWhen -eq 'after') { Start-Sleep -Seconds ([int]$StallFor) }

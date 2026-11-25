@@ -1190,6 +1190,35 @@ def fake_download(argv):
     return ""
 
 
+class FakeProc:
+    """A spawned ssh for windows.ps1, answered by FakeSh's rules: a rule that
+    raises TimeoutExpired means the ssh never exits (the CB-475 hang). Each
+    wait advances the fake clock by its timeout; `exits_after` makes a hung
+    call end on its own after that many waits."""
+
+    def __init__(self, sh, argv, clock, exits_after=None):
+        self.sh, self.argv, self.clock = sh, argv, clock
+        self.returncode, self.killed, self.waits = None, False, 0
+        try:
+            self.result = sh(argv)
+        except subprocess.TimeoutExpired:
+            self.result = None
+
+    def communicate(self, timeout=None):
+        if self.killed:
+            return "", ""
+        if self.result is None:
+            self.waits += 1
+            self.clock.t += timeout or 0
+            raise subprocess.TimeoutExpired(self.argv, timeout)
+        self.returncode = self.result.returncode
+        return self.result.stdout, self.result.stderr
+
+    def kill(self):
+        self.killed = True
+        self.sh.calls.append(["KILL"] + self.argv)
+
+
 class WindowsTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -1200,7 +1229,17 @@ class WindowsTests(unittest.TestCase):
 
     def machine(self, rules):
         sh = FakeSh(rules)
-        return windows.WindowsMachine(self.cfg, sh=sh), sh
+        clock = Clock(0.0)
+        m = windows.WindowsMachine(self.cfg, sh=sh, spawn=lambda argv: FakeProc(sh, argv, clock))
+        m.new_nonce = lambda: "n0nce"
+        m.slept = []
+
+        def sleep(s):
+            m.slept.append(s)
+            clock.t += s
+        m.sleep = sleep
+        m.clock = clock
+        return m, sh
 
     def install_rules(self, **over):
         rules = [
@@ -1273,7 +1312,141 @@ class WindowsTests(unittest.TestCase):
                                                        subprocess.TimeoutExpired("ssh", 120))]))
         with self.assertRaises(base.MachineError) as e:
             m.install(7, SHA, lambda s: None)
-        self.assertIn("timed out", str(e.exception))
+        self.assertIn(f"windows.ps1 keep timed out after {windows.STEP_TIMEOUT} s and recorded no outcome",
+                      str(e.exception))
+
+    # CB-475: ssh to the PC can stay open for minutes after the script has
+    # finished. The call is cut off and the script's own record is read.
+    def hang(self, action):
+        return (has("-Action", action), subprocess.TimeoutExpired("ssh", windows.INSTALL_TIMEOUT))
+
+    def done(self, action, text):
+        return (has("cat", f"{windows.REMOTE_DIR}/done-{action}.txt"), text)
+
+    def test_a_hung_ssh_after_a_finished_install_returns_at_the_first_poll(self):
+        # The field hang: work done and recorded, ssh never closes. The runner
+        # must not wait out the cap (lead's ruling): it returns at the first
+        # poll and kills the ssh.
+        m, sh = self.machine(self.install_rules(first=[
+            self.hang("install"), self.done("install", "n0nce ok\ninstalled 1.0.13+" + SHA)]))
+        lines = []
+        m.install(7, SHA, lines.append)
+        self.assertIn("installed 1.0.13+" + SHA, lines)
+        self.assertEqual(m.clock.t, windows.DONE_POLL)
+        self.assertTrue(any("finished after 5 s (recorded by the script)" in l for l in lines))
+        killed = [c for c in sh.calls if c[0] == "KILL"]
+        self.assertEqual(len(killed), 1)
+        self.assertIn("install", killed[0])
+        self.assertEqual(m.slept, [])
+        # Control: the install call itself carried this call's nonce.
+        call = [a for a in sh.calls if "-Action" in a and a[0] == "ssh" and a[a.index("-Action") + 1] == "install"][0]
+        self.assertEqual(call[-2:], ["-Nonce", "n0nce"])
+
+    def test_a_record_appearing_after_n_polls_returns_then_not_at_the_cap(self):
+        reads = []
+
+        def later(argv):
+            reads.append(argv)
+            return "" if len(reads) < 3 else "n0nce ok\nrestored 1.0.13+" + OLD
+        m, _ = self.machine([self.hang("restore"), self.done("restore", later)])
+        lines = []
+        m.restore(lines.append)
+        self.assertIn("restored 1.0.13+" + OLD, lines)
+        self.assertEqual(m.clock.t, 3 * windows.DONE_POLL)
+        self.assertLess(m.clock.t, windows.RESTORE_TIMEOUT)
+
+    def test_a_call_that_exits_normally_never_reads_the_record(self):
+        m, sh = self.machine([(has("-Action", "stamp"), "1.0.13+" + SHA + "\r\n")])
+        self.assertEqual(m.installed_commit(), SHA)
+        self.assertFalse(any(a[:1] == ["ssh"] and "cat" in a for a in sh.calls))
+        self.assertFalse(any(a[0] == "KILL" for a in sh.calls))
+
+    def test_a_recorded_failure_is_a_failure_at_once(self):
+        m, _ = self.machine([self.hang("restore"), self.done("restore", "n0nce failed\nrobocopy exited 16")])
+        with self.assertRaises(base.MachineError) as e:
+            m.restore(lambda s: None)
+        self.assertIn("windows.ps1 restore failed: robocopy exited 16", str(e.exception))
+        self.assertEqual(m.clock.t, windows.DONE_POLL)
+
+    def test_an_earlier_calls_record_for_the_same_action_never_counts(self):
+        m, _ = self.machine([self.hang("restore"), self.done("restore", "0ldnonce ok\nrestored 1.0.13+" + OLD)])
+        lines = []
+        with self.assertRaises(base.MachineError) as e:
+            m.restore(lines.append)
+        self.assertIn(f"timed out after {windows.RESTORE_TIMEOUT} s and recorded no outcome within "
+                      f"{windows.DONE_GRACE} s more", str(e.exception))
+        # The bound: the cap, then the grace, and no longer.
+        self.assertEqual(m.clock.t, windows.RESTORE_TIMEOUT + windows.DONE_GRACE)
+
+    def test_a_record_that_lands_in_the_grace_after_the_cut_off_counts(self):
+        reads = []
+        polls_in_cap = windows.STEP_TIMEOUT // windows.DONE_POLL
+
+        def late(argv):
+            reads.append(argv)
+            return "n0nce ok\nkept" if len(reads) > polls_in_cap + 1 else ""
+        m, _ = self.machine([self.hang("keep"), self.done("keep", late)])
+        self.assertEqual(m._ps("keep", log=None), "kept")
+        self.assertGreater(m.clock.t, windows.STEP_TIMEOUT)
+        self.assertLessEqual(m.clock.t, windows.STEP_TIMEOUT + windows.DONE_GRACE)
+
+    def test_an_unreadable_record_times_out_too(self):
+        m, _ = self.machine([self.hang("restore"),
+                             (has("cat"), subprocess.TimeoutExpired("ssh", 15))])
+        with self.assertRaises(base.MachineError):
+            m.restore(lambda s: None)
+
+    def test_a_malformed_record_is_ignored(self):
+        for text in ("n0nce", "n0nce maybe\nx", "n0nce ok extra\nx", ""):
+            m, _ = self.machine([self.hang("restore"), self.done("restore", text)])
+            with self.assertRaises(base.MachineError):
+                m.restore(lambda s: None)
+
+    def test_timeouts_are_minutes_not_a_quarter_hour(self):
+        # QA measured a real install at 10-25 s and a restore at about 5 s.
+        self.assertLessEqual(windows.INSTALL_TIMEOUT + windows.DONE_GRACE, 2 * 60)
+        self.assertLessEqual(windows.RESTORE_TIMEOUT + windows.DONE_GRACE, 90)
+        self.assertLessEqual(windows.STEP_TIMEOUT, 60)
+
+    def test_install_and_restore_stop_an_earlier_run_first(self):
+        with open(windows.SCRIPT) as f:
+            ps1 = f.read()
+        self.assertIn("if ($Action -in 'install', 'restore') { Stop-EarlierRuns }", ps1)
+        self.assertIn("$_.ProcessId -ne $me -and $_.CommandLine -match 'ow-machine\\.ps1'", ps1)
+
+    def test_the_stall_seam_is_one_shot_and_inert_without_its_file(self):
+        with open(windows.SCRIPT) as f:
+            ps1 = f.read()
+        self.assertIn('"stall-$Action.txt"', ps1)
+        self.assertIn("Remove-Item $Stall -Force", ps1)
+        self.assertIn("$StallWhen, $StallFor = '', 0", ps1)
+        # "after" sleeps only once the outcome is recorded: the observed hang.
+        self.assertLess(ps1.index("Write-Done 'ok'"), ps1.index("if ($StallWhen -eq 'after')"))
+        self.assertLess(ps1.index("if ($StallWhen -eq 'before')"), ps1.index("$Out = & { switch"))
+
+    def test_a_hung_install_with_no_record_is_restored_and_the_lock_released(self):
+        # QA's matrix row 3, through the runner: the ssh never returns and the
+        # script records nothing, so the install fails, the runner restores and
+        # lets go of the lock, and result.json names the cut-off.
+        m, _ = self.machine(self.install_rules(first=[
+            self.hang("install"), (has("-Action", "stamp"), "1.0.13+" + OLD + "\r\n")]))
+        lock = FakeLock()
+        r = runner.Runner(cfg(), FakeGh(p7=pr()), lock, {"windows": m}, {}, Clock(), lambda l: None, lambda s: None)
+        [(_, res, _, _)] = r.tick([(install(), None)])
+        self.assertFalse(res["ok"])
+        self.assertIn(f"windows.ps1 install timed out after {windows.INSTALL_TIMEOUT} s", res["machines"]["windows"]["error"])
+        self.assertTrue(res["machines"]["windows"]["error"].startswith("install failed:"))
+        self.assertFalse(lock.held)
+        self.assertIsNone(r.hold)
+
+    def test_the_script_records_its_outcome_with_the_nonce(self):
+        with open(windows.SCRIPT) as f:
+            ps1 = f.read()
+        self.assertIn('[string]$Nonce', ps1)
+        self.assertIn('"done-$Action.txt"', ps1)
+        self.assertIn("Write-Done 'failed' $_.Exception.Message", ps1)
+        self.assertIn("Write-Done 'ok'", ps1)
+        self.assertIn('"$Nonce $state`n$text"', ps1)
 
     def test_more_than_one_installer_is_refused(self):
         def two(argv):
@@ -1290,7 +1463,7 @@ class WindowsTests(unittest.TestCase):
         m, _ = self.machine([(has("-Action", "stamp"), subprocess.TimeoutExpired("ssh", 120))])
         with self.assertRaises(base.MachineError) as e:
             m.installed_commit()
-        self.assertIn("windows.ps1 stamp timed out", str(e.exception))
+        self.assertIn("windows.ps1 stamp timed out after", str(e.exception))
 
     def test_restore_and_unreachable_stamp(self):
         m, sh = self.machine([])
