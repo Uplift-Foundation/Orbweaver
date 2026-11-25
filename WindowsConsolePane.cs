@@ -53,17 +53,38 @@ namespace Orbweaver
             new() { Source = SessionSource.ClaudeCode, SessionPid = client };
 
         // The three trust seams over a console, with the process table, the
-        // read, the press and the kill passed in so every arm is a unit case.
+        // read, the press, the kill and the log passed in so every arm is a
+        // unit case. `read` takes the client pid and returns the screen, or
+        // null with the Win32 error.
+        //
+        // A console that cannot be read stays no_session, as before, but now
+        // says why in the log, once per failed look (at most one a second for
+        // LaunchCheckIn): no client under the host, or the read's error (87:
+        // no console of its own, 5: access denied). The pid only, never a folder.
         internal static LaunchRunner.TrustSeams Seams(
             Func<IEnumerable<Row>> table,
-            Func<SessionStatus, Task<string?>> read,
+            Func<int, Task<(string? Screen, int Error)>> read,
             Func<SessionStatus, string, Func<string?, bool>, Task<(bool Pressed, string? Before)>> press,
-            Action<int> kill)
+            Action<int> kill,
+            Action<string> log)
         {
             int? ClientOf(string pane) => Host(pane) is { } host ? Client(host, table()) : null;
 
+            async Task<string?> ReadPane(string pane)
+            {
+                if (Host(pane) is not { } host) return null;
+                if (Client(host, table()) is not { } client)
+                {
+                    log($"console-read-failed host={host} reason=no_client");
+                    return null;
+                }
+                var (screen, error) = await read(client).ConfigureAwait(false);
+                if (screen is null) log($"console-read-failed host={host} client={client} error={error}");
+                return screen;
+            }
+
             return new(
-                pane => ClientOf(pane) is { } c ? read(StatusFor(c)) : Task.FromResult<string?>(null),
+                ReadPane,
                 (pane, key, approved) => ClientOf(pane) is { } c ? press(StatusFor(c), key, approved) : Task.FromResult((false, (string?)null)),
                 pane =>
                 {
@@ -77,9 +98,23 @@ namespace Orbweaver
         [ExcludeFromCodeCoverage]
         internal static LaunchRunner.TrustSeams Default() => Seams(
             () => OperatingSystem.IsWindows() ? Snapshot() : [],
-            WindowsConsoleScreenReader.Instance.ReadAsync,
+            ReadConsole,
             TerminalFocuser.CaptureAndPress,
-            Kill);
+            Kill,
+            line => MirrorLog.Say("peer-launch", line));
+
+        // WindowsConsoleScreenReader's read, keeping the error it drops.
+        [ExcludeFromCodeCoverage]
+        private static Task<(string? Screen, int Error)> ReadConsole(int client) => Task.Run(() =>
+        {
+            if (!OperatingSystem.IsWindows()) return ((string?)null, 0);
+            try
+            {
+                var screen = ScreenReaders.Normalise(WindowsConsoleRead.Read((uint)client, TerminalFocuser.ConsoleGate, out var error));
+                return (screen, error);
+            }
+            catch (Exception) { return ((string?)null, -1); }
+        });
 
         [ExcludeFromCodeCoverage]
         private static void Kill(int host)

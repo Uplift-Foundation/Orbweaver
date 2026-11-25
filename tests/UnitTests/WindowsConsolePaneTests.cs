@@ -64,18 +64,21 @@ public class WindowsConsolePaneTests
         public readonly List<int> Read = [];
         public readonly List<(int Pid, string Key)> Pressed = [];
         public readonly List<int> Killed = [];
+        public readonly List<string> Log = [];
         public string? Screen = "screen";
+        public int Error;
 
         public LaunchRunner.TrustSeams Seams() => WindowsConsolePane.Seams(
             () => Table,
-            s => { Read.Add(s.SessionPid); return Task.FromResult(Screen); },
+            c => { Read.Add(c); return Task.FromResult((Screen, Error)); },
             (s, key, approved) =>
             {
                 if (!approved(Screen)) return Task.FromResult((false, Screen));
                 Pressed.Add((s.SessionPid, key));
                 return Task.FromResult((true, Screen));
             },
-            Killed.Add);
+            Killed.Add,
+            Log.Add);
     }
 
     [Fact]
@@ -84,6 +87,20 @@ public class WindowsConsolePaneTests
         var f = new Fake();
         Assert.Equal("screen", await f.Seams().ReadPane("con:10"));
         Assert.Equal([12], f.Read);
+        Assert.Empty(f.Log);
+    }
+
+    [Fact]
+    public async Task A_console_that_cannot_be_read_says_why_in_the_log()
+    {
+        var failed = new Fake { Screen = null, Error = 87 };
+        Assert.Null(await failed.Seams().ReadPane("con:10"));
+        Assert.Equal(["console-read-failed host=10 client=12 error=87"], failed.Log);
+
+        var gone = new Fake { Table = [] };
+        Assert.Null(await gone.Seams().ReadPane("con:10"));
+        Assert.Equal(["console-read-failed host=10 reason=no_client"], gone.Log);
+        Assert.Empty(gone.Read);
     }
 
     [Theory]
@@ -94,6 +111,7 @@ public class WindowsConsolePaneTests
         var f = new Fake();
         Assert.Null(await f.Seams().ReadPane(pane));
         Assert.Empty(f.Read);
+        Assert.Equal(pane == "%1" ? 0 : 1, f.Log.Count);
     }
 
     [Fact]
