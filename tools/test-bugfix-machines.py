@@ -1293,7 +1293,7 @@ class WindowsTests(unittest.TestCase):
         lines = []
         m.install(7, SHA, lines.append)
         self.assertIn("installed 1.0.13+" + SHA, lines)
-        self.assertTrue(any("ssh still open after 240 s" in l for l in lines))
+        self.assertTrue(any(f"ssh still open after {windows.INSTALL_TIMEOUT} s" in l for l in lines))
         self.assertTrue(any("finished (recorded by the script)" in l for l in lines))
         self.assertEqual(m.slept, [])
         # Control: the install call itself carried this call's nonce.
@@ -1332,9 +1332,41 @@ class WindowsTests(unittest.TestCase):
             m.restore(lambda s: None)
 
     def test_timeouts_are_minutes_not_a_quarter_hour(self):
-        self.assertLessEqual(windows.INSTALL_TIMEOUT, 5 * 60)
-        self.assertLessEqual(windows.RESTORE_TIMEOUT, 5 * 60)
-        self.assertLessEqual(windows.RESTORE_TIMEOUT + windows.DONE_GRACE, 5 * 60)
+        # QA measured a real install at 10-25 s and a restore at about 5 s.
+        self.assertLessEqual(windows.INSTALL_TIMEOUT + windows.DONE_GRACE, 3 * 60)
+        self.assertLessEqual(windows.RESTORE_TIMEOUT + windows.DONE_GRACE, 3 * 60)
+        self.assertLessEqual(windows.STEP_TIMEOUT, 60)
+
+    def test_install_and_restore_stop_an_earlier_run_first(self):
+        with open(windows.SCRIPT) as f:
+            ps1 = f.read()
+        self.assertIn("if ($Action -in 'install', 'restore') { Stop-EarlierRuns }", ps1)
+        self.assertIn("$_.ProcessId -ne $me -and $_.CommandLine -match 'ow-machine\\.ps1'", ps1)
+
+    def test_the_stall_seam_is_one_shot_and_inert_without_its_file(self):
+        with open(windows.SCRIPT) as f:
+            ps1 = f.read()
+        self.assertIn('"stall-$Action.txt"', ps1)
+        self.assertIn("Remove-Item $Stall -Force", ps1)
+        self.assertIn("$StallWhen, $StallFor = '', 0", ps1)
+        # "after" sleeps only once the outcome is recorded: the observed hang.
+        self.assertLess(ps1.index("Write-Done 'ok'"), ps1.index("if ($StallWhen -eq 'after')"))
+        self.assertLess(ps1.index("if ($StallWhen -eq 'before')"), ps1.index("$Out = & { switch"))
+
+    def test_a_hung_install_with_no_record_is_restored_and_the_lock_released(self):
+        # QA's matrix row 3, through the runner: the ssh never returns and the
+        # script records nothing, so the install fails, the runner restores and
+        # lets go of the lock, and result.json names the cut-off.
+        m, _ = self.machine(self.install_rules(first=[
+            self.hang("install"), (has("-Action", "stamp"), "1.0.13+" + OLD + "\r\n")]))
+        lock = FakeLock()
+        r = runner.Runner(cfg(), FakeGh(p7=pr()), lock, {"windows": m}, {}, Clock(), lambda l: None, lambda s: None)
+        [(_, res, _, _)] = r.tick([(install(), None)])
+        self.assertFalse(res["ok"])
+        self.assertIn("windows.ps1 install did not finish", res["machines"]["windows"]["error"])
+        self.assertTrue(res["machines"]["windows"]["error"].startswith("install failed:"))
+        self.assertFalse(lock.held)
+        self.assertIsNone(r.hold)
 
     def test_the_script_records_its_outcome_with_the_nonce(self):
         with open(windows.SCRIPT) as f:

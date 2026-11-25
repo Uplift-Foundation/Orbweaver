@@ -34,13 +34,14 @@ REMOTE_DIR = "orbweaver-machines"
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "windows.ps1")
 ARTIFACT = "unsigned-win-x64"
 STAMP_RE = re.compile(r"^\d+\.\d+\.\d+[^+\s]*\+([0-9a-fA-F]{7,40})\s*$", re.M)
-# CB-475: how long one remote install or restore may hold the ssh call. The
-# work itself takes about a minute; ssh to this PC can then stay open for many
+# CB-475: how long one remote action may hold the ssh call. QA measured a real
+# install at 10-25 s and a restore at about 5 s; ssh to this PC can then stay open for many
 # more after the script has finished (seen one install in two on 2026-11-25),
 # and while it does the runner holds /tmp/ow-install.lock. So the call is cut
 # off here and the script's own record of the outcome is read instead.
-INSTALL_TIMEOUT = 4 * 60
-RESTORE_TIMEOUT = 3 * 60
+INSTALL_TIMEOUT = 2 * 60
+RESTORE_TIMEOUT = 90
+STEP_TIMEOUT = 60
 # After a cut-off, how long to keep looking for the outcome record of an
 # action that may genuinely still be running, before calling it failed.
 DONE_GRACE = 60
@@ -110,7 +111,7 @@ class WindowsMachine:
                    log, what="scp windows.ps1")
         self._script_pushed = True
 
-    def _ps(self, action, *args, log=None, timeout=120):
+    def _ps(self, action, *args, log=None, timeout=STEP_TIMEOUT):
         self._push_script(log)
         nonce = self.new_nonce()
         what = f"windows.ps1 {action}"
