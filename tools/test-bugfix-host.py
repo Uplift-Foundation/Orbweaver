@@ -358,18 +358,32 @@ class AuditRuleTests(unittest.TestCase):
 
 # ---------------------------------------------------------------- warden tick
 
+UNREADABLE = object()
+
+
 class FakeGH:
-    def __init__(self, prs=None, merged=(), comments=None, checks=None, runs=None):
+    def __init__(self, prs=None, merged=(), comments=None, checks=None, runs=None, push_runs=None):
         self.prs, self.merged = prs or {}, list(merged)
         self.comments, self.checks = comments or {}, checks or {}
         self.dispatched = []
         self.runs, self.reran = runs or {}, []
+        self.push_runs = push_runs or {}
+        self.failures = {}
 
-    def latest_ci_run(self, sha):
-        return self.runs.get(sha)
+    def latest_ci_run(self, sha, event="pull_request"):
+        return (self.push_runs if event == "push" else self.runs).get(sha)
 
     def rerun_failed(self, run_id):
         self.reran.append(run_id)
+        for run in self.push_runs.values():
+            if run and run.get("id") == run_id:
+                run["run_attempt"] = run.get("run_attempt", 1) + 1
+
+    def failed_tests(self, run_id, attempt):
+        got = self.failures.get((run_id, attempt), [])
+        if got is UNREADABLE:
+            raise subprocess.CalledProcessError(1, ["gh", "run", "view"])
+        return list(got)
 
     def get_pr(self, n):
         return self.prs.get(n)
@@ -711,12 +725,167 @@ class TickTests(unittest.TestCase):
         self.assertEqual(pc.pauses, [])
 
 
+class DevelopRuleTests(unittest.TestCase):
+    """CB-467: which tests a CI log says failed, and when a red develop is rerun."""
+    # Lines as `gh run view --log-failed` printed them for develop's run 45499459145.
+    LOG = ("unit-package (osx-arm64)\tUnit tests (xUnit)\t2026-11-25T03:52:11.9809370Z [xUnit.net 00:01:05.46]"
+           "     Orbweaver.Tests.TurnSoundsTests.APendingSoundAndALiveOneAreNotPlayedInsideOneGap [FAIL]\n"
+           "unit-package (osx-arm64)\tUnit tests (xUnit)\t2026-11-25T03:52:11.9913230Z   Failed "
+           "Orbweaver.Tests.TurnSoundsTests.APendingSoundAndALiveOneAreNotPlayedInsideOneGap [3 s]\n"
+           "build (macos-latest, osx-arm64)\tEvery job must have succeeded\t2026-11-25T03:57:15Z "
+           "##[error]a CI job was not green (failure, cancelled and skipped all count as red)\n")
+
+    def test_vstest_and_xunit_lines_name_one_test_once(self):
+        self.assertEqual(warden.failed_tests_in(self.LOG),
+                         ["Orbweaver.Tests.TurnSoundsTests.APendingSoundAndALiveOneAreNotPlayedInsideOneGap"])
+
+    def test_the_testing_platform_line_is_read_too(self):
+        log = "ui (osx-arm64)\tUI tests\tT   failed Orbweaver.UiTests.ChatPanelTests.SendsOnEnter (812ms)\n"
+        self.assertEqual(warden.failed_tests_in(log), ["Orbweaver.UiTests.ChatPanelTests.SendsOnEnter"])
+
+    def test_a_log_with_no_failed_test_names_none(self):
+        for log in ("", None, "error CS1002: ; expected\n##[error]Process completed with exit code 1.\n",
+                    "Failed!  - Failed: 1, Passed: 4, Skipped: 0, Total: 5\n"):
+            self.assertEqual(warden.failed_tests_in(log), [], log)
+
+    def test_the_first_rerun_is_unconditional(self):
+        for attempts in ([["A"]], [[]]):
+            self.assertIsNone(warden.develop_rerun_problem(attempts, 0), attempts)
+
+    def test_a_different_test_each_attempt_is_rerun_until_the_cap(self):
+        self.assertIsNone(warden.develop_rerun_problem([["A"], ["B"]], 1))
+        self.assertIn("after 2 reruns", warden.develop_rerun_problem([["A"], ["B"], ["C"]], 2))
+
+    def test_a_test_failing_twice_is_real(self):
+        self.assertEqual(warden.develop_rerun_problem([["A", "B"], ["B"]], 1), "failed twice: B")
+        self.assertEqual(warden.develop_rerun_problem([["A"], ["B"], ["A"]], 1), "failed twice: A")
+
+    def test_an_attempt_that_names_no_test_is_real(self):
+        for attempts in ([[], ["B"]], [["A"], []]):
+            self.assertIn("other than a test", warden.develop_rerun_problem(attempts, 1), attempts)
+
+
+class DevelopRerunTests(unittest.TestCase):
+    """CB-467: a red develop on a bot merge is rerun while the failures look like flakes."""
+    RED = {warden.REQUIRED_CHECKS[0]: "failure", warden.REQUIRED_CHECKS[1]: "success"}
+    GREEN = {n: "success" for n in warden.REQUIRED_CHECKS}
+
+    def gh(self, *failures):
+        gh = FakeGH(merged=[merged_pr()], comments={7: ["osx-arm64 win-x64"]},
+                    checks={"abc": dict(self.RED)}, push_runs={"abc": ci_run("abc", run_id=55)})
+        gh.failures = {(55, i + 1): f for i, f in enumerate(failures)}
+        return gh
+
+    def test_a_different_test_in_each_attempt_is_rerun_twice_then_pauses(self):
+        gh, state = self.gh(["A"], ["B"], ["C"]), {}
+        _, paused, logs = tick(gh=gh, pc=FakePC(), state=state)
+        self.assertFalse(paused)
+        self.assertEqual(gh.reran, [55])
+        self.assertIn("abc", state["audit_pending"], "still pending until the rerun concludes")
+        self.assertTrue(any("(A): reran failed jobs of run 55, rerun 1 of 2" in l for l in logs), logs)
+        _, paused, logs = tick(gh=gh, pc=FakePC(), state=state)
+        self.assertFalse(paused, "B is not A: the runner, not the merge")
+        self.assertEqual(gh.reran, [55, 55])
+        self.assertTrue(any("rerun 2 of 2" in l for l in logs), logs)
+        pc = FakePC()
+        _, paused, _ = tick(gh=gh, pc=pc, state=state)
+        self.assertTrue(paused)
+        self.assertIn("(still red after 2 reruns)", pc.pauses[0])
+        self.assertEqual(gh.reran, [55, 55])
+        self.assertEqual(state["develop_failures"], {}, "retired merges leave no cache behind")
+
+    def test_the_same_test_failing_again_pauses_and_names_it(self):
+        gh, state = self.gh(["A"], ["A", "B"]), {}
+        tick(gh=gh, pc=FakePC(), state=state)
+        pc = FakePC()
+        _, paused, _ = tick(gh=gh, pc=pc, state=state)
+        self.assertTrue(paused)
+        self.assertIn("CI red", pc.pauses[0])
+        self.assertIn("(failed twice: A)", pc.pauses[0])
+        self.assertEqual(gh.reran, [55])
+
+    def test_a_build_failure_is_rerun_once_then_pauses(self):
+        gh, state = self.gh([], []), {}
+        _, paused, logs = tick(gh=gh, pc=FakePC(), state=state)
+        self.assertFalse(paused)
+        self.assertTrue(any("(no test named)" in l for l in logs), logs)
+        pc = FakePC()
+        _, paused, _ = tick(gh=gh, pc=pc, state=state)
+        self.assertTrue(paused)
+        self.assertIn("other than a test", pc.pauses[0])
+
+    def test_unreadable_logs_rerun_the_first_time_and_pause_after(self):
+        gh, state = self.gh(UNREADABLE, UNREADABLE), {}
+        _, paused, _ = tick(gh=gh, pc=FakePC(), state=state)
+        self.assertFalse(paused)
+        self.assertEqual(gh.reran, [55])
+        pc = FakePC()
+        _, paused, _ = tick(gh=gh, pc=pc, state=state)
+        self.assertTrue(paused)
+        self.assertIn("(could not read which tests failed)", pc.pauses[0])
+
+    def test_red_then_green_after_the_rerun_retires_the_merge_without_a_pause(self):
+        gh, state = self.gh(["A"]), {}
+        tick(gh=gh, pc=FakePC(), state=state)
+        gh.checks["abc"] = dict(self.GREEN)
+        _, paused, _ = tick(gh=gh, pc=FakePC(), state=state)
+        self.assertFalse(paused)
+        self.assertEqual(state["audit_pending"], {})
+        self.assertIn("abc", state["audited"])
+        self.assertEqual(state["develop_failures"], {})
+
+    def test_a_run_still_going_keeps_the_merge_pending(self):
+        gh, state = self.gh(), {}
+        gh.push_runs = {"abc": ci_run("abc", status="in_progress", conclusion=None)}
+        _, paused, _ = tick(gh=gh, pc=FakePC(), state=state)
+        self.assertFalse(paused)
+        self.assertIn("abc", state["audit_pending"])
+        self.assertEqual(gh.reran, [])
+
+    def test_no_red_run_to_rerun_pauses_at_once(self):
+        for run in (None, ci_run("abc", conclusion="success")):
+            gh = self.gh()
+            gh.push_runs = {"abc": run} if run else {}
+            pc = FakePC()
+            _, paused, _ = tick(gh=gh, pc=pc)
+            self.assertTrue(paused, run)
+            self.assertEqual(gh.reran, [])
+
+    def test_a_refused_rerun_pauses(self):
+        class Refusing(FakeGH):
+            def rerun_failed(self, run_id):
+                raise subprocess.CalledProcessError(1, ["gh"])
+        gh = self.gh(["A"])
+        gh.__class__ = Refusing
+        _, paused, _ = tick(gh=gh, pc=FakePC())
+        self.assertTrue(paused)
+
+
 class StopWorkTests(unittest.TestCase):
     def test_pause_cancels_active_runs_and_blocks_in_progress_issues(self):
         pc = FakePC(active=["run-aaaaaaaa", "run-bbbbbbbb"], issues=["iss-11111111"])
         tick(pc=pc, requests=[{"verb": "push_refused"}])
         self.assertEqual(pc.cancelled, ["run-aaaaaaaa", "run-bbbbbbbb"])
         self.assertEqual(pc.blocked, ["iss-11111111"])
+
+    def test_a_refused_block_is_logged_and_the_tick_survives_with_the_reason_first(self):
+        # CB-467: Paperclip answered 422 to a PATCH to blocked, the exception
+        # escaped, and the warden died before logging why it had paused.
+        class Refusing(FakePC):
+            def block_issue(self, i):
+                if i == "iss-bad00000":
+                    raise urllib.error.HTTPError("u", 422, "Unprocessable Entity", {}, None)
+                super().block_issue(i)
+
+        pc = Refusing(active=["run-aaaaaaaa"], issues=["iss-bad00000", "iss-good0000"])
+        _, paused, logs = tick(pc=pc, requests=[{"verb": "push_refused"}])
+        self.assertTrue(paused)
+        self.assertEqual(pc.cancelled, ["run-aaaaaaaa"])
+        self.assertEqual(pc.blocked, ["iss-good0000"], "the next issue is still blocked")
+        refused = [i for i, l in enumerate(logs) if "could not block issue iss-bad0" in l]
+        reason = [i for i, l in enumerate(logs) if l.startswith("PAUSED:")]
+        self.assertTrue(refused and reason)
+        self.assertLess(reason[0], refused[0], "the reason is logged before anything that can fail")
 
     def test_still_paused_next_tick_keeps_cancelling_stragglers(self):
         pc = FakePC(paused=True, active=["run-cccccccc"])

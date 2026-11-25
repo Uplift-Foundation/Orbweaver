@@ -62,6 +62,18 @@ open `bugfix/pc-*` PR from this repository, into develop). The run must be
 completed red, at most once per head sha (`state["reruns"]`). A refusal is
 logged and never pauses.
 
+Develop's own push CI after a bot merge is rerun by the warden unasked
+(CB-467), because red there pauses the whole org. The first rerun is
+unconditional. After that it reruns again only while every attempt failed on
+tests and no test failed twice, at most `DEVELOP_RERUNS` (2) times; the names
+come from the failed jobs' logs (`gh run view --attempt N --log-failed`) and
+are cached per attempt in `state["develop_failures"]` until the merge is
+retired. The macOS unit leg is why: PR 377's merge failed on
+`ClaudeCloudEventsTests`, its rerun on `TurnSoundsTests`, and the old
+rerun-once rule paused the org on the second. The same test failing twice, an
+attempt whose log names no test (a build error), or a third red all pause, and
+the pause reason says which.
+
 ## Deletes
 
 Paperclip refuses `DELETE` on issues, agents and projects with 409 once they are referenced

@@ -251,6 +251,13 @@ import json, os, sys
 a = sys.argv[1:]
 open(os.environ["GH_LOG"], "a").write(json.dumps(a) + "\n")
 fx = json.load(open(os.environ["GH_FIXTURE"]))
+if a[:2] == ["run", "view"]:
+    key = "log:" + a[2] + ":" + a[a.index("--attempt") + 1]
+    if "--log-failed" not in a or key not in fx:
+        sys.stderr.write("gh: run log not found\n")
+        sys.exit(1)
+    sys.stdout.write(fx[key])
+    sys.exit(0)
 assert a[0] == "api"
 method, path = a[2], a[3]
 if method == "POST":
@@ -668,6 +675,17 @@ class World(unittest.TestCase):
         self.fx[f"repos/{REPO}/actions/runs"] = {"workflow_runs": []}
         self.write_fx()
         self.assertIsNone(gh.latest_ci_run("m1"))
+        # CB-467: the failed tests of one attempt, read off its failed jobs' log.
+        self.fx["log:6:2"] = ("unit-package (osx-arm64)\tUnit tests (xUnit)\t2026-11-25T03:52:11.9809370Z "
+                              "[xUnit.net 00:01:05.46]     Orbweaver.Tests.TurnSoundsTests.APendingSound [FAIL]\n"
+                              "unit-package (osx-arm64)\tUnit tests (xUnit)\t2026-11-25T03:52:11.9913230Z "
+                              "  Failed Orbweaver.Tests.TurnSoundsTests.APendingSound [3 s]\n")
+        self.write_fx()
+        self.assertEqual(gh.failed_tests(6, 2), ["Orbweaver.Tests.TurnSoundsTests.APendingSound"])
+        args = json.loads([l for l in open(self.gh_log) if "--log-failed" in l][0])
+        self.assertEqual(args, ["run", "view", "6", "--repo", REPO, "--attempt", "2", "--log-failed"])
+        with self.assertRaises(subprocess.CalledProcessError):
+            gh.failed_tests(6, 3)
 
     # ---- AppMinter ----
 

@@ -294,6 +294,7 @@ class Warden:
         self.cfg, self.gh, self.minter, self.pc = cfg, github, minter, paperclip
         self.state, self.now, self.log = state, now, log
         self.pause_reasons = []
+        self.develop_why = ""
 
     def pause(self, reason):
         self.pause_reasons.append(reason)
@@ -319,6 +320,46 @@ class Warden:
             self.pause("GitHub refused a bot push on a ruleset")
         elif v == "rerun_failed":
             self.rerun_failed(req["pr"])
+
+    def rerun_develop(self, sha, n):
+        """Rerun the failed jobs of develop's push CI at a bot merge while the
+        red looks like runner flakes (CB-467). True keeps the merge pending: a
+        rerun was started, or the run has not finished. False lets the red
+        stand, with `self.develop_why` saying why."""
+        self.develop_why = ""
+        try:
+            run = self.gh.latest_ci_run(sha, event="push")
+        except (subprocess.CalledProcessError, OSError, ValueError, KeyError):
+            return False
+        if not run:
+            return False
+        if run.get("status") != "completed":
+            return True
+        if run.get("conclusion") not in RED_CONCLUSIONS:
+            return False
+        attempt = int(run.get("run_attempt") or 1)
+        cache = self.state.setdefault("develop_failures", {}).setdefault(sha, {})
+        try:
+            for a in range(1, attempt + 1):
+                if str(a) not in cache:
+                    cache[str(a)] = self.gh.failed_tests(run["id"], a)
+        except (subprocess.CalledProcessError, OSError, ValueError):
+            if attempt > 1:
+                self.develop_why = " (could not read which tests failed)"
+                return False
+        attempts = [cache.get(str(a), []) for a in range(1, attempt + 1)]
+        why = develop_rerun_problem(attempts, attempt - 1)
+        if why:
+            self.develop_why = f" ({why})"
+            return False
+        try:
+            self.gh.rerun_failed(run["id"])
+        except (subprocess.CalledProcessError, OSError):
+            return False
+        failed = ", ".join(attempts[-1]) or "no test named"
+        self.log(f"develop CI red on bot merge PR {n} at {sha[:9]} ({failed}): "
+                 f"reran failed jobs of run {run['id']}, rerun {attempt} of {DEVELOP_RERUNS}")
+        return True
 
     def rerun_failed(self, n):
         """Rerun the failed jobs of PR n's latest CI run, once per head sha
@@ -347,12 +388,22 @@ class Warden:
         (phase 0, measured). So while the company is paused, every tick cancels
         its queued and running runs and sets its in-progress issues to blocked.
         The warden never resumes; a person or the lead does."""
+        # One refusal must not end the tick (CB-467): Paperclip answered a
+        # PATCH to blocked with 422, the exception escaped, and the warden died
+        # after pausing but before logging why or saving its state, on every
+        # tick from then on.
         for run_id in self.pc.active_run_ids():
-            self.pc.cancel_run(run_id)
-            self.log(f"cancelled run {run_id[:8]}")
+            try:
+                self.pc.cancel_run(run_id)
+                self.log(f"cancelled run {run_id[:8]}")
+            except (urllib.error.URLError, OSError, ValueError) as e:
+                self.log(f"could not cancel run {run_id[:8]}: {type(e).__name__} {getattr(e, 'code', '')}".rstrip())
         for issue_id in self.pc.in_progress_issue_ids():
-            self.pc.block_issue(issue_id)
-            self.log(f"blocked issue {issue_id[:8]}")
+            try:
+                self.pc.block_issue(issue_id)
+                self.log(f"blocked issue {issue_id[:8]}")
+            except (urllib.error.URLError, OSError, ValueError) as e:
+                self.log(f"could not block issue {issue_id[:8]}: {type(e).__name__} {getattr(e, 'code', '')}".rstrip())
 
     def watch_releases(self):
         """Releases from Paperclip's own issue states. The spool's `released`
@@ -423,8 +474,13 @@ class Warden:
         for sha, entry in list(pending.items()):
             ci = self.gh.check_conclusions(sha)
             red = audit_merge(True, ci)
+            # A red develop on a bot merge is rerun while each attempt fails on
+            # a different test (CB-467): CB-426's flake and then TurnSoundsTests
+            # paused the org for hours on a merge that touched neither.
+            if red and self.rerun_develop(sha, entry["pr"]):
+                continue
             for r in red:
-                self.pause(f"PR {entry['pr']}: {r}")
+                self.pause(f"PR {entry['pr']}: {r}{self.develop_why}")
             if red or ci_settled(ci):
                 del pending[sha]
                 seen.add(sha)
@@ -432,6 +488,9 @@ class Warden:
                 self.pause(f"PR {entry['pr']}: develop CI never finished on a bot merge")
                 del pending[sha]
                 seen.add(sha)
+        failures = self.state.get("develop_failures", {})
+        for sha in [k for k in failures if k not in pending]:
+            del failures[sha]
         self.state["audit_pending"] = pending
         self.state["audited"] = sorted(seen)[-200:]
 
@@ -451,15 +510,56 @@ class Warden:
         if self.pause_reasons and not paused:
             self.pc.pause("; ".join(self.pause_reasons))
             paused = True
-        if paused:
-            self.stop_work()
+        # The reason goes in the log before anything that can fail (CB-467).
         for r in self.pause_reasons:
             self.log("PAUSED: " + r)
+        if paused:
+            self.stop_work()
         if mint_due(self.state, self.now, paused):
             self.pc.put_secret("GITHUB_TOKEN", self.minter.mint())
             self.state["last_mint"] = self.now
             self.log("token refreshed")
         return paused
+
+
+# Develop's push CI after a bot merge (CB-467). Red there pauses the org, but
+# the macOS unit leg flakes on timing tests the merge never touched: the first
+# rerun of PR 377's merge failed on ClaudeCloudEventsTests, its rerun on
+# TurnSoundsTests, and pausing on the second cost the org another hour. A
+# different test failing in each attempt is the runner, not the merge; the same
+# test failing twice, or a failure that names no test (a build error), is real.
+DEVELOP_RERUNS = 2
+_FAILED_TEST = re.compile(
+    r"(?:\bFailed ([A-Za-z_][\w.`+<>,]*) \[|\bfailed ([A-Za-z_][\w.`+<>,]*) \(\d"
+    r"|\s([A-Za-z_][\w.`+<>,]*) \[FAIL\])")
+
+
+def failed_tests_in(log):
+    """Test names a CI log reports as failed: VSTest's `Failed X [3 s]`, the
+    testing platform's `failed X (12ms)` and xUnit's `X [FAIL]`."""
+    names = set()
+    for m in _FAILED_TEST.finditer(log or ""):
+        names.add(next(g for g in m.groups() if g))
+    return sorted(names)
+
+
+def develop_rerun_problem(attempts, reruns):
+    """Why a red develop run at a bot merge must NOT be rerun again (None = go).
+    `attempts` lists the failed test names of every attempt so far, newest last;
+    `reruns` is how many reruns the warden has already started there."""
+    if reruns == 0:
+        return None
+    if reruns >= DEVELOP_RERUNS:
+        return f"still red after {reruns} reruns"
+    if any(not a for a in attempts):
+        return "an attempt failed on something other than a test"
+    seen = set()
+    for a in attempts:
+        twice = sorted(seen & set(a))
+        if twice:
+            return "failed twice: " + ", ".join(twice)
+        seen |= set(a)
+    return None
 
 
 # ---------------------------------------------------------------- real seams
@@ -486,9 +586,9 @@ class GhCli:
               "-f", f"ref={ref}", "-f", f"inputs[test_class]={test_class}",
               "-f", f"inputs[n]={n}", "-f", f"inputs[suite]={suite}"])
 
-    def latest_ci_run(self, sha):
-        """The newest run of ci.yml at this sha from a pull_request, or None."""
-        data = self.api(f"repos/{REPO}/actions/runs?head_sha={sha}&event=pull_request&per_page=30") or {}
+    def latest_ci_run(self, sha, event="pull_request"):
+        """The newest run of ci.yml at this sha from `event`, or None."""
+        data = self.api(f"repos/{REPO}/actions/runs?head_sha={sha}&event={event}&per_page=30") or {}
         runs = [r for r in data.get("workflow_runs", [])
                 if str(r.get("path", "")).endswith("/ci.yml") or r.get("name") == "CI"]
         runs.sort(key=lambda r: r.get("created_at") or "", reverse=True)
@@ -496,6 +596,11 @@ class GhCli:
 
     def rerun_failed(self, run_id):
         _run(["gh", "api", "-X", "POST", f"repos/{REPO}/actions/runs/{int(run_id)}/rerun-failed-jobs"])
+
+    def failed_tests(self, run_id, attempt):
+        """Test names that failed in one attempt of a run, from its failed jobs' logs."""
+        return failed_tests_in(_run(["gh", "run", "view", str(int(run_id)), "--repo", REPO,
+                                     "--attempt", str(int(attempt)), "--log-failed"]))
 
     def merged_bot_prs(self):
         prs = self.api(f"repos/{REPO}/pulls?state=closed&base=develop&sort=updated&direction=desc&per_page=30")
@@ -511,7 +616,8 @@ class GhCli:
         return out
 
     def check_conclusions(self, sha):
-        data = self.api(f"repos/{REPO}/commits/{sha}/check-runs?per_page=100")
+        # filter=latest: after a rerun, the rerun's result replaces the red one.
+        data = self.api(f"repos/{REPO}/commits/{sha}/check-runs?filter=latest&per_page=100")
         return {c["name"]: c.get("conclusion") for c in data["check_runs"]}
 
 
@@ -675,11 +781,13 @@ def run_once(config_path):
         paused = w.tick(read_spool(cfg["spool"], log))
     finally:
         logf.close()
-    tmp = state_path + ".tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        json.dump(w.state, f)
-    os.replace(tmp, state_path)
+        # Saved even when the tick raises (CB-467), so a crash cannot make the
+        # next tick redo work it already did.
+        tmp = state_path + ".tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(w.state, f)
+        os.replace(tmp, state_path)
     return 3 if paused else 0
 
 
