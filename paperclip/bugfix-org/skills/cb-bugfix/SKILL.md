@@ -118,16 +118,21 @@ answers requests in the order they arrived. When it has dealt with one,
 `$RESULTS/<id>/` holds `result.json`, `stdout.txt` and `stderr.txt` (all three,
 always). Runs and releases are answered within about a minute unless an install
 is in progress. **A `machine_install` can take many minutes** (the runner may
-wait up to 10 minutes for the install lock, and a signed Mac build is slow,
-`host/README.md` has the measured time) and every request behind it waits too,
+wait up to 10 minutes for the install lock, and a signed Mac build takes 5 to 20 minutes, measured twice on 2026-11-25, with a
+25-minute timeout, and the 45-minute hold starts only after it, when the install
+begins) and every request behind it waits too,
 so wait well past a minute for it before deciding it is lost.
 
 Some requests are never answered, so a missing folder after a long wait can mean
 one of them: a file whose name is not exactly `<id>.json`, an `id` outside the
 pattern, an `id` you already used (the first answer stands and the repeat does
-not run, so choose a new `id` every time), or a file over 64 KiB. Count a
-request with no folder after fifteen minutes (longer for an install) as a failed
-round.
+not run, so choose a new `id` every time), or a file over 64 KiB. A file that is not valid JSON,
+or has no usable `id`, gets **no result folder at all**, only a line in the runner's
+log. So if no result appears within a few minutes for a Windows request, or
+within 30 minutes for a Mac install, check that the request file is valid JSON
+named `<id>.json`, and look in `machine-spool/bad/` (the runner moves a rejected
+file there). If it is there, fix the file and send it again under a new `id`;
+if it is not and there is still no result, count it as a failed round.
 
 Every `result.json` has `id`, `verb`, `pr`, `ok` (true or false), `refused`,
 `started_at` and `finished_at`. Act on `ok` and `refused`; `refused` is one

@@ -161,15 +161,17 @@ command logged.
 `powershell -Command ...` for PowerShell and avoid bare `/FLAG` arguments. A Windows install
 needs CI to have uploaded the `unsigned-win-x64` artifact for that sha first.
 
-**The Mac build, measured (2026-11-25, `release.yml` run 45689769046 on `e2e/cb-470-probe`).**
-A Mac install waits for a signed build from `release.yml` on `e2e/bugfix-pr-<n>`: about
-five minutes from request to a stapled DMG on the mini. The `release` deployment was
-pending 26 s after dispatch; the macOS leg took 3.5 minutes including signing and
-notarization; the runner waits for the whole run, so the Windows and osx-x64 legs count
+**The Mac build, measured twice on 2026-11-25: 5 to 20 minutes.** A Mac install waits for a
+signed build from `release.yml` on `e2e/bugfix-pr-<n>`. One run (`release.yml` run
+45689769046 on `e2e/cb-470-probe`) took 282 s from request to a stapled DMG on the mini;
+another the same afternoon took 1238 s (20.6 minutes), because macOS CI jobs queue. On the
+fast run the `release` deployment was pending 26 s after dispatch and the macOS leg took
+3.5 minutes including signing and notarization; the runner waits for the whole run, so the Windows and osx-x64 legs count
 too; the artifact download took 17 s (about 208 MB). One build, cached by sha, serves
 both Macs, so the MacBook adds only a copy and an install. Each Mac's own install (stop,
 swap, relaunch, verify) was not part of that measurement. The runner gives the build 25
-minutes before it fails naming the run. The `e2e/bugfix-pr-<n>` branch is deleted when the
+minutes before it fails naming the run. The 45-minute hold starts only after the build,
+when the install begins, so a slow build does not eat it. The `e2e/bugfix-pr-<n>` branch is deleted when the
 Macs are restored, and `publish` never runs because it is tag-only. An agent should expect
-a `machine_install` that includes a Mac to take about five minutes plus any wait for the
+a `machine_install` that includes a Mac to take 5 to 20 minutes plus any wait for the
 install lock.
