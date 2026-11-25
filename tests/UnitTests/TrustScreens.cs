@@ -18,12 +18,18 @@ internal static class TrustScreens
     internal static string HooksOnNo => Read("hooks-w100-no");
     internal static string HooksOnYes => Read("hooks-w100-yes");
 
-    // CB-476: the Windows PC's own console (Claude Code under a named account in
-    // its home folder, conhost's 120x30 window, read with AttachConsole and
-    // ReadConsoleOutputCharacterW exactly as WindowsConsoleRead does; the yes
-    // file had one Down written as console input and Enter never sent). The
-    // home folder asks every session and its folder declares hooks.
+    // CB-476: the Windows PC's own console, captured by bryn-kowalczyk: Claude Code
+    // started as a Windows launch starts it (conhost.exe cmd.exe /k, named account
+    // .claude-sundaysky) in the logged-on session, buffer 120x9001, window 120x30,
+    // read with AttachConsole + ReadConsoleOutputCharacterW over the visible window
+    // as WindowsConsoleRead does. The yes files had one VK_DOWN written as console
+    // input and Enter never sent. The only change from the captured files is
+    // WindowsConsoleRead.Assemble's own shape: LF between rows, no trailing newline
+    // (the capture script joined with CRLF). conhost draws the marker as ">" and
+    // the hooks sign as "‼". "home" is the account's home folder, which asks every
+    // session and declares hooks; "plain" is a fresh folder under it.
     internal const string WindowsHome = @"C:\Users\warre";
+    internal const string WindowsPlain = @"C:\Users\warre\tmp-cb476";
     internal static string ConsoleOnNo => Read("conhost-home-w120-no");
     internal static string ConsoleOnYes => Read("conhost-home-w120-yes");
 }

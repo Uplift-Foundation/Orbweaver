@@ -152,6 +152,25 @@ public class LaunchRunnerTrustTests
         Assert.Equal(0, d.Reads);
     }
 
+    // Cancel, expiry, a replaced question and a dropped link all close through
+    // CloseIfStillAskingAsync: a console is killed only while it still shows the
+    // prompt for that folder, never once somebody at the PC has answered it.
+    [Fact]
+    public async Task A_windows_console_is_closed_only_while_it_still_asks()
+    {
+        var asking = Console(_ => TrustScreens.ConsoleOnNo);
+        await asking.Runner().CloseIfStillAskingAsync(TrustScreens.WindowsHome, NewChatCli.ClaudeCode, "con:42");
+        Assert.Equal(["con:42"], asking.Closed);
+
+        var answered = Console(_ => Idle);
+        await answered.Runner().CloseIfStillAskingAsync(TrustScreens.WindowsHome, NewChatCli.ClaudeCode, "con:42");
+        Assert.Empty(answered.Closed);
+
+        var unreadable = Console(_ => null);
+        await unreadable.Runner().CloseIfStillAskingAsync(TrustScreens.WindowsHome, NewChatCli.ClaudeCode, "con:42");
+        Assert.Empty(unreadable.Closed);
+    }
+
     [Fact]
     public async Task Windows_reports_to_the_phone_and_closes_for_a_desktop_that_cannot_ask()
     {
