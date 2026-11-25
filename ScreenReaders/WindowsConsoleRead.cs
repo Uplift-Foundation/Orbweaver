@@ -47,6 +47,41 @@ namespace Orbweaver
         [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool FreeConsole();
 
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr GetStdHandle(int which);
+
+        [DllImport("kernel32.dll")] [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetStdHandle(int which, IntPtr handle);
+
+        private static readonly int[] StdIds = { -10, -11, -12 };
+
+        // CB-476: this process's standard handles, to put back after a console
+        // has been attached and freed. AttachConsole points a GUI process's
+        // standard handles at the console it attaches to, and FreeConsole does
+        // NOT put them back, so afterwards they name handles of a console this
+        // process no longer has. A child started with UseShellExecute = false
+        // inherits them, and conhost started that way (the named-account launch,
+        // CB-474) exits at once with code 0. Measured on the Windows PC with a
+        // GUI-subsystem repro: std handles 0,0,0 before a read and 44c,458,454
+        // after it, with the next conhost dead in under 3 s; restoring them, it
+        // lived. Every attach in the app (this read, the console typer, the
+        // console press) saves before and restores after.
+        internal readonly struct StdHandles
+        {
+            private readonly IntPtr[] _saved;
+
+            private StdHandles(IntPtr[] saved) => _saved = saved;
+
+            [SupportedOSPlatform("windows")]
+            internal static StdHandles Save() => new(StdIds.Select(GetStdHandle).ToArray());
+
+            [SupportedOSPlatform("windows")]
+            internal void Restore()
+            {
+                for (var i = 0; i < StdIds.Length; i++) SetStdHandle(StdIds[i], _saved[i]);
+            }
+        }
+
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         private static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
 
@@ -69,13 +104,26 @@ namespace Orbweaver
             error = 0;
             lock (gate)
             {
+                var std = StdHandles.Save();
+                try { return ReadAttached(pid, out error); }
+                finally { std.Restore(); }
+            }
+        }
+
+        [SupportedOSPlatform("windows")]
+        private static string? ReadAttached(uint pid, out int error)
+        {
+            error = 0;
+            // The block is the body of the lock this used to sit in; Read holds the gate now.
+            {
                 FreeConsole();
                 if (!AttachConsole(pid)) { error = Marshal.GetLastWin32Error(); return null; }
 
                 try
                 {
-                    // CONOUT$ rather than GetStdHandle: after AttachConsole this process's standard
-                    // handles are the ones it started with, not the attached console's.
+                    // CONOUT$ rather than GetStdHandle: a process started with standard handles of its
+                    // own keeps them after AttachConsole. (One with none, a GUI app, is pointed at the
+                    // attached console and left pointing there after FreeConsole: Read restores them.)
                     using var output = CreateFileW("CONOUT$", GenericRead | GenericWrite, FileShareReadWrite, IntPtr.Zero, OpenExisting, 0, IntPtr.Zero);
                     if (output.IsInvalid) { error = Marshal.GetLastWin32Error(); return null; }
 
