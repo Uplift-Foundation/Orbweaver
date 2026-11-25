@@ -30,6 +30,13 @@ import collections
 import subprocess
 
 
+# CB-475 follow-up: every ssh and scp the runner starts carries these, so a
+# connection that dies mid-call is noticed within about 30 s instead of
+# sitting until the call's own cap. QA lost 36 minutes to a plain ssh on a
+# dead connection; the runner's calls had the same exposure up to their cap.
+SSH_KEEPALIVE = ["-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3"]
+
+
 class MachineError(Exception):
     """An install, restore or run that failed. The message is written into
     result.json for the org to read, so it must never carry a secret."""

@@ -1100,6 +1100,72 @@ class ConfigTests(unittest.TestCase):
                 runner.load_config(p)
 
 
+class DefaultsAndKeepaliveTests(unittest.TestCase):
+    """CB-475 follow-up (a deploy defect): the README's defaults, a visible
+    machine set, and keepalive on every ssh the runner starts."""
+
+    def test_a_config_with_only_company_dir_gets_all_three_machines(self):
+        with tempfile.TemporaryDirectory() as t:
+            p = os.path.join(t, "m.json")
+            with open(p, "w") as f:
+                json.dump({"company_dir": t, "state_dir": t}, f)
+            c = runner.load_config(p)
+        self.assertEqual(sorted(c["machines"]), ["macbook", "mini", "windows"])
+        self.assertEqual(sorted(runner.make_machines(c)), ["macbook", "mini", "windows"])
+        # Control: a config naming its machines keeps exactly those.
+        with tempfile.TemporaryDirectory() as t:
+            p = os.path.join(t, "m.json")
+            with open(p, "w") as f:
+                json.dump({"company_dir": t, "machines": {"windows": {}}}, f)
+            self.assertEqual(list(runner.load_config(p)["machines"]), ["windows"])
+
+    @unittest.skipIf(os.name == "nt", "run_once uses fcntl")
+    def test_run_once_logs_its_machines_on_change_and_an_empty_set_every_tick(self):
+        with tempfile.TemporaryDirectory() as t:
+            conf = {"company_dir": os.path.join(t, "c"), "state_dir": os.path.join(t, "s"),
+                    "log_path": os.path.join(t, "m.log"), "lock_path": os.path.join(t, "lock")}
+            cp = os.path.join(t, "m.json")
+            with open(cp, "w") as f:
+                json.dump(conf, f)
+
+            def tick(ms):
+                runner.run_once(cp, clock=Clock(), gh=FakeGh(), machines=ms)
+                with open(conf["log_path"]) as f:
+                    return f.read()
+            ms = {"windows": FakeMachine("windows")}
+            self.assertEqual(tick(ms).count("machines on this runner: windows"), 1)
+            self.assertEqual(tick(ms).count("machines on this runner:"), 1, "unchanged: not logged again")
+            log = tick({})
+            self.assertEqual(log.count("machines on this runner: NONE (check machines.json)"), 1)
+            self.assertEqual(tick({}).count("NONE (check machines.json)"), 2, "empty: logged every tick")
+
+    def test_every_windows_ssh_and_scp_carries_keepalive(self):
+        with tempfile.TemporaryDirectory() as t:
+            sh = FakeSh([])
+            m = windows.WindowsMachine({"state_dir": t, "machines": {"windows": {"ssh": "w"}}}, sh=sh)
+            m.run("echo hi", 5)
+            m._push_script(None)
+        argvs = [a for a in sh.calls if a[0] in ("ssh", "scp")]
+        self.assertGreaterEqual(len(argvs), 3)
+        for argv in argvs:
+            i = argv.index("ServerAliveInterval=10")
+            self.assertEqual(argv[i - 1:i + 3], base.SSH_KEEPALIVE, argv)
+
+    def test_the_macbooks_ssh_carries_keepalive(self):
+        from host.machines import mac
+        seen = []
+
+        def sh(argv, timeout=None, input=None):
+            seen.append(argv)
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        with tempfile.TemporaryDirectory() as t:
+            m = mac.MacMachine("macbook", {"state_dir": t, "machines": {"macbook": {"ssh": [["mbp"]]}}}, sh=sh)
+            m.run("true", 5)
+        self.assertEqual(seen[0][0], "ssh")
+        self.assertIn("ServerAliveInterval=10", seen[0])
+        self.assertIn("ServerAliveCountMax=3", seen[0])
+
+
 class MakeMachinesTests(unittest.TestCase):
     def test_builds_what_is_configured_and_ignores_unknown_names(self):
         ms = runner.make_machines({"state_dir": "/tmp", "machines": {"windows": {}, "toaster": {}}})

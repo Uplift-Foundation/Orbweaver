@@ -70,7 +70,7 @@ import time
 
 if __package__ in (None, ""):
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
-from host.machines.base import MachineError, RunResult, default_sh  # noqa: E402
+from host.machines.base import SSH_KEEPALIVE, MachineError, RunResult, default_sh  # noqa: E402
 
 REPO = "Uplift-Foundation/Orbweaver"
 TEAM_ID = "5AQ4ULRG3Z"
@@ -404,8 +404,7 @@ class MacMachine:
             return self._sh(["/bin/bash", "-c", script], timeout)
         r = None
         for route in self.routes:
-            r = self._sh(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
-                          "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4"]
+            r = self._sh(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", *SSH_KEEPALIVE]
                          + route + ["/bin/bash -c " + shlex.quote(script)], timeout)
             if r.returncode != 255:
                 return r
@@ -459,12 +458,12 @@ class MacMachine:
             # scp spells ssh's -p as -P; a route is ssh arguments then a host.
             args = ["-P" if a == "-p" else a for a in route[:-1]]
             for attempt in range(1, self.PUT_ATTEMPTS + 1):
-                last = self._sh(["scp", "-q", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
+                last = self._sh(["scp", "-q", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", *SSH_KEEPALIVE]
                                 + args + [path, f"{route[-1]}:{remote}"], 600)
                 log(f"scp DMG via {' '.join(route)} (attempt {attempt}): exit {last.returncode}")
                 if last.returncode == 0:
                     return remote
-                rm = self._sh(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
+                rm = self._sh(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", *SSH_KEEPALIVE]
                               + route + ["rm -f " + shlex.quote(remote)], 30)
                 log(f"rm partial DMG via {' '.join(route)}: exit {rm.returncode}")
                 if last.returncode == 255:
