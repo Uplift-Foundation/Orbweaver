@@ -181,6 +181,22 @@ class ParseTests(unittest.TestCase):
         self.ok(release(i="a" * 40))
         self.ok(release(i="cb-470-1"))
 
+    def test_id_edge_cases_from_qa(self):
+        for bad in ("", "a/b", "id\n", "UPPER", "a b", 7):
+            self.refused(dict(release(), id=bad), "id must match", has_id=False)
+        r = release()
+        del r["id"]
+        self.refused(r, "id must match", has_id=False)
+
+    def test_type_edge_cases_from_qa(self):
+        self.refused("", "not JSON", has_id=False)
+        self.refused(run(timeout_s="5"), "timeout_s")
+        self.refused(run(timeout_s=True), "timeout_s")
+        self.refused(run(timeout_s=-1), "timeout_s")
+        self.refused(dict(install(), machines="windows"), "non-empty list")
+        self.refused(install(machines=("Windows",)), "unknown machine(s): 'Windows'")
+        self.refused(run(command=7), "command must be")
+
     def test_unknown_verb_is_answered_with_its_id(self):
         self.refused(dict(release(), verb="machine_reboot"), "unknown verb")
 
@@ -250,147 +266,230 @@ class PrRuleTests(unittest.TestCase):
 
 # ---------------------------------------------------------------- runner
 
+FIELDS = {"id", "verb", "pr", "ok", "refused", "started_at", "finished_at"}
+
+
+def shape(test, res, *extra):
+    """Every answer carries the lead's fixed fields and exactly its verb's
+    extra ones, so the skill can document them without a 'sometimes'."""
+    got = set(res) - {"_stdout", "_stderr"}
+    test.assertEqual(got, FIELDS | set(extra), res)
+
+
+def refused_untouched(test, r, res, fragment):
+    test.assertFalse(res["ok"])
+    test.assertIn(fragment, res["refused"] or "")
+    for m in r.machines.values():
+        test.assertFalse([c for c in m.calls if c[0] in ("install", "restore", "run")], m.calls)
+
+
 class InstallTests(unittest.TestCase):
     def test_install_takes_the_lock_and_confirms_the_stamp(self):
         lock, clock = FakeLock(), Clock()
         r = make_runner(lock=lock, clock=clock)
         res = one(r, install(machines=("windows", "mini")))
-        self.assertEqual(res["status"], "ok", res)
+        shape(self, res, "machines", "hold_expires_at")
+        self.assertTrue(res["ok"], res)
+        self.assertIsNone(res["refused"])
         self.assertTrue(lock.held)
-        self.assertEqual(res["machines"]["windows"], {"before": OLD, "installed": SHA, "status": "ok"})
+        self.assertEqual(res["machines"]["windows"],
+                         {"ok": True, "installed_commit": SHA, "previous_commit": OLD, "error": None})
         self.assertEqual(r.hold["before"], {"windows": OLD, "mini": OLD})
         self.assertEqual(r.hold["since"], clock.t)
         self.assertEqual(res["hold_expires_at"], runner.iso(clock.t + 45 * 60))
+        self.assertEqual(res["started_at"], runner.iso(clock.t))
 
     def test_other_author_refused_control_allowed(self):
         r = make_runner(gh=FakeGh(p7=pr(author="someone")))
         res = one(r, install())
-        self.assertEqual(res["status"], "refused")
-        self.assertIn("not allowed", res["reason"])
+        shape(self, res)
+        refused_untouched(self, r, res, "not allowed")
         self.assertIsNone(r.hold)
-        self.assertEqual(r.machines["windows"].calls, [])
-        self.assertEqual(one(make_runner(), install())["status"], "ok")
+        self.assertTrue(one(make_runner(), install())["ok"])
+
+    def test_empty_allowed_list_allows_nobody(self):
+        res = one(make_runner(allowed_authors=[]), install())
+        self.assertIn("not allowed", res["refused"])
 
     def test_stale_sha_refused_control_head_ok(self):
         r = make_runner(gh=FakeGh(p7=pr(head=SHA2)))
         res = one(r, install(sha=SHA))
-        self.assertEqual((res["status"], res["reason"]), ("refused", "sha is not the PR's current head"))
+        refused_untouched(self, r, res, "sha is not the PR's current head")
         self.assertFalse(r.lock.held)
-        self.assertEqual(one(make_runner(gh=FakeGh(p7=pr(head=SHA2))), install(sha=SHA2))["status"], "ok")
+        self.assertTrue(one(make_runner(gh=FakeGh(p7=pr(head=SHA2))), install(sha=SHA2))["ok"])
 
-    def test_closed_pr_refused(self):
-        res = one(make_runner(gh=FakeGh(p7=pr(state="CLOSED"))), install())
-        self.assertEqual(res["reason"], "PR is not open")
+    def test_head_is_asked_afresh_for_every_install(self):
+        gh = FakeGh(p7=pr())
+        r = make_runner(gh=gh)
+        self.assertTrue(one(r, install())["ok"])
+        gh.prs[7] = pr(head=SHA2)  # a push since the first install
+        self.assertIn("current head", one(r, install(i="i2", sha=SHA))["refused"])
 
-    def test_lock_held_elsewhere_refused_and_nothing_touched(self):
-        r = make_runner(lock=FakeLock(held_by_other=True))
+    def test_closed_missing_and_unreadable_pr_refused(self):
+        self.assertEqual(one(make_runner(gh=FakeGh(p7=pr(state="CLOSED"))), install())["refused"], "PR is not open")
+        self.assertEqual(one(make_runner(gh=FakeGh(p7=pr(state="MERGED"))), install())["refused"], "PR is not open")
+        # GhCli turns a gh error or timeout into None: the gate fails closed.
+        self.assertEqual(one(make_runner(gh=FakeGh()), install())["refused"], "PR not found")
+
+    def test_lock_held_elsewhere_waits_then_refuses(self):
+        clock = Clock()
+        slept = []
+
+        def sleep(s):
+            slept.append(s)
+            clock.t += s
+        r = make_runner(lock=FakeLock(held_by_other=True), clock=clock, lock_wait_s=60)
+        r.sleep = sleep
         res = one(r, install())
-        self.assertEqual(res["status"], "refused")
-        self.assertIn("install lock is held", res["reason"])
+        refused_untouched(self, r, res, "install lock is held by another session and was not free within 60 s")
+        self.assertEqual(sum(slept), 60)
         self.assertIsNone(r.hold)
-        self.assertEqual(r.machines["windows"].calls, [])
+
+    def test_lock_freed_during_the_wait_is_taken(self):
+        clock, lock = Clock(), FakeLock(held_by_other=True)
+
+        def sleep(s):
+            clock.t += s
+            lock.held = lock.other = False  # the other team released it
+        r = make_runner(lock=lock, clock=clock)
+        r.sleep = sleep
+        self.assertTrue(one(r, install())["ok"])
+
+    def test_lock_wait_defaults_to_ten_minutes(self):
+        self.assertEqual(runner.DEFAULTS["lock_wait_s"], 600)
 
     def test_one_pr_at_a_time(self):
         gh = FakeGh(p7=pr(), p8=pr(head=SHA2))
         r = make_runner(gh=gh)
-        self.assertEqual(one(r, install())["status"], "ok")
+        self.assertTrue(one(r, install())["ok"])
+        before = list(r.machines["windows"].calls)
         res = one(r, install(i="i2", n=8, sha=SHA2))
-        self.assertEqual(res["status"], "refused")
-        self.assertIn("held by PR #7", res["reason"])
+        self.assertFalse(res["ok"])
+        self.assertIn("held by PR #7", res["refused"])
         self.assertEqual(r.hold["pr"], 7)
+        self.assertEqual(r.machines["windows"].calls, before)
 
-    def test_same_pr_reinstalls_new_head_keeping_the_original_before(self):
+    def test_same_pr_reinstalls_new_head_keeping_the_original_before_and_start(self):
         gh = FakeGh(p7=pr())
         clock = Clock()
         r = make_runner(gh=gh, clock=clock)
-        one(r, install())
-        since = r.hold["since"]
+        first = one(r, install())
         gh.prs[7] = pr(head=SHA2)
         clock.t += 60
         res = one(r, install(i="i2", sha=SHA2, machines=("windows", "mini")))
-        self.assertEqual(res["status"], "ok", res)
-        # windows' before is still the build from before the hold, not SHA.
+        self.assertTrue(res["ok"], res)
+        # windows' previous build is still the one from before the hold, not SHA.
+        self.assertEqual(res["machines"]["windows"]["previous_commit"], OLD)
         self.assertEqual(r.hold["before"], {"windows": OLD, "mini": OLD})
         self.assertEqual(r.hold["sha"], SHA2)
-        # A re-install does not restart the 45 minutes.
-        self.assertEqual(r.hold["since"], since)
+        # A re-install does not extend the 45 minutes.
+        self.assertEqual(res["hold_expires_at"], first["hold_expires_at"])
 
     def test_machine_not_configured_refused(self):
         ms = {"windows": FakeMachine("windows")}
         res = one(make_runner(machines=ms), install(machines=("mini",)))
-        self.assertIn("not available on this runner: mini", res["reason"])
-        self.assertEqual(one(make_runner(machines=ms), install())["status"], "ok")
+        self.assertIn("not available on this runner: mini", res["refused"])
+        self.assertTrue(one(make_runner(machines=ms), install())["ok"])
 
     def test_stamp_mismatch_fails_restores_and_releases(self):
         r = make_runner()
         r.machines["windows"].stamp_after_install = SHA2
         res = one(r, install(machines=("windows", "mini")))
-        self.assertEqual(res["status"], "failed")
-        self.assertIn("reports", res["reason"])
+        shape(self, res, "machines", "hold_expires_at")
+        self.assertFalse(res["ok"])
+        self.assertIsNone(res["refused"])
+        self.assertIn("reports " + SHA2, res["machines"]["windows"]["error"])
+        self.assertEqual(res["machines"]["windows"]["installed_commit"], OLD)  # what is there now
         self.assertEqual(r.machines["windows"].stamp, OLD)
-        self.assertEqual(res["restore"]["windows"]["status"], "ok")
-        # mini was never installed: the failure stops at the first machine.
         self.assertNotIn(("install", 7, SHA), r.machines["mini"].calls)
         self.assertIsNone(r.hold)
         self.assertFalse(r.lock.held)
 
-    def test_install_error_fails_restores_and_releases(self):
+    def test_failure_on_machine_two_of_three_restores_machine_one(self):
         r = make_runner()
         r.machines["mini"].install_error = "no artifact"
-        res = one(r, install(machines=("windows", "mini")))
-        self.assertEqual(res["status"], "failed")
-        self.assertIn("install on mini failed: no artifact", res["reason"])
+        res = one(r, install(machines=("windows", "mini", "macbook")))
+        self.assertFalse(res["ok"])
+        self.assertIsNone(res["refused"])
+        self.assertEqual(res["machines"]["mini"]["error"], "install failed: no artifact")
+        self.assertTrue(res["machines"]["windows"]["ok"])           # restored, and confirmed
+        self.assertEqual(res["machines"]["windows"]["installed_commit"], OLD)
         self.assertEqual(r.machines["windows"].stamp, OLD)
+        self.assertIn(("restore",), r.machines["windows"].calls)
+        # macbook was only read: its restore is the seam's no-op, and the
+        # report says its build is the one it had.
+        self.assertFalse(any(c[0] == "install" for c in r.machines["macbook"].calls))
+        self.assertEqual(res["machines"]["macbook"]["installed_commit"], OLD)
         self.assertIsNone(r.hold)
         self.assertFalse(r.lock.held)
+
+    def test_failed_restore_after_failed_install_says_both(self):
+        r = make_runner()
+        r.machines["windows"].stamp_after_install = SHA2
+        r.machines["windows"].restore_to = SHA2
+        res = one(r, install())
+        self.assertIn("then restored build reports", res["machines"]["windows"]["error"])
 
     def test_unreadable_machine_fails_before_any_install(self):
         r = make_runner()
         r.machines["mini"].read_error = "ssh: connect timed out"
         res = one(r, install(machines=("windows", "mini")))
-        self.assertEqual(res["status"], "failed")
-        self.assertIn("could not read the installed build on mini", res["reason"])
+        self.assertFalse(res["ok"])
+        self.assertIn("could not read the installed build", res["machines"]["mini"]["error"])
         self.assertFalse(any(c[0] == "install" for c in r.machines["windows"].calls))
         self.assertFalse(r.lock.held)
 
 
 class RunTests(unittest.TestCase):
+    RUN_FIELDS = ("machine", "exit_code", "timed_out", "stdout_truncated", "stderr_truncated")
+
     def held(self, **kw):
         r = make_runner(**kw)
-        self.assertEqual(one(r, install(machines=("windows",)))["status"], "ok")
+        self.assertTrue(one(r, install(machines=("windows",)))["ok"])
         return r
 
     def test_run_without_hold_refused_control_with_hold(self):
-        res = one(make_runner(), run())
-        self.assertEqual(res["status"], "refused")
-        self.assertIn("does not hold the machines", res["reason"])
+        r = make_runner()
+        res = one(r, run())
+        shape(self, res, *self.RUN_FIELDS)
+        refused_untouched(self, r, res, "does not hold the machines")
+        self.assertIsNone(res["exit_code"])
         r = self.held()
         res = one(r, run())
-        self.assertEqual((res["status"], res["exit_code"], res["timed_out"]), ("ok", 0, False))
+        shape(self, res, *self.RUN_FIELDS)
+        self.assertEqual((res["ok"], res["exit_code"], res["timed_out"]), (True, 0, False))
         self.assertEqual((res["_stdout"], res["_stderr"]), ("out", "err"))
         self.assertIn(("run", "echo hi", 30), r.machines["windows"].calls)
 
+    def test_nonzero_exit_is_not_ok_but_not_refused(self):
+        r = self.held()
+        r.machines["windows"].result = base.RunResult(3, "", "boom", False)
+        res = one(r, run())
+        self.assertEqual((res["ok"], res["refused"], res["exit_code"]), (False, None, 3))
+
     def test_run_by_another_pr_refused(self):
         r = self.held(gh=FakeGh(p7=pr(), p8=pr()))
-        res = one(r, run(n=8))
-        self.assertIn("does not hold", res["reason"])
+        self.assertIn("does not hold", one(r, run(n=8))["refused"])
 
     def test_run_on_a_machine_not_installed_refused(self):
         r = self.held()
-        res = one(r, run(machine="mini"))
-        self.assertIn("not one of the machines", res["reason"])
-        self.assertEqual(r.machines["mini"].calls, [("installed_commit",)] * 0)
+        self.assertIn("not one of the machines", one(r, run(machine="mini"))["refused"])
+        self.assertEqual(r.machines["mini"].calls, [])
+
+    def test_run_after_release_refused(self):
+        r = self.held()
+        one(r, release())
+        self.assertIn("does not hold", one(r, run())["refused"])
 
     def test_run_after_head_moved_refused(self):
         r = self.held()
         r.gh.prs[7] = pr(head=SHA2)
-        res = one(r, run())
-        self.assertIn("head moved", res["reason"])
+        self.assertIn("head moved", one(r, run())["refused"])
 
     def test_run_on_closed_pr_refused(self):
         r = self.held()
         r.gh.prs[7] = pr(state="MERGED")
-        self.assertEqual(one(r, run())["reason"], "PR is not open")
+        self.assertEqual(one(r, run())["refused"], "PR is not open")
 
     def test_every_command_is_logged_with_machine_pr_and_exit(self):
         r = self.held()
@@ -405,25 +504,38 @@ class RunTests(unittest.TestCase):
     def test_refused_run_is_logged_too(self):
         r = make_runner()
         one(r, run())
-        self.assertTrue(any("refused id=r1 machine_run" in l for l in r.lines))
+        self.assertTrue(any("refused id=r1 verb=machine_run" in l and "machine=windows" in l for l in r.lines))
 
     def test_run_on_a_machine_dropped_from_config_refused(self):
         r = self.held()
         del r.machines["windows"]
-        self.assertIn("not available on this runner", one(r, run())["reason"])
+        self.assertIn("not available on this runner", one(r, run())["refused"])
 
-    def test_run_machine_error_is_a_failed_answer(self):
+    def test_run_machine_error_is_a_failure_with_the_sentence_in_stderr(self):
         r = self.held()
         r.machines["windows"].run = lambda c, t: (_ for _ in ()).throw(base.MachineError("ssh: no route"))
         res = one(r, run())
-        self.assertEqual((res["status"], res["reason"]), ("failed", "ssh: no route"))
+        self.assertEqual((res["ok"], res["refused"], res["exit_code"]), (False, None, None))
+        self.assertEqual(res["_stderr"], "ssh: no route\n")
         self.assertTrue(any("run id=r1 failed: ssh: no route" in l for l in r.lines))
 
     def test_timeout_is_reported(self):
         r = self.held()
         r.machines["windows"].result = base.RunResult(None, "partial", "", True)
         res = one(r, run())
-        self.assertEqual((res["exit_code"], res["timed_out"]), (None, True))
+        self.assertEqual((res["ok"], res["exit_code"], res["timed_out"]), (False, None, True))
+        self.assertEqual(res["_stdout"], "partial")
+
+    def test_output_is_bounded_and_flagged(self):
+        r = self.held(max_output_bytes=10)
+        r.machines["windows"].result = base.RunResult(0, "0123456789abc", "short", False)
+        res = one(r, run())
+        self.assertEqual((res["_stdout"], res["stdout_truncated"]), ("0123456789", True))
+        self.assertEqual((res["_stderr"], res["stderr_truncated"]), ("short", False))
+
+    def test_bound_never_splits_a_character(self):
+        self.assertEqual(runner.bound("é" * 3, 3), ("é", True))
+        self.assertEqual(runner.bound(None, 3), ("", False))
 
 
 class ReleaseTests(unittest.TestCase):
@@ -431,33 +543,43 @@ class ReleaseTests(unittest.TestCase):
         r = make_runner()
         one(r, install(machines=("windows", "mini")))
         res = one(r, release())
-        self.assertEqual(res["status"], "ok", res)
-        self.assertEqual(res["restore"]["windows"], {"want": OLD, "got": OLD, "status": "ok"})
+        shape(self, res, "machines", "hold_expires_at")
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["machines"]["windows"],
+                         {"ok": True, "installed_commit": OLD, "previous_commit": OLD, "error": None})
+        self.assertIsNone(res["hold_expires_at"])
         self.assertEqual(r.machines["windows"].stamp, OLD)
         self.assertIsNone(r.hold)
         self.assertFalse(r.lock.held)
 
-    def test_release_by_non_holder_refused(self):
+    def test_release_by_non_holder_refused_and_touches_nothing(self):
         r = make_runner(gh=FakeGh(p7=pr(), p8=pr()))
         one(r, install())
         res = one(r, release(n=8))
-        self.assertEqual(res["status"], "refused")
+        shape(self, res, "machines", "hold_expires_at")
+        self.assertIn("does not hold", res["refused"])
+        self.assertNotIn(("restore",), r.machines["windows"].calls)
         self.assertEqual(r.hold["pr"], 7)
         self.assertTrue(r.lock.held)
+        self.assertEqual(r.lock.released, [])
+
+    def test_release_with_no_hold_refused(self):
+        self.assertIn("does not hold", one(make_runner(), release())["refused"])
 
     def test_release_works_after_the_pr_merged(self):
         r = make_runner()
         one(r, install())
         r.gh.prs[7] = pr(state="MERGED")
-        self.assertEqual(one(r, release())["status"], "ok")
+        self.assertTrue(one(r, release())["ok"])
 
     def test_restore_that_does_not_match_fails_but_still_unlocks(self):
         r = make_runner()
         one(r, install())
         r.machines["windows"].restore_to = SHA2
         res = one(r, release())
-        self.assertEqual(res["status"], "failed")
-        self.assertIn("windows", res["reason"])
+        self.assertFalse(res["ok"])
+        self.assertIsNone(res["refused"])
+        self.assertIn("expected " + OLD, res["machines"]["windows"]["error"])
         # Tried twice, then let go: holding the lock forever stops every team.
         self.assertEqual(r.machines["windows"].calls.count(("restore",)), 2)
         self.assertFalse(r.lock.held)
@@ -469,7 +591,7 @@ class ReleaseTests(unittest.TestCase):
         one(r, install())
         del r.machines["windows"]
         res = one(r, release())
-        self.assertEqual(res["restore"]["windows"]["error"], "machine no longer configured")
+        self.assertEqual(res["machines"]["windows"]["error"], "machine no longer configured on this runner")
         self.assertFalse(r.lock.held)
 
     def test_restore_error_retried_once(self):
@@ -477,21 +599,25 @@ class ReleaseTests(unittest.TestCase):
         one(r, install())
         r.machines["windows"].restore_error = "ssh down"
         res = one(r, release())
-        self.assertEqual(res["restore"]["windows"]["status"], "failed")
-        self.assertEqual(res["restore"]["windows"]["error"], "ssh down")
+        self.assertFalse(res["machines"]["windows"]["ok"])
+        self.assertEqual(res["machines"]["windows"]["error"], "restore failed: ssh down")
         self.assertEqual(r.machines["windows"].calls.count(("restore",)), 2)
 
-    def test_lock_not_ours_is_not_counted_as_released(self):
+    def test_lock_left_behind_fails_the_release_loudly(self):
         lock = FakeLock()
         r = make_runner(lock=lock)
         one(r, install())
-        lock.other = True  # someone replaced it by hand while we held it
-        one(r, release())
-        self.assertTrue(any("not ours to release" in l for l in r.lines))
+        lock.other = True  # rmdir failed, or someone replaced it by hand
+        res = one(r, release())
+        self.assertFalse(res["ok"])
+        self.assertTrue(res["machines"]["windows"]["ok"])
+        self.assertIn("was not removed", res["_stderr"])
+        self.assertTrue(any("NEEDS ATTENTION: install lock" in l for l in r.lines))
+        self.assertIsNone(r.hold)
 
 
 class CapTests(unittest.TestCase):
-    def test_hold_past_cap_is_restored_and_released_control_just_before(self):
+    def test_hold_past_cap_is_restored_and_released_while_idle_control_just_before(self):
         clock = Clock()
         r = make_runner(clock=clock, hold_cap_s=120)
         one(r, install())
@@ -499,16 +625,19 @@ class CapTests(unittest.TestCase):
         self.assertEqual(r.tick([]), [])
         self.assertIsNotNone(r.hold)
         clock.t += 1
-        r.tick([])
+        self.assertEqual(r.tick([]), [])  # no request needed
         self.assertIsNone(r.hold)
         self.assertFalse(r.lock.held)
         self.assertEqual(r.machines["windows"].stamp, OLD)
+        self.assertTrue(any("cap; restoring" in l for l in r.lines))
+        self.assertTrue(any("released the machines" in l for l in r.lines))
         res = one(r, run())
-        self.assertEqual(res["status"], "refused")
-        self.assertIn("reached its cap", res["reason"])
+        self.assertIn("reached its cap", res["refused"])
         res = one(r, release())
-        self.assertEqual(res["status"], "ok")
-        self.assertIn("already reached its cap", res["reason"])
+        self.assertTrue(res["ok"])
+        self.assertIsNone(res["refused"])
+        self.assertIn("already reached its cap", res["_stdout"])
+        self.assertTrue(res["machines"]["windows"]["ok"])
 
     def test_cap_defaults_to_45_minutes(self):
         self.assertEqual(runner.DEFAULTS["hold_cap_s"], 2700)
@@ -542,8 +671,8 @@ class RefusedParseTests(unittest.TestCase):
         r = make_runner()
         req, why = runner.parse_request(json.dumps(dict(release(), extra=1)))
         [(rid, result, _, _)] = r.tick([(req, why)])
-        self.assertEqual((rid, result["status"]), ("x1", "refused"))
-        self.assertIn("unknown field", result["reason"])
+        self.assertEqual((rid, result["ok"]), ("x1", False))
+        self.assertIn("unknown field", result["refused"])
 
 
 # ---------------------------------------------------------------- files
@@ -576,6 +705,15 @@ class DirLockTests(unittest.TestCase):
         with self.assertRaises(OSError):
             lock.acquire("runner")
 
+    def test_a_lock_already_gone_counts_as_released(self):
+        self.assertTrue(runner.DirLock(self.path).release("tok"))
+
+    def test_write_result_never_overwrites(self):
+        self.assertTrue(runner.write_result(self.tmp.name, "a1", {"ok": True}, "1", ""))
+        self.assertFalse(runner.write_result(self.tmp.name, "a1", {"ok": False}, "2", ""))
+        with open(os.path.join(self.tmp.name, "a1", "stdout.txt")) as f:
+            self.assertEqual(f.read(), "1")
+
     def test_wrong_token_refused(self):
         lock = runner.DirLock(self.path)
         lock.acquire("runner")
@@ -594,13 +732,12 @@ class RunOnceTests(unittest.TestCase):
         self.company = os.path.join(t, "company")
         self.conf = {"company_dir": self.company, "state_dir": os.path.join(t, "state"),
                      "log_path": os.path.join(t, "machines.log"), "lock_path": os.path.join(t, "ow-install.lock"),
-                     "hold_cap_s": 300, "machines": {"windows": {}}}
+                     "hold_cap_s": 300, "lock_wait_s": 30, "machines": {"windows": {}}}
         self.cpath = os.path.join(t, "machines.json")
         with open(self.cpath, "w") as f:
             json.dump(self.conf, f)
         self.spool = os.path.join(self.company, "machine-spool")
         self.results = os.path.join(self.company, "machine-results")
-        os.makedirs(self.spool)
         self.clock = Clock()
         self.machines = {"windows": FakeMachine("windows")}
         self.gh = FakeGh(p7=pr())
@@ -609,19 +746,24 @@ class RunOnceTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def drop(self, req, raw=None):
+    def drop(self, req, raw=None, name=None):
+        os.makedirs(self.spool, exist_ok=True)
         self.n += 1
-        path = os.path.join(self.spool, f"{self.n:03d}.json")
+        path = os.path.join(self.spool, name or f"{req['id']}.json")
         with open(path, "w") as f:
             f.write(raw if raw is not None else json.dumps(req))
         os.utime(path, (self.n, self.n))
         return path
 
+    def sleep(self, s):
+        self.clock.t += s
+
     def tick(self):
-        return runner.run_once(self.cpath, clock=self.clock, gh=self.gh, machines=self.machines)
+        return runner.run_once(self.cpath, clock=self.clock, gh=self.gh, machines=self.machines, sleep=self.sleep)
 
     def result(self, rid):
         d = os.path.join(self.results, rid)
+        self.assertEqual(sorted(os.listdir(d)), ["result.json", "stderr.txt", "stdout.txt"])
         with open(os.path.join(d, "result.json")) as f:
             res = json.load(f)
         with open(os.path.join(d, "stdout.txt")) as f:
@@ -634,53 +776,82 @@ class RunOnceTests(unittest.TestCase):
         with open(self.conf["log_path"]) as f:
             return f.read()
 
+    def test_the_runner_creates_both_company_folders(self):
+        self.tick()
+        for d in (self.spool, self.results):
+            self.assertTrue(os.path.isdir(d))
+            self.assertEqual(os.stat(d).st_mode & 0o777, 0o755)
+
     def test_a_full_round_across_three_ticks(self):
         self.drop(install())
         self.assertEqual(self.tick(), 0)
-        self.assertEqual(self.result("i1")["status"], "ok")
+        self.assertTrue(self.result("i1")["ok"])
         self.assertTrue(os.path.isdir(self.conf["lock_path"]))
         # The hold survives into the next tick through the state file.
         self.drop(run(command="echo hi"))
         self.tick()
         res = self.result("r1")
-        self.assertEqual((res["status"], res["_stdout"], res["_stderr"]), ("ok", "out", "err"))
+        self.assertEqual((res["ok"], res["_stdout"], res["_stderr"]), (True, "out", "err"))
         self.drop(release())
         self.tick()
-        self.assertEqual(self.result("x1")["status"], "ok")
+        self.assertTrue(self.result("x1")["ok"])
         self.assertFalse(os.path.exists(self.conf["lock_path"]))
-        self.assertEqual(sorted(os.listdir(os.path.join(self.spool, "done"))), ["001.json", "002.json", "003.json"])
-        log = self.log_text()
-        self.assertIn('pr=7 machine=windows run id=r1 exit=0 timed_out=False command="echo hi"', log)
+        self.assertEqual(sorted(os.listdir(os.path.join(self.spool, "done"))), ["i1.json", "r1.json", "x1.json"])
+        self.assertIn('pr=7 machine=windows run id=r1 exit=0 timed_out=False command="echo hi"', self.log_text())
 
     def test_requests_in_one_tick_are_answered_in_arrival_order(self):
         self.drop(run())       # before the install: refused
         self.drop(install())
         self.drop(run(i="r2"))  # after it: runs
         self.tick()
-        self.assertEqual(self.result("r1")["status"], "refused")
-        self.assertEqual(self.result("r2")["status"], "ok")
+        self.assertIn("does not hold", self.result("r1")["refused"])
+        self.assertTrue(self.result("r2")["ok"])
+
+    def test_tmp_files_are_left_for_the_writer_to_finish(self):
+        self.drop(install(), name="i1.json.tmp")
+        self.tick()
+        self.assertEqual(sorted(os.listdir(self.spool)), ["bad", "done", "i1.json.tmp"])
+        self.assertFalse(os.path.exists(os.path.join(self.results, "i1")))
 
     def test_bad_requests_go_to_bad_and_are_answered_when_they_have_an_id(self):
-        self.drop(None, raw="not json")
+        self.drop(None, raw="not json", name="junk.json")
         self.drop(dict(release(), extra=1))
         self.tick()
-        self.assertEqual(sorted(os.listdir(os.path.join(self.spool, "bad"))), ["001.json", "002.json"])
-        self.assertEqual(self.result("x1")["status"], "refused")
-        self.assertIn("dropped 001.json: not JSON", self.log_text())
+        self.assertEqual(sorted(os.listdir(os.path.join(self.spool, "bad"))), ["junk.json", "x1.json"])
+        self.assertIn("unknown field", self.result("x1")["refused"])
+        self.assertIn("dropped junk.json: not JSON", self.log_text())
+
+    def test_file_name_must_be_the_id(self):
+        self.drop(install(), name="other.json")
+        self.tick()
+        self.assertFalse(os.path.exists(os.path.join(self.results, "i1")))
+        self.assertFalse(os.path.exists(os.path.join(self.results, "other")))
+        self.assertEqual(os.listdir(os.path.join(self.spool, "bad")), ["other.json"])
+        self.assertIn("file name is not <id>.json", self.log_text())
+        self.assertEqual(self.machines["windows"].calls, [])
+        self.drop(install())  # control
+        self.tick()
+        self.assertTrue(self.result("i1")["ok"])
 
     def test_oversized_request_dropped(self):
-        self.drop(None, raw=json.dumps(release()) + " " * (64 * 1024))
+        self.drop(None, raw=json.dumps(release()) + " " * (64 * 1024), name="x1.json")
         self.tick()
         self.assertFalse(os.path.exists(os.path.join(self.results, "x1")))
         self.assertIn("larger than 64 KiB", self.log_text())
 
-    def test_a_duplicate_id_never_overwrites_the_first_answer(self):
+    def test_a_reused_id_is_not_run_and_the_first_answer_stands(self):
         self.drop(install())
         self.tick()
-        self.drop(install())
+        with open(os.path.join(self.results, "i1", "result.json"), "rb") as f:
+            first = f.read()
+        calls = list(self.machines["windows"].calls)
+        self.drop(release(i="i1"))
         self.tick()
-        self.assertEqual(self.result("i1")["status"], "ok")
+        with open(os.path.join(self.results, "i1", "result.json"), "rb") as f:
+            self.assertEqual(f.read(), first)
+        self.assertEqual(self.machines["windows"].calls, calls)  # the release never ran
         self.assertIn("already has a result", self.log_text())
+        self.assertEqual(os.listdir(os.path.join(self.spool, "bad")), ["i1.json"])
 
     def test_short_cap_restores_between_ticks(self):
         self.drop(install())
@@ -692,12 +863,15 @@ class RunOnceTests(unittest.TestCase):
         with open(os.path.join(self.conf["state_dir"], "state.json")) as f:
             self.assertIsNone(json.load(f)["hold"])
 
-    def test_a_hand_taken_lock_refuses_the_install(self):
+    def test_a_hand_taken_lock_waits_then_refuses_and_is_never_removed(self):
         os.mkdir(self.conf["lock_path"])
         self.drop(install())
+        t0 = self.clock.t
         self.tick()
-        self.assertIn("install lock is held", self.result("i1")["reason"])
+        self.assertIn("install lock is held", self.result("i1")["refused"])
+        self.assertEqual(self.clock.t - t0, 30)
         self.assertTrue(os.path.isdir(self.conf["lock_path"]))
+        self.assertEqual(self.machines["windows"].calls, [])
 
     def test_a_second_runner_on_the_same_state_does_nothing(self):
         import fcntl
@@ -706,16 +880,24 @@ class RunOnceTests(unittest.TestCase):
             fcntl.flock(g, fcntl.LOCK_EX)
             self.drop(install())
             self.tick()
-            self.assertEqual(os.listdir(self.spool), ["001.json"])
+            self.assertEqual(os.listdir(self.spool), ["i1.json"])
         self.tick()
-        self.assertEqual(self.result("i1")["status"], "ok")
+        self.assertTrue(self.result("i1")["ok"])
 
     def test_an_unreadable_spool_entry_is_skipped(self):
-        os.mkdir(os.path.join(self.spool, "odd.json"))
+        os.makedirs(os.path.join(self.spool, "odd.json"))
         self.drop(install())
         self.tick()
-        self.assertEqual(self.result("i1")["status"], "ok")
+        self.assertTrue(self.result("i1")["ok"])
         self.assertTrue(os.path.isdir(os.path.join(self.spool, "odd.json")))
+
+    def test_writes_nothing_outside_its_own_folders(self):
+        bugfix = os.path.join(self.company, "bugfix-spool")
+        os.makedirs(bugfix)
+        self.drop(install())
+        self.tick()
+        self.assertEqual(os.listdir(bugfix), [])
+        self.assertEqual(sorted(os.listdir(self.company)), ["bugfix-spool", "machine-results", "machine-spool"])
 
     def test_state_file_is_private(self):
         self.drop(install())
@@ -772,6 +954,10 @@ class GhCliTests(unittest.TestCase):
         self.assertEqual(seen[0], ["gh", "pr", "view", "7", "--repo", "o/r", "--json", "state,author,headRefOid"])
         self.assertIsNone(runner.GhCli("o/r", lambda a: subprocess.CompletedProcess(a, 1, "", "no")).pr(7))
         self.assertIsNone(runner.GhCli("o/r", lambda a: subprocess.CompletedProcess(a, 0, "{", "")).pr(7))
+
+        def hang(argv):
+            raise subprocess.TimeoutExpired(argv, 60)
+        self.assertIsNone(runner.GhCli("o/r", hang).pr(7))
 
 
 # ---------------------------------------------------------------- windows

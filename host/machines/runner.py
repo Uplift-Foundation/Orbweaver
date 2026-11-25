@@ -66,6 +66,11 @@ DEFAULTS = {
     "lock_path": "/tmp/ow-install.lock",
     "log_path": os.path.join(DEFAULT_DIR, "machines.log"),
     "state_dir": os.path.join(DEFAULT_DIR, "machines"),
+    # How long an install waits for someone else's /tmp/ow-install.lock
+    # before refusing (lead's ruling, CB-470).
+    "lock_wait_s": 10 * 60,
+    # Per stream, for machine_run's stdout.txt and stderr.txt.
+    "max_output_bytes": 1024 * 1024,
 }
 MACHINES = ("windows", "mini", "macbook")
 ID_RE = re.compile(r"[a-z0-9-]{1,40}")
@@ -203,11 +208,17 @@ class Runner:
 
     `before` is written to disk before the first install starts, so a tick
     killed half way through an install still knows what to put back.
+
+    Every answer has the lead's fixed shape (CB-470): id, verb, pr, ok,
+    refused, started_at, finished_at, plus per-verb fields. `refused` is set
+    only when nothing was touched; a failure after work began is ok=false with
+    refused=null and the sentence in the per-machine `error` (or, for a run,
+    in stderr.txt).
     """
 
-    def __init__(self, cfg, gh, lock, machines, state, clock, log, save):
+    def __init__(self, cfg, gh, lock, machines, state, clock, log, save, sleep=time.sleep):
         self.cfg, self.gh, self.lock, self.machines = cfg, gh, lock, machines
-        self.state, self.clock, self.log_line, self.save = state, clock, log, save
+        self.state, self.clock, self.log_line, self.save, self.sleep = state, clock, log, save, sleep
 
     @property
     def hold(self):
@@ -232,27 +243,35 @@ class Runner:
         self.expire()
         out = []
         for req, why in requests:
+            self.started = self.clock()
             if why is not None:
-                self.log(f"refused id={req['id']} verb={req.get('verb')}: {why}", pr=req.get("pr"))
-                out.append(self.answer(req, "refused", why))
+                out.append(self.refuse(req, why))
                 continue
             out.append(getattr(self, req["verb"])(req))
             # A request is answered against the state the one before it left.
             self.save(self.state)
         return out
 
-    def answer(self, req, status, reason=None, stdout="", stderr="", **extra):
-        result = {"id": req["id"], "verb": req.get("verb"), "pr": req.get("pr"),
-                  "status": status, "reason": reason, "finished_at": iso(self.clock())}
-        if self.hold is not None and self.hold["pr"] == req.get("pr"):
-            result["hold_expires_at"] = iso(self.hold["since"] + self.cfg["hold_cap_s"])
+    def answer(self, req, ok, refused=None, stdout="", stderr="", **extra):
+        result = {"id": req["id"], "verb": req.get("verb"), "pr": req.get("pr"), "ok": ok,
+                  "refused": refused, "started_at": iso(self.started), "finished_at": iso(self.clock())}
         result.update(extra)
         return req["id"], result, stdout, stderr
+
+    def refuse(self, req, why, **extra):
+        self.log(f"refused id={req['id']} verb={req.get('verb')}: {why}", pr=req.get("pr"),
+                 machine=req.get("machine"))
+        return self.answer(req, False, why, **extra)
+
+    def expires_at(self):
+        h = self.hold
+        return iso(h["since"] + self.cfg["hold_cap_s"]) if h and h.get("since") is not None else None
 
     def expire(self):
         """A hold past its cap is restored and released by the runner itself:
         an agent that crashed, or forgot, must not leave its build on three
-        machines and every other team locked out."""
+        machines and every other team locked out. This runs at the top of
+        every tick, so it happens with no request needed."""
         h = self.hold
         if h is None:
             return
@@ -268,8 +287,19 @@ class Runner:
             return
         report = self.restore_all()
         self.release_lock()
-        self.state["expired"] = {"pr": h["pr"], "at": self.clock(), "restore": report}
+        self.state["expired"] = {"pr": h["pr"], "at": self.clock(), "machines": report}
         self.save(self.state)
+
+    def take_lock(self, pr_n):
+        """The shared install lock, waiting up to lock_wait_s for whoever has
+        it (lead's ruling): installs by people and other teams are minutes
+        long, and refusing at once would make the org retry in a loop."""
+        deadline = self.clock() + self.cfg["lock_wait_s"]
+        while True:
+            token = self.lock.acquire(f"orbweaver-bugfix machine runner, PR #{pr_n}")
+            if token is not None or self.clock() >= deadline:
+                return token
+            self.sleep(min(15, max(0.0, deadline - self.clock())))
 
     # -- verbs
 
@@ -279,30 +309,35 @@ class Runner:
         if why is None:
             why = pr_problem(self.gh.pr(pr_n), self.cfg["allowed_authors"], sha=req["sha"])
         if why is None and self.hold is None:
-            token = self.lock.acquire(f"orbweaver-bugfix machine runner, PR #{pr_n}")
+            token = self.take_lock(pr_n)
             if token is None:
-                why = "the install lock is held by another session; try again later"
+                why = (f"the install lock is held by another session and was not free within "
+                       f"{self.cfg['lock_wait_s']} s; try again later")
             else:
                 self.state["hold"] = {"pr": pr_n, "sha": req["sha"], "since": None,
                                       "machines": [], "before": {}, "lock_token": token}
                 self.state.pop("expired", None)
         if why is not None:
-            self.log(f"refused id={req['id']} machine_install: {why}", pr=pr_n)
-            return self.answer(req, "refused", why)
+            return self.refuse(req, why)
 
         h = self.hold
         h["sha"] = req["sha"]
-        report, failed = {}, None
+        report, failed = {}, False
+
+        def entry(name, ok, installed, error=None):
+            report[name] = {"ok": ok, "installed_commit": installed,
+                            "previous_commit": h["before"].get(name), "error": error}
+
         for name in req["machines"]:
             if name not in h["machines"]:
-                # The stamp before anything is touched. Recorded once per hold:
-                # a second install for a new head must not record the first
-                # install's build as the one to put back.
+                # The stamp before anything is touched. Recorded once per hold
+                # (lead's ruling): a second install for a new head must not
+                # record the first install's build as the one to put back.
                 try:
                     h["before"][name] = self.machines[name].installed_commit()
                 except MachineError as e:
-                    report[name] = {"status": "failed", "error": f"could not read the installed build: {e}"}
-                    failed = f"could not read the installed build on {name}: {e}"
+                    entry(name, False, None, f"could not read the installed build: {e}")
+                    failed = True
                     break
                 h["machines"].append(name)
         self.save(self.state)
@@ -314,53 +349,64 @@ class Runner:
                 m.install(pr_n, req["sha"], log)
                 got = m.installed_commit()
             except MachineError as e:
-                report[name] = {"before": h["before"].get(name), "status": "failed", "error": str(e)}
-                failed = f"install on {name} failed: {e}"
+                entry(name, False, None, f"install failed: {e}")
+                failed = True
                 break
             ok = stamp_matches(got, req["sha"])
-            report[name] = {"before": h["before"].get(name), "installed": got,
-                            "status": "ok" if ok else "failed"}
+            entry(name, ok, got, None if ok else f"the installed build reports {got} after installing {req['sha']}")
             log(f"installed stamp {got}: {'ok' if ok else 'does not match ' + req['sha']}")
             if not ok:
-                failed = f"{name} reports {got!r} after installing {req['sha']}"
+                failed = True
                 break
 
         if failed:
             # Half an install is the worst state to leave three machines in:
-            # put everything this hold touched back and let go of the lock.
-            self.log(f"install failed, restoring: {failed}", pr=pr_n)
-            restore = self.restore_all()
+            # put back every machine this hold changed and let go of the lock.
+            self.log("install failed; restoring every machine the hold changed", pr=pr_n)
+            restored = self.restore_all()
             self.release_lock()
-            return self.answer(req, "failed", failed, machines=report, restore=restore)
+            for name, r in restored.items():
+                if name not in report:
+                    report[name] = r
+                else:
+                    # Keep the install error; say what is on the machine now.
+                    report[name]["installed_commit"] = r["installed_commit"]
+                    if not r["ok"]:
+                        report[name]["error"] += "; then " + r["error"]
+            return self.answer(req, False, machines=report, hold_expires_at=None)
         if h["since"] is None:
             # The clock starts when the machines are ready, not when the
-            # request arrived: a signed Mac build alone can take a third of it.
+            # request arrived: a signed Mac build alone can take a third of
+            # it. A re-install keeps the original start (lead's ruling).
             h["since"] = self.clock()
         self.save(self.state)
-        return self.answer(req, "ok", machines=report)
+        return self.answer(req, True, machines=report, hold_expires_at=self.expires_at())
 
     def machine_run(self, req):
+        name = req["machine"]
+        run_fields = dict(machine=name, exit_code=None, timed_out=False,
+                          stdout_truncated=False, stderr_truncated=False)
         pr = self.gh.pr(req["pr"])
         why = pr_problem(pr, self.cfg["allowed_authors"]) or run_problem(req, self.hold, pr)
-        if why is None and req["machine"] not in self.machines:
-            why = f"{req['machine']} is not available on this runner"
+        if why is None and name not in self.machines:
+            why = f"{name} is not available on this runner"
         if why is not None:
             exp = self.state.get("expired")
             if exp and exp["pr"] == req["pr"] and self.hold is None:
                 why += f" (this PR's hold reached its cap at {iso(exp['at'])} and was restored)"
-            self.log(f"refused id={req['id']} machine_run on {req['machine']}: {why}", pr=req["pr"])
-            return self.answer(req, "refused", why)
-        name = req["machine"]
+            return self.refuse(req, why, **run_fields)
         try:
             r = self.machines[name].run(req["command"], req["timeout_s"])
         except MachineError as e:
             self.log(f"run id={req['id']} failed: {e} command={json.dumps(req['command'])}",
                      pr=req["pr"], machine=name)
-            return self.answer(req, "failed", str(e), machine=name)
-        self.log(f"run id={req['id']} exit={r.exit_code} timed_out={r.timed_out} "
+            return self.answer(req, False, stderr=f"{e}\n", **run_fields)
+        out, run_fields["stdout_truncated"] = bound(r.stdout, self.cfg["max_output_bytes"])
+        err, run_fields["stderr_truncated"] = bound(r.stderr, self.cfg["max_output_bytes"])
+        run_fields.update(exit_code=r.exit_code, timed_out=bool(r.timed_out))
+        self.log(f"run id={req['id']} exit={r.exit_code} timed_out={bool(r.timed_out)} "
                  f"command={json.dumps(req['command'])}", pr=req["pr"], machine=name)
-        return self.answer(req, "ok", stdout=r.stdout or "", stderr=r.stderr or "", machine=name,
-                           exit_code=r.exit_code, timed_out=bool(r.timed_out))
+        return self.answer(req, not r.timed_out and r.exit_code == 0, stdout=out, stderr=err, **run_fields)
 
     def machine_release(self, req):
         # No PR check here on purpose: a PR that merged or closed while it held
@@ -369,17 +415,17 @@ class Runner:
         if h is None or h["pr"] != req["pr"]:
             exp = self.state.get("expired")
             if exp and exp["pr"] == req["pr"] and h is None:
-                return self.answer(req, "ok", "the hold had already reached its cap and been restored",
-                                   restore=exp.get("restore"))
-            why = "PR does not hold the machines"
-            self.log(f"refused id={req['id']} machine_release: {why}", pr=req["pr"])
-            return self.answer(req, "refused", why)
+                report = exp.get("machines") or {}
+                return self.answer(req, all(r["ok"] for r in report.values()), machines=report,
+                                   hold_expires_at=None,
+                                   stdout=f"the hold had already reached its cap at {iso(exp['at'])} "
+                                          "and the runner restored the machines then\n")
+            return self.refuse(req, "PR does not hold the machines", machines={}, hold_expires_at=None)
         report = self.restore_all()
-        self.release_lock()
-        bad = sorted(n for n, r in report.items() if r["status"] != "ok")
-        if bad:
-            return self.answer(req, "failed", "restore not confirmed on " + ", ".join(bad), restore=report)
-        return self.answer(req, "ok", restore=report)
+        lock_ok = self.release_lock()
+        err = "" if lock_ok else f"the install lock at {self.cfg['lock_path']} was not removed\n"
+        return self.answer(req, lock_ok and all(r["ok"] for r in report.values()), machines=report,
+                           hold_expires_at=None, stderr=err)
 
     # -- restore and lock
 
@@ -391,28 +437,27 @@ class Runner:
         h, report = self.hold, {}
         for name in h["machines"]:
             m, log, want = self.machines.get(name), self.machine_log(h["pr"], name), h["before"].get(name)
+            entry = {"ok": False, "installed_commit": None, "previous_commit": want, "error": None}
             if m is None:
-                report[name] = {"status": "failed", "error": "machine no longer configured", "want": want}
-                continue
-            entry = {"want": want}
-            for attempt in (1, 2):
+                entry["error"] = "machine no longer configured on this runner"
+            for attempt in ((1, 2) if m is not None else ()):
                 try:
                     m.restore(log)
                     got = m.installed_commit()
                 except MachineError as e:
-                    entry.update(status="failed", error=str(e))
+                    entry["error"] = f"restore failed: {e}"
                     log(f"restore attempt {attempt} failed: {e}")
                     continue
-                entry["got"] = got
+                entry["installed_commit"] = got
                 # Nothing was installed before: there is no stamp to compare
                 # with, so trust the module's restore and say so.
                 ok = got == want if want is None else stamp_matches(got, want) or stamp_matches(want, got)
-                entry["status"] = "ok" if ok else "failed"
-                entry.pop("error", None)
-                log(f"restore attempt {attempt}: stamp {got}, want {want}: {entry['status']}")
+                entry["ok"] = ok
+                entry["error"] = None if ok else f"restored build reports {got}, expected {want}"
+                log(f"restore attempt {attempt}: stamp {got}, want {want}: {'ok' if ok else 'MISMATCH'}")
                 if ok:
                     break
-            if entry["status"] != "ok":
+            if not entry["ok"]:
                 self.log(f"NEEDS ATTENTION: {name} not restored to {want}", pr=h["pr"], machine=name)
                 self.state.setdefault("unrestored", []).append(
                     {"machine": name, "want": want, "pr": h["pr"], "at": self.clock()})
@@ -420,12 +465,29 @@ class Runner:
         return report
 
     def release_lock(self):
+        """Release and check: True only when the lock directory is gone. A
+        directory still there (not ours, or rmdir failed: CB-427) is logged as
+        NEEDS ATTENTION; the hold ends either way."""
         h = self.hold
-        if not self.lock.release(h["lock_token"]):
-            self.log("install lock was not ours to release (gone or replaced)", pr=h["pr"])
-        self.log("released the machines", pr=h["pr"])
+        ok = self.lock.release(h["lock_token"])
+        if ok:
+            self.log("released the machines and the install lock", pr=h["pr"])
+        else:
+            self.log(f"NEEDS ATTENTION: install lock at {self.cfg['lock_path']} was not removed "
+                     "(gone, replaced by someone else, or rmdir failed)", pr=h["pr"])
         self.state["hold"] = None
         self.save(self.state)
+        return ok
+
+
+def bound(text, limit):
+    """Output capped at `limit` UTF-8 bytes, and whether it was cut. A command
+    that prints a disk image must not fill the company folder."""
+    text = text or ""
+    raw = text.encode("utf-8", "replace")
+    if len(raw) <= limit:
+        return text, False
+    return raw[:limit].decode("utf-8", "ignore"), True
 
 
 # ---------------------------------------------------------------- real seams
@@ -433,11 +495,19 @@ class Runner:
 class GhCli:
     def __init__(self, repo, sh=None):
         self.repo = repo
-        self.sh = sh or (lambda argv: subprocess.run(argv, capture_output=True, text=True, timeout=60))
+        self.sh = sh or (lambda argv: subprocess.run(argv, capture_output=True, text=True,
+                                                     errors="replace", timeout=60))
 
     def pr(self, n):
-        r = self.sh(["gh", "pr", "view", str(int(n)), "--repo", self.repo,
-                     "--json", "state,author,headRefOid"])
+        """The PR, or None for anything that is not a clean answer. Every
+        rule reads None as a refusal, so a GitHub outage or a hung gh fails
+        closed: nothing is installed or run on a PR the runner could not see.
+        The head is asked afresh for every request, never cached."""
+        try:
+            r = self.sh(["gh", "pr", "view", str(int(n)), "--repo", self.repo,
+                         "--json", "state,author,headRefOid"])
+        except (subprocess.TimeoutExpired, OSError):
+            return None
         if r.returncode != 0:
             return None
         try:
@@ -474,6 +544,9 @@ class DirLock:
         return token
 
     def release(self, token):
+        """True when the lock directory is gone afterwards."""
+        if not os.path.exists(self.path):
+            return True
         try:
             with open(os.path.join(self.path, "owner")) as f:
                 if f.read().strip() != token:
@@ -500,16 +573,23 @@ def make_machines(cfg):
 
 # ---------------------------------------------------------------- spool, main
 
-def read_spool(spool, log):
-    """(request, why) pairs from spool/*.json in arrival order; every file is
-    moved to done/ or bad/ so it is read once. A file with no usable id is
-    moved to bad/ and only logged: there is no result folder to answer it in."""
+def read_spool(spool, results, log):
+    """(request, why) pairs from spool/<id>.json in arrival order; every file
+    is moved to done/ or bad/ so it is read once. Agents write <id>.json.tmp
+    and rename, so only names ending .json are read.
+
+    Three kinds of file are moved to bad/ and only logged, never answered:
+    one with no usable id (there is no folder to answer in), one whose name is
+    not its own id, and one whose id already has a result folder (lead's
+    ruling: the first answer stands, untouched, and the repeat does nothing).
+    """
     out = []
     for sub in ("done", "bad"):
         os.makedirs(os.path.join(spool, sub), exist_ok=True)
     paths = glob.glob(os.path.join(spool, "*.json"))
     paths.sort(key=lambda p: (os.path.getmtime(p), p))
     for path in paths:
+        base = os.path.basename(path)
         try:
             with open(path, "rb") as f:
                 raw = f.read(MAX_REQUEST_BYTES + 1)
@@ -519,12 +599,15 @@ def read_spool(spool, log):
             req, why = None, "request is larger than 64 KiB"
         else:
             req, why = parse_request(raw.decode("utf-8", "replace"))
-        dest = "done" if why is None else "bad"
+        if req is not None and base != req["id"] + ".json":
+            req, why = None, f"file name is not <id>.json for id {req['id']!r}"
+        if req is not None and os.path.exists(os.path.join(results, req["id"])):
+            req, why = None, f"id {req['id']!r} already has a result; the repeat was not run"
         if req is None:
-            log(f"dropped {os.path.basename(path)}: {why}")
+            log(f"dropped {base}: {why}")
         else:
             out.append((req, why))
-        os.replace(path, os.path.join(spool, dest, os.path.basename(path)))
+        os.replace(path, os.path.join(spool, "done" if why is None else "bad", base))
     return out
 
 
@@ -569,7 +652,7 @@ def save_state(path, state):
     os.replace(tmp, path)
 
 
-def run_once(config_path, clock=time.time, gh=None, machines=None, lock=None):
+def run_once(config_path, clock=time.time, gh=None, machines=None, lock=None, sleep=time.sleep):
     import fcntl
 
     cfg = load_config(config_path)
@@ -598,13 +681,15 @@ def run_once(config_path, clock=time.time, gh=None, machines=None, lock=None):
 
     company = cfg["company_dir"]
     spool, results = os.path.join(company, "machine-spool"), os.path.join(company, "machine-results")
-    os.makedirs(spool, exist_ok=True)
-    os.makedirs(results, exist_ok=True)
+    # The runner makes both folders (lead's ruling), 755 like bugfix-spool:
+    # the org writes requests, only the runner writes results.
+    for d in (spool, results):
+        os.makedirs(d, mode=0o755, exist_ok=True)
     runner = Runner(cfg, gh or GhCli(cfg["repo"]), lock or DirLock(cfg["lock_path"], clock),
                     machines if machines is not None else make_machines(cfg),
-                    state, clock, log, lambda s: save_state(state_path, s))
+                    state, clock, log, lambda s: save_state(state_path, s), sleep)
     try:
-        for rid, result, out, err in runner.tick(read_spool(spool, log)):
+        for rid, result, out, err in runner.tick(read_spool(spool, results, log)):
             if not write_result(results, rid, result, out, err):
                 log(f"id={rid} already has a result; this answer was not written: {json.dumps(result)}")
     finally:

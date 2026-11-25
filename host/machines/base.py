@@ -40,10 +40,12 @@ RunResult = collections.namedtuple("RunResult", "exit_code stdout stderr timed_o
 
 def default_sh(argv, timeout=None, input=None):
     """subprocess.run with captured text output and no exception on a nonzero
-    exit: every caller wants the exit code as data. A timeout still raises
+    exit: every caller wants the exit code as data. Undecodable bytes become
+    U+FFFD rather than an exception, since a command may print anything. A timeout still raises
     subprocess.TimeoutExpired, which callers turn into a MachineError or a
     timed-out RunResult."""
-    return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, input=input)
+    return subprocess.run(argv, capture_output=True, text=True, errors="replace",
+                          timeout=timeout, input=input)
 
 
 def stamp_matches(stamp, sha):

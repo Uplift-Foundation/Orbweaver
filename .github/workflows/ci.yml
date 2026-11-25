@@ -164,6 +164,12 @@ jobs:
         if: ${{ !cancelled() && matrix.checks }}
         run: python tools/test-bugfix-machines.py
 
+      # CB-470: the Mac half of the machine runner (signed e2e build, install,
+      # restore), same fakes-only rule.
+      - name: Unit tests (bug-fix org machine runner, Macs)
+        if: ${{ !cancelled() && matrix.checks }}
+        run: python tools/test-bugfix-machines-mac.py
+
       # CB-455: the same host side against loopback stand-ins for Paperclip and the
       # GitHub App API and stub gh/dotnet scripts, every pause trigger beside its
       # control. POSIX only; the cases skip themselves on the Windows leg.
