@@ -971,8 +971,10 @@ public class RelayRemoteTests
     }
 
     [Fact]
-    public async Task A_windows_claude_account_is_set_inside_the_consoles_own_command_line()
+    public async Task A_windows_claude_account_is_set_on_the_consoles_own_environment()
     {
+        // CB-474: carried on the process, never through the cmd line, which
+        // conhost hands to cmd with its quotes taken off.
         var w = new World(windows: true);
         w.Binary = "C:\\bin\\claude.exe";
         ChecksIn(w, "new", Status(cwd: "C:\\w"));
@@ -980,9 +982,10 @@ public class RelayRemoteTests
 
         Assert.Equal(["launched", "typed"], Codes(w));
         var start = w.WindowsStarts.Single();
-        Assert.Empty(start.ArgumentList);
-        Assert.Equal("cmd.exe /k set \"CLAUDE_CONFIG_DIR=" + Path.Combine(w.Home, ".claude-uplift") + "\" && \"C:\\bin\\claude.exe\"", start.Arguments);
-        Assert.DoesNotContain("\\\"", start.Arguments);
+        Assert.Equal(["cmd.exe", "/k", "C:\\bin\\claude.exe"], start.ArgumentList);
+        Assert.False(start.UseShellExecute);
+        Assert.Equal(Path.Combine(w.Home, ".claude-uplift"), start.Environment["CLAUDE_CONFIG_DIR"]);
+        Assert.Empty(start.Arguments);
     }
 
     [Fact]

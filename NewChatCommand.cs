@@ -219,30 +219,33 @@ namespace Orbweaver
             return start;
         }
 
-        // A phone's launch under a named account on Windows. conhost cannot be handed an
-        // environment through ShellExecute, so the variable is set where the CLI starts:
-        // inside the cmd /k line for Claude (every part checked to carry nothing cmd would read
-        // as syntax), or on the process itself for Codex and Grok, which have no cmd to set it
-        // in. Null when a value is not safe to carry that way.
+        // A launch under a named account on Windows (phone, or the desktop machine picker).
+        // The account's folder is set on the process's own environment, never inside the cmd
+        // line: conhost hands cmd its command line with the quotes taken off, so CB-432's
+        // `set "VAR=dir" && "exe"` reached cmd as `set VAR=dir && exe`, and the variable ended
+        // in a trailing space. Claude Code read that as a different, empty folder and started
+        // signed out (CB-474, measured on the Windows PC). The environment carries any path,
+        // spaces included, and is inherited conhost -> cmd -> CLI unchanged.
+        //
+        // UseShellExecute is false because ShellExecute ignores Environment. The window is
+        // still conhost's own (CB-316's reason for naming conhost): conhost is what owns the
+        // console either way; ShellExecute was only inherited from the general builder.
+        // viaCmd keeps Claude's `cmd /k`, so the console stays open when the CLI exits, and
+        // still holds exe and args to CmdSafe since cmd re-parses that part. Null when a value
+        // is not safe to carry that way.
         internal static ProcessStartInfo? ConsoleStartInfoForAccount(NewChatCli cli, string exe, string cwd, IReadOnlyList<string> args, string configDir, bool viaCmd = true)
         {
-            var variable = NewChatAccountHome.For(cli).EnvVar;
+            if (viaCmd && (!CmdSafe(configDir) || !CmdSafe(exe) || args.Any(a => !CmdSafe(a)))) return null;
+            var start = new ProcessStartInfo("conhost.exe") { UseShellExecute = false, WorkingDirectory = cwd };
             if (viaCmd)
             {
-                if (!CmdSafe(configDir) || !CmdSafe(exe) || args.Any(a => !CmdSafe(a))) return null;
-                var line = $"set \"{variable}={configDir}\" && \"{exe}\"" + string.Concat(args.Select(a => " " + a));
-                var start = new ProcessStartInfo("conhost.exe") { UseShellExecute = true, WorkingDirectory = cwd };
-                // Arguments, not ArgumentList: ArgumentList would turn each quote of the line into
-                // \", which cmd does not read as an escape (CB-432). The line starts with "set", so
-                // cmd /k keeps the quotes in it as they are, paths with spaces included.
-                start.Arguments = "cmd.exe /k " + line;
-                return start;
+                start.ArgumentList.Add("cmd.exe");
+                start.ArgumentList.Add("/k");
             }
-            var direct = new ProcessStartInfo("conhost.exe") { UseShellExecute = false, WorkingDirectory = cwd };
-            direct.ArgumentList.Add(exe);
-            foreach (var arg in args) direct.ArgumentList.Add(arg);
-            direct.Environment[variable] = configDir;
-            return direct;
+            start.ArgumentList.Add(exe);
+            foreach (var arg in args) start.ArgumentList.Add(arg);
+            start.Environment[NewChatAccountHome.For(cli).EnvVar] = configDir;
+            return start;
         }
 
         // A path or word safe to put inside one cmd command line: no quote, percent, caret,
