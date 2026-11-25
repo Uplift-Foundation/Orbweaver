@@ -363,7 +363,10 @@ class Runner:
         report, failed = {}, False
 
         def entry(name, ok, installed, error=None):
-            report[name] = {"ok": ok, "installed_commit": installed,
+            # pr_head beside installed_commit (lead's ruling): when CI built
+            # the head merged into develop the two differ, and a reader should
+            # see both rather than wonder which build is on the machine.
+            report[name] = {"ok": ok, "installed_commit": installed, "pr_head": req["sha"],
                             "previous_commit": h["before"].get(name), "error": error}
 
         for name in req["machines"]:

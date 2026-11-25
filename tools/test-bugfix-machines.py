@@ -303,7 +303,8 @@ class InstallTests(unittest.TestCase):
         self.assertIsNone(res["refused"])
         self.assertTrue(lock.held)
         self.assertEqual(res["machines"]["windows"],
-                         {"ok": True, "installed_commit": SHA, "previous_commit": OLD, "error": None})
+                         {"ok": True, "installed_commit": SHA, "pr_head": SHA, "previous_commit": OLD,
+                          "error": None})
         self.assertEqual(r.hold["before"], {"windows": OLD, "mini": OLD})
         self.assertEqual(r.hold["since"], clock.t)
         self.assertEqual(res["hold_expires_at"], runner.iso(clock.t + 45 * 60))
@@ -450,6 +451,7 @@ class InstallTests(unittest.TestCase):
         res = one(r, install())
         self.assertTrue(res["ok"], res)
         self.assertEqual(res["machines"]["windows"]["installed_commit"], merge)
+        self.assertEqual(res["machines"]["windows"]["pr_head"], SHA)
 
     def test_a_merge_that_does_not_include_the_head_is_refused(self):
         merge = "d" * 40
