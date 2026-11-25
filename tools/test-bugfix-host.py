@@ -856,6 +856,37 @@ class ReleaseTickTests(unittest.TestCase):
         self.assertTrue(paused)
         self.assertTrue(any("CB-21 released" in l for l in logs))
 
+    def test_two_engineer_issues_of_one_ticket_in_one_pass_are_one_release(self):
+        # CB-471: CB-415 was released once after its second fix round, both of
+        # its engineer issues were cancelled, and the org paused on "2 in a row".
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state)
+        pc.cancelled_issues = [R("r1", 415, parentId="pass1"), R("r2", 415, parentId="pass1")]
+        _, paused, logs = tick(pc=pc, state=state)
+        self.assertFalse(paused, "one ticket released once, with two fix rounds, is one release")
+        self.assertEqual(state["paperclip_releases"], 1)
+        self.assertTrue(any("CB-415 already counted" in l for l in logs))
+
+    def test_the_same_ticket_released_in_a_second_pass_counts_again(self):
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state)
+        pc.cancelled_issues = [R("r1", 415, parentId="pass1")]
+        self.assertFalse(tick(pc=pc, state=state)[1])
+        pc.cancelled_issues = [R("r1", 415, parentId="pass1"), R("r3", 415, parentId="pass2")]
+        self.assertTrue(tick(pc=pc, state=state)[1], "a second pass that also gives up is a second release")
+
+    def test_two_tickets_released_in_one_pass_are_two_releases(self):
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state)
+        pc.cancelled_issues = [R("r1", 415, parentId="pass1"), R("r2", 416, parentId="pass1")]
+        self.assertTrue(tick(pc=pc, state=state)[1])
+
+    def test_issues_with_no_parent_are_each_counted(self):
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state)
+        pc.cancelled_issues = [R("r1", 415), R("r2", 415)]
+        self.assertTrue(tick(pc=pc, state=state)[1], "with no pass to match on, the brake counts both")
+
     def test_row_missing_its_description_is_fetched_and_counted_when_it_is_an_engineer_issue(self):
         state, pc = {}, FakePC()
         tick(pc=pc, state=state)

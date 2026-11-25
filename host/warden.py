@@ -366,6 +366,19 @@ class Warden:
                 self.log(f"release signal unreadable for issue {issue_id[:8]}")
                 self.pause(f"release signal unreadable (issue {issue_id[:8]} has no readable description)")
             elif kind == "release":
+                # One release per ticket per fix pass. Releasing a ticket after
+                # its second fix round cancels both engineer issues, and counting
+                # each paused the org on a single release (CB-471). The pass is
+                # the parent issue; a row with no parent cannot be matched to
+                # one, so it is counted, which errs towards the brake.
+                parent = rows[issue_id].get("parentId")
+                counted = self.state.setdefault("paperclip_release_passes", [])
+                if parent and [key, parent] in counted:
+                    self.log(f"{key} already counted as released in this pass (issue {issue_id[:8]})")
+                    continue
+                if parent:
+                    counted.append([key, parent])
+                    del counted[:-50]
                 n = self.state["paperclip_releases"] = self.state.get("paperclip_releases", 0) + 1
                 self.log(f"{key} released (Paperclip issue cancelled; {n} in a row)")
                 if n >= RELEASES_IN_A_ROW:
