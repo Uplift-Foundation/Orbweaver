@@ -172,9 +172,9 @@ def macos_job_problem(jobs):
 
 _COMMON = r'''
 set -uo pipefail
-# ORBWEAVER_MACHINES_ROOT exists for tools/test-bugfix-machines-mac.py, which
+# OW_MACHINES_TEST_ROOT exists for tools/test-bugfix-machines-mac.py, which
 # runs these scripts against a scratch /Applications; unset, it is the real one.
-APP="${ORBWEAVER_MACHINES_ROOT:-}/Applications/Orbweaver.app"
+APP="${OW_MACHINES_TEST_ROOT:-}/Applications/Orbweaver.app"
 EXE="$APP/Contents/MacOS/Orbweaver"
 BUNDLE_ID=%(bundle)s
 KEEP="$HOME/Library/LaunchAgents/$BUNDLE_ID.plist"

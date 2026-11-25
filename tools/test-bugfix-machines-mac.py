@@ -7,7 +7,7 @@ stdlib unittest, like tools/test-bugfix-machines.py. Nothing here touches
 GitHub, ssh or the real /Applications: every command goes through the
 machine's `sh` seam, where `gh` meets a scripted fake and ssh/scp a fake
 runner, and the install and restore scripts run for real under bash against a
-scratch root (ORBWEAVER_MACHINES_ROOT) with stub `hdiutil`, `codesign` and
+scratch root (OW_MACHINES_TEST_ROOT) with stub `hdiutil`, `codesign` and
 `launchctl` on PATH. The "app" in each scratch bundle is an ad hoc signed copy
 of /bin/sleep, so stopping and relaunching it are real processes found by real
 `ps` and ended by real `kill`. Each refusal has a passing control beside it,
@@ -266,7 +266,7 @@ STUB_LAUNCHCTL = r'''#!/bin/bash
 echo "$*" >> "$STUB_LOG"
 if [ "$1" = list ]; then [ -f "$STUB_KEEPALIVE" ]; exit $?; fi
 if [ "$1" = load ]; then
-  nohup "$ORBWEAVER_MACHINES_ROOT/Applications/Orbweaver.app/Contents/MacOS/Orbweaver" 300 >/dev/null 2>&1 &
+  nohup "$OW_MACHINES_TEST_ROOT/Applications/Orbweaver.app/Contents/MacOS/Orbweaver" 300 >/dev/null 2>&1 &
 fi
 exit 0
 '''
@@ -298,7 +298,7 @@ class InstallScripts(unittest.TestCase):
         self.log_path = os.path.join(self.tmp, "stub.log")
         self.keepalive_flag = os.path.join(self.tmp, "keepalive-loaded")
         self.env = dict(os.environ, PATH=self.bin + ":" + os.environ["PATH"], HOME=self.home,
-                        ORBWEAVER_MACHINES_ROOT=self.root, STUB_LOG=self.log_path,
+                        OW_MACHINES_TEST_ROOT=self.root, STUB_LOG=self.log_path,
                         STUB_KEEPALIVE=self.keepalive_flag, CLAUDE_CONFIG_DIR="/leaked/from/agent")
         self.app = os.path.join(self.root, "Applications", "Orbweaver.app")
         self.exe = os.path.join(self.app, "Contents", "MacOS", "Orbweaver")
