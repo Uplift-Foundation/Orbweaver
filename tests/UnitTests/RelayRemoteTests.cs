@@ -989,12 +989,26 @@ public class RelayRemoteTests
     }
 
     [Fact]
-    public async Task A_windows_account_that_cmd_would_read_as_syntax_is_refused_not_started()
+    public async Task A_windows_account_folder_cmd_would_read_as_syntax_now_starts_intact()
     {
+        // CB-474: the folder no longer meets cmd, so & in it is just a character.
         var w = new World(windows: true);
         w.Binary = "C:\\bin\\claude.exe";
         w.AccountChoices.Add(new("odd", ".a&b"));
+        ChecksIn(w, "new", Status(cwd: "C:\\w"));
         await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, cwd: "C:\\w", account: ".a&b"));
+
+        Assert.Equal(["launched", "typed"], Codes(w));
+        Assert.Equal(Path.Combine(w.Home, ".a&b"), w.WindowsStarts.Single().Environment["CLAUDE_CONFIG_DIR"]);
+    }
+
+    [Fact]
+    public async Task A_windows_named_launch_whose_exe_cmd_would_read_as_syntax_is_refused_not_started()
+    {
+        // The exe still rides the cmd /k line, so CmdSafe still guards it.
+        var w = new World(windows: true);
+        w.Binary = "C:\\b&in\\claude.exe";
+        await w.Remote.HandleAsync("ph", PhoneKey.Public, Launch(w, cwd: "C:\\w", account: ".claude-uplift"));
 
         Assert.Equal(["launch_failed"], Codes(w));
         Assert.Empty(w.WindowsStarts);

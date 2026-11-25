@@ -295,7 +295,7 @@ namespace Orbweaver
                     ? NewChatCommand.ConsoleStartInfo(binary, f.Cwd, args, viaCmd: !inArgv)
                     : NewChatCommand.ConsoleStartInfoForAccount(cli, binary, f.Cwd, args, profileDir, viaCmd: !inArgv);
                 if (start is null)
-                    return (RelayReplies.LaunchFailed, "That account's folder can't be carried safely into a console for " + name + ".");
+                    return (RelayReplies.LaunchFailed, "That launch's program path or arguments can't be carried safely into a console for " + name + ".");
                 return launch.StartWindows(start) is null
                     ? (RelayReplies.LaunchFailed, "Couldn't open a console for " + name + ".")
                     : null;

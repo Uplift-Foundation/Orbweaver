@@ -137,14 +137,47 @@ public class RelayAccountsTests
         Assert.Equal(@"C:\Users\me\.codex-b", codex.Environment[NewChatAccountHome.For(NewChatCli.Codex).EnvVar]);
     }
 
+    // cmd still re-parses the exe and args of a Claude launch, so CmdSafe still
+    // refuses those; the folder is only ever an environment value, so it is
+    // refused only when no Windows folder could be named that way.
     [Theory]
-    [InlineData(@"C:\a&b", @"C:\bin\claude.exe", "opus")]
     [InlineData(".claude-uplift", @"C:\bin\cl%aude.exe", "opus")]
     [InlineData(".claude-uplift", @"C:\bin\claude.exe", "op|us")]
+    [InlineData(".claude-uplift", @"C:\bin\claude.exe", "a&b")]
     [InlineData("", @"C:\bin\claude.exe", "opus")]
-    public void A_windows_value_cmd_would_read_as_syntax_is_not_carried_that_way(string configDir, string exe, string arg)
+    [InlineData("C:\\a\"b", @"C:\bin\claude.exe", "opus")]
+    [InlineData("C:\\a\nb", @"C:\bin\claude.exe", "opus")]
+    [InlineData("C:\\a\rb", @"C:\bin\claude.exe", "opus")]
+    [InlineData("C:\\a\0b", @"C:\bin\claude.exe", "opus")]
+    public void A_windows_value_that_cannot_be_carried_is_refused(string configDir, string exe, string arg)
     {
         Assert.Null(NewChatCommand.ConsoleStartInfoForAccount(NewChatCli.ClaudeCode, exe, @"C:\w", [arg], configDir));
+    }
+
+    [Theory]
+    [InlineData(@"C:\Users\a&b\.claude-x")]
+    [InlineData(@"C:\Users\100%\.claude-x")]
+    [InlineData(@"C:\Users\a (b)\.claude-x y")]
+    [InlineData(@"C:\Users\a^b\.claude-x")]
+    [InlineData(@" C:\Users\a\.claude-x ")]
+    public void A_windows_account_folder_arrives_byte_for_byte_whatever_cmd_would_make_of_it(string configDir)
+    {
+        var start = NewChatCommand.ConsoleStartInfoForAccount(NewChatCli.ClaudeCode, @"C:\bin\claude.exe", @"C:\w", [], configDir)!;
+        Assert.Equal(configDir, start.Environment["CLAUDE_CONFIG_DIR"]);
+        Assert.DoesNotContain(configDir.Trim(), FinalCommandLine(start));
+    }
+
+    [Fact]
+    public void Codex_and_grok_starts_are_unchanged_by_cb474()
+    {
+        foreach (var cli in new[] { NewChatCli.Codex, NewChatCli.Grok })
+        {
+            var start = NewChatCommand.ConsoleStartInfoForAccount(cli, @"C:\bin\x.exe", @"C:\w", ["--", "a & b > %c%"], @"C:\h\.x", viaCmd: false)!;
+            Assert.Equal("conhost.exe", start.FileName);
+            Assert.False(start.UseShellExecute);
+            Assert.Equal([@"C:\bin\x.exe", "--", "a & b > %c%"], start.ArgumentList);
+            Assert.Equal(@"C:\h\.x", start.Environment[NewChatAccountHome.For(cli).EnvVar]);
+        }
     }
 
     // What Windows builds for a child: Arguments verbatim when set, otherwise each

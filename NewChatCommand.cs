@@ -230,12 +230,16 @@ namespace Orbweaver
         // UseShellExecute is false because ShellExecute ignores Environment. The window is
         // still conhost's own (CB-316's reason for naming conhost): conhost is what owns the
         // console either way; ShellExecute was only inherited from the general builder.
-        // viaCmd keeps Claude's `cmd /k`, so the console stays open when the CLI exits, and
-        // still holds exe and args to CmdSafe since cmd re-parses that part. Null when a value
-        // is not safe to carry that way.
+        // viaCmd keeps Claude's `cmd /k`, exactly as the default-account launch does, so the
+        // window behaves the same either way (stays open when the CLI exits). cmd still
+        // re-parses the exe and args, so those stay held to CmdSafe; the folder never meets
+        // cmd now, so it only has to be a folder a Windows path can name (not empty, no quote,
+        // no line break or NUL) — % & ( ) and spaces arrive intact. Null when a value is not
+        // safe to carry.
         internal static ProcessStartInfo? ConsoleStartInfoForAccount(NewChatCli cli, string exe, string cwd, IReadOnlyList<string> args, string configDir, bool viaCmd = true)
         {
-            if (viaCmd && (!CmdSafe(configDir) || !CmdSafe(exe) || args.Any(a => !CmdSafe(a)))) return null;
+            if (configDir.Length == 0 || configDir.IndexOfAny(['"', '\r', '\n', '\0']) >= 0) return null;
+            if (viaCmd && (!CmdSafe(exe) || args.Any(a => !CmdSafe(a)))) return null;
             var start = new ProcessStartInfo("conhost.exe") { UseShellExecute = false, WorkingDirectory = cwd };
             if (viaCmd)
             {
