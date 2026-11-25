@@ -96,6 +96,8 @@ namespace Orbweaver
         private CancellationTokenSource? _connection;
         private Task? _loop;
         private bool _unauthorized;
+        // Counts connections that have ended; guarded by _gate (CB-347).
+        private int _connectionEpoch;
 
         // One registration at a time. The relay invalidates a device's old
         // token the moment the same identity key registers again, so two
@@ -132,7 +134,15 @@ namespace Orbweaver
 
             // Raised inside RelayLink, under the lock: anything that reaches
             // outside this class is deferred until the lock is released.
-            _link.WelcomeReceived += () => Defer(() => { SetStatus(Status.Connected); PhonesChanged(); });
+            // The Connected this welcome means belongs to the connection it
+            // arrived on (CB-347): by the time the pump runs it that socket may
+            // have dropped and the run loop moved on, and a stale Connected
+            // would then outlive the connection until the next loop.
+            _link.WelcomeReceived += () =>
+            {
+                var epoch = _connectionEpoch;
+                Defer(() => { SetStatus(Status.Connected, epoch); PhonesChanged(); });
+            };
             // Both arrive only from the read loop, under the lock, while a
             // connection is current — so _connection is set.
             _link.Unauthorized += () => { _unauthorized = true; _connection!.Cancel(); };
@@ -352,7 +362,8 @@ namespace Orbweaver
 
         // ---- what the UI sees ------------------------------------------------
 
-        internal Status State { get; private set; } = Status.Off;
+        private Status _state = Status.Off;
+        internal Status State { get { lock (_gate) return _state; } }
         internal string? LastError { get; private set; }
 
         internal event Action<Status> StateChanged = delegate { };
@@ -509,6 +520,7 @@ namespace Orbweaver
                     _link.Disconnected();
                     _outbox = null;
                     _connection = null;
+                    _connectionEpoch++;
                 }
                 Remote.Disconnected();
                 outbox.Writer.TryComplete();
@@ -689,9 +701,22 @@ namespace Orbweaver
 
         private void SetStatus(Status status)
         {
-            if (State == status) return;
-            State = status;
-            Raise(() => StateChanged(status));
+            lock (_gate)
+            {
+                if (_state == status) return;
+                _state = status;
+                Raise(() => StateChanged(status));
+            }
+        }
+
+        // A status that belongs to one connection: dropped if that connection
+        // has ended since. Checked and written under one hold of the lock.
+        private void SetStatus(Status status, int epoch)
+        {
+            lock (_gate)
+            {
+                if (_connectionEpoch == epoch) SetStatus(status);
+            }
         }
 
         // ---- registration (§2.1) -------------------------------------------------
