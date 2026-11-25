@@ -208,6 +208,14 @@ Then, none of which a package can carry:
      `thresholdPercent: 90` and one member per account, each with
      `profile: {provider: "acpx", acpxAgent: "claude", model}`. Bind each agent
      with `runtimeConfig.aiConnection = {mode: "router", connectionId: <pool id>}`.
+   - **Grant every pooled connection to the whole company**:
+     `PUT /api/tool-connections/<id>/installs {"installs": [{"targetType": "company", "targetId": <company id>}]}`.
+     Paperclip offers the router only the members that this agent may use. The
+     first pooled run (04:30Z, 2026-11-25) offered the lead just two of the four
+     accounts, because the other two had been granted to one agent each back
+     when agents were pinned by hand. The router correctly skipped the one at
+     100% and took the only other one, at 80%, while two accounts under 20%
+     were never offered.
    - **What it does.** For each new task the router skips any account at or
      over 90% on its 5-hour or weekly window (or a model-scoped window for its
      own model). It picks the least loaded of the rest, and accounts within ten
