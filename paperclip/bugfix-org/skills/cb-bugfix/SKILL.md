@@ -21,9 +21,31 @@ Skip a ticket when **any** of these holds:
 - an open PR names its key in the title or body
   (`gh pr list --repo Uplift-Foundation/Orbweaver --state open --search "<key> in:title,body"`);
 - a pushed, unmerged commit names its key
-  (`git fetch origin` in your worktree, then `git log --remotes --not origin/develop --grep "<key>"`);
+  (`git fetch origin` in your worktree, then `git log --remotes --not origin/develop --grep "<key>"`),
+  **unless that work is this org's own released work** (next paragraph);
 - it has no comment starting with `[triage]` yet (the triage org's likely cause is your input);
 - it is in a class this org leaves alone (below).
+
+**This org's own released work is not a reason to skip.** When the rule above
+finds commits, check each branch that holds them. It is the org's own, with no
+one working on it, only if **both** hold:
+
+1. its name starts `bugfix/pc-` and the author of every commit on it that is not
+   on `develop` is the App's bot:
+   `git log --format='%an <%ae>' origin/develop..origin/<branch> | sort -u`
+   prints only `orbweaver-bugfix[bot]`;
+2. no PR from it is open: `gh pr list --repo Uplift-Foundation/Orbweaver --state open --head <branch>`
+   prints nothing.
+
+Then the ticket is **eligible**, and the engineer continues from that branch
+instead of starting over: in the worktree, `git fetch origin`,
+`git checkout -B <branch> origin/<branch>`, rebase once onto `origin/develop`,
+and carry on (a closed PR can be reopened with `gh pr reopen <number>`, or open a
+new one from the branch with the same `gh pr create` as always). Keep the branch
+name; never rename a pushed branch. The claim comment names that branch and says
+`continuing released work`. If either test fails (a human's commit is on the
+branch, or a PR is open) the ticket is somebody's and you skip it as before.
+The work is yours to check: read what the branch changed before building on it.
 
 Among what is left take the highest Jira priority, then class 1 before class 2,
 then the oldest. At most **two tickets per run**.
@@ -59,8 +81,12 @@ human-led teams skip it by the same rule. Claim in this order: transition to
 Development, comment `[bugfix-org] claimed` with the branch name, read the
 ticket back. If another comment or transition landed in between, release it.
 
-Release means: close the PR if there is one, comment `[bugfix-org] released`
-with what you learned and why you stopped, move the ticket back to Refinement.
+Release means: close the PR if there is one, make sure everything worth keeping
+is **pushed** on the engineer's branch (never delete the branch), comment
+`[bugfix-org] released` with what you learned, why you stopped and **the branch
+name with its last commit sha** (that is what makes "a later pass can pick this
+up" true: the next pass finds the branch by the rule in **Which tickets**), and
+move the ticket back to Refinement.
 The engineer's Paperclip issue is titled with the change words, never the CB
 key (its slug becomes the branch name), and its description starts with the line
 `Ticket: CB-NNN`, which is how the host matches the issue to the ticket.
@@ -197,6 +223,33 @@ a red check.
 Two fix rounds per ticket, ninety minutes from the claim, one rebase onto
 `develop`. Past any of them the ticket is released. Two tickets per run, two org
 PRs open at once.
+
+**Time the company was paused does not count toward the ninety minutes.** The
+warden publishes every pause in `$BUGFIX_SPOOL/pauses.json`, a list of the last
+20 windows, each `{"paused_at": "<UTC time>", "resumed_at": "<UTC time>" or null}`
+(null means the company is paused now). The times are UTC and good to about
+five minutes either way, because the warden notices a pause or a resume on its
+five-minute tick; do not argue over a few minutes. A missing file means no pause
+has been recorded. The lead works out a ticket's limit like this, and does it before
+releasing any ticket for time:
+
+1. `claimed` is the time of the `[bugfix-org] claimed` comment; `now` is the
+   current UTC time.
+2. For each window, take `max(paused_at, claimed)` as its start and
+   `min(resumed_at, now)` as its end, using `now` when `resumed_at` is null. If
+   the end is not after the start, the window does not overlap; skip it.
+3. Add up the overlapping lengths. That is `paused_minutes`.
+4. The ticket is out of time when `now - claimed - paused_minutes` is more than
+   90 minutes.
+
+Example: claimed 18:36, now 20:09, one window paused 18:39 and resumed 19:19.
+It overlaps for 40 minutes. Elapsed is 93 minutes, minus 40 is 53, which is
+inside the limit, so the ticket is not released for time. Without the pause the
+same ticket would have been released.
+
+Fix rounds and the rebase limit are not paused by this; only the ninety minutes.
+A ticket continued from released work (see **Which tickets**) is a new claim: its
+ninety minutes start at its new `[bugfix-org] claimed` comment.
 
 ## Never
 
