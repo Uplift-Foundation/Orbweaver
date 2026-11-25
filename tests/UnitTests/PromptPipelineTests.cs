@@ -1858,6 +1858,19 @@ public class PromptPipelineTests
     }
 
     [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("/nonexistent/cb429-missing.jsonl")]
+    public async Task A_plan_approval_prompt_without_a_readable_transcript_keeps_the_screen_preview(string? path)
+    {
+        _pane.Screen = PlanPane;
+        await _p.OnScannedAsync([("s1", new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode, Title = "orbweaver", TranscriptPath = path })]);
+        var preview = JsonDocument.Parse(Assert.Single(_sent.Prompts).Prompt).RootElement.GetProperty("preview").GetString()!;
+        Assert.Contains("Would you like to proceed?", preview);
+        Assert.DoesNotContain("Add the plan key", preview);
+    }
+
+    [Theory]
     [InlineData(false, true)]
     [InlineData(true, false)]
     public async Task A_plan_approval_prompt_carries_the_pending_plan_in_its_preview(bool answered, bool carriesPlan)
