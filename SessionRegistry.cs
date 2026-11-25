@@ -177,6 +177,39 @@ namespace Orbweaver
             return found;
         }
 
+        // CB-415: how long ScanCached holds a walk. RemoteMirrorServer asks
+        // once per session while a roster is built on the peer pump, and each
+        // ask was a full walk of every registry on disk. Claude Code writes
+        // these files from its own process, so there is no in-process write to
+        // invalidate on; the hold is kept short instead. A session that
+        // registers is seen within this window, and a session that exits is
+        // never mistaken for live because callers re-check the pid on every
+        // lookup rather than trusting the cached row.
+        internal static readonly TimeSpan ScanHeldFor = TimeSpan.FromSeconds(2);
+
+        // Seams so a test can count walks and move the clock without sleeping.
+        internal static Func<DateTime> Now { get; set; } = () => DateTime.UtcNow;
+        internal static Func<IReadOnlyList<string>, IReadOnlyList<Entry>> Walk { get; set; } = Scan;
+
+        private static readonly object CacheGate = new();
+        private static (DateTime At, string Roots, IReadOnlyList<Entry> Entries)? _held;
+
+        // Scan, answered from the last walk when it is younger than ScanHeldFor
+        // and was made over the same roots.
+        internal static IReadOnlyList<Entry> ScanCached(IReadOnlyList<string> configRoots)
+        {
+            var key = string.Join('\n', configRoots);
+            var now = Now();
+            lock (CacheGate)
+                if (_held is { } h && h.Roots == key && now - h.At < ScanHeldFor) return h.Entries;
+
+            var entries = Walk(configRoots);
+            lock (CacheGate) _held = (now, key, entries);
+            return entries;
+        }
+
+        internal static void ForgetScan() { lock (CacheGate) _held = null; }
+
         // The one live entry for a session id, or null.
         //
         // Ordinal, not ignore-case: session ids are GUIDs Claude Code assigns,

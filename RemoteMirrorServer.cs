@@ -587,7 +587,7 @@ namespace Orbweaver
         {
             if (status.SessionPid <= 0) return null;
 
-            foreach (var entry in SessionRegistry.Scan(ClaudeConfigRoots.AllWithDiscovered()))
+            foreach (var entry in SessionRegistry.ScanCached(ClaudeConfigRoots.AllWithDiscovered()))
             {
                 if (entry.Pid == status.SessionPid && ProcessLiveness.IsRunning(entry.Pid)) return entry;
             }
