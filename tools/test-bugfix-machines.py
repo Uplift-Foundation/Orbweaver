@@ -53,6 +53,7 @@ class FakeLock:
         self.held = held_by_other
         self.other = held_by_other
         self.released = []
+        self.stuck = False  # ours, but rmdir fails
 
     def acquire(self, who):
         if self.held:
@@ -60,9 +61,14 @@ class FakeLock:
         self.held = True
         return "tok"
 
+        self.stuck = False  # ours, but rmdir fails
+
+    def ours(self, token):
+        return self.held and not self.other and token == "tok"
+
     def release(self, token):
         self.released.append(token)
-        if self.other or token != "tok":
+        if self.other or token != "tok" or self.stuck:
             return False
         self.held = False
         return True
@@ -358,6 +364,13 @@ class InstallTests(unittest.TestCase):
     def test_lock_wait_defaults_to_ten_minutes(self):
         self.assertEqual(runner.DEFAULTS["lock_wait_s"], 600)
 
+    def test_an_unauthorized_pr_learns_nothing_about_the_holder(self):
+        r = make_runner(gh=FakeGh(p7=pr(), p8=pr(author="someone")))
+        one(r, install())
+        res = one(r, install(i="i2", n=8))
+        self.assertIn("not allowed", res["refused"])
+        self.assertNotIn("#7", res["refused"])
+
     def test_one_pr_at_a_time(self):
         gh = FakeGh(p7=pr(), p8=pr(head=SHA2))
         r = make_runner(gh=gh)
@@ -586,6 +599,66 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(r.state["unrestored"][0]["want"], OLD)
         self.assertTrue(any("NEEDS ATTENTION" in l for l in r.lines))
 
+    def test_twice_failed_restore_raises_the_marker_and_blocks_installs(self):
+        r = make_runner()
+        one(r, install())
+        r.machines["windows"].restore_to = SHA2
+        one(r, release())
+        rec = r.attention.read()
+        self.assertEqual((rec["machine"], rec["should_have"], rec["has"]), ("windows", OLD, SHA2))
+        calls = list(r.machines["windows"].calls)
+        res = one(r, install(i="i2"))
+        self.assertFalse(res["ok"])
+        self.assertIn("NEEDS-ATTENTION.json", res["refused"])
+        self.assertIn("windows was not restored after PR #7", res["refused"])
+        self.assertEqual(r.machines["windows"].calls, calls)
+        self.assertFalse(r.lock.held)
+        # Control: once a person deletes the marker, installs work again.
+        r.attention.record = None
+        self.assertTrue(one(r, install(i="i3"))["ok"])
+
+    def test_a_confirmed_restore_raises_no_marker(self):
+        r = make_runner()
+        one(r, install())
+        one(r, release())
+        self.assertIsNone(r.attention.read())
+
+    def test_the_first_marker_is_kept(self):
+        m = runner.MemoryMarker()
+        m.write({"reason": "first"})
+        m.write({"reason": "second"})
+        self.assertEqual(m.read()["reason"], "first")
+
+    def test_releasing_pr_must_be_the_holder(self):
+        r = make_runner(gh=FakeGh(p7=pr(), p8=pr()))
+        one(r, install())
+        r.gh.prs[7] = pr(state="MERGED")  # holder's state does not matter
+        self.assertIn("does not hold", one(r, release(n=8))["refused"])
+        self.assertTrue(one(r, release())["ok"])
+
+    def test_our_stranded_lock_is_remembered_and_retried(self):
+        lock = FakeLock()
+        r = make_runner(lock=lock)
+        one(r, install())
+        lock.stuck = True
+        self.assertFalse(one(r, release())["ok"])
+        self.assertEqual(r.state["lock_stranded"], "tok")
+        r.tick([])
+        self.assertIn("lock_stranded", r.state)  # still stuck: kept
+        self.assertTrue(any("still cannot remove our install lock" in l for l in r.lines))
+        lock.stuck = False
+        r.tick([])
+        self.assertNotIn("lock_stranded", r.state)
+        self.assertFalse(lock.held)
+
+    def test_a_lock_someone_else_replaced_is_not_remembered(self):
+        lock = FakeLock()
+        r = make_runner(lock=lock)
+        one(r, install())
+        lock.other = True
+        one(r, release())
+        self.assertNotIn("lock_stranded", r.state)
+
     def test_machine_dropped_from_config_is_reported_not_crashed(self):
         r = make_runner()
         one(r, install())
@@ -704,6 +777,20 @@ class DirLockTests(unittest.TestCase):
         lock = runner.DirLock(os.path.join(self.tmp.name, "missing", "ow-install.lock"))
         with self.assertRaises(OSError):
             lock.acquire("runner")
+
+    def test_ours(self):
+        lock = runner.DirLock(self.path)
+        self.assertFalse(lock.ours("x"))
+        tok = lock.acquire("runner")
+        self.assertTrue(lock.ours(tok))
+        self.assertFalse(lock.ours("x"))
+
+    def test_file_marker_keeps_the_first_problem(self):
+        m = runner.FileMarker(os.path.join(self.tmp.name, "NEEDS-ATTENTION.json"))
+        self.assertIsNone(m.read())
+        m.write({"reason": "first"})
+        m.write({"reason": "second"})
+        self.assertEqual(m.read()["reason"], "first")
 
     def test_a_lock_already_gone_counts_as_released(self):
         self.assertTrue(runner.DirLock(self.path).release("tok"))
@@ -898,6 +985,55 @@ class RunOnceTests(unittest.TestCase):
         self.tick()
         self.assertEqual(os.listdir(bugfix), [])
         self.assertEqual(sorted(os.listdir(self.company)), ["bugfix-spool", "machine-results", "machine-spool"])
+
+    def test_marker_file_after_a_failed_restore_blocks_installs_until_deleted(self):
+        self.drop(install())
+        self.tick()
+        self.machines["windows"].restore_to = SHA2
+        self.drop(release())
+        self.tick()
+        marker = os.path.join(self.results, "NEEDS-ATTENTION.json")
+        with open(marker) as f:
+            rec = json.load(f)
+        self.assertEqual((rec["machine"], rec["should_have"], rec["has"]), ("windows", OLD, SHA2))
+        self.drop(install(i="i2"))
+        self.tick()
+        self.assertIn("NEEDS-ATTENTION.json", self.result("i2")["refused"])
+        os.remove(marker)
+        self.machines["windows"].restore_to = "kept"
+        self.drop(install(i="i3"))
+        self.tick()
+        self.assertTrue(self.result("i3")["ok"])
+
+    def test_an_unreadable_state_file_is_kept_aside_and_blocks_installs(self):
+        os.makedirs(self.conf["state_dir"])
+        sp = os.path.join(self.conf["state_dir"], "state.json")
+        with open(sp, "w") as f:
+            f.write("{ half a hold")
+        self.drop(install())
+        self.tick()
+        self.assertIn("NEEDS-ATTENTION.json", self.result("i1")["refused"])
+        aside = [n for n in os.listdir(self.conf["state_dir"]) if n.startswith("state.json.unreadable-")]
+        self.assertEqual(len(aside), 1)
+        with open(os.path.join(self.conf["state_dir"], aside[0])) as f:
+            self.assertEqual(f.read(), "{ half a hold")
+        self.assertIn("NEEDS ATTENTION: state file unreadable", self.log_text())
+        self.assertEqual(self.machines["windows"].calls, [])
+
+    def test_a_non_object_state_file_counts_as_unreadable(self):
+        os.makedirs(self.conf["state_dir"])
+        with open(os.path.join(self.conf["state_dir"], "state.json"), "w") as f:
+            f.write("[]")
+        self.tick()
+        self.assertTrue(os.path.exists(os.path.join(self.results, "NEEDS-ATTENTION.json")))
+
+    def test_an_unreadable_marker_still_blocks(self):
+        os.makedirs(self.results)
+        with open(os.path.join(self.results, "NEEDS-ATTENTION.json"), "w") as f:
+            f.write("garbage")
+        self.drop(install())
+        self.tick()
+        self.assertIn("an unreadable marker", self.result("i1")["refused"])
 
     def test_state_file_is_private(self):
         self.drop(install())

@@ -216,9 +216,10 @@ class Runner:
     in stderr.txt).
     """
 
-    def __init__(self, cfg, gh, lock, machines, state, clock, log, save, sleep=time.sleep):
+    def __init__(self, cfg, gh, lock, machines, state, clock, log, save, sleep=time.sleep, attention=None):
         self.cfg, self.gh, self.lock, self.machines = cfg, gh, lock, machines
         self.state, self.clock, self.log_line, self.save, self.sleep = state, clock, log, save, sleep
+        self.attention = attention if attention is not None else MemoryMarker()
 
     @property
     def hold(self):
@@ -240,6 +241,7 @@ class Runner:
     def tick(self, requests):
         """`requests` is a list of (request, why) from the spool in arrival
         order. Returns a list of (id, result, stdout, stderr) to write."""
+        self.retry_stranded_lock()
         self.expire()
         out = []
         for req, why in requests:
@@ -305,9 +307,19 @@ class Runner:
 
     def machine_install(self, req):
         pr_n = req["pr"]
-        why = install_problem(req, self.hold, self.machines)
+        # The PR gate first: a PR that may not use the machines learns
+        # nothing about who holds them (QA round 1).
+        why = pr_problem(self.gh.pr(pr_n), self.cfg["allowed_authors"], sha=req["sha"])
         if why is None:
-            why = pr_problem(self.gh.pr(pr_n), self.cfg["allowed_authors"], sha=req["sha"])
+            marker = self.attention.read()
+            if marker is not None:
+                # Lead's ruling: after a restore nobody could confirm, no more
+                # installs on machines in an unknown state until a person has
+                # looked and deleted the marker.
+                why = (f"the machines need a person first: {self.attention.path} says "
+                       f"{marker.get('reason', 'see the file')}; installs are refused until it is deleted")
+        if why is None:
+            why = install_problem(req, self.hold, self.machines)
         if why is None and self.hold is None:
             token = self.take_lock(pr_n)
             if token is None:
@@ -459,6 +471,9 @@ class Runner:
                     break
             if not entry["ok"]:
                 self.log(f"NEEDS ATTENTION: {name} not restored to {want}", pr=h["pr"], machine=name)
+                self.raise_attention(f"{name} was not restored after PR #{h['pr']}",
+                                     machine=name, should_have=want, has=entry["installed_commit"],
+                                     error=entry["error"])
                 self.state.setdefault("unrestored", []).append(
                     {"machine": name, "want": want, "pr": h["pr"], "at": self.clock()})
             report[name] = entry
@@ -466,18 +481,84 @@ class Runner:
 
     def release_lock(self):
         """Release and check: True only when the lock directory is gone. A
-        directory still there (not ours, or rmdir failed: CB-427) is logged as
-        NEEDS ATTENTION; the hold ends either way."""
+        directory still there is logged as NEEDS ATTENTION; if it is still
+        ours (rmdir failed: CB-427's shape), the token is kept in the state and
+        the release retried every tick, so nothing forgets a stranded lock.
+        The hold ends either way."""
         h = self.hold
         ok = self.lock.release(h["lock_token"])
         if ok:
             self.log("released the machines and the install lock", pr=h["pr"])
         else:
             self.log(f"NEEDS ATTENTION: install lock at {self.cfg['lock_path']} was not removed "
-                     "(gone, replaced by someone else, or rmdir failed)", pr=h["pr"])
+                     "(replaced by someone else, or rmdir failed)", pr=h["pr"])
+            if self.lock.ours(h["lock_token"]):
+                self.state["lock_stranded"] = h["lock_token"]
         self.state["hold"] = None
         self.save(self.state)
         return ok
+
+    def retry_stranded_lock(self):
+        token = self.state.get("lock_stranded")
+        if token is None:
+            return
+        if self.lock.release(token) or not self.lock.ours(token):
+            self.log("stranded install lock is gone now")
+            self.state.pop("lock_stranded")
+            self.save(self.state)
+        else:
+            self.log(f"NEEDS ATTENTION: still cannot remove our install lock at {self.cfg['lock_path']}")
+
+    def raise_attention(self, reason, **detail):
+        record = {"reason": reason, "at": iso(self.clock())}
+        record.update(detail)
+        self.attention.write(record)
+
+
+class MemoryMarker:
+    """The NEEDS-ATTENTION marker for tests and for a runner with nowhere to
+    write one. FileMarker is the real one."""
+    path = "NEEDS-ATTENTION.json"
+
+    def __init__(self):
+        self.record = None
+
+    def read(self):
+        return self.record
+
+    def write(self, record):
+        # The first problem is the one a person must see; a second does not
+        # overwrite it.
+        if self.record is None:
+            self.record = record
+
+
+class FileMarker:
+    """machine-results/NEEDS-ATTENTION.json, where the org and a person both
+    look. Present means installs are refused; a person deletes it after
+    putting the machines right."""
+
+    def __init__(self, path):
+        self.path = path
+
+    def read(self):
+        try:
+            with open(self.path) as f:
+                rec = json.load(f)
+            return rec if isinstance(rec, dict) else {"reason": "an unreadable marker"}
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError):
+            return {"reason": "an unreadable marker"}
+
+    def write(self, record):
+        if os.path.exists(self.path):
+            return
+        tmp = self.path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(record, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, self.path)
 
 
 def bound(text, limit):
@@ -542,6 +623,13 @@ class DirLock:
         with open(os.path.join(self.path, "owner"), "w") as f:
             f.write(token + "\n")
         return token
+
+    def ours(self, token):
+        try:
+            with open(os.path.join(self.path, "owner")) as f:
+                return f.read().strip() == token
+        except OSError:
+            return False
 
     def release(self, token):
         """True when the lock directory is gone afterwards."""
@@ -667,11 +755,6 @@ def run_once(config_path, clock=time.time, gh=None, machines=None, lock=None, sl
         guard.close()
         return 0
     state_path = os.path.join(cfg["state_dir"], "state.json")
-    try:
-        with open(state_path) as f:
-            state = json.load(f)
-    except (OSError, ValueError):
-        state = {}
     os.makedirs(os.path.dirname(cfg["log_path"]), exist_ok=True)
     logf = open(cfg["log_path"], "a")
 
@@ -685,9 +768,29 @@ def run_once(config_path, clock=time.time, gh=None, machines=None, lock=None, sl
     # the org writes requests, only the runner writes results.
     for d in (spool, results):
         os.makedirs(d, mode=0o755, exist_ok=True)
+    attention = FileMarker(os.path.join(results, "NEEDS-ATTENTION.json"))
+    state = {}
+    try:
+        with open(state_path) as f:
+            state = json.load(f)
+        if not isinstance(state, dict):
+            raise ValueError("not an object")
+    except FileNotFoundError:
+        state = {}
+    except (OSError, ValueError) as e:
+        # A state file that cannot be read may have held a live hold: a build
+        # on the machines and our lock in /tmp. Forgetting it silently would
+        # strand both (QA round 1), so set it aside and stop installing until
+        # a person has looked.
+        aside = f"{state_path}.unreadable-{int(clock())}"
+        os.replace(state_path, aside)
+        log(f"NEEDS ATTENTION: state file unreadable ({e}); kept at {aside}")
+        attention.write({"reason": "the runner's state file was unreadable and may have held a live hold",
+                         "at": iso(clock()), "kept_at": aside})
+        state = {}
     runner = Runner(cfg, gh or GhCli(cfg["repo"]), lock or DirLock(cfg["lock_path"], clock),
                     machines if machines is not None else make_machines(cfg),
-                    state, clock, log, lambda s: save_state(state_path, s), sleep)
+                    state, clock, log, lambda s: save_state(state_path, s), sleep, attention)
     try:
         for rid, result, out, err in runner.tick(read_spool(spool, results, log)):
             if not write_result(results, rid, result, out, err):
