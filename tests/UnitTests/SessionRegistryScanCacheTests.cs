@@ -6,6 +6,9 @@ namespace Orbweaver.Tests;
 // once per session, and each ask walked the whole registry on disk, on the
 // peer pump. Walks are counted through SessionRegistry.Walk and the clock is
 // moved by hand: no sleeps, no wall-clock assertions.
+// The collection runs alone (DisableParallelization), so no other class that
+// reaches RegistryEntryFor can see the fake Now/Walk/PidIsRunning; Dispose
+// restores them as well.
 [Collection("SessionRegistryScanCache")]
 public class SessionRegistryScanCacheTests : IDisposable
 {
@@ -19,12 +22,14 @@ public class SessionRegistryScanCacheTests : IDisposable
         SessionRegistry.ForgetScan();
         SessionRegistry.Now = () => _now;
         SessionRegistry.Walk = _ => { _walks++; return _disk.ToList(); };
+        RemoteMirrorServer.PidIsRunning = _ => true;
     }
 
     public void Dispose()
     {
         SessionRegistry.Now = () => DateTime.UtcNow;
         SessionRegistry.Walk = SessionRegistry.Scan;
+        RemoteMirrorServer.PidIsRunning = ProcessLiveness.IsRunning;
         SessionRegistry.ForgetScan();
     }
 
@@ -34,12 +39,30 @@ public class SessionRegistryScanCacheTests : IDisposable
     [Fact]
     public void ABuildThatAsksOncePerSessionWalksTheRegistryOnce()
     {
-        _disk.Add(Row(_pid, "one"));
+        // The real Scan, counted inside itself: on develop every ask is a walk
+        // (8 here), with the cache the 8 asks cost one.
+        SessionRegistry.Walk = SessionRegistry.Scan;
+        var before = SessionRegistry.WalksMade;
 
         for (var i = 0; i < 8; i++)
-            Assert.NotNull(RemoteMirrorServer.RegistryEntryFor(new SessionStatus { SessionPid = _pid }));
+            RemoteMirrorServer.RegistryEntryFor(new SessionStatus { SessionPid = _pid });
 
+        Assert.Equal(1, SessionRegistry.WalksMade - before);
+    }
+
+    [Fact]
+    public void ACachedRowWhosePidHasExitedIsNotReturnedAsLive()
+    {
+        _disk.Add(Row(4242, "gone"));
+        var status = new SessionStatus { SessionPid = 4242 };
+
+        Assert.NotNull(RemoteMirrorServer.RegistryEntryFor(status));
         Assert.Equal(1, _walks);
+
+        RemoteMirrorServer.PidIsRunning = _ => false;
+
+        Assert.Null(RemoteMirrorServer.RegistryEntryFor(status));
+        Assert.Equal(1, _walks); // still answered from the held walk
     }
 
     [Fact]
@@ -66,3 +89,6 @@ public class SessionRegistryScanCacheTests : IDisposable
         Assert.Equal(2, _walks);
     }
 }
+
+[CollectionDefinition("SessionRegistryScanCache", DisableParallelization = true)]
+public class SessionRegistryScanCacheCollection { }
