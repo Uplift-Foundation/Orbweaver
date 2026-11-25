@@ -312,6 +312,17 @@ class InstructionTests(unittest.TestCase):
         # Control: the engineers' instructions are not where the rids live.
         self.assertNotIn("win-x64", read("agents", "hana-moriyama", "AGENTS.md"))
 
+    def test_released_work_is_retakable_and_pauses_do_not_count(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        for needle in ("This org's own released work is not a reason to skip",
+                       "orbweaver-bugfix[bot]", "--state open --head <branch>",
+                       "continuing released work", "the branch\nname with its last commit sha",
+                       "$BUGFIX_SPOOL/pauses.json", "`paused_minutes`"):
+            with self.subTest(needle):
+                self.assertIn(needle, skill)
+        self.assertIn("less the time the company was paused",
+                      read("agents", "marisol-vandenberg", "AGENTS.md"))
+
     def test_nobody_is_told_to_install_or_take_the_lock(self):
         for slug in AGENTS:
             doc = read("agents", slug, "AGENTS.md")

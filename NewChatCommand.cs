@@ -232,9 +232,10 @@ namespace Orbweaver
                 if (!CmdSafe(configDir) || !CmdSafe(exe) || args.Any(a => !CmdSafe(a))) return null;
                 var line = $"set \"{variable}={configDir}\" && \"{exe}\"" + string.Concat(args.Select(a => " " + a));
                 var start = new ProcessStartInfo("conhost.exe") { UseShellExecute = true, WorkingDirectory = cwd };
-                start.ArgumentList.Add("cmd.exe");
-                start.ArgumentList.Add("/k");
-                start.ArgumentList.Add(line);
+                // Arguments, not ArgumentList: ArgumentList would turn each quote of the line into
+                // \", which cmd does not read as an escape (CB-432). The line starts with "set", so
+                // cmd /k keeps the quotes in it as they are, paths with spaces included.
+                start.Arguments = "cmd.exe /k " + line;
                 return start;
             }
             var direct = new ProcessStartInfo("conhost.exe") { UseShellExecute = false, WorkingDirectory = cwd };

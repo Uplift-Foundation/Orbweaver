@@ -184,9 +184,9 @@ public class LaunchRunnerTests
         Assert.Equal("new", (await account.Runner().RunAsync(F(cwd: "C:\\w", account: ".claude-b"))).SessionId);
         var expected = Path.Combine(account.Home, ".claude-b");
         Assert.Equal(
-            NewChatCommand.ConsoleStartInfoForAccount(NewChatCli.ClaudeCode, "C:\\c\\claude.exe", "C:\\w", [], expected, viaCmd: true)!.ArgumentList,
-            account.WindowsStarts.Single().ArgumentList);
-        Assert.Contains(account.WindowsStarts.Single().ArgumentList, a => a.Contains(expected));
+            NewChatCommand.ConsoleStartInfoForAccount(NewChatCli.ClaudeCode, "C:\\c\\claude.exe", "C:\\w", [], expected, viaCmd: true)!.Arguments,
+            account.WindowsStarts.Single().Arguments);
+        Assert.Contains(expected, account.WindowsStarts.Single().Arguments);
     }
 
     // CB-397: every CLI's variable carries the absolute folder, a settings entry

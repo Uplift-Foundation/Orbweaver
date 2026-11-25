@@ -980,7 +980,9 @@ public class RelayRemoteTests
 
         Assert.Equal(["launched", "typed"], Codes(w));
         var start = w.WindowsStarts.Single();
-        Assert.Equal(["cmd.exe", "/k", "set \"CLAUDE_CONFIG_DIR=" + Path.Combine(w.Home, ".claude-uplift") + "\" && \"C:\\bin\\claude.exe\""], start.ArgumentList);
+        Assert.Empty(start.ArgumentList);
+        Assert.Equal("cmd.exe /k set \"CLAUDE_CONFIG_DIR=" + Path.Combine(w.Home, ".claude-uplift") + "\" && \"C:\\bin\\claude.exe\"", start.Arguments);
+        Assert.DoesNotContain("\\\"", start.Arguments);
     }
 
     [Fact]
