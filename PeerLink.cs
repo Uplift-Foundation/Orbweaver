@@ -773,9 +773,10 @@ namespace Orbweaver
         // stretch before its first await cannot hold the caller) and is awaited
         // through WaitAsync, which completes on the token whether or not the
         // native call ever does. What cannot be recovered is the thread inside
-        // the native call, so the abandoned ones are counted: while any is
-        // still out, no new handshake starts (HandshakeBlocked), which bounds
-        // the leak to one thread instead of one per tick. When the keychain
+        // the native call, so the abandoned ones are counted: while
+        // MaxStuckHandshakes are still out, no new handshake starts
+        // (HandshakeBlocked), which bounds the leak to that many threads
+        // instead of one per tick. When the keychain
         // unlocks the stuck call returns, the count falls, and the next tick
         // reconnects.
         private int _stuckHandshakes;
@@ -783,6 +784,12 @@ namespace Orbweaver
         // How long an abandoned handshake may keep unwinding before it is called
         // stuck. Settable so a test of the non-cooperative case need not wait it out.
         internal TimeSpan StallGrace { get; set; } = TimeSpan.FromSeconds(2);
+
+        // How many abandoned handshakes may be out before new ones are refused.
+        // One stuck call that never returns (CB-416) must not block every dial
+        // and inbound until a restart; the leak is still bounded, at this many
+        // threads, and not one per tick.
+        internal const int MaxStuckHandshakes = 3;
 
         // Abandoned handshakes whose native call has not returned yet.
         internal int StuckHandshakes => Volatile.Read(ref _stuckHandshakes);
@@ -851,10 +858,10 @@ namespace Orbweaver
             }
         }
 
-        // True, and logged, while an abandoned handshake is still out.
-        private bool HandshakeBlocked(string direction, string? machine = null)
+        // True, and logged, once MaxStuckHandshakes abandoned handshakes are still out.
+        internal bool HandshakeBlocked(string direction, string? machine = null)
         {
-            if (StuckHandshakes < 1) return false;
+            if (StuckHandshakes < MaxStuckHandshakes) return false;
 
             MirrorLog.SayOnce("peer-handshake-blocked",
                 (machine is null ? "" : $"to={machine} ")

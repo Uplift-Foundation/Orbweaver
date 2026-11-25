@@ -202,6 +202,57 @@ public class PeerHandshakeBoundTests
         await Until(() => link.StuckHandshakes == 0);
     }
 
+    // CB-416: one handshake whose native call never returns must not refuse the
+    // next dial or inbound, and a handshake after it completes normally.
+    [Fact]
+    public async Task OneStuckHandshakeDoesNotBlockTheNextOne()
+    {
+        using var link = Link();
+        var gate = Gate();
+        using var setup = new CancellationTokenSource(Short);
+
+        await Assert.ThrowsAsync<PeerLink.HandshakeStalled>(() =>
+            link.BoundedHandshakeAsync(() => gate.Task, CancellationToken.None, setup.Token, "0.1s"));
+        Assert.Equal(1, link.StuckHandshakes);
+
+        Assert.False(link.HandshakeBlocked("dial", "mini"));
+        Assert.False(link.HandshakeBlocked("inbound"));
+
+        using var next = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await link.BoundedHandshakeAsync(() => Task.CompletedTask, CancellationToken.None, next.Token, "10s");
+
+        gate.SetResult();
+        await Until(() => link.StuckHandshakes == 0);
+    }
+
+    // The leak stays bounded: at the cap, dials and inbounds are refused (and
+    // logged), and they are allowed again once a stuck call returns.
+    [Fact]
+    public async Task HandshakesAreRefusedAtTheCapAndAllowedAgainBelowIt()
+    {
+        using var link = Link();
+        var gates = Enumerable.Range(0, PeerLink.MaxStuckHandshakes).Select(_ => Gate()).ToList();
+
+        foreach (var gate in gates)
+        {
+            Assert.False(link.HandshakeBlocked("dial", "mini"));
+            using var setup = new CancellationTokenSource(Short);
+            await Assert.ThrowsAsync<PeerLink.HandshakeStalled>(() =>
+                link.BoundedHandshakeAsync(() => gate.Task, CancellationToken.None, setup.Token, "0.1s"));
+        }
+
+        Assert.Equal(PeerLink.MaxStuckHandshakes, link.StuckHandshakes);
+        Assert.True(link.HandshakeBlocked("dial", "mini"));
+        Assert.True(link.HandshakeBlocked("inbound"));
+
+        gates[0].SetResult();
+        await Until(() => link.StuckHandshakes == PeerLink.MaxStuckHandshakes - 1);
+        Assert.False(link.HandshakeBlocked("dial", "mini"));
+
+        foreach (var gate in gates) gate.TrySetResult();
+        await Until(() => link.StuckHandshakes == 0);
+    }
+
     // The timeout and the stuck call's return landing together must leave the
     // count at exactly zero, never negative and never stuck on.
     [Fact]

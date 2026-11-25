@@ -121,7 +121,7 @@ public class PeerLinkKeychainHangTests
     }
 
     [Fact]
-    public async Task ASecondDialWhileOneIsStuckFailsAtOnceAndNeverTouchesTheSocket()
+    public async Task ADialPastTheStuckCapFailsAtOnceAndNeverTouchesTheSocket()
     {
         using var keychain = new Keychain();
         using var link = Link(keychain);
@@ -132,19 +132,22 @@ public class PeerLinkKeychainHangTests
 
         try
         {
-            Assert.False(await link.ConnectAsync("kc-dial-two-a", "127.0.0.1", port).WaitAsync(TimeSpan.FromSeconds(10)));
-            await Within(TimeSpan.FromSeconds(5), () => accepted() >= 1);
-            Assert.Equal(1, accepted());
+            // CB-416: below the cap each dial still reaches the seam.
+            var cap = PeerLink.MaxStuckHandshakes;
+            for (var i = 0; i < cap; i++)
+                Assert.False(await link.ConnectAsync($"kc-dial-two-{i}", "127.0.0.1", port).WaitAsync(TimeSpan.FromSeconds(10)));
+            await Within(TimeSpan.FromSeconds(5), () => accepted() >= cap);
+            Assert.Equal(cap, accepted());
 
             // No stopwatch: that the seam, the socket and the count are all
             // untouched below is what says it failed fast, without a wall-clock
             // tolerance a loaded runner would break.
-            Assert.False(await link.ConnectAsync("kc-dial-two-b", "127.0.0.1", port).WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.False(await link.ConnectAsync("kc-dial-two-over", "127.0.0.1", port).WaitAsync(TimeSpan.FromSeconds(10)));
 
             await Task.Delay(100);
-            Assert.Equal(1, accepted());                 // no second TCP connection
-            Assert.Equal(1, keychain.Entered);           // no second native call
-            Assert.Equal(1, link.StuckHandshakes);       // leak bounded to one
+            Assert.Equal(cap, accepted());               // no further TCP connection
+            Assert.Equal(cap, keychain.Entered);         // no further native call
+            Assert.Equal(cap, link.StuckHandshakes);     // leak bounded to the cap
             lock (heard)
                 Assert.Contains(heard, e => e.Item1 == "peer-handshake-blocked" && e.Item2.Contains("keychain"));
         }
@@ -184,12 +187,18 @@ public class PeerLinkKeychainHangTests
         server.Listen(0);
         var port = server.BoundPort;
 
-        using var first = new TcpClient();
-        await first.ConnectAsync(IPAddress.Loopback, port);
-        await Within(TimeSpan.FromSeconds(5), () => keychain.Entered == 1);
+        var cap = PeerLink.MaxStuckHandshakes;
+        var held = new List<TcpClient>();
+        for (var i = 1; i <= cap; i++)
+        {
+            var c = new TcpClient();
+            held.Add(c);
+            await c.ConnectAsync(IPAddress.Loopback, port);
+            await Within(TimeSpan.FromSeconds(5), () => keychain.Entered == i);
 
-        // Stuck: the inbound setup clock expires and the handshake is abandoned.
-        await Within(TimeSpan.FromSeconds(5), () => server.StuckHandshakes == 1);
+            // Stuck: the inbound setup clock expires and the handshake is abandoned.
+            await Within(TimeSpan.FromSeconds(5), () => server.StuckHandshakes == i);
+        }
 
         // The loop is still accepting, and with the cap held the newcomer is
         // closed rather than given a second native call.
@@ -197,15 +206,16 @@ public class PeerLinkKeychainHangTests
         await second.ConnectAsync(IPAddress.Loopback, port).WaitAsync(TimeSpan.FromSeconds(5));
         var read = await second.GetStream().ReadAsync(new byte[1]).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(0, read);                            // closed by the server
-        Assert.Equal(1, keychain.Entered);
-        Assert.Equal(1, server.StuckHandshakes);
+        Assert.Equal(cap, keychain.Entered);
+        Assert.Equal(cap, server.StuckHandshakes);
 
         // Released: the cap clears and a third client reaches the handshake again.
         keychain.Gate.Set();
         await Within(TimeSpan.FromSeconds(5), () => server.StuckHandshakes == 0);
         using var third = new TcpClient();
         await third.ConnectAsync(IPAddress.Loopback, port);
-        await Within(TimeSpan.FromSeconds(5), () => keychain.Entered == 2);
+        await Within(TimeSpan.FromSeconds(5), () => keychain.Entered == cap + 1);
+        foreach (var c in held) c.Dispose();
     }
 
     // A released call may also simply return. The clear is in a continuation,
@@ -242,13 +252,15 @@ public class PeerLinkKeychainHangTests
 
         try
         {
-            Assert.False(await link.ConnectAsync("kc-cross-out", "127.0.0.1", port).WaitAsync(TimeSpan.FromSeconds(10)));
-            Assert.Equal(1, link.StuckHandshakes);
+            var cap = PeerLink.MaxStuckHandshakes;
+            for (var i = 0; i < cap; i++)
+                Assert.False(await link.ConnectAsync($"kc-cross-out-{i}", "127.0.0.1", port).WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Equal(cap, link.StuckHandshakes);
 
             using var inbound = new TcpClient();
             await inbound.ConnectAsync(IPAddress.Loopback, link.BoundPort);
             Assert.Equal(0, await inbound.GetStream().ReadAsync(new byte[1]).AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
-            Assert.Equal(1, keychain.Entered); // the inbound never reached the seam
+            Assert.Equal(cap, keychain.Entered); // the inbound never reached the seam
         }
         finally { listener.Stop(); }
     }
@@ -264,14 +276,21 @@ public class PeerLinkKeychainHangTests
 
         try
         {
-            using var inbound = new TcpClient();
-            await inbound.ConnectAsync(IPAddress.Loopback, link.BoundPort);
-            await Within(TimeSpan.FromSeconds(5), () => link.StuckHandshakes == 1);
+            var cap = PeerLink.MaxStuckHandshakes;
+            var held = new List<TcpClient>();
+            for (var i = 1; i <= cap; i++)
+            {
+                var inbound = new TcpClient();
+                held.Add(inbound);
+                await inbound.ConnectAsync(IPAddress.Loopback, link.BoundPort);
+                await Within(TimeSpan.FromSeconds(5), () => link.StuckHandshakes == i);
+            }
 
             Assert.False(await link.ConnectAsync("kc-cross-in", "127.0.0.1", port).WaitAsync(TimeSpan.FromSeconds(10)));
             await Task.Delay(100);
             Assert.Equal(0, accepted());       // no TCP connection was made
-            Assert.Equal(1, keychain.Entered); // and no second native call
+            Assert.Equal(cap, keychain.Entered); // and no further native call
+            foreach (var c in held) c.Dispose();
         }
         finally { listener.Stop(); }
     }
