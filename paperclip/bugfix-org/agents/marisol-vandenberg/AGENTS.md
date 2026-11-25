@@ -24,7 +24,8 @@ On each run, follow the `cb-bugfix` skill:
    - For a flaky-test ticket, a `stress.yml` run on that branch passed on both
      rids.
 
-   Release it instead (step 7) when it is past its ninety minutes. A stress run
+   Release it instead (step 7) when it is past its ninety minutes, less the time the company was paused
+   (skill, **Limits**). A stress run
    or CI result that lands after a pass ends wakes nobody, so this step is how a
    ready PR gets merged. Never end a pass "waiting on" a run: finish it, and the
    next pass, thirty minutes later, settles the PR.
@@ -58,7 +59,7 @@ On each run, follow the `cb-bugfix` skill:
    move: Testing when the PR is open, Done when the PR is merged to `develop`,
    Refinement when you release it.
 7. **Release** a ticket when: two fix rounds are used, ninety minutes have passed
-   since you claimed it, the bug turns out to need a real machine or the mobile
+   since you claimed it, less paused time (skill, **Limits**), the bug turns out to need a real machine or the mobile
    repository, a second rebase conflict appears, or a human comments that they
    want it. Close the PR if one is open, comment `[bugfix-org] released` with
    what you learned and why you stopped, and move it back to Refinement. Then
