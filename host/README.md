@@ -91,17 +91,27 @@ stamped commit. `machine_run` runs one command on one machine the PR holds.
 `machine_release` puts back exactly what was there, confirms it and drops the lock.
 Requests are `<id>.json` files in `<company>/machine-spool/`; each is answered by a folder
 `<company>/machine-results/<id>/` holding `result.json`, `stdout.txt` and `stderr.txt`,
-and the request moves to `machine-spool/done/` (or `bad/` when it has no usable `id`).
-The runner creates the spool and results folders if they are missing. The sandbox profile
+and the file's name must equal its `id`. A valid request moves to `machine-spool/done/`, an
+invalid one to `bad/`. Those that land in `bad/` **unanswered** (logged only) have no usable
+`id`, a name that is not `<id>.json`, an `id` that already has a result folder (the first
+answer stands, the repeat never runs) or a size over 64 KiB. An invalid request with a usable
+`id` is answered as a refusal.
+The runner creates the spool and results folders (mode 755) on every tick if they are missing. The sandbox profile
 already lets agents write the first and read the second, because it allows all of
 `~/.paperclip`, so nothing in it changes.
 
-**What it refuses**, each written to `result.json` as `status: "refused"` with a one-line
-`reason` and nothing touched: a PR that is not open, not written by an allowed author or
+**What it refuses**, each written to `result.json` as `ok: false` with a one-line
+`refused` sentence and nothing touched: a PR that is not open, not written by an allowed author or
 whose head is not `sha`; a second PR while one holds the machines; a `machine_run` without
 a hold, on an unlisted machine, or after the PR's head moved since the install; any unknown
-verb, field or machine, and an `id` outside `[a-z0-9-]{1,40}`. A hold ends on
+verb, field or machine, and an `id` outside `[a-z0-9-]{1,40}`. Every answer has `id`, `verb`,
+`pr`, `ok`, `refused`, `started_at`, `finished_at`; a run is `ok` only on exit 0 without a
+timeout, and a failure after work started is `ok: false` with `refused: null`. A hold ends on
 `machine_release` or after 45 minutes, when the runner restores and releases by itself.
+
+**When a restore fails twice** the runner writes `machine-results/NEEDS-ATTENTION.json` and
+refuses every install until a person has put the machines right and deleted that file. An
+agent that meets the refusal reports it on its task and does not retry.
 
 **Config:** `~/.config/orbweaver-bugfix/machines.json`. Only `company_dir` is required.
 
@@ -110,6 +120,8 @@ verb, field or machine, and an `id` outside `[a-z0-9-]{1,40}`. A hold ends on
 | `company_dir` | none | the folder that holds `bugfix-spool` |
 | `allowed_authors` | `["app/orbweaver-bugfix"]` | PR authors as `gh pr view` spells them |
 | `hold_cap_s` | `2700` | the hold cap, 45 minutes; set it low to test the cap |
+| `lock_wait_s` | `600` | how long an install waits for the lock before refusing |
+| `max_output_bytes` | `1048576` | output kept per stream of a `machine_run` |
 | `lock_path` | `/tmp/ow-install.lock` | the install lock every team on the mini takes |
 | `log_path` | `~/.config/orbweaver-bugfix/machines.log` | the audit log |
 | `state_dir` | `~/.config/orbweaver-bugfix/machines` | the hold and what to restore |
