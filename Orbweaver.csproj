@@ -126,14 +126,14 @@
          headless test hosts to different Avalonia majors. tests/UiTests and
          tests/UiScreenshots both moved to 12.1.1 alongside this for the same
          reason. -->
-    <PackageReference Include="Avalonia" Version="12.1.1" />
-    <PackageReference Include="Avalonia.Desktop" Version="12.1.1" />
-    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.1" />
+    <PackageReference Include="Avalonia" Version="12.2.0" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.2.0" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.2.0" />
     <!-- ColorPicker, for the orb-colour rows in the settings window. It arrives
          transitively via the macOS theme below, but is named here on purpose: a
          theme bump that dropped it would otherwise break the build for a reason
          with nothing to do with theming. -->
-    <PackageReference Include="Avalonia.Controls.ColorPicker" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Controls.ColorPicker" Version="12.2.0" />
     <!-- Ed25519, for the OpenClaw gateway's device identity. The gateway will
          not grant operator scopes to a bearer token alone — it answers
          DEVICE_IDENTITY_REQUIRED until the connect carries a signature over its
@@ -151,15 +151,15 @@
     <PackageReference Include="PvRecorder" Version="1.2.13" />
     <!-- CB-287: rasterises a picked SVG once, at pick time. Pinned to 5.1.x on
          purpose: 5.2.x moves to SkiaSharp 4.x under Avalonia 12.1.1's 3.119. -->
-    <PackageReference Include="Svg.Skia" Version="5.1.1" />
+    <PackageReference Include="Svg.Skia" Version="5.2.4" />
     <PackageReference Include="System.Management" Version="8.0.0" />
     <!-- CB-314: DPAPI for the phone relay's private keys and token on Windows
          (RelaySecretStore.cs). Microsoft's own package; every call is behind
          OperatingSystem.IsWindows(). -->
-    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.12" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.15" />
     <!-- CB-314: the pairing QR code. Pure managed and MIT; PairPhoneWindow
          draws its module matrix directly, so none of its renderers are used. -->
-    <PackageReference Include="QRCoder" Version="1.7.0" />
+    <PackageReference Include="QRCoder" Version="1.9.0" />
     <!-- AppKit-shaped control styles (MIT, Devolutions). Loaded only on macOS —
          see App.Initialize — with Fluent kept for Windows. Hand-rolling this was
          a losing game: the shapes, metrics and states of AppKit's controls are
@@ -167,7 +167,7 @@
          every time Apple moves. Bumped to 2026.7.30 alongside the Avalonia
          12.1.1 move above — 2026.6.16.1 pins Avalonia 11.3.7 and 2026.7.30 is
          the first release that targets Avalonia 12.0.2+. -->
-    <PackageReference Include="Devolutions.AvaloniaTheme.MacOS" Version="2026.7.30" />
+    <PackageReference Include="Devolutions.AvaloniaTheme.MacOS" Version="2026.11.5" />
     <PackageReference Include="Whisper.net" Version="1.9.1" />
     <PackageReference Include="Whisper.net.Runtime" Version="1.9.1" />
   </ItemGroup>
