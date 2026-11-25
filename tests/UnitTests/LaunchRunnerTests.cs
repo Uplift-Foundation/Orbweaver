@@ -183,10 +183,10 @@ public class LaunchRunnerTests
         account.ChecksIn("new", Status(cwd: "C:\\w"));
         Assert.Equal("new", (await account.Runner().RunAsync(F(cwd: "C:\\w", account: ".claude-b"))).SessionId);
         var expected = Path.Combine(account.Home, ".claude-b");
-        Assert.Equal(
-            NewChatCommand.ConsoleStartInfoForAccount(NewChatCli.ClaudeCode, "C:\\c\\claude.exe", "C:\\w", [], expected, viaCmd: true)!.Arguments,
-            account.WindowsStarts.Single().Arguments);
-        Assert.Contains(expected, account.WindowsStarts.Single().Arguments);
+        var started = account.WindowsStarts.Single();
+        Assert.Equal(["cmd.exe", "/k", "C:\\c\\claude.exe"], started.ArgumentList);
+        Assert.Equal(expected, started.Environment["CLAUDE_CONFIG_DIR"]);
+        Assert.DoesNotContain(expected, RelayAccountsTests.FinalCommandLine(started));
     }
 
     // CB-397: every CLI's variable carries the absolute folder, a settings entry
@@ -254,10 +254,13 @@ public class LaunchRunnerTests
     [Fact]
     public async Task Windows_refusals_name_why()
     {
-        // A profile folder cmd would re-parse.
-        var unsafeDir = new Desk { Windows = true, Binary = "C:\\c\\claude.exe" };
-        Assert.Equal(RelayReplies.LaunchFailed, (await unsafeDir.Runner().RunAsync(F(cwd: "C:\\w", account: ".claude%x"))).Code);
-        Assert.Empty(unsafeDir.WindowsStarts);
+        // An exe cmd would re-parse, under a named account (CB-474: the folder
+        // itself no longer meets cmd, so only the exe and args are held to CmdSafe).
+        var unsafeExe = new Desk { Windows = true, Binary = "C:\\c%x\\claude.exe" };
+        var why = await unsafeExe.Runner().RunAsync(F(cwd: "C:\\w", account: ".claude-b"));
+        Assert.Equal(RelayReplies.LaunchFailed, why.Code);
+        Assert.Equal("That launch's program path or arguments can't be carried safely into a console for Claude Code.", why.Why);
+        Assert.Empty(unsafeExe.WindowsStarts);
 
         // A script shim handed a message.
         var shim = new Desk { Windows = true, Binary = "C:\\npm\\codex.cmd" };

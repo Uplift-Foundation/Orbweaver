@@ -119,12 +119,17 @@ public class RelayAccountsTests
     }
 
     [Fact]
-    public void A_windows_claude_account_rides_the_cmd_line_and_a_codex_one_rides_the_process()
+    public void A_windows_account_rides_the_process_for_claude_and_codex_alike()
     {
+        // CB-474: Claude's account used to ride the cmd line, and conhost took
+        // its quotes off, so the variable ended in a space and named another folder.
         var claude = NewChatCommand.ConsoleStartInfoForAccount(NewChatCli.ClaudeCode, @"C:\bin\claude.exe", @"C:\w", ["--model", "opus"], ".claude-uplift")!;
-        Assert.Empty(claude.ArgumentList);
-        Assert.Equal("cmd.exe /k set \"CLAUDE_CONFIG_DIR=.claude-uplift\" && \"C:\\bin\\claude.exe\" --model opus", claude.Arguments);
-        Assert.True(claude.UseShellExecute);
+        Assert.Equal(["cmd.exe", "/k", @"C:\bin\claude.exe", "--model", "opus"], claude.ArgumentList);
+        Assert.Empty(claude.Arguments);
+        Assert.False(claude.UseShellExecute);
+        Assert.Equal(".claude-uplift", claude.Environment["CLAUDE_CONFIG_DIR"]);
+        Assert.Equal("conhost.exe", claude.FileName);
+        Assert.Equal(@"C:\w", claude.WorkingDirectory);
 
         var codex = NewChatCommand.ConsoleStartInfoForAccount(NewChatCli.Codex, @"C:\bin\codex.exe", @"C:\w", ["--", "fix it"], @"C:\Users\me\.codex-b", viaCmd: false)!;
         Assert.Equal([@"C:\bin\codex.exe", "--", "fix it"], codex.ArgumentList);
@@ -132,14 +137,47 @@ public class RelayAccountsTests
         Assert.Equal(@"C:\Users\me\.codex-b", codex.Environment[NewChatAccountHome.For(NewChatCli.Codex).EnvVar]);
     }
 
+    // cmd still re-parses the exe and args of a Claude launch, so CmdSafe still
+    // refuses those; the folder is only ever an environment value, so it is
+    // refused only when no Windows folder could be named that way.
     [Theory]
-    [InlineData(@"C:\a&b", @"C:\bin\claude.exe", "opus")]
     [InlineData(".claude-uplift", @"C:\bin\cl%aude.exe", "opus")]
     [InlineData(".claude-uplift", @"C:\bin\claude.exe", "op|us")]
+    [InlineData(".claude-uplift", @"C:\bin\claude.exe", "a&b")]
     [InlineData("", @"C:\bin\claude.exe", "opus")]
-    public void A_windows_value_cmd_would_read_as_syntax_is_not_carried_that_way(string configDir, string exe, string arg)
+    [InlineData("C:\\a\"b", @"C:\bin\claude.exe", "opus")]
+    [InlineData("C:\\a\nb", @"C:\bin\claude.exe", "opus")]
+    [InlineData("C:\\a\rb", @"C:\bin\claude.exe", "opus")]
+    [InlineData("C:\\a\0b", @"C:\bin\claude.exe", "opus")]
+    public void A_windows_value_that_cannot_be_carried_is_refused(string configDir, string exe, string arg)
     {
         Assert.Null(NewChatCommand.ConsoleStartInfoForAccount(NewChatCli.ClaudeCode, exe, @"C:\w", [arg], configDir));
+    }
+
+    [Theory]
+    [InlineData(@"C:\Users\a&b\.claude-x")]
+    [InlineData(@"C:\Users\100%\.claude-x")]
+    [InlineData(@"C:\Users\a (b)\.claude-x y")]
+    [InlineData(@"C:\Users\a^b\.claude-x")]
+    [InlineData(@" C:\Users\a\.claude-x ")]
+    public void A_windows_account_folder_arrives_byte_for_byte_whatever_cmd_would_make_of_it(string configDir)
+    {
+        var start = NewChatCommand.ConsoleStartInfoForAccount(NewChatCli.ClaudeCode, @"C:\bin\claude.exe", @"C:\w", [], configDir)!;
+        Assert.Equal(configDir, start.Environment["CLAUDE_CONFIG_DIR"]);
+        Assert.DoesNotContain(configDir.Trim(), FinalCommandLine(start));
+    }
+
+    [Fact]
+    public void Codex_and_grok_starts_are_unchanged_by_cb474()
+    {
+        foreach (var cli in new[] { NewChatCli.Codex, NewChatCli.Grok })
+        {
+            var start = NewChatCommand.ConsoleStartInfoForAccount(cli, @"C:\bin\x.exe", @"C:\w", ["--", "a & b > %c%"], @"C:\h\.x", viaCmd: false)!;
+            Assert.Equal("conhost.exe", start.FileName);
+            Assert.False(start.UseShellExecute);
+            Assert.Equal([@"C:\bin\x.exe", "--", "a & b > %c%"], start.ArgumentList);
+            Assert.Equal(@"C:\h\.x", start.Environment[NewChatAccountHome.For(cli).EnvVar]);
+        }
     }
 
     // What Windows builds for a child: Arguments verbatim when set, otherwise each
@@ -166,12 +204,20 @@ public class RelayAccountsTests
     }
 
     [Fact]
-    public void The_command_line_windows_receives_has_no_escaped_quote_for_a_named_account()
+    public void The_command_line_windows_receives_for_a_named_account_does_not_carry_the_account()
     {
-        var line = FinalCommandLine(NewChatCommand.ConsoleStartInfoForAccount(NewChatCli.ClaudeCode,
-            @"C:\Program Files\Claude\claude.exe", @"C:\w", ["--model", "opus"], @"C:\Users\a b\.claude-sundaysky")!);
-        Assert.DoesNotContain("\\\"", line);
-        Assert.Equal("cmd.exe /k set \"CLAUDE_CONFIG_DIR=C:\\Users\\a b\\.claude-sundaysky\" && \"C:\\Program Files\\Claude\\claude.exe\" --model opus", line);
+        // Fails on CB-432's construction for the reason CB-474 measured: the
+        // account was inside the line, where conhost strips the quotes that
+        // kept `set` from swallowing the space before &&.
+        var start = NewChatCommand.ConsoleStartInfoForAccount(NewChatCli.ClaudeCode,
+            @"C:\Program Files\Claude\claude.exe", @"C:\w", ["--model", "opus"], @"C:\Users\a b\.claude-sundaysky")!;
+        var line = FinalCommandLine(start);
+        Assert.DoesNotContain("CLAUDE_CONFIG_DIR", line);
+        Assert.DoesNotContain("set ", line);
+        Assert.Equal("cmd.exe /k \"C:\\Program Files\\Claude\\claude.exe\" --model opus", line);
+        // Exactly the folder, spaces kept and nothing added at either end.
+        Assert.Equal(@"C:\Users\a b\.claude-sundaysky", start.Environment["CLAUDE_CONFIG_DIR"]);
+        Assert.Equal(line, FinalCommandLine(NewChatCommand.ConsoleStartInfo(@"C:\Program Files\Claude\claude.exe", @"C:\w", ["--model", "opus"])));
     }
 
     [Fact]
