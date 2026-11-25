@@ -684,6 +684,8 @@ namespace Orbweaver
         private ScanProbes GatherProbes(List<ScanEntry> found)
         {
             BackgroundJobs.NoteLiveTranscripts(ClaudeTranscripts(found));
+            var firstScan = !_firstScanGathered;
+            _firstScanGathered = true;
 
             // CB-212: every pid's team first, in one read, because the plan's
             // gates need the leads and the UI half needs the rest.
@@ -713,8 +715,14 @@ namespace Orbweaver
                 },
                 () => Timed("attach clients", found.Count, () => _attachClients()),
                 cwd => Timed("agent viewer", 1, () => _agentViewer(cwd)),
-                fileTeams);
+                fileTeams,
+                jobListingBudget: firstScan ? FirstScanJobListingBudget : null);
         }
+
+        // CB-424: how long the launch's first scan waits for the job listing
+        // before showing orbs without it. See ScanProbes.ListJobs.
+        internal static readonly TimeSpan FirstScanJobListingBudget = TimeSpan.FromMilliseconds(500);
+        private bool _firstScanGathered;
 
         internal static IEnumerable<string?> ClaudeTranscripts(IEnumerable<ScanEntry> found) =>
             found.Where(e => e.Status.Source == SessionSource.ClaudeCode).Select(e => e.Status.TranscriptPath);
