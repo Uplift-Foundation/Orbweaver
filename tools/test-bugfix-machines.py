@@ -39,9 +39,13 @@ OLD = "c" * 40
 class FakeGh:
     def __init__(self, **prs):
         self.prs = {int(k[1:]): v for k, v in prs.items()}
+        self.commits = {}
 
     def pr(self, n):
         return self.prs.get(n)
+
+    def commit(self, sha):
+        return self.commits.get(sha)
 
 
 def pr(head=SHA, author=BOT, state="OPEN"):
@@ -435,6 +439,41 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(res["machines"]["macbook"]["installed_commit"], OLD)
         self.assertIsNone(r.hold)
         self.assertFalse(r.lock.held)
+
+    def test_a_ci_merge_build_of_the_head_is_accepted(self):
+        # QA, Windows PC: CI's pull_request installer stamps GitHub's merge
+        # of the head into develop, not the head.
+        merge, base_ = "d" * 40, "e" * 40
+        r = make_runner()
+        r.gh.commits[merge] = {"sha": merge, "parents": [{"sha": base_}, {"sha": SHA}]}
+        r.machines["windows"].stamp_after_install = merge
+        res = one(r, install())
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["machines"]["windows"]["installed_commit"], merge)
+
+    def test_a_merge_that_does_not_include_the_head_is_refused(self):
+        merge = "d" * 40
+        r = make_runner()
+        r.gh.commits[merge] = {"sha": merge, "parents": [{"sha": "e" * 40}, {"sha": SHA2}]}
+        r.machines["windows"].stamp_after_install = merge
+        res = one(r, install())
+        self.assertFalse(res["ok"])
+        self.assertIn("neither", res["machines"]["windows"]["error"])
+        self.assertEqual(r.machines["windows"].stamp, OLD)
+
+    def test_installed_stamp_rule(self):
+        merge = "d" * 40
+        commits = {merge[:7]: {"sha": merge, "parents": [{"sha": SHA}]},
+                   "f" * 7: {"sha": "0" * 40, "parents": [{"sha": SHA}]}}
+        ok = lambda s: runner.installed_stamp_ok(s, SHA, commits.get)  # noqa: E731
+        self.assertTrue(ok(SHA))
+        self.assertTrue(ok(SHA[:7]))
+        self.assertTrue(ok(merge[:7]))      # an abbreviated merge stamp
+        self.assertFalse(ok("f" * 7))       # GitHub answered for a different commit
+        self.assertFalse(ok("1" * 40))      # GitHub does not know it
+        self.assertFalse(ok(None))
+        self.assertFalse(ok("xyz1234"))     # never sent to GitHub
+        self.assertFalse(runner.installed_stamp_ok(merge, SHA, lambda s: {"sha": merge}))  # no parents
 
     def test_failed_restore_after_failed_install_says_both(self):
         r = make_runner()
@@ -1094,6 +1133,17 @@ class GhCliTests(unittest.TestCase):
         def hang(argv):
             raise subprocess.TimeoutExpired(argv, 60)
         self.assertIsNone(runner.GhCli("o/r", hang).pr(7))
+        self.assertIsNone(runner.GhCli("o/r", hang).commit(SHA))
+
+    def test_commit_lookup(self):
+        seen = []
+
+        def sh(argv):
+            seen.append(argv)
+            return subprocess.CompletedProcess(argv, 0, json.dumps({"sha": SHA, "parents": []}), "")
+        self.assertEqual(runner.GhCli("o/r", sh).commit("abcdef1")["sha"], SHA)
+        self.assertEqual(seen[0], ["gh", "api", "repos/o/r/commits/abcdef1"])
+        self.assertIsNone(runner.GhCli("o/r", lambda a: subprocess.CompletedProcess(a, 1, "", "404")).commit("x"))
 
 
 # ---------------------------------------------------------------- windows

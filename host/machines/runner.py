@@ -184,6 +184,32 @@ def run_problem(req, hold, pr):
     return None
 
 
+STAMP_RE = re.compile(r"[0-9a-f]{7,40}")
+
+
+def installed_stamp_ok(stamp, head, commit_of):
+    """True when the build now on a machine is the PR at `head`.
+
+    Two shapes are the PR. A build of the head itself stamps the head (the
+    Macs' e2e/* branch is a plain push of it). CI's pull_request build, which
+    is where the Windows installer comes from, checks out GitHub's merge of
+    the head into develop and stamps that merge commit instead: measured by
+    QA on the Windows PC, every real install failed the head-only check. So a
+    stamp that is not the head is accepted only if GitHub says it is a commit
+    whose parents include the head. `commit_of(stamp)` returns the API's
+    commit object or None; a merge of anything else, or a stamp GitHub does
+    not know, is refused.
+    """
+    if stamp_matches(stamp, head):
+        return True
+    if not (isinstance(stamp, str) and STAMP_RE.fullmatch(stamp)):
+        return False
+    commit = commit_of(stamp)
+    if not commit or not stamp_matches(stamp, commit.get("sha")):
+        return False
+    return head in [p.get("sha") for p in commit.get("parents") or []]
+
+
 def install_problem(req, hold, configured):
     absent = [m for m in req["machines"] if m not in configured]
     if absent:
@@ -364,8 +390,9 @@ class Runner:
                 entry(name, False, None, f"install failed: {e}")
                 failed = True
                 break
-            ok = stamp_matches(got, req["sha"])
-            entry(name, ok, got, None if ok else f"the installed build reports {got} after installing {req['sha']}")
+            ok = installed_stamp_ok(got, req["sha"], self.gh.commit)
+            entry(name, ok, got, None if ok else
+                  f"the installed build reports {got}, which is neither {req['sha']} nor a merge of it")
             log(f"installed stamp {got}: {'ok' if ok else 'does not match ' + req['sha']}")
             if not ok:
                 failed = True
@@ -589,6 +616,18 @@ class GhCli:
                          "--json", "state,author,headRefOid"])
         except (subprocess.TimeoutExpired, OSError):
             return None
+        return self._json(r)
+
+    def commit(self, sha):
+        """The commit object (sha, parents) for a stamp, or None."""
+        try:
+            r = self.sh(["gh", "api", f"repos/{self.repo}/commits/{sha}"])
+        except (subprocess.TimeoutExpired, OSError):
+            return None
+        return self._json(r)
+
+    @staticmethod
+    def _json(r):
         if r.returncode != 0:
             return None
         try:
