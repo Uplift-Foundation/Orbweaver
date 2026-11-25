@@ -1834,4 +1834,56 @@ public class PromptPipelineTests
         Assert.Equal(overlay.Prompt, sender.PromptsTo.Single(x => x.Sid == "so").Prompt);
         Assert.Contains("\"quiet\":true", sender.PromptsTo.Single(x => x.Sid == "so").Prompt);
     }
+
+    // CB-429: the plan-approval dialog draws the plan above its rule, so the preview
+    // held only the question and the phone could not approve knowingly. The plan is
+    // the transcript's pending ExitPlanMode `input.plan`.
+    private const string PlanPane =
+        "────────────────────────────────────────────────────────────────────\n" +
+        " Claude has written up a plan and is ready to execute. Would you like to proceed?\n\n" +
+        " ❯ 1. Yes, and use auto mode\n   2. Yes, manually approve edits\n   3. Tell Claude what to change\n\n" +
+        " ctrl+g to edit in nano · ~/.claude/plans/x.md\n";
+
+    private static string PlanTranscript(bool answered)
+    {
+        var path = Path.Combine(Path.GetTempPath(), "cb429-" + Guid.NewGuid().ToString("N") + ".jsonl");
+        var rows = new List<string>
+        {
+            JsonSerializer.Serialize(new { message = new { content = new object[] { new { type = "tool_use", id = "tu1", name = "ExitPlanMode", input = new { plan = "1. Add the plan key\n2. Cover it with a test" } } } } })
+        };
+        if (answered)
+            rows.Add(JsonSerializer.Serialize(new { message = new { content = new object[] { new { type = "tool_result", tool_use_id = "tu1" } } } }));
+        File.WriteAllLines(path, rows);
+        return path;
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("/nonexistent/cb429-missing.jsonl")]
+    public async Task A_plan_approval_prompt_without_a_readable_transcript_keeps_the_screen_preview(string? path)
+    {
+        _pane.Screen = PlanPane;
+        await _p.OnScannedAsync([("s1", new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode, Title = "orbweaver", TranscriptPath = path })]);
+        var preview = JsonDocument.Parse(Assert.Single(_sent.Prompts).Prompt).RootElement.GetProperty("preview").GetString()!;
+        Assert.Contains("Would you like to proceed?", preview);
+        Assert.DoesNotContain("Add the plan key", preview);
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task A_plan_approval_prompt_carries_the_pending_plan_in_its_preview(bool answered, bool carriesPlan)
+    {
+        var path = PlanTranscript(answered);
+        try
+        {
+            _pane.Screen = PlanPane;
+            await _p.OnScannedAsync([("s1", new SessionStatus { State = "waiting", Source = SessionSource.ClaudeCode, Title = "orbweaver", TranscriptPath = path })]);
+            var preview = JsonDocument.Parse(Assert.Single(_sent.Prompts).Prompt).RootElement.GetProperty("preview").GetString()!;
+            Assert.Contains("Would you like to proceed?", preview);
+            Assert.Equal(carriesPlan, preview.Contains("1. Add the plan key\n2. Cover it with a test"));
+        }
+        finally { File.Delete(path); }
+    }
 }

@@ -102,6 +102,49 @@ namespace Orbweaver
             return pending;
         }
 
+        internal const string PlanToolName = "ExitPlanMode";
+
+        // The plan of the latest ExitPlanMode the transcript has asked and not had
+        // answered (CB-429). The plan-approval dialog draws the plan above its rule,
+        // where the preview never looks, and a long plan has scrolled off by the time
+        // the options are drawn; the tool_use row carries all of it as `input.plan`.
+        internal static string? PendingPlan(IEnumerable<string> lines)
+        {
+            string? id = null, plan = null;
+            foreach (var line in lines)
+            {
+                JsonDocument doc;
+                try { doc = JsonDocument.Parse(line); }
+                catch (JsonException) { continue; }
+
+                using (doc)
+                {
+                    var root = doc.RootElement;
+                    if (root.ValueKind != JsonValueKind.Object
+                        || !root.TryGetProperty("message", out var message)
+                        || message.ValueKind != JsonValueKind.Object
+                        || !message.TryGetProperty("content", out var content)
+                        || content.ValueKind != JsonValueKind.Array) continue;
+
+                    foreach (var block in content.EnumerateArray())
+                    {
+                        if (block.ValueKind != JsonValueKind.Object) continue;
+                        var type = Str(block, "type");
+                        if (type == "tool_use" && Str(block, "name") == PlanToolName && Str(block, "id") is { } use
+                            && block.TryGetProperty("input", out var input) && input.ValueKind == JsonValueKind.Object
+                            && Str(input, "plan") is { } text && !string.IsNullOrWhiteSpace(text))
+                        {
+                            id = use;
+                            plan = text.Trim();
+                        }
+                        else if (type == "tool_result" && id is not null && Str(block, "tool_use_id") == id)
+                            id = plan = null;
+                    }
+                }
+            }
+            return plan;
+        }
+
         private static List<CallQuestion>? QuestionsOf(JsonElement input)
         {
             if (input.ValueKind != JsonValueKind.Object || !input.TryGetProperty("questions", out var qs)
