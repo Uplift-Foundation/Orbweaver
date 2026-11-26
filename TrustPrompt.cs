@@ -27,11 +27,12 @@ namespace Orbweaver
         internal enum Option { None, No, Yes }
 
         // Marker is which option the ❯ is on, meaningful only when Answerable.
-        internal sealed record Reading(Kind Kind, Option Marker = Option.None, bool Hooks = false)
+        internal sealed record Reading(Kind Kind, Option Marker = Option.None, bool Hooks = false, string? Dialog = null)
         {
             internal static readonly Reading Nothing = new(Kind.None);
         }
 
+        internal const string ImportsDialogName = FirstRunDialogs.ExternalImports + "?";
         private const string Heading = "Accessing workspace:";
         private const string Question = "Is this a project you created or one you trust?";
         private const string Footer = "Enter to confirm · Esc to cancel";
@@ -64,6 +65,11 @@ namespace Orbweaver
             if (string.IsNullOrWhiteSpace(screen)) return Reading.Nothing;
 
             var flat = Collapse(screen);
+
+            // CB-477: Claude's imports dialog is shown before hooks run and is
+            // not a trust question; reported by name, never answered.
+            if (!flat.Contains(Heading, StringComparison.Ordinal) && flat.Contains(FirstRunDialogs.ExternalImports, StringComparison.Ordinal))
+                return new Reading(Kind.Unanswerable, Dialog: ImportsDialogName);
 
             if (!flat.Contains(Heading, StringComparison.Ordinal))
                 return OtherTrustWording.Any(w => flat.Contains(w, StringComparison.Ordinal))

@@ -131,7 +131,6 @@ public class TrustPromptTests
     }
 
     [Theory]
-    [InlineData("tmux-claude-importdialog")]
     [InlineData("conhost-claude-none")]
     [InlineData("conhost-claude-prompt")]
     [InlineData("conhost-codex-updatedialog")]
@@ -196,5 +195,32 @@ public class TrustPromptTests
         var root = TrustScreens.OnNo.Replace(TrustScreens.Folder, "/");
         Assert.Equal(TrustPrompt.Kind.Answerable, Read(root, "/").Kind);
         Assert.Equal(TrustPrompt.Kind.Unanswerable, Read(root, "/tmp").Kind);
+    }
+
+    // CB-477: real captures (tmux and Windows Terminal) of the imports dialog a
+    // fresh folder shows before hooks run. It is reported, never answered.
+    [Theory]
+    [InlineData("tmux-claude-importdialog")]
+    [InlineData("wt-claude-importdialog")]
+    public void The_imports_dialog_reads_as_unanswerable(string fixture) =>
+        Assert.Equal(TrustPrompt.Kind.Unanswerable, Read(Screens(fixture)).Kind);
+
+    [Theory]
+    [InlineData("tmux-claude-importdialog")]
+    [InlineData("wt-claude-importdialog")]
+    public void The_imports_dialog_is_named_and_its_options_are_never_offered(string fixture)
+    {
+        var reading = Read(Screens(fixture));
+        Assert.Equal("Allow external CLAUDE.md file imports?", reading.Dialog);
+        Assert.Equal(TrustPrompt.Option.None, reading.Marker);
+    }
+
+    [Fact]
+    public void Other_screens_are_unchanged_by_the_imports_wording()
+    {
+        Assert.Equal(TrustPrompt.Reading.Nothing, Read(Screens("conhost-claude-none")));
+        Assert.Equal(TrustPrompt.Kind.Answerable, Read(TrustScreens.OnNo).Kind);
+        Assert.Null(Read(TrustScreens.OnNo).Dialog);
+        Assert.Null(Read(Screens("tmux-grok-trustdialog"), cli: NewChatCli.Grok).Dialog);
     }
 }

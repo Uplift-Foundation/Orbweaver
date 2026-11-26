@@ -18,6 +18,9 @@ namespace Orbweaver
     // in a real prompt. Add a phrase when a capture shows another such dialog.
     internal static class FirstRunDialogs
     {
+        // CB-477: also read by TrustPrompt, which reports it by name on a launch.
+        internal const string ExternalImports = "Allow external CLAUDE.md file imports";
+
         // Each entry is a set of phrases that must ALL be on the screen. One phrase is enough for the
         // dialogs whose wording is unique to them; the update prompt needs its choice as well, because
         // Codex also draws "Update available!" as a one-line banner on an idle screen
@@ -27,7 +30,7 @@ namespace Orbweaver
             // Claude Code: folder trust and external imports.
             new[] { "Do you trust the contents of this directory" },
             new[] { "Do you trust the files in this folder" },
-            new[] { "Allow external CLAUDE.md file imports" },
+            new[] { ExternalImports },
             // Claude Code 2.1.325+ (CB-327 capture, CB-397).
             new[] { "Accessing workspace:", "Yes, I trust this folder" },
             // Codex and Grok: folder trust.
