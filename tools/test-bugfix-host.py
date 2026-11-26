@@ -363,8 +363,9 @@ UNREADABLE = object()
 
 class FakeGH:
     def __init__(self, prs=None, merged=(), comments=None, checks=None, runs=None, push_runs=None,
-                 open_prs=(), files=None):
+                 open_prs=(), files=None, rulesets=(), branch_rules=()):
         self.prs, self.merged = prs or {}, list(merged)
+        self.ruleset_rows, self.develop_rules = rulesets, branch_rules
         self.open_prs, self.files, self.files_read = list(open_prs), files or {}, []
         self.comments, self.checks = comments or {}, checks or {}
         self.dispatched = []
@@ -381,6 +382,16 @@ class FakeGH:
 
     def open_bot_prs(self):
         return self.open_prs
+
+    def rulesets(self):
+        if self.ruleset_rows is UNREADABLE:
+            raise subprocess.CalledProcessError(1, ["gh", "api"])
+        return list(self.ruleset_rows)
+
+    def branch_rules(self, branch):
+        if self.develop_rules is UNREADABLE:
+            raise subprocess.CalledProcessError(1, ["gh", "api"])
+        return list(self.develop_rules) if branch == "develop" else []
 
     def pr_files(self, n):
         self.files_read.append(n)
@@ -2166,6 +2177,19 @@ class WorkflowGuardTests(unittest.TestCase):
         other = {"filename": "host/warden.py", "status": "modified", "patch": "+ environment secrets runs-on"}
         self.assertEqual(warden.workflow_problems([other], self.D), [])
 
+    def test_a_composite_action_is_guarded_like_a_workflow(self):
+        act = ".github/actions/setup/action.yml"
+        for status in ("added", "removed", "renamed"):
+            got = warden.workflow_problems([{"filename": act, "status": status, "patch": "+x"}], self.D)
+            self.assertIn(f"workflow file {status}", got[0], status)
+        moved_in = {"filename": "tools/setup.yml", "status": "renamed", "previous_filename": act}
+        self.assertEqual(len(warden.workflow_problems([moved_in], self.D)), 1, "moved out of .github/actions")
+        risky = {"filename": act, "status": "modified", "patch": "@@ -1 +1 @@\n+      KEY: ${{ secrets.X }}"}
+        self.assertIn("mentions 'secrets'", warden.workflow_problems([risky], self.D)[0])
+        benign = {"filename": act, "status": "modified", "patch": "@@ -1 +1 @@\n-      shell: bash\n+      shell: pwsh"}
+        self.assertEqual(warden.workflow_problems([benign], self.D), [], "control")
+        self.assertIn("may not edit workflows", warden.workflow_problems([benign], warden.MOBILE)[0])
+
     def test_any_workflow_change_on_mobile_pauses_and_its_code_does_not(self):
         got = warden.workflow_problems(REAL_FILES[397], warden.MOBILE)
         self.assertIn("may not edit workflows", got[0])
@@ -2213,6 +2237,36 @@ def read_json(path):
         return json.load(f)
 
 
+# Shaped like Orbweaver's own reads of 2026-11-26 (rulesets listing; rules/branches/develop).
+ACTIVE_RS = [{"id": 1, "name": "main and develop: PRs only", "target": "branch", "enforcement": "active"}]
+DEVELOP_RULES = [{"type": "deletion", "ruleset_id": 1}, {"type": "pull_request", "ruleset_id": 1},
+                 {"type": "required_status_checks", "ruleset_id": 1}]
+
+
+def protected_mobile(**kw):
+    return FakeGH(rulesets=ACTIVE_RS, branch_rules=DEVELOP_RULES, **kw)
+
+
+class RulesetGateTests(unittest.TestCase):
+    def test_an_active_pull_request_rule_on_develop_passes(self):
+        self.assertIsNone(warden.ruleset_gate(ACTIVE_RS, DEVELOP_RULES))
+
+    def test_each_way_of_not_being_protected_is_named(self):
+        disabled = [dict(ACTIVE_RS[0], enforcement="disabled")]
+        evaluate = [dict(ACTIVE_RS[0], enforcement="evaluate")]
+        cases = {
+            "empty": ([], [], "no rulesets"),
+            "disabled": (disabled, DEVELOP_RULES, "no active ruleset"),
+            "evaluate only": (evaluate, DEVELOP_RULES, "no active ruleset"),
+            "active but nothing on develop": (ACTIVE_RS, [], "no active pull_request rule on develop"),
+            "deletion only": (ACTIVE_RS, [{"type": "deletion", "ruleset_id": 1}], "pull_request"),
+            "rule from another, inactive ruleset": (ACTIVE_RS + [dict(ACTIVE_RS[0], id=2, enforcement="disabled")],
+                                                    [{"type": "pull_request", "ruleset_id": 2}], "pull_request"),
+        }
+        for label, (rs, rules, why) in cases.items():
+            self.assertIn(why, warden.ruleset_gate(rs, rules) or "", label)
+
+
 class MintTickTests(unittest.TestCase):
     def setUp(self):
         self.spool = tempfile.mkdtemp()
@@ -2226,7 +2280,8 @@ class MintTickTests(unittest.TestCase):
 
     def test_two_repositories_and_the_permission_mint_both_tokens_each_scoped(self):
         pc, m = FakePC(), FakeMinter({warden.REPO: WF_INSTALL, MOBILE_REPO: WF_INSTALL})
-        _, _, logs = tick(pc=pc, minter=m, cfg=dict(TWO, spool=self.spool))
+        gh = {"desktop": FakeGH(), "mobile": protected_mobile()}
+        _, _, logs = tick(gh=gh, pc=pc, minter=m, cfg=dict(TWO, spool=self.spool))
         self.assertEqual([n for n, _ in pc.secrets], ["GITHUB_TOKEN", "GITHUB_TOKEN_WORKFLOWS"])
         everyday, workflow = m.minted
         self.assertEqual(everyday, (9, ["Orbweaver", "Orbweaver-Mobile"], warden.EVERYDAY_PERMISSIONS))
@@ -2239,7 +2294,7 @@ class MintTickTests(unittest.TestCase):
 
     def test_workflow_token_is_withheld_while_the_permission_is_absent(self):
         pc, m = FakePC(), FakeMinter({warden.REPO: DESKTOP_INSTALL, MOBILE_REPO: DESKTOP_INSTALL})
-        tick(pc=pc, minter=m, cfg=dict(TWO, spool=self.spool))
+        tick(gh={"desktop": FakeGH(), "mobile": protected_mobile()}, pc=pc, minter=m, cfg=dict(TWO, spool=self.spool))
         self.assertEqual([n for n, _ in pc.secrets], ["GITHUB_TOKEN"])
         self.assertEqual(len(m.minted), 1)
         self.assertFalse(read_json(os.path.join(self.spool, "access.json"))["workflows"])
@@ -2250,6 +2305,53 @@ class MintTickTests(unittest.TestCase):
         self.assertEqual(m.minted[0][1], ["Orbweaver"])
         self.assertEqual(read_json(os.path.join(self.spool, "access.json"))["repos"],
                          {"desktop": True, "mobile": False})
+
+    def mint_with_mobile(self, mobile_gh, state=None):
+        if state is not None:
+            state.pop("last_mint", None)   # every call is a mint tick
+        pc, m = FakePC(), FakeMinter({warden.REPO: DESKTOP_INSTALL, MOBILE_REPO: DESKTOP_INSTALL})
+        _, _, logs = tick(gh={"desktop": FakeGH(), "mobile": mobile_gh}, pc=pc, minter=m,
+                          cfg=dict(TWO, spool=self.spool), state=state if state is not None else {})
+        return m.minted[0][1], read_json(os.path.join(self.spool, "access.json")), logs
+
+    def test_mobile_rulesets_present_puts_both_repositories_on_the_token(self):
+        repos, access, logs = self.mint_with_mobile(protected_mobile())
+        self.assertEqual(repos, ["Orbweaver", "Orbweaver-Mobile"])
+        self.assertEqual((access["repos"], access["withheld"]), ({"desktop": True, "mobile": True}, {}))
+        self.assertFalse(any("kept off" in l for l in logs))
+
+    def test_empty_failed_or_disabled_mobile_rulesets_mint_orbweaver_only(self):
+        disabled = [dict(ACTIVE_RS[0], enforcement="disabled")]
+        cases = {"empty": (FakeGH(), "no rulesets"),
+                 "failed read": (FakeGH(rulesets=UNREADABLE), "rulesets unreadable (CalledProcessError)"),
+                 "failed rules read": (FakeGH(rulesets=ACTIVE_RS, branch_rules=UNREADABLE), "rulesets unreadable"),
+                 "disabled": (FakeGH(rulesets=disabled, branch_rules=DEVELOP_RULES), "no active ruleset")}
+        for label, (gh, why) in cases.items():
+            repos, access, logs = self.mint_with_mobile(gh)
+            self.assertEqual(repos, ["Orbweaver"], label)
+            self.assertEqual(access["repos"], {"desktop": True, "mobile": False}, label)
+            self.assertIn(why, access["withheld"]["mobile"], label)
+            self.assertTrue(any(l.startswith("mobile kept off the token: " + why) for l in logs), label)
+
+    def test_the_withheld_line_is_logged_once_per_state_change(self):
+        state = {}
+        _, _, logs = self.mint_with_mobile(FakeGH(), state)
+        self.assertEqual(sum("kept off" in l for l in logs), 1)
+        _, _, logs = self.mint_with_mobile(FakeGH(), state)
+        self.assertEqual(sum("kept off" in l for l in logs), 0, "same reason, no new line")
+        _, _, logs = self.mint_with_mobile(FakeGH(rulesets=UNREADABLE), state)
+        self.assertEqual(sum("kept off" in l for l in logs), 1, "a new reason is a new line")
+        repos, _, logs = self.mint_with_mobile(protected_mobile(), state)
+        self.assertIn("mobile back on the token: its rulesets now protect it", logs)
+        self.assertIn("Orbweaver-Mobile", repos)
+
+    def test_desktop_never_waits_on_a_rulesets_read(self):
+        class NoRulesets(FakeGH):
+            def rulesets(self):
+                raise AssertionError("desktop's rulesets must not be read")
+        pc, m = FakePC(), FakeMinter()
+        tick(gh=NoRulesets(), pc=pc, minter=m)
+        self.assertEqual(m.minted[0][1], ["Orbweaver"])
 
     def test_a_failed_mint_is_logged_and_the_tick_goes_on(self):
         pc = FakePC()

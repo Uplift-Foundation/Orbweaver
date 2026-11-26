@@ -80,8 +80,8 @@ the pause reason says which.
 **Config.** `repos` in `warden.json` lists the repositories the org works in. Absent, the
 warden uses `warden.DEFAULT_REPOS`, Orbweaver alone, so an older config behaves exactly as
 before. To add the mobile repository, paste `warden.DESKTOP` and `warden.MOBILE` from
-`host/warden.py` as JSON. **Only after mobile's rulesets are read back as active:** the
-moment `repos` names mobile, the everyday token can push there.
+`host/warden.py` as JSON. The order (rulesets before a token that can push there) is
+enforced by the code, not left to the deploy: see the ruleset gate below.
 
 | key | desktop | mobile |
 | --- | --- | --- |
@@ -105,7 +105,18 @@ both are read from Paperclip.
 **Two tokens.** Every mint reads `GET /repos/<repo>/installation` with the App's JWT for
 each configured repository (404 means not covered) and then mints:
 
-* `GITHUB_TOKEN`: every configured repository the installation covers, with the six
+* **Ruleset gate.** A repository other than desktop joins the everyday token only while
+  `GET /repos/<repo>/rules/branches/<base>` shows a `pull_request` rule from a ruleset
+  that `GET /repos/<repo>/rulesets` lists as `active`. Both are read with the host's `gh`.
+  An empty listing, a failed read, a disabled or evaluate-only ruleset, or active rules
+  with no `pull_request` among them (a deletion rule alone does not keep the org off
+  develop) each keep it off the token and the mint goes ahead for the rest. One line is
+  logged per change (`mobile kept off the token: <why>`, `mobile back on the token: ...`),
+  not one per tick. Desktop is never gated, so its token never waits on that read.
+  Measured 2026-11-26: Orbweaver's develop shows four active rules, `pull_request` among
+  them; Orbweaver-Mobile shows no rulesets.
+* `GITHUB_TOKEN`: every configured repository the installation covers and the gate lets
+  through, with the six
   permissions asked for by name (`warden.EVERYDAY_PERMISSIONS`). It never carries
   Workflows, so a permission the App gains later does not reach it by default.
 * `GITHUB_TOKEN_WORKFLOWS`: the repositories with `workflow_edits` only, which is
@@ -114,8 +125,12 @@ each configured repository (404 means not covered) and then mints:
   the mini's own `orbweaver-ios` runner with mobile's Docker Hub secrets. Binding it to the
   engineers is the org definition's job (task 2).
 
-The read is written to `<spool>/access.json`, `{"checked_at", "repos": {"desktop": true,
-"mobile": true}, "workflows": true}`, a health check for the lead. A failed mint is logged
+The read is written to `<spool>/access.json`: `{"checked_at", "repos": {"desktop": true,
+"mobile": false}, "workflows": true, "withheld": {"mobile": "no rulesets"}}`. `repos.<key>`
+means "on the everyday token as of the last mint"; `withheld` names why a covered repository
+is not. The org reads it: a warden older than CB-481 never writes the file, so its
+existence with `"mobile": true` is what tells an engineer a mobile `rerun_failed` will be
+read as mobile, not as a desktop PR of the same number. A failed mint is logged
 (`token not refreshed: ...`) and the tick goes on to the unstick sweep; `last_mint` moves
 only on success, so the next tick tries again. Before CB-481 a failed mint ended the tick.
 

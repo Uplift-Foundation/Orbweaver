@@ -381,6 +381,25 @@ def workflow_problems(files, r):
 
 # ---------------------------------------------------------------- tokens (CB-481)
 
+def ruleset_gate(rulesets, branch_rules, base="develop"):
+    """Why a repository must NOT go on the everyday token (None = go), from
+    GET /repos/<repo>/rulesets and GET /repos/<repo>/rules/branches/<base>.
+
+    The token can push, so a repository joins it only once a ruleset keeps the
+    org off its base branch (lead ruling): an active ruleset contributing a
+    `pull_request` rule to that branch. Measured on Orbweaver 2026-11-26: the
+    branch-rules read names each rule's `type` and `ruleset_id`; the rulesets
+    listing gives each ruleset's `enforcement`. A deletion-only rule is not
+    enough, and a rule from a ruleset not listed as active does not count."""
+    if not rulesets:
+        return "no rulesets"
+    active = {r.get("id") for r in rulesets if r.get("enforcement") == "active"}
+    if not active:
+        return "no active ruleset"
+    if not any(x.get("type") == "pull_request" and x.get("ruleset_id") in active for x in branch_rules or []):
+        return f"no active pull_request rule on {base}"
+    return None
+
 def token_plan(repos, access):
     """Which repositories each token names. `access` maps a repository key to
     the installation object GitHub returns for that repository, or None when
@@ -1071,6 +1090,27 @@ class Warden:
         self.unstick(paused)
         return paused
 
+    def rulesets_problem(self, r):
+        """ruleset_gate for a repository, read with the host's gh. A failed
+        read withholds the repository too: the gate cannot be shown to hold."""
+        gh = self.gh_for(r)
+        try:
+            return ruleset_gate(gh.rulesets(), gh.branch_rules(r["base"]), r["base"])
+        except (subprocess.CalledProcessError, OSError, ValueError, KeyError, AttributeError) as e:
+            return f"rulesets unreadable ({type(e).__name__})"
+
+    def note_withheld(self, withheld):
+        """One log line per change in which repositories are kept off the
+        token and why, not one per tick."""
+        before = self.state.get("withheld", {})
+        for key in sorted(set(before) | set(withheld)):
+            if before.get(key) != withheld.get(key):
+                if key in withheld:
+                    self.log(f"{key} kept off the token: {withheld[key]}")
+                else:
+                    self.log(f"{key} back on the token: its rulesets now protect it")
+        self.state["withheld"] = dict(withheld)
+
     def mint_tokens(self):
         """Both tokens (CB-481). The everyday one names every configured
         repository the installation covers, with EVERYDAY_PERMISSIONS by name,
@@ -1078,15 +1118,21 @@ class Warden:
         repositories with `workflow_edits` (desktop), and is minted only while
         the installation shows `workflows: write`. Each repository's coverage
         is read on every mint and written to <spool>/access.json."""
-        access = {}
+        access, withheld = {}, {}
         for r in self.repos():
             access[r["key"]] = self.minter.installation(r["repo"])
+            if access[r["key"]] and r["key"] != "desktop":
+                why = self.rulesets_problem(r)
+                if why:
+                    withheld[r["key"]] = why
+                    access[r["key"]] = None
+        self.note_withheld(withheld)
         plan = token_plan(self.repos(), access)
         workflows = bool(plan["workflows"])
         if self.cfg.get("spool"):
             try:
                 write_access(self.cfg["spool"], {k: bool(v) for k, v in access.items()},
-                             workflows, self.now)
+                             workflows, self.now, withheld)
             except OSError as e:
                 self.log(f"{ACCESS_FILE} not written: {type(e).__name__}")
         if not plan["everyday"]:
@@ -1280,6 +1326,13 @@ class GhCli:
     def merged_bot_prs(self):
         prs = self.api(f"repos/{self.repo}/pulls?state=closed&base={self.base}&sort=updated&direction=desc&per_page=30")
         return [p for p in prs if p.get("merged_at") and (p["user"] or {}).get("login") == BOT_LOGIN]
+
+    def rulesets(self):
+        return self.api(f"repos/{self.repo}/rulesets") or []
+
+    def branch_rules(self, branch):
+        """The active rules GitHub applies to `branch`, each naming its ruleset."""
+        return self.api(f"repos/{self.repo}/rules/branches/{branch}") or []
 
     def open_bot_prs(self):
         prs = self.api(f"repos/{self.repo}/pulls?state=open&base={self.base}&per_page=100") or []
@@ -1516,15 +1569,18 @@ def write_pauses(spool, windows):
     os.replace(tmp, path)
 
 
-def write_access(spool, repos, workflows, now):
-    """<spool>/access.json (CB-481): which configured repositories the App's
-    installation covers and whether it holds `workflows: write`, as read on the
-    last mint. A health check for the lead; written like pauses.json."""
+def write_access(spool, repos, workflows, now, withheld=None):
+    """<spool>/access.json (CB-481): which configured repositories are on the
+    everyday token (covered by the installation and, beyond desktop, past the
+    ruleset gate), why any covered one was withheld, and whether the workflow
+    token was minted, as of the last mint. Written like pauses.json; its very
+    existence tells the org a per-repository warden is running."""
     path = os.path.join(spool, ACCESS_FILE)
     tmp = path + ".tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
     with os.fdopen(fd, "w") as f:
-        json.dump({"checked_at": iso(now), "repos": repos, "workflows": workflows}, f, indent=1)
+        json.dump({"checked_at": iso(now), "repos": repos, "workflows": workflows,
+                   "withheld": dict(withheld or {})}, f, indent=1)
         f.write("\n")
     os.chmod(tmp, 0o644)
     os.replace(tmp, path)

@@ -793,6 +793,7 @@ class World(unittest.TestCase):
         self.two_repos()
         wf = {"id": 9, "permissions": dict(warden.WORKFLOW_PERMISSIONS)}
         self.app.installs = {REPO: wf, MOBILE_REPO: wf}
+        self.protect_mobile()
         self.assert_untouched(self.run_warden(mint=True))
         self.assertEqual([(s["name"], s["value"]) for s in self.pc.secrets],
                          [("GITHUB_TOKEN", "ghs_FAKETOKEN"), ("GITHUB_TOKEN_WORKFLOWS", "ghs_FAKEWORKFLOW")])
@@ -806,6 +807,36 @@ class World(unittest.TestCase):
         log = open(os.path.join(self.d, "warden.log")).read()
         self.assertNotIn("ghs_FAKE", log)
         self.assertEqual(sorted(os.listdir(os.path.join(self.spool, "bad"))), [], "access.json is not a request")
+
+    def protect_mobile(self):
+        # Shaped like Orbweaver's own reads of 2026-11-26.
+        self.fx[f"repos/{MOBILE_REPO}/rulesets"] = [
+            {"id": 31, "name": "develop: PRs only", "target": "branch", "enforcement": "active"}]
+        self.fx[f"repos/{MOBILE_REPO}/rules/branches/develop"] = [
+            {"type": "deletion", "ruleset_id": 31, "ruleset_source_type": "Repository"},
+            {"type": "pull_request", "ruleset_id": 31, "ruleset_source_type": "Repository"}]
+
+    def test_covered_but_unprotected_mobile_is_kept_off_the_token(self):
+        if not HAVE_OPENSSL:
+            self.skipTest("openssl")
+        self.two_repos()
+        inst = {"id": 9, "permissions": dict(warden.EVERYDAY_PERMISSIONS)}
+        self.app.installs = {REPO: inst, MOBILE_REPO: inst}
+        # No rulesets fixture: the stub gh answers 404, a failed read.
+        self.assert_untouched(self.run_warden(mint=True))
+        bodies = [b for m, p, b in self.app.calls if p.endswith("/access_tokens")]
+        self.assertEqual([b["repositories"] for b in bodies], [["Orbweaver"]])
+        with open(os.path.join(self.spool, "access.json")) as f:
+            access = json.load(f)
+        self.assertEqual(access["repos"], {"desktop": True, "mobile": False})
+        self.assertIn("rulesets unreadable", access["withheld"]["mobile"])
+        self.assertIn("mobile kept off the token", open(os.path.join(self.d, "warden.log")).read())
+        # Control: the same world once mobile's develop is protected.
+        self.app.calls.clear()
+        self.protect_mobile()
+        self.assert_untouched(self.run_warden(mint=True))
+        bodies = [b for m, p, b in self.app.calls if p.endswith("/access_tokens")]
+        self.assertEqual([b["repositories"] for b in bodies], [["Orbweaver", "Orbweaver-Mobile"]])
 
     def test_without_the_permission_only_the_everyday_token_and_mobile_404_is_reported(self):
         if not HAVE_OPENSSL:
