@@ -15,20 +15,62 @@ Jira project `CB` on `uplifttech.atlassian.net`. The `cloudId` is
 project = CB AND issuetype = Bug AND status = Refinement ORDER BY priority DESC, created ASC
 ```
 
-Skip a ticket when **any** of these holds:
+## Every ticket gets an outcome
 
-- its status is not Refinement;
-- an open PR names its key in the title or body
-  (`gh pr list --repo Uplift-Foundation/Orbweaver --state open --search "<key> in:title,body"`);
-- a pushed, unmerged commit names its key
-  (`git fetch origin` in your worktree, then `git log --remotes --not origin/develop --grep "<key>"`),
-  **unless that work is this org's own released work** (next paragraph);
-- it has no comment starting with `[triage]` yet (the triage org's likely cause is your input);
-- it is in a class this org leaves alone (below).
+**No ticket the query returns is skipped in silence.** A pass that read 18
+bugs, took none and changed nothing, then said the same thing thirty minutes
+later, is the failure this section exists to stop (CB-480). Every ticket the
+query returns leaves the pass with exactly one of these outcomes, decided in
+this order; the first that applies is the one:
 
-**This org's own released work is not a reason to skip.** When the rule above
-finds commits, check each branch that holds them. It is the org's own, with no
-one working on it, only if **both** hold:
+- **Wait: another team's PR.** An open PR's **title** names the key. Check
+   with `gh pr list --repo Uplift-Foundation/Orbweaver --state open --search "<key> in:title" --json number,title`
+   and confirm the key is literally in a returned title (the search is fuzzy).
+   A key named only in a PR body, a commit message or a branch is **not** a
+   reason to wait: work named in passing is not somebody holding the ticket.
+   If that PR is the org's own, it is settled by the lead's step 0, not here.
+- **Wait: triage.** It has no comment starting with `[triage]` yet. The triage
+   org runs every four hours, so this wait is short and is counted, not fixed.
+- **Wait: org access.** Until the org's GitHub access covers them, a bug whose fix is in the mobile repository (`Orbweaver-Mobile`) or in `.github/workflows/` is left exactly as it is (no Jira comment, no transition, and not a defect of the pass), a claimed ticket that turns out to need one is put back rather than released (close any draft PR, move the ticket to Refinement with the one comment `stopped: needs org access to <mobile repository | workflow files>; nothing merged; branch kept at <sha>`, and set the engineer's Paperclip issue to `done` with that same sentence as its `comment`, never `cancelled`), and the report counts all of them on the `Waiting on org access` line of the counts block.
+- **Close.** The ticket is no longer a bug on `develop`, and the evidence is
+   in hand, not inferred:
+   - **already fixed:** a PR merged to `develop` fixed it. Name the PR and its
+     merge sha, and say why it covers what this ticket describes (read the
+     PR's diff and the ticket's reproduction steps side by side; a PR that
+     mentions the key is not evidence it fixed it);
+   - **duplicate:** another ticket describes the same defect. Name it, and say
+     which one carries the work;
+   - **cannot reproduce:** a real attempt was made and the bug did not appear.
+     Say what was run, on which machine or in which test, at which sha, and
+     what was seen. Reading the code and concluding it looks fine is not an
+     attempt. A first-time cannot-reproduce comes from a claimed
+     reproduce-or-fix round (**Take it**), never from reading alone.
+   Close by moving it to Done (transition `41`) and posting one comment that
+   starts `[bugfix-org] closed:` with the reason and the evidence. Close only a
+   ticket in Refinement or one the org itself claimed, never one a person has
+   in Development or Testing. A close is
+   **not a release and needs no claim**. When the close ends a ticket the org
+   had claimed, set the engineer's Paperclip issue to `done`, not `cancelled`:
+   the ticket was settled.
+- **Take it: fix or reproduce.** Everything else is eligible, including a
+   security bug, a bug that needs a real captured prompt (class 4 below) and a
+   bug that needs a real machine (class 3). Among them take the highest Jira
+   priority, then the lower class number, then the oldest, up to the run's
+   ticket limit (**Limits**).
+
+**Closes do not use the ticket limit; they have their own cap (**Limits**).**
+That cap is what keeps one pass from sweeping the board
+on thin evidence. A ticket that would have been closed past the cap is left for the next pass and named in the report as such.
+
+**Commits that name the key are not a skip, but check whose they are.** When
+`git fetch origin` then `git log --remotes --not origin/develop --grep "<key>"`
+finds commits, look at each branch that holds them. If it is **this org's own
+released work** it is continued rather than started over (next paragraph). If
+it is anybody else's and no open PR's title names the key, the ticket is still
+eligible: say in the claim comment which branch already mentions it.
+
+**This org's own released work** is a branch with no one working on it. It is
+the org's only if **both** hold:
 
 1. its name starts `bugfix/pc-` and the author of every commit on it that is not
    on `develop` is the App's bot:
@@ -37,20 +79,37 @@ one working on it, only if **both** hold:
 2. no PR from it is open: `gh pr list --repo Uplift-Foundation/Orbweaver --state open --head <branch>`
    prints nothing.
 
-Then the ticket is **eligible**, and the engineer continues from that branch
-instead of starting over: in the worktree, `git fetch origin`,
-`git checkout -B <branch> origin/<branch>`, rebase once onto `origin/develop`,
-and carry on (a closed PR can be reopened with `gh pr reopen <number>`, or open a
-new one from the branch with the same `gh pr create` as always). Keep the branch
-name; never rename a pushed branch. The claim comment names that branch and says
-`continuing released work`. If either test fails (a human's commit is on the
-branch, or a PR is open) the ticket is somebody's and you skip it as before.
-The work is yours to check: read what the branch changed before building on it.
+Then the engineer continues from that branch instead of starting over: in the
+worktree, `git fetch origin`, `git checkout -B <branch> origin/<branch>`,
+rebase once onto `origin/develop`, and carry on (a closed PR can be reopened
+with `gh pr reopen <number>`, or open a new one from the branch with the same
+`gh pr create` as always). Keep the branch name; never rename a pushed branch.
+The claim comment names that branch and says `continuing released work`. The
+work is yours to check: read what the branch changed before building on it.
 
-Among what is left take the highest Jira priority, then the lower class number first,
-then the oldest. At most **two tickets per run**.
+**The pass report ends with counts.** The last lines of the lead's summary are:
 
-## What this org fixes, and what it leaves
+```
+Fixed: <n> (<keys and PRs merged>)
+Closed: <n> (<keys, one reason each>)
+Waiting on triage: <n> (<keys>)
+Taken, in progress: <n> (<keys and PRs open>)
+Waiting on another team's PR: <n> (<keys and PR numbers>)
+Left untouched: <n> (<keys, and why>)
+Waiting on org access: <n> (<keys>)   (delete with **Wait: org access**)
+```
+
+Every ticket the query returned is in exactly one line. **Left untouched** is
+for a ticket that got no outcome: the ticket limit was full, the
+close cap was reached, or something failed. Each one there is a
+defect of the pass and says why; a pass whose `Left untouched` grows pass after
+pass for the same reason is reporting a problem with these rules, not a quiet
+board.
+
+## What this org fixes
+
+The class comes from the summary and the triage comment, and you re-classify
+when you read the code.
 
 1. **Flaky tests in this repository.** Proof: the test class run 30 times on
    both rids on GitHub's runners. You cannot dispatch that run; the warden
@@ -72,12 +131,36 @@ then the oldest. At most **two tickets per run**.
    that shows the bug, then the same one on the fixed build installed on the
    machines it concerns, plus CI green on both rids.
 
-Leave alone, and say why if asked: a bug that needs a real captured prompt; a
-change to `.github/workflows/` (you may not edit it); a security fix; anything
-in the mobile repository (`Orbweaver-Mobile`); a ticket a human team holds. The
-class comes from the summary and the triage comment, and you re-classify when
-you read the code: a ticket that turns out to need one of those is released. A
-ticket that needs only a machine is not released for that reason.
+4. **Bugs that need a real captured prompt** (a permission dialog, a pane, a
+   transcript or rollout the parser has to read and no fixture holds). These
+   are taken, not skipped: the org has real machines (**Real machines**), and
+   the capture is made there. The order:
+   - the engineer opens the PR first, as a draft
+     (`gh pr create ... --draft`), with the test that will read the capture and
+     a note in the body of exactly what has to be captured; the runner only
+     serves an open org PR, so the PR has to exist before any capture;
+   - the lead hands QA a **capture task** with the PR number, the ticket key
+     and what to capture. QA sends `machine_install` for the machines the bug
+     concerns, then `machine_run` commands that produce the prompt and print it
+     (for example start the CLI in a detached `tmux` session, wait, then
+     `tmux capture-pane -p`), reads `stdout.txt`, and always sends
+     `machine_release`. QA's answer names the result folder holding the
+     capture;
+   - the engineer commits that capture as the fixture, unedited, shows the test
+     failing on it before the fix and passing after, and the PR leaves draft.
+   Proof: the fixture as captured, the test failing then passing, plus CI green
+   on both rids. **If the capture cannot be made within the ticket's fix rounds**, the ticket
+   still gets an outcome: close it as cannot-reproduce (**Close** in **Every
+   ticket gets an outcome**) when the attempts ran and the prompt did not
+   appear, or release it when the capture needs something the runner cannot
+   give, such as a person signing in. Either way the comment says what was
+   run, on which machine, and what came back.
+
+**Security bugs are taken like any other bug**, with one added rule: the PR
+body, the commit messages and every Jira comment describe the class of flaw and
+the fix, never a working exploit (no payload, no step-by-step to trigger it).
+The test that proves the fix may exercise the flaw; the prose around it does
+not explain how to use it.
 
 ## Real machines
 
@@ -228,7 +311,9 @@ key (its slug becomes the branch name), and its description starts with the line
 
 Settling a ticket also leaves one fact in Paperclip, which the host reads in
 place of anything an agent says: the engineer's Paperclip issue ends `done` when
-the PR merged to `develop` and `cancelled` when the ticket was released. The
+the ticket left the org with an outcome (the PR merged to `develop`, the
+ticket was closed after a claim, or an outcome in **Every ticket gets an
+outcome** says so), and `cancelled` only when the ticket was released. The
 Jira comment is the human-readable record; the issue status is the machine one.
 The warden also cancels a child task that sat with no run through two of its
 wake comments, and says so on your task; that is not a release, so treat it as
@@ -247,6 +332,7 @@ connector cannot check this; the rule is the control.
 | PR open | Development to Testing | the PR link and what the fix is |
 | merged to `develop` | Testing to Done | the merge sha, what was verified and what was not |
 | gave up | back to Refinement | `[bugfix-org] released`, what it learned, why it stopped |
+| closed | Refinement, or a ticket the org claimed, to Done (`41`); no claim needed | `[bugfix-org] closed:`, the reason and the evidence (**Every ticket gets an outcome**, **Close**) |
 
 ## GitHub access
 
@@ -365,9 +451,17 @@ a red check.
 
 ## Limits
 
-Two fix rounds per ticket, ninety minutes from the claim, one rebase onto
-`develop`. Past any of them the ticket is released. Two tickets per run, two org
-PRs open at once.
+**The limits are stated here and nowhere else;** every other file points
+here.
+
+- **Per run:** at most **two tickets taken** (to fix or reproduce), at most
+  **five closes** (which do not use the two), and at most **two org PRs open**
+  at once.
+- **Per ticket:** **two fix rounds**, **ninety minutes** from the claim (less
+  paused time, below), and **one rebase** onto `develop`.
+
+Past a per-ticket limit the ticket is released, or closed when the attempt
+itself is the evidence (**Every ticket gets an outcome**).
 
 **Time the company was paused does not count toward the ninety minutes.** The
 warden publishes every pause in `$BUGFIX_SPOOL/pauses.json`, a list of the last
@@ -402,5 +496,6 @@ Install on any machine yourself, or run `ssh` or anything else that reaches
 one: only the machines runner does that, when you write it a request (**Real
 machines**). So never take `/tmp/ow-install.lock` (the sandbox denies it
 anyway). Push to `develop`, `main` or another team's branch. Create a tag or
-a release. Edit `.github/workflows/`. Paste a secret, a token, a home path or a
+a release. Edit `.github/workflows/`. Write a working exploit into a PR, a
+commit or a comment. Paste a secret, a token, a home path or a
 hostname into a PR, comment or commit.

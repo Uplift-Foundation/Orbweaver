@@ -286,14 +286,15 @@ class InstructionTests(unittest.TestCase):
         skill = read("skills", "cb-bugfix", "SKILL.md")
         self.assertIn('{"status": "cancelled"}', lead)
         self.assertIn('{"status": "done"}', lead)
-        self.assertIn("`cancelled` when the ticket was released", skill)
+        self.assertIn("`cancelled` only when the ticket was released", skill)
         # Control: the engineers are never told to settle a ticket.
         for slug in ("hana-moriyama", "rafaela-quintero"):
             self.assertNotIn("cancelled", read("agents", slug, "AGENTS.md"))
 
-    def test_lead_carries_the_run_limits_and_the_bug_only_rule(self):
+    def test_lead_points_at_the_limits_and_carries_the_bug_only_rule(self):
         lead = read("agents", "marisol-vandenberg", "AGENTS.md")
-        for needle in ("at most\n   **two** tickets", "**two** rounds", "ninety minutes",
+        for needle in ("the run limits in the skill's **Limits**", "past a per-ticket limit in the skill's\n   **Limits**",
+                       "past the skill's fix-round limit, release",
                        "`Bug`", "bugfix/pc-<slug>", "Verdict: merge", "both required checks"):
             with self.subTest(needle):
                 self.assertIn(needle, lead)
@@ -314,14 +315,149 @@ class InstructionTests(unittest.TestCase):
 
     def test_released_work_is_retakable_and_pauses_do_not_count(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")
-        for needle in ("This org's own released work is not a reason to skip",
+        for needle in ("**This org's own released work** is a branch with no one working on it",
                        "orbweaver-bugfix[bot]", "--state open --head <branch>",
                        "continuing released work", "the branch\nname with its last commit sha",
                        "$BUGFIX_SPOOL/pauses.json", "`paused_minutes`"):
             with self.subTest(needle):
                 self.assertIn(needle, skill)
-        self.assertIn("less the time the company was paused",
+        self.assertIn("the skill's **Limits** says (paused time does not count)",
                       read("agents", "marisol-vandenberg", "AGENTS.md"))
+
+    # CB-480: two passes read 18 bugs, took none and changed nothing. Each
+    # rule below is one of the ticket's five outcomes, pinned in the text the
+    # lead actually reads, with a control that the old skip is gone.
+    def test_query_is_the_plain_refinement_query(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        self.assertIn("project = CB AND issuetype = Bug AND status = Refinement ORDER BY", skill)
+        # Control: item 3 was changed to no hand-offs, so no label filter.
+        self.assertNotIn("handoff-team", skill)
+
+    def test_every_ticket_gets_one_of_the_outcomes(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        for needle in ("## Every ticket gets an outcome",
+                       "**No ticket the query returns is skipped in silence.**",
+                       "- **Wait: another team's PR.**", "- **Wait: triage.**",
+                       "- **Wait: org access.**", "- **Close.**", "- **Take it: fix or reproduce.**"):
+            with self.subTest(needle):
+                self.assertIn(needle, skill)
+        # Control: the old skip list, and the old leave-alone paragraph, are gone.
+        self.assertNotIn("Skip a ticket when **any** of these holds", skill)
+        self.assertNotIn("Leave alone, and say why if asked", skill)
+
+    def test_lead_may_close_with_evidence_and_no_claim(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        for needle in ("**already fixed:**", "**duplicate:**", "**cannot reproduce:**",
+                       "transition `41`", "`[bugfix-org] closed:`",
+                       "A close is\n   **not a release and needs no claim**",
+                       "Reading the code and concluding it looks fine is not an\n     attempt"):
+            with self.subTest(needle):
+                self.assertIn(needle, skill)
+        lead = read("agents", "marisol-vandenberg", "AGENTS.md")
+        self.assertIn("Done when the PR is merged to `develop` or\n   when you close the ticket", lead)
+
+    def test_limits_are_stated_once_in_the_skill(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        limits = skill.split("## Limits", 1)[1].split("\n## ", 1)[0]
+        for needle in ("**The limits are stated here and nowhere else;**", "**two tickets taken**",
+                       "**five closes** (which do not use the two)", "**two org PRs open**",
+                       "**two fix rounds**", "**ninety minutes**", "**one rebase**"):
+            with self.subTest(needle):
+                self.assertIn(needle, limits)
+        self.assertIn("**Closes do not use the ticket limit; they have their own cap (**Limits**).**", skill)
+        # Outside Limits, the numbers are not restated anywhere an agent reads them.
+        rest = skill.replace(limits, "")
+        for pattern in (r"\bninety\b", r"\*\*two\*\*", r"\bfive closes\b", r"two tickets per", r"two fix rounds",
+                        r"two rounds\b", r"at most \*\*five\*\*"):
+            with self.subTest(pattern):
+                self.assertIsNone(re.search(pattern, rest), pattern)
+                for doc in [read("tasks", "fix-cb-bugs", "TASK.md")] + [read("agents", a, "AGENTS.md") for a in AGENTS]:
+                    self.assertIsNone(re.search(pattern, doc), pattern)
+
+    def test_close_never_takes_a_persons_ticket(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        self.assertIn("Close only a\n   ticket in Refinement or one the org itself claimed", skill)
+        self.assertIn("| closed | Refinement, or a ticket the org claimed, to Done (`41`)", skill)
+        # Control: the "any status" wording that could close a person's ticket is gone.
+        self.assertNotIn("any status to Done", skill)
+
+    def test_a_captured_prompt_is_taken_and_captured_by_qa(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        for needle in ("4. **Bugs that need a real captured prompt**",
+                       "`gh pr create ... --draft`", "capture task",
+                       "**If the capture cannot be made within the ticket's fix rounds**",
+                       "or release it when the capture needs something the runner cannot\n   give"):
+            with self.subTest(needle):
+                self.assertIn(needle, skill)
+        qa = read("agents", "tamsin-oyelaran", "AGENTS.md")
+        self.assertIn("**A capture task**", qa)
+        self.assertIn("always send\n`machine_release`", qa)
+        for slug in ("hana-moriyama", "rafaela-quintero"):
+            self.assertIn("open the PR as\n   a draft first", read("agents", slug, "AGENTS.md"))
+        # Control: the lead no longer releases a ticket for needing a capture.
+        self.assertNotIn("need the mobile repository or a real captured prompt",
+                         read("agents", "marisol-vandenberg", "AGENTS.md"))
+
+    def test_security_bugs_are_taken_and_never_described_as_an_exploit(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        self.assertIn("**Security bugs are taken like any other bug**", skill)
+        self.assertIn("describe the class of flaw and\nthe fix, never a working exploit", skill)
+        self.assertIn("Write a working exploit into a PR, a\ncommit or a comment.", skill)
+        self.assertIn("Security bugs are taken like any other.", read("agents", "marisol-vandenberg", "AGENTS.md"))
+        # Control: no list of things the org leaves alone names security any more.
+        for doc in (skill, read("README.md"), read("agents", "marisol-vandenberg", "AGENTS.md")):
+            self.assertNotIn("a security fix", doc)
+            self.assertNotIn("fix a security", doc)
+        # Control: no agent is told to edit a Jira field, so no label path exists.
+        for slug in AGENTS:
+            self.assertNotIn("editJiraIssue", read("agents", slug, "AGENTS.md"))
+
+    def test_org_access_wait_writes_nothing_and_is_one_line_to_delete(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        tag = "(delete with **Wait: org access**)"
+        lines = [l for l in skill.splitlines() if "org access" in l and tag not in l]
+        self.assertEqual(len(lines), 1, lines)
+        line = lines[0]
+        self.assertTrue(line.startswith("- **Wait: org access.** Until the org's GitHub access covers them"))
+        body = line.split("** ", 1)[1]
+        self.assertNotIn(". ", body, "one sentence after the label")
+        self.assertTrue(body.endswith("."))
+        for needle in ("`Orbweaver-Mobile`", "`.github/workflows/`", "no Jira comment, no transition",
+                       "not a defect of the pass", "the `Waiting on org access` line of the counts block",
+                       "put back rather than released", "move the ticket to Refinement with the one comment",
+                       "nothing merged; branch kept at <sha>", "`done` with that same sentence as its `comment`, never `cancelled`"):
+            self.assertIn(needle, line)
+        # Every other mention, in the counts block and the lead's step 8, carries
+        # the tag, so deleting the rule and the tagged mentions removes the wait.
+        self.assertIn("Waiting on org access: <n> (<keys>)   " + tag, skill)
+        lead = read("agents", "marisol-vandenberg", "AGENTS.md")
+        self.assertIn("Waiting on org access " + tag, lead)
+        for doc in (skill.replace(line + "\n", ""), lead):
+            for l in doc.replace("\n   ", " ").splitlines():
+                if "org access" in l:
+                    self.assertIn(tag, l)
+        # The lead can send that sentence: one PATCH carries status and comment.
+        self.assertIn('send it in the same body as `"comment"`', read("agents", "marisol-vandenberg", "AGENTS.md"))
+
+    def test_only_an_open_pr_title_holds_a_ticket_for_another_team(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        self.assertIn('--state open --search "<key> in:title" --json number,title', skill)
+        self.assertIn("A key named only in a PR body, a commit message or a branch is **not** a\n   reason to wait", skill)
+        # Control: the body search and the commit-mention skip are gone.
+        self.assertNotIn("in:title,body", skill)
+        self.assertNotIn("a pushed, unmerged commit names its key", skill)
+
+    def test_report_ends_with_counts_and_names_what_was_left(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        lines = ("Fixed: <n>", "Closed: <n>", "Waiting on triage: <n>", "Taken, in progress: <n>",
+                 "Waiting on another team's PR: <n>", "Left untouched: <n>")
+        block = re.search(r"```\n(Fixed: <n>.*?)```", skill, re.S)
+        self.assertIsNotNone(block)
+        got = [l.split(" (")[0] for l in block.group(1).strip().splitlines()]
+        self.assertEqual(got, list(lines) + ["Waiting on org access: <n>"])
+        lead = read("agents", "marisol-vandenberg", "AGENTS.md")
+        self.assertIn("**End it with the counts block from the skill**", lead)
+        self.assertIn("ending with the counts the skill asks for", read("tasks", "fix-cb-bugs", "TASK.md"))
 
     def test_nobody_is_told_to_install_or_take_the_lock(self):
         for slug in AGENTS:

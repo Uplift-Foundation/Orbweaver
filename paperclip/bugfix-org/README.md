@@ -110,13 +110,13 @@ lead actually making that PATCH has not been run.
 
 ## The brakes (plan section 6)
 
-Two tickets per run; routine `coalesce_if_active`; `maxConcurrentRuns: 1`,
+Routine `coalesce_if_active`; `maxConcurrentRuns: 1`,
 `timeoutSec: 3600` and `maxDailyRuns` (120 for the lead, 48 for each other
 agent, since the org runs around the clock on Warren's word of 2026-11-24; they
 bound a runaway, they are not a throttle. One ticket, CB-343, took three lead
 runs, one engineer run and one QA run. The lead started at 3, which cannot
-finish one ticket; it defers wakes rather than dropping them, see the table above) per agent; two fix rounds and ninety minutes per ticket,
-then release. The warden (host side, not in this package) pauses the company on
+finish one ticket; it defers wakes rather than dropping them, see the table above) per agent; and the per-run and per-ticket limits in the
+skill's **Limits**, the one place they are stated. The warden (host side, not in this package) pauses the company on
 the conditions in plan section 6. `budgetMonthlyCents` is set but is not a
 brake: on a subscription connection spend reads 0.
 
@@ -261,6 +261,23 @@ Then, none of which a package can carry:
 Install on any of the three machines itself (it asks the machines runner, which
 holds the keys and the lock; a PR that needed no machine says `Installed on: none`
 and why); touch the
-mobile repository; fix a bug that needs a real captured prompt; fix a security
-ticket; edit a
-workflow file; tag or release; push to `develop` or `main`.
+mobile repository or edit a
+workflow file until its GitHub access covers them (a pass reports those bugs as
+waiting on org access and writes nothing to Jira); tag or release; push to
+`develop` or `main`. Security bugs are fixed like any other, with write-ups
+that describe the class of flaw and the fix, never an exploit. A bug that needs
+a real captured prompt is taken: QA captures it on the real machines.
+
+## Every bug gets an outcome (CB-480)
+
+On 2026-11-26 two passes in a row read 18 open bugs, took none and changed
+nothing, and the next pass would have said the same. Since CB-480 every ticket
+the query returns leaves a pass with one outcome: fixed, closed (already fixed,
+duplicate, or not reproduced after a real attempt, with the evidence in the
+comment, transition `41`, no claim), waiting on triage, waiting on org access
+(mobile and workflow-file bugs, until the org's GitHub access covers them), waiting on another team's PR (only when an open PR's title names the
+key), or taken. Closes have their own cap (skill, **Limits**) so a pass
+cannot sweep the board on thin evidence. The report ends with the counts and
+names anything left untouched as a defect of the pass. The rules are the
+skill's **Every ticket gets an outcome**.
+
