@@ -31,7 +31,7 @@ Their pictures live in `.profiles-assets/`, which is not checked in.
 
 **The pilot carried one ticket through on 2026-11-24.** CB-343: claimed 17:33Z, PR #365 opened by the App, QA's review with a broken-on-purpose control, merged by the App at 18:20Z as `9515045`, ticket moved to Done, warden audit clean. That took 47 minutes, one fix round and five agent runs.
 
-**It runs around the clock, on Warren's word.** Since 18:25Z the routine fires every 30 minutes, every day. The run caps are 120 for the lead and 48 for each of the others, and the warden's `max_runs_per_day` is 300. The other warden brakes are unchanged, including the pause after two releases in a row. A paused org stays paused until a person, or the lead of a session working on it, resumes it.
+**It runs around the clock, on Warren's word.** Since 18:25Z the routine fires every 30 minutes, every day. The run caps are 120 for the lead and 48 for each of the others, and the warden's `max_runs_per_day` is 300. The other warden brakes are unchanged, including the pause after two released tickets in a row. A paused org stays paused until a person, or the lead of a session working on it, resumes it, except a pause made by the release brake alone, which the warden always lifts itself after 60 minutes (CB-484, see `host/README.md`).
 
 **The App's lane, measured with its own installation token:**
 
