@@ -1228,7 +1228,8 @@ namespace Orbweaver
                 // pass afterwards is what keeps a fan that reached into the
                 // next band from landing on anything in it.
                 var positions = FanOut(
-                    result[lead], centreOf[g], team.Count, circle, nearestOf[g], layout.Work, window);
+                    result[lead], centreOf[g], team.Count, circle, nearestOf[g], layout.Work, window,
+                    web: g < shapes.Count && IsWeb(shapes[g]));
 
                 for (var i = 0; i < team.Count; i++)
                 {
@@ -1664,9 +1665,111 @@ namespace Orbweaver
             return (TeamLinkGeometry.MinimumCentreDistance(memberRadiusDip, leadRadiusDip) + 3) * scale;
         }
 
+        // The web: how many radial threads a team hangs from its lead, at most.
+        // Eight is what an orb-weaver actually spins, and it is also as many as
+        // the first ring can hold at the distance an arrow needs without its
+        // neighbours touching.
+        internal const int WebSpokes = 8;
+
+        // The shape whose teams are drawn as webs. Its roots gather on a ring, as
+        // a circle's do — see Unit — and the difference is entirely in how a
+        // lead's members are placed round it and how they are tied to it. Every
+        // other shape fans its members off one side of their lead, as it always
+        // has.
+        internal const string WebShape = "web";
+
+        internal static bool IsWeb(string? shape) => shape == WebShape;
+
+        // Fewer members than this are not a web: two spokes is a straight line
+        // through the lead, and it crowds the orbs either side of it for no
+        // gain in how it reads.
+        internal const int WebMinimum = 3;
+
+        // Where each of a lead's `count` members sits relative to it, as the
+        // points of a spiderweb centred on the lead: members on evenly spaced
+        // spokes, a new ring out each time the spokes are full. A team of five
+        // is five spokes on one ring; a team of twenty is eight spokes on three
+        // rings, the last one short.
+        //
+        // Members go to spoke `i % spokes` on ring `i / spokes`, so a spoke's
+        // members line up along one thread — the thing that makes it read as a
+        // web and not as a ring of orbs with a few more outside it. Rings are a
+        // member-and-a-half apart, the same breathing room the arc fan gives
+        // neighbours, and the first sits at `radius`, the distance an arrow
+        // needs.
+        //
+        // `phase` turns the whole web, in radians; with a partial `span` it is
+        // the direction the web faces, where 0 is straight up and a quarter turn
+        // is right.
+        //
+        // `span` is how much of the circle the spokes may use. A lead with room
+        // all round gets the full turn; a lead against a screen edge gets a
+        // half or a quarter of one, facing the room there is. Spokes are then
+        // fewer — as many as fit at the spacing a full web keeps — and every
+        // spoke the web does have still carries as many rings as it needs, so a
+        // lead in a corner draws a smaller web and not a line.
+        //
+        // Pure: no windows, no screen — FanOut decides whether the web fits.
+        internal static (double X, double Y)[] WebOffsets(
+            int count, double radius, double memberCircle, double phase, double span = Math.PI * 2)
+        {
+            var offsets = new (double X, double Y)[Math.Max(count, 0)];
+            if (count <= 0) return offsets;
+
+            var full = span >= Math.PI * 2 - 1e-9;
+            var spokes = Math.Min(count, WebSpokes);
+
+            if (!full)
+            {
+                // The angle two neighbours on the first ring need between them
+                // to clear each other by a fifth of a member.
+                var apart = 2 * Math.Asin(Math.Min(1, memberCircle * 1.2 / (2 * radius)));
+                spokes = Math.Min(spokes, Math.Max(1, (int)Math.Floor(span / apart)));
+            }
+
+            var step = memberCircle * 1.5;
+
+            for (var i = 0; i < count; i++)
+            {
+                var ring = i / spokes;
+                var k = i % spokes;
+                var angle = full
+                    ? phase - Math.PI / 2 + Math.PI * 2 * k / spokes
+                    : phase - Math.PI / 2 + span * ((k + 0.5) / spokes - 0.5);
+                var r = radius + ring * step;
+
+                offsets[i] = (r * Math.Cos(angle), r * Math.Sin(angle));
+            }
+
+            return offsets;
+        }
+
+        // How far a web of `count` members reaches from its lead's centre, at
+        // most, in the units of its inputs: the first ring's distance, plus a
+        // step for every further ring, plus half a member. What a caller laying
+        // webs out down a column needs to reserve above and below a lead before
+        // it knows which way the web will face.
+        internal static double WebReach(int count, double radius, double memberCircle)
+        {
+            if (count <= 0) return 0;
+
+            var rings = (count + WebSpokes - 1) / WebSpokes;
+            return radius + (rings - 1) * memberCircle * 1.5 + memberCircle / 2;
+        }
+
+        // The same web FanOut draws, for a caller that is not an arrangement:
+        // where `count` members go around a lead at `lead` (a window's top-left,
+        // as everywhere here), given the screen they must stay on.
+        // `awayFrom` is a point on the side the web should turn its back on —
+        // it is the "middle of the pattern" FanOut points outward from.
+        internal static PixelPoint[] WebAround(
+            PixelPoint lead, (double X, double Y) awayFrom, int count,
+            double circle, PixelRect work, int window)
+            => FanOut(lead, awayFrom, count, circle, 0, work, window, web: true);
+
         private static PixelPoint[] FanOut(
             PixelPoint lead, (double X, double Y) centre, int count,
-            double circle, double nearest, PixelRect work, int window)
+            double circle, double nearest, PixelRect work, int window, bool web = false)
         {
             var memberCircle = circle * MemberScale;
 
@@ -1739,6 +1842,56 @@ namespace Orbweaver
                     (int)Math.Round(lead.Y + radius * Math.Sin(angle)));
             }
 
+            // A team of three or more is drawn as a spiderweb around its lead
+            // when it fits on screen. The whole web first, turned a little at a
+            // time to find a phase that clears the edges; then, for a lead with
+            // an edge close by, less of it — three quarters, a half, a quarter
+            // of a turn — facing the way the fan would have, nearest-first. Only
+            // a lead with no room for even that falls through to the one-sided
+            // fan below, which can squeeze where a web cannot.
+            if (web && count >= WebMinimum)
+            {
+                var webRadius = ArrowRadius(circle, scale);
+
+                PixelPoint[]? TryWeb(double phase, double span)
+                {
+                    var offsets = WebOffsets(count, webRadius, memberCircle, phase, span);
+                    var web = new PixelPoint[count];
+
+                    for (var i = 0; i < count; i++)
+                    {
+                        web[i] = new PixelPoint(
+                            (int)Math.Round(lead.X + offsets[i].X),
+                            (int)Math.Round(lead.Y + offsets[i].Y));
+
+                        if (web[i].X < work.X || web[i].Y < work.Y
+                            || web[i].X > work.Right - window || web[i].Y > work.Bottom - window)
+                        {
+                            return null;
+                        }
+                    }
+
+                    return web;
+                }
+
+                var webStep = Math.PI * 2 / Math.Min(count, WebSpokes);
+
+                for (var phaseStep = 0; phaseStep < 8; phaseStep++)
+                {
+                    if (TryWeb(webStep * phaseStep / 8, Math.PI * 2) is { } whole) return whole;
+                }
+
+                foreach (var span in new[] { Math.PI * 1.5, Math.PI, Math.PI * 0.75, Math.PI * 0.5 })
+                {
+                    for (var step = 0; step < 16; step++)
+                    {
+                        var turn = (step + 1) / 2 * (step % 2 == 0 ? 1 : -1) * (Math.PI * 2 / 16);
+
+                        if (TryWeb(baseAngle + turn + Math.PI / 2, span) is { } part) return part;
+                    }
+                }
+            }
+
             // Which way the fan points, when pointing outward would hang it off
             // the screen. The radius is not negotiable — it is the distance the
             // arrow needs and the distance that keeps members off each other —
@@ -1809,7 +1962,7 @@ namespace Orbweaver
 
             return shape switch
             {
-                "circle" => Sampled(CircleAt, n),
+                "circle" or WebShape => Sampled(CircleAt, n),
                 "diamond" => Sampled(DiamondAt, n),
                 "star" => Sampled(StarAt, n),
                 "grid" => Grid(n),

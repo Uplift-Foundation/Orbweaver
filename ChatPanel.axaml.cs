@@ -3104,6 +3104,12 @@ namespace Orbweaver
             var text = (Input.Text ?? "").Trim();
             if ((text.Length == 0 && _pendingImages.Count == 0) || _session is null) return;
 
+            // Talking to an agent is attending to it, so its thread stops tugging
+            // for you. Opening this panel already says so; this is for the panel
+            // that was open before the agent started working, or reopened by a
+            // path that did not.
+            _owner?.AcknowledgeThread();
+
             // CB-35: no longer cleared here. It used to be — unconditionally,
             // before the send was even attempted — which is exactly the bug:
             // a session that cannot send at all (replying switched off, no

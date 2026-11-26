@@ -940,6 +940,7 @@ namespace Orbweaver
 
         internal static readonly (string Label, string Value)[] ShapeChoices =
         {
+            ("Web", "web"),
             ("Heart", "heart"),
             ("Circle", "circle"),
             ("Diamond", "diamond"),
@@ -1075,9 +1076,45 @@ namespace Orbweaver
             {
                 Row("Shape", ShapePicker(),
                     "The pattern orbs arrange into when you click the sparkle button on any orb's flyout."),
+                Row("Threads", ThreadStylePicker(),
+                    "How a team member is tied to its lead. Silk is a fine thread, and on the Web shape "
+                    + "the whole web is drawn between them; Arrows are the original arrowed links. "
+                    + "The web itself only appears when the shape above is Web."),
                 Row("Spacing", SpacingSlider(),
                     "How far apart the orbs sit inside the shape. Drag to see them move in real time.")
             };
+        }
+
+        internal static readonly (string Label, string Value)[] ThreadStyleChoices =
+        {
+            ("Silk", OrbweaverSettings.ThreadStyleSilk),
+            ("Arrows", OrbweaverSettings.ThreadStyleArrows)
+        };
+
+        // A saved value is always one of the two (the setting normalises it), so
+        // unlike the shape picker there is no unknown-name entry to add.
+        internal Control ThreadStylePicker() => ThreadStylePicker(
+            () => OrbweaverSettings.ThreadStyle,
+            v => OrbweaverSettings.ThreadStyle = v);
+
+        internal Control ThreadStylePicker(Func<string> get, Action<string> set)
+        {
+            var current = get();
+            var combo = new ComboBox
+            {
+                ItemsSource = ThreadStyleChoices.Select(c => c.Label).ToList(),
+                SelectedIndex = Math.Max(0, Array.FindIndex(ThreadStyleChoices, c => c.Value == current)),
+                MinWidth = 132
+            };
+            combo.SelectionChanged += (_, _) =>
+            {
+                var index = combo.SelectedIndex;
+                if (index < 0) return;
+
+                set(ThreadStyleChoices[index].Value);
+                SessionManager.Instance?.RefreshThreads();
+            };
+            return combo;
         }
 
         // CB-268's global outline style. The same four values a group's own

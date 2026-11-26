@@ -139,6 +139,27 @@ you arranged them in. Dragging a *member* moves only that member, which is how
 you pull one out to look at it; its arrow stretches to follow. The arrows are
 click-through, so they never eat a click meant for the desktop underneath.
 
+**Teams can be drawn as a spiderweb.** Settings → Auto-organize → **Shape → Web**
+(the default for a fresh install; a shape you have already chosen is left alone)
+puts a team's lead at the hub and its members on the points of a web: up to
+eight spokes round the lead, with a new ring out each time the spokes fill. A
+lead against a screen edge gets the part of a web that fits, facing the room
+there is, rather than a line. Roots gather on a ring, as with the Circle shape.
+Settings → Auto-organize → **Threads** chooses how a member is tied to its lead:
+**Silk** (the default) draws fine threads — on the Web shape the spokes plus the
+sagging threads between neighbouring points, and on any other shape a single
+thread per link — and **Arrows** is the original arrowed link. The web is only
+ever drawn, and members only ever placed on it, when the shape is Web; every
+other shape lays teams out exactly as it always did.
+
+**Threads tug.** While a member is working its thread shivers, in that member's
+colour, about every two and a half seconds, and a member that has just started
+waiting on you gets one bigger tug. Clicking an agent's orb, opening its chat,
+using its flyout's mic or read-aloud buttons, or sending it a message stops the
+tugging until its state changes — an agent still working after you have looked
+at it stays quiet, and one that finishes and starts again tugs again. Nothing
+tugs with Threads set to Arrows or with the OS's reduce-motion setting on.
+
 Each agent orb is lettered and labelled with **the agent's own name** —
 `MenuUX`, `Narrative`, `HitReactSpec` — not the team's. Every member inherits
 the team session's title, so a team of four otherwise drew the same letter four
@@ -2766,7 +2787,10 @@ outside the app (a launchd agent, an installer replacing the bundle) stopped it.
   whatever the Size setting makes it — so stacking, dragging and remembered
   positions are untouched), `SessionManager.DisplayOrder()` gathers each team
   behind its lead, and `TeamLinks.cs` draws the arrows, one click-through window
-  per arrow, parked and reused rather than closed (see `ClaudeDesktopOverlay`
+  per arrow (or, with the Silk thread style, per thread, plus one per web-shaped
+  team for its spokes and rings — `TeamWebGeometry` is the pure frame,
+  `OrbArrangement.WebOffsets`/`FanOut` the pure placement, `ThreadTug` the pure
+  tug timing), parked and reused rather than closed (see `ClaudeDesktopOverlay`
   for why closing them is unsafe). Arrow geometry measures the screen-coordinate
   units per DIP with `PointToScreen` instead of reading `Scaling`: on macOS
   Avalonia hands out points, not pixels, and assuming otherwise put every arrow

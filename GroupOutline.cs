@@ -378,6 +378,7 @@ internal static class GroupOutline
         "circle" => OrbArrangement.CircleAt,
         "diamond" => OrbArrangement.DiamondAt,
         "star" => OrbArrangement.StarAt,
+        OrbArrangement.WebShape => OrbArrangement.CircleAt,
         _ => OrbArrangement.HeartAt
     };
 
@@ -440,7 +441,8 @@ internal static class GroupOutline
             case "line": return Stadium(Math.Max(halfW, halfH), halfH);
             case "vline": return Stadium(halfW, Math.Max(halfW, halfH), vertical: true);
             case "grid": return RoundedRect(Math.Max(halfW, 1e-6), Math.Max(halfH, 1e-6));
-            case "circle": return Curve(OrbArrangement.CircleAt);
+            case "circle":
+            case OrbArrangement.WebShape: return Curve(OrbArrangement.CircleAt);
             case "diamond": return Curve(OrbArrangement.DiamondAt);
             case "star": return Curve(OrbArrangement.StarAt);
             default: return Curve(OrbArrangement.HeartAt); // same default as OrbArrangement.Unit

@@ -62,6 +62,10 @@ namespace Orbweaver
         public string SessionId { get; }
 
         private string _lastState = "";
+
+        // What this orb's session is doing — "idle", "generating" or "waiting" —
+        // as the thread between it and its lead needs to know it (ThreadTug).
+        internal string State => string.IsNullOrEmpty(_lastState) ? "idle" : _lastState;
         private string _lastColor = "";
         private Color? _accentColor;
         private string _lastGlyphName = "";
@@ -2131,6 +2135,11 @@ namespace Orbweaver
                 _flyout.SpeakClicked += OnSpeakClicked;
                 _flyout.ChatClicked += OpenChat;
 
+                // The flyout's own buttons are the user attending to this agent too:
+                // talking to it or having it read aloud. Chat already says so above.
+                _flyout.MicClicked += AcknowledgeThread;
+                _flyout.SpeakClicked += AcknowledgeThread;
+
                 // The other half of the hover bridge described on
                 // _hideFlyoutTimer: entering the flyout must cancel a hide
                 // that Root.PointerExited already scheduled, and leaving it
@@ -2236,6 +2245,8 @@ namespace Orbweaver
         // TextToSpeech.StateChanged is the single source now; see SessionManager,
         // which broadcasts it to every orb because speech is global rather than
         // per-orb.
+        internal void AcknowledgeThread() => ThreadTug.Acknowledge(this);
+
         internal void OnSpeakClicked()
         {
             if (TextToSpeech.IsSpeaking)
@@ -2465,6 +2476,8 @@ namespace Orbweaver
         [ExcludeFromCodeCoverage]
         internal void OpenChat()
         {
+            ThreadTug.Acknowledge(this);
+
             var chat = SessionManager.Instance?.RemoteChatFor(SessionId);
             if (chat is null) return;
 
@@ -3109,6 +3122,10 @@ namespace Orbweaver
 
         internal void OnClicked(int clicks)
         {
+            // Any click is the user attending to this agent, so its thread stops
+            // tugging for them.
+            ThreadTug.Acknowledge(this);
+
             // Beyond three there is nothing to bind, and treating a fourth click
             // as a fresh single would fire the single-click action in the middle
             // of somebody drumming on the orb.
