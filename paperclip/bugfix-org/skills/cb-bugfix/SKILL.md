@@ -12,11 +12,8 @@ Jira project `CB` on `uplifttech.atlassian.net`. The `cloudId` is
 `getAccessibleAtlassianResources`. Query:
 
 ```
-project = CB AND issuetype = Bug AND status = Refinement AND (labels IS EMPTY OR labels != handoff-team) ORDER BY priority DESC, created ASC
+project = CB AND issuetype = Bug AND status = Refinement ORDER BY priority DESC, created ASC
 ```
-
-(`labels != handoff-team` alone drops every ticket with no labels at all, which
-is why the `IS EMPTY` arm is there.)
 
 ## Every ticket gets an outcome
 
@@ -26,26 +23,16 @@ later, is the failure this section exists to stop (CB-480). Every ticket the
 query returns leaves the pass with exactly one of these outcomes, decided in
 this order; the first that applies is the one:
 
-1. **Wait: another team's PR.** An open PR's **title** names the key. Check
+- **Wait: another team's PR.** An open PR's **title** names the key. Check
    with `gh pr list --repo Uplift-Foundation/Orbweaver --state open --search "<key> in:title" --json number,title`
    and confirm the key is literally in a returned title (the search is fuzzy).
    A key named only in a PR body, a commit message or a branch is **not** a
    reason to wait: work named in passing is not somebody holding the ticket.
    If that PR is the org's own, it is settled by the lead's step 0, not here.
-2. **Wait: triage.** It has no comment starting with `[triage]` yet. The triage
+- **Wait: triage.** It has no comment starting with `[triage]` yet. The triage
    org runs every four hours, so this wait is short and is counted, not fixed.
-3. **Hand off.** The fix belongs to a class this org may not make: a security
-   fix, anything in the mobile repository (`Orbweaver-Mobile`), or a change to
-   `.github/workflows/`. Add the label `handoff-team` with `editJiraIssue`
-   (`update: {"labels": [{"add": "handoff-team"}]}`, nothing else in the call),
-   then one comment starting `[bugfix-org] handoff-team:` saying in a sentence
-   which class and why. The query then stops returning it. Do it **once**: a
-   ticket that already has a `[bugfix-org] handoff-team:` comment is never
-   commented on again. If the label edit is refused, post the comment anyway,
-   say in the report that the label is missing, and on later passes treat any
-   ticket carrying that comment as handed off without touching it again.
-   The status stays Refinement; a hand-off is not a claim and not a release.
-4. **Close.** The ticket is no longer a bug on `develop`, and the evidence is
+- **Wait: org access.** Until the org's GitHub access covers them, a bug whose fix is in the mobile repository (`Orbweaver-Mobile`) or in `.github/workflows/` is left exactly as it is (no Jira comment, no transition, and not a defect of the pass), a claimed ticket that turns out to need one is released, and the report counts them on a line of their own at the end of the counts block, `Waiting on org access: <n> (<keys>)`.
+- **Close.** The ticket is no longer a bug on `develop`, and the evidence is
    in hand, not inferred:
    - **already fixed:** a PR merged to `develop` fixed it. Name the PR and its
      merge sha, and say why it covers what this ticket describes (read the
@@ -57,22 +44,21 @@ this order; the first that applies is the one:
      Say what was run, on which machine or in which test, at which sha, and
      what was seen. Reading the code and concluding it looks fine is not an
      attempt. A first-time cannot-reproduce comes from a claimed
-     reproduce-or-fix round (outcome 5), never from reading alone.
+     reproduce-or-fix round (**Take it**), never from reading alone.
    Close by moving it to Done (transition `41`) and posting one comment that
    starts `[bugfix-org] closed:` with the reason and the evidence. A close is
    **not a release and needs no claim**. When the close ends a ticket the org
    had claimed, set the engineer's Paperclip issue to `done`, not `cancelled`:
    the ticket was settled.
-5. **Take it: fix or reproduce.** Everything else is eligible, including a bug
-   that needs a real captured prompt (class 4 below) and a bug that needs a
-   real machine (class 3). Among them take the highest Jira priority, then the
-   lower class number, then the oldest. At most **two tickets per run** are
-   taken this way.
+- **Take it: fix or reproduce.** Everything else is eligible, including a
+   security bug, a bug that needs a real captured prompt (class 4 below) and a
+   bug that needs a real machine (class 3). Among them take the highest Jira
+   priority, then the lower class number, then the oldest. At most **two
+   tickets per run** are taken this way.
 
-**Closes and hand-offs do not count against the two tickets, but at most five
-per pass, together.** That cap is what keeps one pass from sweeping the board
-on thin evidence. A ticket that would have been closed or handed off past the
-cap is left for the next pass and named in the report as such.
+**Closes do not count against the two tickets, but at most five closes per
+pass.** That cap is what keeps one pass from sweeping the board
+on thin evidence. A ticket that would have been closed past the cap is left for the next pass and named in the report as such.
 
 **Commits that name the key are not a skip, but check whose they are.** When
 `git fetch origin` then `git log --remotes --not origin/develop --grep "<key>"`
@@ -104,16 +90,15 @@ work is yours to check: read what the branch changed before building on it.
 ```
 Fixed: <n> (<keys and PRs merged>)
 Closed: <n> (<keys, one reason each>)
-Handed off: <n> (<keys, one class each>)
-Taken, in progress: <n> (<keys and PRs open>)
 Waiting on triage: <n> (<keys>)
+Taken, in progress: <n> (<keys and PRs open>)
 Waiting on another team's PR: <n> (<keys and PR numbers>)
 Left untouched: <n> (<keys, and why>)
 ```
 
 Every ticket the query returned is in exactly one line. **Left untouched** is
 for a ticket that got no outcome: the two-ticket limit was full, the
-close-and-hand-off cap was reached, or something failed. Each one there is a
+close cap was reached, or something failed. Each one there is a
 defect of the pass and says why; a pass whose `Left untouched` grows pass after
 pass for the same reason is reporting a problem with these rules, not a quiet
 board.
@@ -162,17 +147,17 @@ when you read the code.
      failing on it before the fix and passing after, and the PR leaves draft.
    Proof: the fixture as captured, the test failing then passing, plus CI green
    on both rids. **If the capture cannot be made in two rounds**, the ticket
-   still gets an outcome: close it as cannot-reproduce (outcome 4 in **Every
+   still gets an outcome: close it as cannot-reproduce (**Close** in **Every
    ticket gets an outcome**) when the attempts ran and the prompt did not
-   appear, or hand it off (outcome 3, with the label) when the capture needs
-   something the runner cannot give, such as a person signing in. Either way
-   the comment says what was run, on which machine, and what came back.
+   appear, or release it when the capture needs something the runner cannot
+   give, such as a person signing in. Either way the comment says what was
+   run, on which machine, and what came back.
 
-**Re-classifying after you read the code.** A ticket that turns out to need a
-security fix, the mobile repository or `.github/workflows/` is handed off
-(outcome 3) and moved back to Refinement, and its engineer's issue is set to
-`done`: it left the org with an outcome. A ticket that needs only a machine, or
-only a capture, is never handed off for that reason.
+**Security bugs are taken like any other bug**, with one added rule: the PR
+body, the commit messages and every Jira comment describe the class of flaw and
+the fix, never a working exploit (no payload, no step-by-step to trigger it).
+The test that proves the fix may exercise the flaw; the prose around it does
+not explain how to use it.
 
 ## Real machines
 
@@ -324,7 +309,7 @@ key (its slug becomes the branch name), and its description starts with the line
 Settling a ticket also leaves one fact in Paperclip, which the host reads in
 place of anything an agent says: the engineer's Paperclip issue ends `done` when
 the ticket left the org with an outcome (the PR merged to `develop`, or the
-ticket was closed or handed off after a claim), and
+ticket was closed after a claim), and
 `cancelled` when the ticket was released. The
 Jira comment is the human-readable record; the issue status is the machine one.
 The warden also cancels a child task that sat with no run through two of its
@@ -344,11 +329,7 @@ connector cannot check this; the rule is the control.
 | PR open | Development to Testing | the PR link and what the fix is |
 | merged to `develop` | Testing to Done | the merge sha, what was verified and what was not |
 | gave up | back to Refinement | `[bugfix-org] released`, what it learned, why it stopped |
-| closed | any status to Done (`41`), no claim needed | `[bugfix-org] closed:`, the reason and the evidence (**Every ticket gets an outcome**, 4) |
-| handed off | stays in, or back to, Refinement; label `handoff-team` | `[bugfix-org] handoff-team:`, the class and why, once |
-
-The label is the one field the lead ever edits, with `editJiraIssue` and only
-`update: {"labels": [{"add": "handoff-team"}]}`.
+| closed | any status to Done (`41`), no claim needed | `[bugfix-org] closed:`, the reason and the evidence (**Every ticket gets an outcome**, **Close**) |
 
 ## GitHub access
 
@@ -470,7 +451,7 @@ a red check.
 Two fix rounds per ticket, ninety minutes from the claim, one rebase onto
 `develop`. Past any of them the ticket is released, or closed or handed off when the
 attempt itself is the evidence (**Every ticket gets an outcome**). Two tickets
-taken per run, plus at most five closes and hand-offs together, two org
+taken per run, plus at most five closes, two org
 PRs open at once.
 
 **Time the company was paused does not count toward the ninety minutes.** The
@@ -506,5 +487,6 @@ Install on any machine yourself, or run `ssh` or anything else that reaches
 one: only the machines runner does that, when you write it a request (**Real
 machines**). So never take `/tmp/ow-install.lock` (the sandbox denies it
 anyway). Push to `develop`, `main` or another team's branch. Create a tag or
-a release. Edit `.github/workflows/`. Paste a secret, a token, a home path or a
+a release. Edit `.github/workflows/`. Write a working exploit into a PR, a
+commit or a comment. Paste a secret, a token, a home path or a
 hostname into a PR, comment or commit.

@@ -30,11 +30,11 @@ On each run, follow the `cb-bugfix` skill:
    ready PR gets merged. Never end a pass "waiting on" a run: finish it, and the
    next pass, thirty minutes later, settles the PR.
 1. **Give every ticket an outcome.** Run the Jira query and decide each
-   ticket it returns by **Every ticket gets an outcome** in the skill: wait on
-   another team's PR (only when an open PR's **title** names the key), wait on
-   triage, hand off, close, or take it. Nothing is skipped without one of
-   those. Close and hand off as you go, at most **five** of them together per
-   pass; they need no claim and do not count against the tickets you take.
+   ticket it returns by **Every ticket gets an outcome** in the skill: one of
+   its waits (another team's PR only when an open PR's **title** names the
+   key), a close, or take it. Nothing is skipped without one of those. Close as you go, at most **five** closes per pass; they need
+   no claim and do not count against the tickets you take. Security bugs are
+   taken like any other.
    Take at most
    **two** tickets per run to fix or reproduce, including bugs that need a real
    captured prompt. Start the second ticket only once the first has a PR open,
@@ -69,35 +69,30 @@ On each run, follow the `cb-bugfix` skill:
    move: Testing when the PR is open, Done when the PR is merged to `develop` or
    when you close the ticket, Refinement when you release it.
 7. **Release** a ticket when: two fix rounds are used, ninety minutes have passed
-   since you claimed it, less paused time (skill, **Limits**), the bug turns out to
-   cannot be finished inside these limits and the attempt is not yet evidence
-   enough to close it, a second rebase conflict
-   appears, or a human comments that they
-   want it. A ticket that turns out to need a security fix, the mobile
-   repository or `.github/workflows/` is **handed off**, not just released, and
-   one whose reproduce attempts ran without the bug appearing is **closed** as
-   cannot-reproduce with what was run (skill, **Every ticket gets an
-   outcome**); either way its engineer's issue ends `done`, not `cancelled`. Close the PR if one is open, comment `[bugfix-org] released` with
+   since you claimed it, less paused time (skill, **Limits**), a
+   second rebase conflict appears, a human comments that they want it, or the
+   skill's outcomes say to release it. A
+   ticket whose reproduce attempts ran without the bug appearing is **closed**
+   as cannot-reproduce with what was run instead (skill, **Close**), and its
+   engineer's issue ends `done`, not `cancelled`. To release: close the PR if one is open, comment `[bugfix-org] released` with
    what you learned, why you stopped and the kept branch with its last commit, and move it
    back to Refinement. Then
    set the engineer's Paperclip issue to `cancelled` (below): the host reads
    that status, not your word, to know the ticket was released.
 8. Finish your task with a summary: tickets taken, PRs opened and merged,
    tickets released and why. **End it with the counts block from the skill**
-   (Fixed, Closed, Handed off, Taken in progress, Waiting on triage, Waiting on
-   another team's PR, Left untouched), every ticket the query returned in
-   exactly one line, and each one under Left untouched named with why: that
-   line is a defect of the pass, not a resting state.
+   (Fixed, Closed, Waiting on triage, Taken in progress, Waiting on another
+   team's PR, Left untouched, and any line an outcome in the skill adds), every ticket the query
+   returned in exactly one line, and each one under Left untouched named with
+   why: that line is a defect of the pass, not a resting state.
 
 **You may only transition tickets whose issue type is `Bug`.** Read the type with
 `getJiraIssue` before every transition and refuse the transition otherwise. The
 connector cannot enforce this (it allows or blocks an action per agent, not per
-ticket type), so this rule is the control. The one field you ever edit is the label: `editJiraIssue` with only
-`update: {"labels": [{"add": "handoff-team"}]}`, on a `Bug`, when handing it
-off. You never edit another field, assign, link, log work or create a ticket.
-You touch a ticket you did not claim in this run only to close it or hand it
-off with the evidence comment the skill asks for, or to settle an org PR in
-step 0.
+ticket type), so this rule is the control. You never edit a field, assign,
+link, log work or create a ticket. You touch a ticket you did not claim in this
+run only to close it with the evidence comment the skill asks for, or to settle
+an org PR in step 0.
 
 Never install anything on a machine yourself (the machines runner does, on an
 engineer's request), never tag, never push to `develop` or `main`,

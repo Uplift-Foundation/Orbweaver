@@ -326,18 +326,18 @@ class InstructionTests(unittest.TestCase):
     # CB-480: two passes read 18 bugs, took none and changed nothing. Each
     # rule below is one of the ticket's five outcomes, pinned in the text the
     # lead actually reads, with a control that the old skip is gone.
-    def test_query_excludes_handed_off_tickets_without_dropping_unlabelled_ones(self):
+    def test_query_is_the_plain_refinement_query(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")
-        self.assertIn("AND (labels IS EMPTY OR labels != handoff-team) ORDER BY", skill)
-        # Control: the bare `!=` form would silently drop every ticket with no labels.
-        self.assertNotIn("AND labels != handoff-team ORDER BY", skill)
+        self.assertIn("project = CB AND issuetype = Bug AND status = Refinement ORDER BY", skill)
+        # Control: item 3 was changed to no hand-offs, so no label filter.
+        self.assertNotIn("handoff-team", skill)
 
     def test_every_ticket_gets_one_of_the_outcomes(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")
         for needle in ("## Every ticket gets an outcome",
                        "**No ticket the query returns is skipped in silence.**",
-                       "**Wait: another team's PR.**", "**Wait: triage.**",
-                       "**Hand off.**", "**Close.**", "**Take it: fix or reproduce.**"):
+                       "- **Wait: another team's PR.**", "- **Wait: triage.**",
+                       "- **Wait: org access.**", "- **Close.**", "- **Take it: fix or reproduce.**"):
             with self.subTest(needle):
                 self.assertIn(needle, skill)
         # Control: the old skip list, and the old leave-alone paragraph, are gone.
@@ -355,19 +355,19 @@ class InstructionTests(unittest.TestCase):
         lead = read("agents", "marisol-vandenberg", "AGENTS.md")
         self.assertIn("Done when the PR is merged to `develop` or\n   when you close the ticket", lead)
 
-    def test_closes_and_handoffs_are_capped_and_do_not_use_the_two_slots(self):
+    def test_closes_are_capped_and_do_not_use_the_two_slots(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")
-        self.assertIn("**Closes and hand-offs do not count against the two tickets, but at most five\nper pass, together.**", skill)
-        self.assertIn("plus at most five closes and hand-offs together", skill)
+        self.assertIn("**Closes do not count against the two tickets, but at most five closes per\npass.**", skill)
+        self.assertIn("plus at most five closes, two org", skill)
         lead = read("agents", "marisol-vandenberg", "AGENTS.md")
-        self.assertIn("at most **five** of them together per\n   pass", lead)
+        self.assertIn("at most **five** closes per pass", lead)
 
     def test_a_captured_prompt_is_taken_and_captured_by_qa(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")
         for needle in ("4. **Bugs that need a real captured prompt**",
                        "`gh pr create ... --draft`", "capture task",
                        "**If the capture cannot be made in two rounds**",
-                       "A ticket that needs only a machine, or\nonly a capture, is never handed off"):
+                       "or release it when the capture needs something the runner cannot\n   give"):
             with self.subTest(needle):
                 self.assertIn(needle, skill)
         qa = read("agents", "tamsin-oyelaran", "AGENTS.md")
@@ -379,19 +379,36 @@ class InstructionTests(unittest.TestCase):
         self.assertNotIn("need the mobile repository or a real captured prompt",
                          read("agents", "marisol-vandenberg", "AGENTS.md"))
 
-    def test_handoff_is_a_label_and_one_comment_once(self):
+    def test_security_bugs_are_taken_and_never_described_as_an_exploit(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")
-        for needle in ('`update: {"labels": [{"add": "handoff-team"}]}`',
-                       "`[bugfix-org] handoff-team:`", "Do it **once**",
-                       "If the label edit is refused, post the comment anyway"):
-            with self.subTest(needle):
-                self.assertIn(needle, skill)
-        lead = read("agents", "marisol-vandenberg", "AGENTS.md")
-        self.assertIn("The one field you ever edit is the label", lead)
-        # Control: only the lead is ever told to edit a Jira issue.
+        self.assertIn("**Security bugs are taken like any other bug**", skill)
+        self.assertIn("describe the class of flaw and\nthe fix, never a working exploit", skill)
+        self.assertIn("Write a working exploit into a PR, a\ncommit or a comment.", skill)
+        self.assertIn("Security bugs are\n   taken like any other.", read("agents", "marisol-vandenberg", "AGENTS.md"))
+        # Control: no list of things the org leaves alone names security any more.
+        for doc in (skill, read("README.md"), read("agents", "marisol-vandenberg", "AGENTS.md")):
+            self.assertNotIn("a security fix", doc)
+            self.assertNotIn("fix a security", doc)
+        # Control: no agent is told to edit a Jira field, so no label path exists.
         for slug in AGENTS:
-            has = "editJiraIssue" in read("agents", slug, "AGENTS.md")
-            self.assertEqual(has, slug == "marisol-vandenberg", slug)
+            self.assertNotIn("editJiraIssue", read("agents", slug, "AGENTS.md"))
+
+    def test_org_access_wait_writes_nothing_and_is_one_line_to_delete(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        lines = [l for l in skill.splitlines() if "org access" in l]
+        self.assertEqual(len(lines), 1, lines)
+        line = lines[0]
+        self.assertTrue(line.startswith("- **Wait: org access.** Until the org's GitHub access covers them"))
+        body = line.split("** ", 1)[1]
+        self.assertNotIn(". ", body, "one sentence after the label")
+        self.assertTrue(body.endswith("."))
+        for needle in ("`Orbweaver-Mobile`", "`.github/workflows/`", "no Jira comment, no transition",
+                       "not a defect of the pass", "`Waiting on org access: <n> (<keys>)`"):
+            self.assertIn(needle, line)
+        # Deleting that one line removes the wait everywhere the lead reads it:
+        # the lead's own file never names it.
+        self.assertNotIn("org access", read("agents", "marisol-vandenberg", "AGENTS.md"))
+        self.assertNotIn("org access", skill.replace(line + "\n", ""))
 
     def test_only_an_open_pr_title_holds_a_ticket_for_another_team(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")
@@ -403,8 +420,8 @@ class InstructionTests(unittest.TestCase):
 
     def test_report_ends_with_counts_and_names_what_was_left(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")
-        lines = ("Fixed: <n>", "Closed: <n>", "Handed off: <n>", "Taken, in progress: <n>",
-                 "Waiting on triage: <n>", "Waiting on another team's PR: <n>", "Left untouched: <n>")
+        lines = ("Fixed: <n>", "Closed: <n>", "Waiting on triage: <n>", "Taken, in progress: <n>",
+                 "Waiting on another team's PR: <n>", "Left untouched: <n>")
         block = re.search(r"```\n(Fixed: <n>.*?)```", skill, re.S)
         self.assertIsNotNone(block)
         self.assertEqual([l.split(" (")[0] for l in block.group(1).strip().splitlines()], list(lines))
