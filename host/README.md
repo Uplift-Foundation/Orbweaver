@@ -223,17 +223,23 @@ under it (or an approval has waited) for 30 minutes unswept by the warden, or
 the warden has not ticked in 15. While the company is paused only the first
 and last are read: the other two are the pause's own effects.
 
-When one holds, it writes `medic-snapshot.txt` and starts `claude -p` on
-`host/medic-runbook.md` under a pool account's config dir (`medic_config_dir`
-in `warden.json`, else the first pool account with one). One at a time
-(`medic.lock`), at most one launch per 20 minutes, 15-minute timeout, all of it
-in `medic.log`. The model's only command is `medic.py act <verb>`
-(`--allowedTools`, `--permission-mode dontAsk`, `--permission-prompts none`,
-`--safe-mode`); everything else is refused, which was proved with a real
-launch before this was merged. Each verb re-checks its own preconditions:
-`resume` never lifts a merge-audit or workflow-guard pause, lifts a develop-red
-pause only when it reads develop green at head itself, and a push-refusal pause
-only when it re-reads the run log and finds no git refusal line.
+When one holds, it asks a headless `claude -p` for a plan, with
+`host/medic-runbook.md` and a snapshot of what it read as the prompt (also kept
+in `medic-snapshot.txt`), under a pool account's config dir
+(`medic_config_dir` in `warden.json`, else the first pool account with one).
+One at a time (`medic.lock`), at most one launch per 20 minutes, 15-minute
+timeout, all of it in `medic.log`. **The model has no tools**: `--tools ""`,
+`--setting-sources ""`, `--strict-mcp-config`, an empty working directory. It
+answers `{diagnosis, actions}` under `--json-schema`, and `medic.py` validates
+every action against a closed list of verbs and arguments (issue references
+must be open tasks in the snapshot) before running any; one invalid action
+means none run and Warren is told once. An allow-listed Bash prefix was tried
+first and dropped: QA measured `; id` and `| cat` running after an allowed
+call. Each verb then re-checks its own preconditions: `resume` never lifts a
+merge-audit or workflow-guard pause, lifts a develop-red pause only when it
+reads develop green at head itself, a push-refusal pause only when it re-reads
+the run log and finds no git refusal line, and never a pause that came back
+within six hours of a medic resume.
 
 `escalate` posts one pending `request_board_approval` to the company per
 incident, which the app shows on the lead's orb as a waiting need titled

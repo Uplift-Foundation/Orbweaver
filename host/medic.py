@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """The medic: notices that the bug-fix org has stopped and gets it going (CB-485).
 
-    python3 host/medic.py check            # the launchd job, every 10 minutes
-    python3 host/medic.py act <verb> ...   # the only hands the diagnosing model has
+    python3 host/medic.py check     # the launchd job, every 10 minutes
 
 The warden (host/warden.py) pauses the company on a closed list of triggers,
 and it has paused it six times since 2026-11-24, five of them false alarms. Each
@@ -13,17 +12,19 @@ So the medic looks at the *outcome* instead of the causes:
 
   1. `check` runs four cheap checks in Python, with no model (see `trips`). If
      none holds it exits without a word.
-  2. If one does, it writes a snapshot of what it read and starts a headless
-     `claude -p` on host/medic-runbook.md and that snapshot. One at a time (a
-     lock file), at most one launch per 20 minutes, 15-minute timeout, under a
-     pool account's config dir rather than Warren's own.
-  3. The model has no shell. Its only command is `medic.py act <verb>`, and the
-     verbs are a closed list. Every verb re-checks its own preconditions here,
-     in code, against what Paperclip, GitHub and the warden's files say now:
-     what the model believes, or was told by a task comment, does not count.
-     In particular `resume` refuses any pause carrying a safety reason whose
-     false-alarm proof it cannot confirm itself, and refuses merge-audit and
-     workflow-guard reasons outright (see `resume_refusals`).
+  2. If one does, it builds a snapshot of what it read and asks a headless
+     `claude -p`, given host/medic-runbook.md and that snapshot, for a plan.
+     One at a time (a lock file), at most one launch per 20 minutes, 15-minute
+     timeout, under a pool account's config dir rather than Warren's own.
+  3. The model has no tools at all. It returns {diagnosis, actions}, and this
+     file validates every action against a closed list of verbs and arguments
+     (`validate_plan`) and runs them itself; one invalid action means none
+     run, and Warren is told once. Every verb then re-checks its own
+     preconditions against what Paperclip, GitHub and the warden's files say
+     now: what the model believes, or was told by a task comment, does not
+     count. In particular `resume` refuses any pause carrying a safety reason
+     whose false-alarm proof it cannot confirm itself, and refuses merge-audit
+     and workflow-guard reasons outright (see `resume_refusals`).
 
 Everything that decides is a pure function near the top; everything that
 touches the world is behind a seam on `Medic` (Paperclip, GitHub, the launcher,
@@ -59,6 +60,7 @@ LAUNCH_TIMEOUT = 15 * 60
 SELF_ESCALATE_AFTER = 3      # launches in one incident before Python escalates itself
 WAKE_EVERY = 60 * 60         # one medic wake per task per hour
 RESTART_EVERY = 60 * 60
+RESUME_REPEAT = 6 * 60 * 60  # paused again this soon after a medic resume: a person decides
 BUGS_PER_DAY = 5
 LOG_TAIL = 100
 MEDIC_SOURCE = "orbweaver-medic"
@@ -75,7 +77,6 @@ PAUSED_LINE = re.compile(r"^PAUSED: (.*)$")
 BLOCKED_LINE = re.compile(r"^blocked issue ([0-9a-f]{8})$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 RUN8_RE = re.compile(r"^[0-9a-f]{8}$")
-ISSUE_RE = re.compile(r"^(?:[A-Z][A-Z0-9]{0,9}-\d{1,6}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$")
 
 
 def ts(s):
@@ -207,7 +208,10 @@ def launch_due(state, now):
 # ---------------------------------------------------------------- pause reasons
 
 def parse_log(lines):
-    """[(epoch, message)] from warden.log lines; lines that do not parse are dropped."""
+    """[(epoch or None, message)] from warden.log lines. A line whose time does
+    not parse keeps None rather than vanishing: Python 3.9 (the mini's
+    /usr/bin/python3) rejects a fraction that is not 3 or 6 digits, and a
+    PAUSED: line dropped for that would let a resume through (fail open)."""
     out = []
     for line in lines:
         m = LOG_LINE.match(line.rstrip("\n"))
@@ -216,18 +220,19 @@ def parse_log(lines):
         try:
             t = dt.datetime.fromisoformat(m.group(1)).timestamp()
         except ValueError:
-            continue
+            t = None
         out.append((t, m.group(2)))
     return out
 
 
 def reasons_in_window(entries, since):
     """PAUSED: reasons the warden logged from a minute before `since` on. The
-    warden logs the reason just after the PATCH that sets pausedAt."""
+    warden logs the reason just after the PATCH that sets pausedAt. A reason
+    whose time cannot be read counts as inside the window."""
     out = []
     for t, msg in entries:
         m = PAUSED_LINE.match(msg)
-        if m and since is not None and t >= since - 60 and m.group(1) not in out:
+        if m and since is not None and (t is None or t >= since - 60) and m.group(1) not in out:
             out.append(m.group(1))
     return out
 
@@ -237,7 +242,7 @@ def blocked_in_window(entries, since):
     out = []
     for t, msg in entries:
         m = BLOCKED_LINE.match(msg)
-        if m and since is not None and t >= since - 60 and m.group(1) not in out:
+        if m and since is not None and t is not None and t >= since - 60 and m.group(1) not in out:
             out.append(m.group(1))
     return out
 
@@ -363,6 +368,117 @@ def issue_rows(issues):
     return out
 
 
+# ---------------------------------------------------------------- the model's plan
+#
+# The model has no tools at all (the lead's ruling, after QA measured that an
+# allow-listed Bash prefix still ran `; id` and `| cat` after an allowed call).
+# It answers with one JSON object, checked against PLAN_SCHEMA by the CLI and
+# then again here by `validate_plan`, which is the whole boundary: every verb
+# and every argument is checked against a closed list, issue references must
+# name a task in the snapshot, and free text exists only in file-bug and
+# escalate. A plan with one bad action runs none of them.
+
+VERBS = ("noop", "resume", "wake", "close-pass", "restart-warden", "file-bug", "escalate")
+MAX_ACTIONS = 10
+DIAGNOSIS_MAX, SUMMARY_MAX, BODY_MAX, LINE_MAX = 2000, 150, 8000, 300
+
+PLAN_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["diagnosis", "actions"],
+    "properties": {
+        "diagnosis": {"type": "string"},
+        "actions": {"type": "array", "maxItems": MAX_ACTIONS, "items": {
+            "type": "object", "additionalProperties": False, "required": ["verb", "args"],
+            "properties": {"verb": {"type": "string", "enum": list(VERBS)}, "args": {"type": "object"}}}},
+    },
+}
+
+ARG_KEYS = {
+    "noop": ((), ()), "restart-warden": ((), ()),
+    "resume": ((), ("develop_green", "no_refusal")),
+    "wake": (("issue",), ()), "close-pass": (("issue",), ()),
+    "file-bug": (("summary", "body"), ()), "escalate": (("line",), ()),
+}
+
+
+def one_line(s, n):
+    """Free text as it may be logged or titled: newlines and runs of space
+    collapsed, so nothing the model writes can forge a log line, then capped."""
+    return " ".join(str(s).split())[:n]
+
+
+def validate_plan(plan, known_issues):
+    """(actions, None) with each action's args normalised, or (None, why).
+    `known_issues` are the identifiers of the open tasks in the snapshot."""
+    if not isinstance(plan, dict) or set(plan) != {"diagnosis", "actions"}:
+        return None, "plan is not {diagnosis, actions}"
+    if not isinstance(plan["diagnosis"], str) or not isinstance(plan["actions"], list):
+        return None, "diagnosis must be a string and actions a list"
+    if len(plan["actions"]) > MAX_ACTIONS:
+        return None, f"more than {MAX_ACTIONS} actions"
+    out = []
+    for n, a in enumerate(plan["actions"]):
+        why = _invalid_action(a, known_issues)
+        if why:
+            return None, f"action {n}: {why}"
+        out.append(_normalise(a))
+    return out, None
+
+
+def _invalid_action(a, known):
+    if not isinstance(a, dict) or set(a) != {"verb", "args"}:
+        return "not {verb, args}"
+    verb, args = a["verb"], a["args"]
+    if verb not in VERBS:
+        return f"unknown verb {one_line(verb, 40)!r}"
+    if not isinstance(args, dict):
+        return "args is not an object"
+    need, may = ARG_KEYS[verb]
+    if set(args) - set(need) - set(may) or set(need) - set(args):
+        return f"{verb} takes {list(need) + list(may)}, got {sorted(map(str, args))[:6]}"
+    if "issue" in args and (not isinstance(args["issue"], str) or args["issue"] not in known):
+        return f"{verb}: {one_line(args['issue'], 40)!r} is not an open task in the snapshot"
+    if verb == "resume":
+        g = args.get("develop_green")
+        if g is not None and not (isinstance(g, str) and SHA_RE.match(g)):
+            return "resume: develop_green must be a 40-character sha"
+        r = args.get("no_refusal", [])
+        if not isinstance(r, list) or len(r) > 10 or not all(isinstance(x, str) and RUN8_RE.match(x) for x in r):
+            return "resume: no_refusal must be a list of 8-character run ids"
+    for k in ("summary", "body", "line"):
+        if k in args and (not isinstance(args[k], str) or not args[k].strip()):
+            return f"{verb}: {k} must be non-empty text"
+    return None
+
+
+def _normalise(a):
+    verb, args = a["verb"], dict(a["args"])
+    if verb == "file-bug":
+        args["summary"] = one_line(args["summary"], SUMMARY_MAX)
+        args["body"] = args["body"][:BODY_MAX]
+    if verb == "escalate":
+        args["line"] = one_line(args["line"], LINE_MAX)
+    if verb == "resume":
+        args.setdefault("develop_green", None)
+        args.setdefault("no_refusal", [])
+    return {"verb": verb, "args": args}
+
+
+def parse_output(code, stdout):
+    """(plan, None) from `claude -p --output-format json`, or (None, why).
+    Measured on 2.1.332: a JSON object whose `structured_output` is the plan."""
+    if code != 0:
+        return None, f"model exited {code}"
+    try:
+        out = json.loads(stdout or "")
+    except ValueError:
+        return None, "model output is not JSON"
+    if not isinstance(out, dict) or out.get("is_error"):
+        return None, "model reported an error: " + one_line((out or {}).get("subtype") if isinstance(out, dict) else "", 80)
+    if not isinstance(out.get("structured_output"), dict):
+        return None, "no structured_output in the model's answer"
+    return out["structured_output"], None
+
+
 # ---------------------------------------------------------------- the medic
 
 class Refused(Exception):
@@ -371,8 +487,8 @@ class Refused(Exception):
 
 class Medic:
     """`pc` is the warden's PaperclipHttp (or a fake), `gh` a GhCli for desktop.
-    `launcher(argv, env, cwd, timeout)` -> (exit code, output); `restart()`
-    kickstarts the warden; `warden_busy()` is True while a warden tick runs."""
+    `launcher(prompt)` -> (exit code, stdout); `restart()` kickstarts the
+    warden; `warden_busy()` is True while a warden tick runs."""
 
     def __init__(self, cfg, pc, gh, now, log, launcher=None, restart=None, warden_busy=None, sleep=time.sleep):
         self.cfg, self.pc, self.gh, self.now, self.log = cfg, pc, gh, now, log
@@ -407,24 +523,23 @@ class Medic:
         return self.load("state.json", {})
 
     def log_entries(self):
+        """(last LOG_TAIL lines, every parsed entry). The whole log is parsed,
+        so a pause older than the tail still has its reason (QA)."""
         try:
             with open(self.path("warden.log")) as f:
-                lines = f.readlines()[-2000:]
+                lines = f.readlines()
         except OSError:
             return [], []
         return lines[-LOG_TAIL:], parse_log(lines)
 
     def last_tick(self):
-        """The warden saves state.json at the end of every tick, paused or not;
-        its log may be quiet for a whole paused hour (CB-484 logs a refusal
-        once), so the file's mtime is the tick and the log is the fallback."""
-        t = []
-        for name in ("state.json", "warden.log"):
-            try:
-                t.append(os.path.getmtime(self.path(name)))
-            except OSError:
-                pass
-        return max(t) if t else None
+        """The warden saves state.json at the end of every tick, paused or not.
+        Its log is not a heartbeat: unpaused, it logs only on a token mint,
+        and the live log has 15-minute gaps (QA, 2026-11-24 and 11-25)."""
+        try:
+            return os.path.getmtime(self.path("state.json"))
+        except OSError:
+            return None
 
     # -- reading the org
 
@@ -447,7 +562,7 @@ class Medic:
     # -- check
 
     def check(self):
-        """One launchd cycle. Returns 0; a cycle that cannot read is logged."""
+        """One launchd cycle. A cycle that cannot read is logged, never raised."""
         os.makedirs(self.dir, exist_ok=True)
         lock = open(self.path("medic.lock"), "a")
         try:
@@ -489,27 +604,54 @@ class Medic:
             inc = st["incident"] = {"key": key, "since": now, "launches": 0, "escalated": None}
             for name, why in tripped:
                 self.log(f"TRIPPED: {name}: {why}")
-        if inc.get("escalated"):
-            self.save("medic-state.json", st)
-            return 0  # Warren has been told; nothing more until the incident changes or ends
-        if not launch_due(st, now):
-            self.save("medic-state.json", st)
-            return 0
+        self.save("medic-state.json", st)
+        if inc.get("escalated") or not launch_due(st, now):
+            return 0  # told already, or launched too recently
         if inc["launches"] >= SELF_ESCALATE_AFTER:
-            self.save("medic-state.json", st)
-            self.escalate(f"medic launched {inc['launches']} times and the org is still stopped: "
-                          + "; ".join(why for _, why in tripped)[:200], by="medic.py")
+            self.try_escalate(f"medic launched {inc['launches']} times and the org is still stopped: "
+                              + "; ".join(why for _, why in tripped), by="medic.py")
             return 0
+        prompt, known = self.prompt(tripped, inc, company, wst, tail, entries, runs, issues, agents)
+        inc["launches"] += 1
+        st["last_launch"] = now
+        self.save("medic-state.json", st)
+        self.log(f"LAUNCH: {key} (launch {inc['launches']} this incident)")
+        code, out = self.launcher(prompt)
+        plan, why = parse_output(code, out)
+        actions = None
+        if plan is not None:
+            actions, why = validate_plan(plan, known)
+        if actions is None:
+            self.log(f"PLAN REJECTED, nothing run: {one_line(why, 300)}")
+            self.try_escalate(f"medic could not act: the model's plan was rejected ({one_line(why, 120)})", by="medic.py")
+            return 0
+        self.log(f"PLAN: {one_line(plan['diagnosis'], DIAGNOSIS_MAX)}")
+        for a in actions:
+            self.act(a["verb"], a["args"])
+        return 0
+
+    def prompt(self, tripped, inc, company, wst, tail, entries, runs, issues, agents):
+        """(prompt text, identifiers the plan may name)."""
         since = pause_started(company, wst.get("pauses", [])) if company else None
-        reasons = pause_reasons(wst, entries, since) if company and company.get("status") == "paused" else []
-        stopped = blocked_in_window(entries, since) if since else []
+        paused = bool(company and company.get("status") == "paused")
+        reasons = pause_reasons(wst, entries, since) if paused else []
+        if "stop_blocked" in wst:  # CB-484 records them; before it, the log does
+            stopped = set(wst.get("stop_blocked") or [])
+            stopped_ids = [i.get("identifier") for i in issues if i["id"] in stopped and i.get("status") not in SETTLED]
+        else:
+            short = blocked_in_window(entries, since) if since else []
+            stopped_ids = [i.get("identifier") for i in issues if i["id"][:8] in short and i.get("status") not in SETTLED]
+        known = sorted(i.get("identifier") for i in issues if i.get("status") not in SETTLED and i.get("identifier"))
         trusted = {
-            "now": iso(now), "incident": key, "incident_since": iso(inc["since"]),
+            "now": iso(self.now), "incident": inc["key"], "incident_since": iso(inc["since"]),
             "tripped": [{"check": n, "detail": d} for n, d in tripped],
             "company_status": (company or {}).get("status"), "paused_since": iso(since) if since else None,
-            "pause_reasons": [{"reason_index": n, "kind": classify(r)[0], "run": classify(r)[1] if classify(r)[0] == "push_log" else None}
+            "pause_reasons": [{"index": n, "kind": classify(r)[0],
+                               "run": classify(r)[1] if classify(r)[0] == "push_log" else None}
                               for n, r in enumerate(reasons)],
-            "stopped_by_warden": [i.get("identifier") for i in issues if i["id"][:8] in stopped and i.get("status") not in SETTLED],
+            "stopped_by_warden": stopped_ids,
+            "warden_restores_stopped": "stop_blocked" in wst or hasattr(W.Warden, "restart_stopped"),
+            "open_task_ids": known,
             "warden_counters": {k: wst.get(k) for k in ("consecutive_releases", "paperclip_releases")},
             "medic": {"launches_this_incident": inc["launches"], "escalated": inc.get("escalated")},
         }
@@ -518,23 +660,20 @@ class Medic:
             "warden_log_tail": [l.rstrip("\n") for l in tail],
             "open_tasks": issue_rows(issues),
             "recent_comments": self.recent_comments(issues),
-            "recent_runs": [{"id8": r["id"][:8], "status": r.get("status"), "agent": r.get("agentId", "")[:8],
-                             "issue": r.get("issueId", "")[:8] if r.get("issueId") else None,
+            "recent_runs": [{"id8": r["id"][:8], "status": r.get("status"), "agent": (r.get("agentId") or "")[:8],
+                             "issue": (r.get("issueId") or "")[:8] or None,
                              "created": r.get("createdAt"), "error_code": r.get("errorCode"),
                              "error": (r.get("error") or "")[:300]} for r in runs[:20]],
             "agents": [{"name": a.get("name"), "status": a.get("status"), "id8": a["id"][:8]} for a in agents],
         }
-        snap = self.path("medic-snapshot.txt")
-        fd = os.open(snap, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        snap = snapshot_text(trusted, untrusted, secrets.token_hex(8))
+        p = self.path("medic-snapshot.txt")  # kept for the person reading medic.log afterwards
+        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
-            f.write(snapshot_text(trusted, untrusted, secrets.token_hex(8)))
-        inc["launches"] += 1
-        st["last_launch"] = now
-        self.save("medic-state.json", st)  # before launch: the model's verbs read and write it too
-        self.log(f"LAUNCH: {key} (launch {inc['launches']} this incident)")
-        code, out = self.launcher(snap)
-        self.log(f"model exited {code}: " + " ".join((out or "").split())[-600:])
-        return 0
+            f.write(snap)
+        with open(runbook_path()) as f:
+            runbook = f.read()
+        return runbook + "\n\n---\n\n" + snap, known
 
     def recent_comments(self, issues):
         out = {}
@@ -549,19 +688,21 @@ class Medic:
             out[i.get("identifier") or i["id"][:8]] = [(c.get("body") or "")[:600] for c in rows[-3:]]
         return out
 
-    # -- verbs
+    # -- verbs: each re-checks its own preconditions against the world now
 
     def act(self, verb, args):
-        """Run one verb. Prints one line for the model; 0 done, 2 refused."""
+        """Run one validated action; True when done. A refusal or a failed
+        seam is logged and the next action still runs."""
         try:
             msg = getattr(self, "v_" + verb.replace("-", "_"))(args)
         except Refused as e:
-            self.log(f"ACT {verb} refused: {e}")
-            print(f"refused: {e}")
-            return 2
-        self.log(f"ACT {verb}: {msg}")
-        print(msg)
-        return 0
+            self.log(f"ACT {verb} refused: {one_line(e, 400)}")
+            return False
+        except Exception as e:
+            self.log(f"ACT {verb} failed: {type(e).__name__} {getattr(e, 'code', '')}".rstrip())
+            return False
+        self.log(f"ACT {verb}: {one_line(msg, 400)}")
+        return True
 
     def v_noop(self, args):
         return "noop"
@@ -570,24 +711,21 @@ class Medic:
         return self.pc.call("GET", f"/api/companies/{self.company}")
 
     def v_resume(self, args):
-        p = argparse.ArgumentParser(prog="resume", add_help=False)
-        p.add_argument("--develop-green")
-        p.add_argument("--no-refusal", action="append", default=[])
-        try:
-            a = p.parse_args(args)
-        except SystemExit:
-            raise Refused("arguments: [--develop-green <sha>] [--no-refusal <run8>]...")
-        if a.develop_green and not SHA_RE.match(a.develop_green):
-            raise Refused("--develop-green takes a full 40-character sha")
-        if any(not RUN8_RE.match(r) for r in a.no_refusal):
-            raise Refused("--no-refusal takes an 8-character run id")
         company = self._company()
         if company.get("status") != "paused":
             raise Refused("the company is not paused")
+        st = self.state()
+        recent = [t for t in st.get("resumes", []) if self.now - t < RESUME_REPEAT]
+        if recent:
+            # CB-484's brake (or anything else) re-paused it after the medic
+            # lifted it: resuming again every cycle would be a loop. A person
+            # decides from here (QA).
+            raise Refused(f"the medic resumed the company at {iso(recent[-1])} and it is paused again; escalate")
         wst = self.warden_state()
         _, entries = self.log_entries()
         reasons = pause_reasons(wst, entries, pause_started(company, wst.get("pauses", [])))
-        why = resume_refusals(reasons, a.develop_green, a.no_refusal, self.verify_develop, self.verify_no_refusal)
+        why = resume_refusals(reasons, args.get("develop_green"), args.get("no_refusal", []),
+                              self.verify_develop, self.verify_no_refusal)
         if why:
             raise Refused("; ".join(why))
         self.wait_for_warden()
@@ -595,6 +733,8 @@ class Medic:
             self.pc.resume()
         else:  # before CB-484's PaperclipHttp.resume
             self.pc.call("PATCH", f"/api/companies/{self.company}", {"status": "active"})
+        st["resumes"] = (st.get("resumes", []) + [self.now])[-20:]
+        self.save("medic-state.json", st)
         wst = self.warden_state()  # re-read after the wait: a tick may have saved it
         self.save("state.json", reset_release_counters(wst))
         return "resumed; release counters reset; reasons were: " + " | ".join(r[:100] for r in reasons)
@@ -606,7 +746,7 @@ class Medic:
             if not (self.warden_busy and self.warden_busy()):
                 return
             self.sleep(2)
-        raise Refused("the warden is mid-tick; try again in a minute")
+        raise Refused("the warden is mid-tick; try again next cycle")
 
     def verify_develop(self, sha):
         head = (self.gh.api(f"repos/{W.REPO}/commits/develop") or {}).get("sha")
@@ -624,17 +764,15 @@ class Medic:
             return "the log does contain git's refusal lines"
         return None
 
-    def _issue(self, args, verb):
-        if len(args) != 1 or not ISSUE_RE.match(args[0]):
-            raise Refused(f"{verb} takes one issue identifier (QAF-123) or id")
+    def _issue(self, args):
         issues = self.pc.all_issues(self.company)
-        i = self.find_issue(issues, args[0])
+        i = self.find_issue(issues, args["issue"])
         if i is None:
-            raise Refused(f"no issue {args[0]} in the bug-fix company")
+            raise Refused(f"no issue {args['issue']} in the bug-fix company")
         return i, issues
 
     def v_wake(self, args):
-        i, _ = self._issue(args, "wake")
+        i, _ = self._issue(args)
         if self._company().get("status") == "paused":
             raise Refused("the company is paused: the warden would block the task again; resume first")
         if i.get("status") not in ("blocked", "todo"):
@@ -652,7 +790,7 @@ class Medic:
         return f"woke {i.get('identifier')}"
 
     def v_close_pass(self, args):
-        i, issues = self._issue(args, "close-pass")
+        i, issues = self._issue(args)
         if i.get("status") != "blocked":
             raise Refused(f"{i.get('identifier')} is {i.get('status')}, not blocked")
         kids = [c for c in issues if c.get("parentId") == i["id"]]
@@ -665,10 +803,7 @@ class Medic:
         return f"closed {i.get('identifier')}"
 
     def v_restart_warden(self, args):
-        if args:
-            raise Refused("restart-warden takes no arguments")
-        why = check_warden(self.last_tick(), self.now)
-        if not why:
+        if not check_warden(self.last_tick(), self.now):
             raise Refused("the warden ticked within 15 minutes; nothing to restart")
         st = self.state()
         last = st.get("last_restart")
@@ -680,11 +815,7 @@ class Medic:
         return "warden kickstarted"
 
     def v_file_bug(self, args):
-        if len(args) != 2:
-            raise Refused("file-bug takes <summary> <body>")
-        summary, body = args
-        if not summary.strip() or "\n" in summary or len(summary) > 150 or len(body) > 8000:
-            raise Refused("summary is one line of at most 150 characters; body at most 8000")
+        summary, body = args["summary"], args["body"]
         d = self.path("medic-bugs")
         os.makedirs(d, mode=0o700, exist_ok=True)
         day = dt.datetime.fromtimestamp(self.now, dt.timezone.utc).strftime("%Y%m%d")
@@ -692,24 +823,37 @@ class Medic:
             raise Refused(f"{BUGS_PER_DAY} bugs already filed today")
         slug = re.sub(r"[^a-z0-9]+", "-", summary.lower()).strip("-")[:50] or "bug"
         name = dt.datetime.fromtimestamp(self.now, dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + slug + ".md"
-        # No host-side Jira credential exists: the org's Jira reaches CB only
-        # through Paperclip's connector, as a comment, from the lead agent. So
-        # the bug is written here for the lead or a person to file as a CB Bug.
+        # No host-side Jira credential exists: the org reaches CB only through
+        # Paperclip's connector, as comments from the lead. So the bug is
+        # written here for the lead or a person to file as a CB Bug.
         fd = os.open(os.path.join(d, name), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w") as f:
             f.write(f"Project: CB\nType: Bug\nSummary: {summary}\nFiled-by: bug-fix org medic, {iso(self.now)}\n\n{body}\n")
         return f"bug written to medic-bugs/{name}"
 
     def v_escalate(self, args):
-        if len(args) != 1 or not args[0].strip() or "\n" in args[0] or len(args[0]) > 300:
-            raise Refused("escalate takes one line of at most 300 characters")
-        return self.escalate(args[0], by="model")
+        return self.escalate(args["line"], by="model")
+
+    def try_escalate(self, line, by):
+        try:
+            self.escalate(one_line(line, LINE_MAX), by)
+        except Refused as e:
+            self.log(f"escalation not sent: {e}")
+        except Exception as e:
+            self.log(f"escalation failed: {type(e).__name__} {getattr(e, 'code', '')}".rstrip())
 
     def escalate(self, line, by):
+        """Once per incident, and never while a medic escalation is still
+        pending, so a pause that keeps coming back reaches Warren once."""
         st = self.state()
         inc = st.setdefault("incident", {"key": "manual", "since": self.now, "launches": 0, "escalated": None})
         if inc.get("escalated"):
             raise Refused("this incident has already been escalated")
+        pending = self.pc.call("GET", f"/api/companies/{self.company}/approvals?status=pending") or []
+        if any((a.get("payload") or {}).get("source") == MEDIC_SOURCE and a.get("status") == "pending" for a in pending):
+            inc["escalated"] = self.now
+            self.save("medic-state.json", st)
+            raise Refused("an earlier medic escalation is still pending")
         # A pending board approval is what the app already shows as "needs you":
         # PaperclipApi.Compose puts it on the lead's orb (no agent named) with
         # the payload's title and summary.
@@ -745,38 +889,28 @@ def pool_config_dir(cfg):
     raise LookupError("no pool account with a config dir")
 
 
-def claude_argv(snapshot, config, claude="claude"):
-    """The headless launch. --tools limits the built-in tools to Bash and Read;
-    --allowedTools pre-approves exactly `python3 <medic.py> act ...` and reading
-    the runbook and snapshot; dontAsk with --permission-prompts none denies
-    everything else instead of asking anyone; --safe-mode drops CLAUDE.md,
-    hooks, plugins and MCP servers from whatever directory it starts in.
-    A Read rule's absolute path takes two leading slashes; one means relative
-    to the project."""
-    me = os.path.abspath(__file__)
-    act = f"python3 {me} act"
-    if config != DEFAULT_CONFIG:
-        act = f"python3 {me} --config {config} act"
-    prompt = (f"You are the bug-fix org's medic. Read the runbook at {runbook_path()} and the snapshot at "
-              f"{snapshot}, then act only through `{act} <verb> ...` as the runbook says. "
-              "Finish with one line saying what you did and why.")
-    return [claude, "-p", prompt, "--tools", "Bash,Read",
-            "--allowedTools", f"Bash({act} *)", f"Read(/{runbook_path()})", f"Read(/{snapshot})",
-            "--permission-mode", "dontAsk", "--permission-prompts", "none",
-            "--safe-mode", "--strict-mcp-config", "--output-format", "text"]
+def claude_argv(claude="claude"):
+    """The headless launch. `--tools ""` gives the model no tools at all (QA
+    measured StructuredOutput as the only one left); `--setting-sources ""` and
+    `--strict-mcp-config` keep the pool account's settings, hooks and MCP
+    servers out. The prompt goes in on stdin, the plan comes back as
+    `structured_output`."""
+    return [claude, "-p", "--tools", "", "--json-schema", json.dumps(PLAN_SCHEMA),
+            "--strict-mcp-config", "--setting-sources", "", "--output-format", "json"]
 
 
-def real_launcher(cfg, config_path):
-    def launch(snapshot):
+def real_launcher(cfg):
+    def launch(prompt):
         env = dict(os.environ, CLAUDE_CONFIG_DIR=pool_config_dir(cfg))
         env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + env.get("PATH", "/usr/bin:/bin")
+        empty = os.path.join(cfg.get("dir", W.DEFAULT_DIR), "medic-empty")
+        os.makedirs(empty, mode=0o700, exist_ok=True)
         try:
-            p = subprocess.run(claude_argv(snapshot, config_path, cfg.get("claude", "claude")),
-                               capture_output=True, text=True, env=env,
-                               cwd=cfg.get("dir", W.DEFAULT_DIR), timeout=LAUNCH_TIMEOUT)
+            p = subprocess.run(claude_argv(cfg.get("claude", "claude")), input=prompt,
+                               capture_output=True, text=True, env=env, cwd=empty, timeout=LAUNCH_TIMEOUT)
         except subprocess.TimeoutExpired:
             return "timeout", ""
-        return p.returncode, (p.stdout or "") + (p.stderr or "")
+        return p.returncode, p.stdout
     return launch
 
 
@@ -790,18 +924,6 @@ def real_warden_busy():
     return p.returncode == 0
 
 
-class LazyPaperclip:
-    """Signs in on first use, so `act noop` and argument refusals need no login."""
-
-    def __init__(self, login, company):
-        self.args, self.pc = (login, company), None
-
-    def __getattr__(self, name):
-        if self.pc is None:
-            self.pc = W.PaperclipHttp(*self.args)
-        return getattr(self.pc, name)
-
-
 def build(config_path):
     cfg = json.load(open(config_path))
     d = cfg.get("dir", W.DEFAULT_DIR)
@@ -812,32 +934,23 @@ def build(config_path):
         logf.write(f"{dt.datetime.now(dt.timezone.utc).isoformat()} {msg}\n")
         logf.flush()
 
-    m = Medic(cfg, LazyPaperclip(cfg["paperclip_login"], cfg["company_id"]), W.GhCli(W.REPO, "develop"),
-              time.time(), log, real_launcher(cfg, config_path), real_restart, real_warden_busy)
+    m = Medic(cfg, W.PaperclipHttp(cfg["paperclip_login"], cfg["company_id"]), W.GhCli(W.REPO, "develop"),
+              time.time(), log, real_launcher(cfg), real_restart, real_warden_busy)
     return m, logf
 
 
 def main(argv=None):
     p = argparse.ArgumentParser()
-    p.add_argument("--config", default=os.environ.get("ORBWEAVER_MEDIC_CONFIG", DEFAULT_CONFIG))
-    p.add_argument("command", choices=["check", "act"])
-    p.add_argument("verb", nargs="?")
-    p.add_argument("args", nargs=argparse.REMAINDER)
+    p.add_argument("command", choices=["check"])
+    p.add_argument("--config", default=DEFAULT_CONFIG)
     a = p.parse_args(argv)
-    verbs = ("noop", "resume", "wake", "close-pass", "restart-warden", "file-bug", "escalate")
-    if a.command == "act" and a.verb not in verbs:
-        print("refused: verbs are " + ", ".join(verbs))
-        return 2
-    m, logf = build(a.config)
     try:
-        if a.command == "check":
-            return m.check()
-        try:
-            return m.act(a.verb, a.args)
-        except Exception as e:  # a seam failed: say so, plainly, to the model and the log
-            m.log(f"ACT {a.verb} failed: {type(e).__name__} {getattr(e, 'code', '')}".rstrip())
-            print(f"failed: {type(e).__name__} {getattr(e, 'code', '')}".rstrip())
-            return 1
+        m, logf = build(a.config)
+    except Exception as e:
+        print(f"medic: cannot start: {type(e).__name__}", file=sys.stderr)
+        return 1
+    try:
+        return m.check()
     finally:
         logf.close()
 
