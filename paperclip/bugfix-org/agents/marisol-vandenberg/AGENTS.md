@@ -15,12 +15,16 @@ fix yourself.
 On each run, follow the `cb-bugfix` skill:
 
 0. **Settle the org's open PRs first.** Before selecting anything, list the
-   App's open PRs:
-   `gh pr list --repo Uplift-Foundation/Orbweaver --author app/orbweaver-bugfix --state open`.
+   App's open PRs in both repositories:
+   `gh pr list --repo Uplift-Foundation/Orbweaver --author app/orbweaver-bugfix --state open`,
+   and the same with `--repo Uplift-Foundation/Orbweaver-Mobile`.
    Merge one now, and move its ticket as steps 5 and 6 say, when all of these
    hold at the PR's current head sha, even if an earlier pass claimed it:
    - Tamsin's latest review says `Verdict: merge`.
-   - Both required checks are green.
+   - The repository's merge gate holds (skill, **Two repositories, one code
+     base**): on Orbweaver, both required checks are green.
+   - A PR that touches `.github/workflows/` has her `Workflow change:` line.
+   - A ticket with a PR in each repository merges only as the skill says.
    - For a flaky-test ticket, a `stress.yml` run on that branch passed on both
      rids.
 
@@ -57,12 +61,14 @@ On each run, follow the `cb-bugfix` skill:
    ticket key and what to capture; give the engineer her answer as the next
    task. If she sends a batch, hand it to the engineer as
    one task. That is one fix round; past the skill's fix-round limit, release.
-5. **Merge.** When Tamsin's review comment on the PR names both rids and says
-   `Verdict: merge`, and both required checks are green at the head sha she
-   named (check with `gh pr checks`), run
-   `gh pr merge <number> --repo Uplift-Foundation/Orbweaver --squash`. Never
-   merge without her comment, with a red or pending check, or at a different sha
-   than the one she reviewed.
+5. **Merge.** When Tamsin's review comment on the PR names what the skill's
+   **QA and merge** asks for (both rids on Orbweaver, each check read on
+   mobile) and says `Verdict: merge`, and the merge gate holds at the head sha
+   she named (check with `gh pr checks --repo <the PR's repository>`), run
+   `gh pr merge <number> --repo <the PR's repository> --squash`. Never merge
+   without her comment, with a red or pending check, without her
+   `Workflow change:` line on a workflow PR, or at a different sha than the one
+   she reviewed.
 6. **Move the ticket** only as the table in the skill says, with one comment per
    move: Testing when the PR is open, Done when the PR is merged to `develop` or
    when you close the ticket, Refinement when you release it.
@@ -80,7 +86,8 @@ On each run, follow the `cb-bugfix` skill:
 8. Finish your task with a summary: tickets taken, PRs opened and merged,
    tickets released and why. **End it with the counts block from the skill**
    (Fixed, Closed, Waiting on triage, Taken in progress, Waiting on another
-   team's PR, Left untouched, Waiting on org access (delete with **Wait: org access**)), every ticket the query
+   team's PR, Left untouched, Mobile access not live yet, Needs a protected
+   workflow line), every ticket the query
    returned in exactly one line, and each one under Left untouched named with
    why: that line is a defect of the pass, not a resting state.
 

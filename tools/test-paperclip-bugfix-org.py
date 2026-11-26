@@ -338,7 +338,7 @@ class InstructionTests(unittest.TestCase):
         for needle in ("## Every ticket gets an outcome",
                        "**No ticket the query returns is skipped in silence.**",
                        "- **Wait: another team's PR.**", "- **Wait: triage.**",
-                       "- **Wait: org access.**", "- **Close.**", "- **Take it: fix or reproduce.**"):
+                       "- **Wait: mobile access.**", "- **Close.**", "- **Take it: fix or reproduce.**"):
             with self.subTest(needle):
                 self.assertIn(needle, skill)
         # Control: the old skip list, and the old leave-alone paragraph, are gone.
@@ -360,7 +360,7 @@ class InstructionTests(unittest.TestCase):
         skill = read("skills", "cb-bugfix", "SKILL.md")
         limits = skill.split("## Limits", 1)[1].split("\n## ", 1)[0]
         for needle in ("**The limits are stated here and nowhere else;**", "**two tickets taken**",
-                       "**five closes** (which do not use the two)", "**two org PRs open**",
+                       "**five closes** (which do not use the two)", "**two tickets with\n  org PRs open**",
                        "**two fix rounds**", "**ninety minutes**", "**one rebase**"):
             with self.subTest(needle):
                 self.assertIn(needle, limits)
@@ -412,49 +412,141 @@ class InstructionTests(unittest.TestCase):
         for slug in AGENTS:
             self.assertNotIn("editJiraIssue", read("agents", slug, "AGENTS.md"))
 
-    def test_org_access_wait_writes_nothing_and_is_one_line_to_delete(self):
-        skill = read("skills", "cb-bugfix", "SKILL.md")
-        tag = "(delete with **Wait: org access**)"
-        lines = [l for l in skill.splitlines() if "org access" in l and tag not in l]
-        self.assertEqual(len(lines), 1, lines)
-        line = lines[0]
-        self.assertTrue(line.startswith("- **Wait: org access.** Until the org's GitHub access covers them"))
-        body = line.split("** ", 1)[1]
-        self.assertNotIn(". ", body, "one sentence after the label")
-        self.assertTrue(body.endswith("."))
-        for needle in ("`Orbweaver-Mobile`", "`.github/workflows/`", "no Jira comment, no transition",
-                       "not a defect of the pass", "the `Waiting on org access` line of the counts block",
-                       "put back rather than released", "move the ticket to Refinement with the one comment",
-                       "nothing merged; branch kept at <sha>", "`done` with that same sentence as its `comment`, never `cancelled`"):
-            self.assertIn(needle, line)
-        # Every other mention, in the counts block and the lead's step 8, carries
-        # the tag, so deleting the rule and the tagged mentions removes the wait.
-        self.assertIn("Waiting on org access: <n> (<keys>)   " + tag, skill)
-        lead = read("agents", "marisol-vandenberg", "AGENTS.md")
-        self.assertIn("Waiting on org access " + tag, lead)
-        for doc in (skill.replace(line + "\n", ""), lead):
-            for l in doc.replace("\n   ", " ").splitlines():
-                if "org access" in l:
-                    self.assertIn(tag, l)
-        # The lead can send that sentence: one PATCH carries status and comment.
-        self.assertIn('send it in the same body as `"comment"`', read("agents", "marisol-vandenberg", "AGENTS.md"))
+    # CB-481: the org works Orbweaver-Mobile and workflow files. The CB-480
+    # "Wait: org access" rule and every line tagged to it are gone.
+    def test_org_access_wait_is_gone(self):
+        docs = [read("skills", "cb-bugfix", "SKILL.md"), read("README.md"),
+                read("tasks", "fix-cb-bugs", "TASK.md")] + [read("agents", a, "AGENTS.md") for a in AGENTS]
+        for doc in docs:
+            self.assertNotIn("org access", doc)
+            self.assertNotIn("Wait: org access", doc)
 
-    def test_only_an_open_pr_title_holds_a_ticket_for_another_team(self):
+    def test_mobile_is_cloned_inside_the_worktree_and_ignored(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")
-        self.assertIn('--state open --search "<key> in:title" --json number,title', skill)
-        self.assertIn("A key named only in a PR body, a commit message or a branch is **not** a\n   reason to wait", skill)
-        # Control: the body search and the commit-mention skip are gone.
-        self.assertNotIn("in:title,body", skill)
-        self.assertNotIn("a pushed, unmerged commit names its key", skill)
+        for needle in ("## Two repositories, one code base",
+                       "git clone https://github.com/Uplift-Foundation/Orbweaver-Mobile.git mobile",
+                       "git -C mobile checkout -b <the worktree's own branch name> origin/develop",
+                       "The same branch name in both repositories"):
+            with self.subTest(needle):
+                self.assertIn(needle, skill)
+        with open(os.path.join(HERE, "..", ".gitignore"), encoding="utf-8") as f:
+            self.assertIn("/mobile/", f.read().splitlines())
+
+    def test_each_repository_has_its_own_gate(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        table = skill.split("## Two repositories, one code base", 1)[1].split("**The clone.**", 1)[0]
+        for needle in ("`build (macos-latest, osx-arm64)` and `build (windows-latest, win-x64)`",
+                       "`relay`, `contracts` and `tools` green always",
+                       "`android` green when the diff touches `android/` or `contracts/`",
+                       "`snapshots` green when it touches `app/`",
+                       "no real phone or Watch", "`none (mobile repository)`",
+                       "| Machines runner | yes (**Real machines**) | no:"):
+            with self.subTest(needle):
+                self.assertIn(needle, table)
+        qa = read("agents", "tamsin-oyelaran", "AGENTS.md")
+        self.assertIn("on a mobile PR, every check the skill's **Two\n  repositories, one code base** table expects", qa)
+        lead = read("agents", "marisol-vandenberg", "AGENTS.md")
+        self.assertIn("`gh pr merge <number> --repo <the PR's repository> --squash`", lead)
+        self.assertIn("and the same with `--repo Uplift-Foundation/Orbweaver-Mobile`", lead)
+        # Control: the lead no longer merges into Orbweaver only.
+        self.assertNotIn("gh pr merge <number> --repo Uplift-Foundation/Orbweaver --squash", lead)
+
+    def test_mobile_unreachable_is_counted_not_written(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        # The check needs the org's own token: the repository is readable
+        # anonymously, so a clone or ls-remote succeeding proves nothing.
+        self.assertIn("`gh api /installation/repositories --jq '.repositories[].full_name'`", skill)
+        self.assertIn("A clone proves nothing", skill)
+        self.assertNotIn("git ls-remote", skill)
+        self.assertNotIn("git ls-remote", read("README.md"))
+        self.assertIn("After a claim the signal is a **refused push**", skill)
+        self.assertIn("- **Wait: mobile access.**", skill)
+        self.assertIn("counted on `Mobile access not live yet`, and not a defect of the pass", skill)
+        self.assertIn("`[bugfix-org] stopped: mobile access not live\nyet; nothing merged; branch kept at <sha>`", skill)
+
+    def test_a_put_back_ticket_stays_a_wait_until_something_changes(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        rule = skill.split("- **Wait: put back.**", 1)[1].split("\n- **", 1)[0]
+        for needle in ("`[bugfix-org] stopped:` put-back", "with no Jira write",
+                       "until a\n   person comments after it", "the check in **Two\n   repositories, one code base** passes"):
+            with self.subTest(needle):
+                self.assertIn(needle, rule)
+        self.assertIn("(it always starts\n`[bugfix-org] stopped:`", skill)
+        # Every put-back sentence carries the prefix a later pass searches for.
+        for m in re.finditer(r"`([^`]*)stopped: ", skill):
+            self.assertEqual(m.group(1), "[bugfix-org] ", m.group(0))
+
+    def test_the_workflow_token_never_touches_mobile(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        self.assertIn("the workflow token is **never used inside `mobile/` or for any\n  mobile push**", skill)
+        self.assertIn("Every command in `mobile/`\nuses the everyday token, never `$BUGFIX_GH_WORKFLOW_TOKEN`.", skill)
+
+    def test_mobile_local_tests_are_marked_untried(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        row = [l for l in skill.splitlines() if l.startswith("| Local tests, targeted only |")][0]
+        self.assertIn("**untried under the sandbox:**", row)
+        self.assertIn("is **not** a failed round", row)
+
+    def test_a_fix_in_both_repositories_is_one_ticket_with_two_prs(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        self.assertIn("**A fix in both repositories is one ticket with two PRs**", skill)
+        self.assertIn("to\nDone only when both are merged", skill)
+        self.assertIn("**two tickets with\n  org PRs open** at once (a ticket with a PR in each repository counts once)", skill)
+        # Control: the per-PR wording is gone.
+        self.assertNotIn("**two org PRs open**", skill)
+
+    def test_workflow_files_are_orbweavers_only_and_guarded(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        section = skill.split("## Workflow files", 1)[1].split("\n## ", 1)[0]
+        for needle in ("Never `release.yml` or\n  `publish-screenshots.yml`",
+                       "an\n  environment, a secret, permissions, a trigger",
+                       "`$BUGFIX_GH_WORKFLOW_TOKEN` (Orbweaver only)",
+                       "**The proof is the PR's own CI run**",
+                       "`Workflow change: <files>; no environment, secret, permission, trigger or runner line`",
+                       "`Needs a protected\n  workflow line`", "`[bugfix-org] stopped: needs a protected workflow\n  line"):
+            with self.subTest(needle):
+                self.assertIn(needle, section)
+        self.assertIn("| Workflow files | allowed, under **Workflow files** | never |", skill)
+        self.assertIn("**Never on mobile:** edit `.github/workflows/`", skill)
+        # Control: the blanket ban is gone from the skill's Never and the engineers.
+        self.assertNotIn("a release. Edit `.github/workflows/`. Write", skill)
+        for slug in ("hana-moriyama", "rafaela-quintero"):
+            doc = read("agents", slug, "AGENTS.md")
+            self.assertIn("except as the skill's\n**Workflow files** allows (never on mobile)", doc)
+            self.assertNotIn("never edit a file\nunder `.github/workflows/`. You", doc)
+
+    def test_only_the_engineers_hold_the_workflow_token(self):
+        for slug in AGENTS:
+            has = "BUGFIX_GH_WORKFLOW_TOKEN" in read("agents", slug, "AGENTS.md")
+            self.assertEqual(has, slug in ("hana-moriyama", "rafaela-quintero"), slug)
+
+    def test_lead_needs_qas_workflow_line_before_merging(self):
+        lead = read("agents", "marisol-vandenberg", "AGENTS.md")
+        self.assertIn("A PR that touches `.github/workflows/` has her `Workflow change:` line.", lead)
+        self.assertIn("`Workflow change:` line on a workflow PR", lead)
+        qa = read("agents", "tamsin-oyelaran", "AGENTS.md")
+        self.assertIn("`Workflow change: <files>; no environment, secret, permission, trigger or runner line`", qa)
+
+    def test_putting_back_is_done_never_cancelled(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        section = skill.split("## Putting a ticket back", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("set the engineer's\nPaperclip issue to `done` with that same sentence as its `comment`, never\n`cancelled`", section)
+        self.assertIn("`[bugfix-org] stopped: needs a protected workflow\n  line (<the line it needs", skill)
+
+    def test_a_mobile_rerun_waits_for_the_per_repo_warden(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        self.assertIn('`{"verb": "rerun_failed", "pr": <PR number>, "repo": "mobile"}`', skill)
+        self.assertIn("only when\n`$BUGFIX_SPOOL/access.json` lists `\"mobile\": true` under `repos`", skill)
 
     def test_report_ends_with_counts_and_names_what_was_left(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")
         lines = ("Fixed: <n>", "Closed: <n>", "Waiting on triage: <n>", "Taken, in progress: <n>",
-                 "Waiting on another team's PR: <n>", "Left untouched: <n>")
+                 "Waiting on another team's PR: <n>", "Left untouched: <n>",
+                 "Mobile access not live yet: <n>", "Needs a protected workflow line: <n>")
         block = re.search(r"```\n(Fixed: <n>.*?)```", skill, re.S)
         self.assertIsNotNone(block)
         got = [l.split(" (")[0] for l in block.group(1).strip().splitlines()]
-        self.assertEqual(got, list(lines) + ["Waiting on org access: <n>"])
+        self.assertEqual(got, list(lines))
         lead = read("agents", "marisol-vandenberg", "AGENTS.md")
         self.assertIn("**End it with the counts block from the skill**", lead)
         self.assertIn("ending with the counts the skill asks for", read("tasks", "fix-cb-bugs", "TASK.md"))
@@ -486,7 +578,7 @@ BASH = find_bash()
 HOOK = os.path.join(HERE, "require-team-sdlc.sh")
 
 
-def hook_decision(body):
+def hook_decision(body, repo="Uplift-Foundation/Orbweaver"):
     """Run the real PreToolUse hook on a `gh pr create` carrying this body in a
     --body-file, and return 'deny' or 'allow'. The body goes in a file because
     that is the form the hook reads from disk."""
@@ -495,7 +587,7 @@ def hook_decision(body):
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(body)
         # Forward slashes: Git Bash cannot read a backslashed Windows path.
-        cmd = ("gh pr create --repo Uplift-Foundation/Orbweaver --base develop --head h "
+        cmd = ("gh pr create --repo " + repo + " --base develop --head h "
                "--title t --body-file " + path.replace("\\", "/"))
         payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}})
         out = subprocess.run([BASH, HOOK], input=payload, capture_output=True,
@@ -515,6 +607,14 @@ class PrBodyShapeTests(unittest.TestCase):
 
     def test_template_in_the_skill_is_allowed_by_the_real_hook(self):
         self.assertEqual(hook_decision(self.shape()), "allow")
+
+    def test_mobile_body_is_allowed_by_the_real_hook(self):
+        body = re.sub(r"(?m)^Installed on:.*(\n.+)*", "Installed on: none (mobile repository)", self.shape())
+        self.assertIn("Installed on: none (mobile repository)", body)
+        self.assertEqual(hook_decision(body, "Uplift-Foundation/Orbweaver-Mobile"), "allow")
+        # Control: the same body without the line is refused for mobile too.
+        self.assertEqual(hook_decision(body.replace("Installed on:", "Where:"),
+                                       "Uplift-Foundation/Orbweaver-Mobile"), "deny")
 
     def test_template_asks_for_machines_used_or_none_with_a_reason(self):
         self.assertRegex(self.shape(), r"(?m)^Installed on: <each of windows, mini, macbook")
