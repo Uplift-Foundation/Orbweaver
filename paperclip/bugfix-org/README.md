@@ -302,6 +302,40 @@ Then, none of which a package can carry:
    all four on 2026-11-24. The MacBook's Orbweaver fetched the new pictures on
    its next roster poll.
 
+## One worktree per pass (CB-482)
+
+The routine's title is `Fix open CB bugs {{timestamp}}`, not a fixed string.
+`{{timestamp}}` is one of Paperclip's two built-in routine variables (`date`
+and `timestamp`; `timestamp` renders like "November 26, 2026 at 5:00 AM UTC").
+The project's `branchTemplate` is `bugfix/pc-{{slug}}`, and the slug is the issue
+title, so a fixed title gave every pass the same branch and the same worktree,
+`bugfix/pc-fix-open-cb-bugs`. Each pass still got its own execution-workspace
+record, all pointing at that one path.
+
+**That shared path was deleted under running passes.** Paperclip's terminal
+workspace reaper runs `git worktree remove --force` on a closed issue's
+workspace once its issue tree is terminal, its branch counts as delivered (a
+pass branch never gets a commit, so it always does) and a cooldown has passed
+(`workspaceReaperCooldownDays`, default 1). It checks only the record it is
+cleaning, never whether another live record uses the same path. The removals
+were read back from each workspace's `workspace-operations` and match the pass
+that closed 24 hours earlier to within 3 s: QAF-56 closed 2026-11-25T05:01:42Z
+and the path went at 2026-11-26T05:01:45Z, under QAF-154's run; the same shape
+broke QAF-110 (21:30Z) and QAF-114 (22:00Z) on 2026-11-25. The run fails at
+finalize, after the agent's work is done, with `workspace_validation_failed`, and
+Paperclip moves the pass to `blocked`. A later run on the same issue re-creates
+the worktree (`git worktree add`) and carries on: QAF-110 and QAF-114 both did.
+Every new pass also ran `git reset --hard` in that shared checkout during
+preparation, under any pass still running there.
+
+A per-fire title gives each pass its own branch and worktree. Built-in
+variables are not routine variables, so they stay out of the dispatch
+fingerprint and coalescing is unchanged. The cost is one fresh worktree per pass
+(source only, the lead does not build), each reaped a day after its pass closes.
+The reaper's missing same-path check is Paperclip's own defect; the engineers'
+deliberate branch reuse across fix rounds is only safe because their branches
+are reaped only after the PR merges.
+
 ## What the org does not do
 
 Install on any of the three machines itself (it asks the machines runner, which

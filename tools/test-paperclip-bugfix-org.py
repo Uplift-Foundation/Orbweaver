@@ -45,6 +45,12 @@ def read(*parts):
         return f.read()
 
 
+def pass_title_is_per_fire(task_md):
+    """True when the routine task's `name:` renders differently on every fire."""
+    m = re.search(r"^name:\s*(.+)$", task_md, re.M)
+    return bool(m) and re.search(r"\{\{\s*timestamp\s*\}\}", m.group(1)) is not None
+
+
 # ---- a reader for the subset of YAML .paperclip.yaml uses -------------------
 def unquoted(value):
     """The value with any quoted span blanked out, so the checks below only look
@@ -266,6 +272,19 @@ class BrakeTests(unittest.TestCase):
         self.assertIn("assignee: marisol-vandenberg", task)
         self.assertIn("project: orbweaver-develop", task)
         self.assertIn("orbweaver-develop", self.cfg["projects"])
+
+    def test_each_pass_gets_its_own_worktree(self):
+        # CB-482: the branch is bugfix/pc-<slug of the title>, so a fixed title
+        # put every pass in one worktree, and Paperclip's reaper deleted it under
+        # a running pass a day after an earlier pass closed. {{timestamp}} is the
+        # only built-in that differs between two fires 30 minutes apart.
+        task = read("tasks", "fix-cb-bugs", "TASK.md")
+        self.assertTrue(pass_title_is_per_fire(task), "routine title is the same every fire")
+        # Negative controls: develop's fixed title, and {{date}} (48 fires a day share it).
+        self.assertFalse(pass_title_is_per_fire(task.replace(" {{timestamp}}", "")))
+        self.assertFalse(pass_title_is_per_fire(task.replace("{{timestamp}}", "{{date}}")))
+        # The README says why, so the next edit does not "tidy" the title back.
+        self.assertIn("One worktree per pass (CB-482)", read("README.md"))
 
 
 class InstructionTests(unittest.TestCase):
