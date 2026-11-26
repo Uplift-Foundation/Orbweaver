@@ -683,7 +683,7 @@ class World(unittest.TestCase):
                                           "parentId": "P", "assigneeAgentId": "eng", "activeRun": None,
                                           "lastActivityAt": self.OLD, "updatedAt": self.OLD}]
         self.pc.runs = [{"id": "r9", "issueId": "c", "agentId": "eng", "status": "cancelled",
-                         "createdAt": self.OLD, "errorCode": "ai_connection_pool_exhausted",
+                         "createdAt": TODAY, "errorCode": "ai_connection_pool_exhausted",
                          "error": "All eligible pool accounts are over their usage limit.",
                          "contextSnapshot": {"taskKey": "c"}}]
         with open(self.pool, "w") as f:

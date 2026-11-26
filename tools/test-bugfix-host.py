@@ -1165,8 +1165,8 @@ def RUN(issue, status="succeeded", agent="eng", at=NOW - 3600, **over):
     return row
 
 
-def EXHAUSTED(issue, **over):
-    return RUN(issue, "cancelled", errorCode="ai_connection_pool_exhausted",
+def EXHAUSTED(issue, at=NOW - 10 * 60, **over):
+    return RUN(issue, "cancelled", at=at, errorCode="ai_connection_pool_exhausted",
                error="All eligible pool accounts are over their usage limit. Waiting for usage to reset.",
                **over)
 
@@ -1240,6 +1240,20 @@ class UnstickChildTests(unittest.TestCase):
         st = {"child_wakes": {"c": [2, NOW - 21 * 60]}}
         self.assertEqual(decide(self.kids(), state=st), [("cancel_child", "c")])
 
+    def test_a_child_that_worked_after_its_wakes_starts_the_count_again(self):
+        # QA, CB-479: woken twice yesterday, worked, idle 21 minutes today.
+        st = {"child_wakes": {"c": [2, NOW - 86400]}}
+        self.assertEqual(decide(self.kids(), state=st), [("wake_child", "c")])
+        acts = warden.unstick_actions(self.kids(), [], {}, st, NOW, True)
+        self.assertEqual(acts[0]["wakes"], 1)
+
+    def test_our_own_wake_comment_does_not_reset_the_count(self):
+        # The comment bumps updatedAt to the wake time; inside the margin.
+        kids = [I("P", "in_progress", idle=60),
+                I("c", "in_progress", "P", idle=21 * 60 - 30, assignee="eng")]
+        st = {"child_wakes": {"c": [2, NOW - 21 * 60]}}
+        self.assertEqual(decide(kids, state=st), [("cancel_child", "c")])
+
     def test_no_second_wake_inside_twenty_minutes_of_the_first(self):
         self.assertEqual(decide(self.kids(), state={"child_wakes": {"c": [1, NOW - 19 * 60]}}), [])
 
@@ -1280,6 +1294,23 @@ class UnstickUsageTests(unittest.TestCase):
         self.assertEqual(decide([I("c", "todo", "P")], [EXHAUSTED("c", at=NOW - 7200), other]),
                          [("wake_child", "c")], "a cancel for another reason is not this rule")
 
+    def test_a_stale_usage_cancel_lets_a_settled_blocked_parent_be_closed(self):
+        # QA, CB-479: CB-469's run history must not shadow CB-424's release.
+        issues = [I("P", "blocked", idle=3600), I("e", "cancelled", "P", idle=3600, assignee="eng")]
+        runs = [EXHAUSTED("P", at=NOW - 7200)]
+        self.assertEqual(decide(issues, runs), [("wake_parent", "P")])
+        self.assertEqual(decide(issues, runs, said={"P": NOW - 600}), [("close_parent", "P")])
+
+    def test_a_fresh_usage_cancel_with_the_pool_full_does_nothing(self):
+        issues = [I("P", "blocked", idle=3600), I("e", "cancelled", "P", idle=3600, assignee="eng"),
+                  I("c", "in_progress", "P2", idle=3600)]
+        runs = [EXHAUSTED("P", at=NOW - 59 * 60), EXHAUSTED("c", at=NOW - 30 * 60)]
+        self.assertEqual(decide(issues, runs, said={"P": NOW - 600}, pool_ok=False), [])
+
+    def test_a_usage_cancel_with_no_time_does_not_count_as_fresh(self):
+        self.assertEqual(decide([I("c", "todo", "P")], [EXHAUSTED("c", createdAt=None)]),
+                         [("wake_child", "c")])
+
     def test_pool_headroom(self):
         self.assertTrue(warden.pool_has_headroom(POOL_OK))
         self.assertFalse(warden.pool_has_headroom(POOL_FULL))
@@ -1316,7 +1347,7 @@ class UnstickTickTests(unittest.TestCase):
         state, pc = {}, self.pc(released_pass())
         self.run_tick(pc, state)
         self.assertEqual([c[0] for c in pc.comments], ["P"])
-        self.assertEqual(state["unstick"]["parent_woken"], {"P": NOW})
+        self.assertEqual(state["unstick"]["companies"]["co"]["parent_woken"], {"P": NOW})
         self.run_tick(pc, state, now=NOW + 5 * 60)
         self.assertEqual(pc.statuses, [], "no close inside the grace, and no second wake")
         self.assertEqual(len(pc.comments), 1)
@@ -1354,7 +1385,7 @@ class UnstickTickTests(unittest.TestCase):
                 description="Ticket: CB-500\nfix")
         pc = self.pc([I("P", "in_progress", idle=60), kid])
         self.run_tick(pc, state)                              # seeds the release history
-        state["unstick"]["child_wakes"] = {"c": [2, NOW - 3600]}
+        state["unstick"]["companies"]["co"]["child_wakes"] = {"c": [2, NOW - 3600]}
         _, _, logs = self.run_tick(pc, state, now=NOW + 1)
         self.assertEqual(pc.statuses, [("c", "cancelled")])
         self.assertEqual(pc.comments[-1][0], "P", "the parent is told")
@@ -1380,7 +1411,7 @@ class UnstickTickTests(unittest.TestCase):
         self.run_tick(pc, state)
         self.assertEqual(pc.resets, [("eng", "c")])
         self.assertEqual(pc.comments[0][0], "c")
-        self.assertIn("c", state["unstick"]["resets"])
+        self.assertIn("c", state["unstick"]["companies"]["co"]["resets"])
         pc2 = self.pc([I("c", "in_progress", "P")])
         pc2.run_rows, pc2.pool = [EXHAUSTED("c")], None
         _, _, logs = self.run_tick(pc2, {})
@@ -1399,7 +1430,55 @@ class UnstickTickTests(unittest.TestCase):
         pc.fail_writes = True
         _, _, logs = self.run_tick(pc, state)
         self.assertTrue(any("unstick wake_parent QAF-P failed: OSError" in l for l in logs))
-        self.assertEqual(state["unstick"].get("parent_woken", {}), {}, "retried next tick, not skipped")
+        self.assertEqual(state["unstick"]["companies"]["co"].get("parent_woken", {}), {},
+                         "retried next tick, not skipped")
+
+    def test_two_companies_keep_each_others_wakes(self):
+        # QA, CB-479: company B's prune must not forget company A's wakes.
+        class TwoCos(FakePC):
+            def all_issues(self, company):
+                return self.by_co[company]
+        pc = TwoCos()
+        pc.pool = POOL_OK
+        pc.by_co = {"A": released_pass(), "B": [I("x", "in_progress", idle=60)]}
+        cfg = {"company_id": "A", "unstick_company_ids": ["A", "B"]}
+        state = {}
+        self.run_tick(pc, state, cfg=cfg)
+        self.assertEqual(state["unstick"]["companies"]["A"]["parent_woken"], {"P": NOW})
+        self.run_tick(pc, state, now=NOW + 5 * 60, cfg=cfg)
+        self.assertEqual(len(pc.comments), 1, "not re-woken every tick")
+        self.run_tick(pc, state, now=NOW + 15 * 60, cfg=cfg)
+        self.assertEqual(pc.statuses, [("P", "done")])
+
+    def test_a_malformed_row_is_logged_and_the_tick_still_finishes(self):
+        pc = self.pc([{"status": "todo"}] + released_pass())
+        state = {}
+        w, paused, logs = self.run_tick(pc, state)
+        self.assertFalse(paused)
+        self.assertTrue(any("unstick sweep failed for company co: KeyError" in l for l in logs))
+        self.assertEqual(state["last_mint"], NOW, "the rest of the tick ran and its state is kept")
+
+    def test_a_full_listing_page_skips_the_company(self):
+        pc = self.pc(released_pass() + [I(f"n{k}", "done", idle=3600) for k in range(996)])
+        pc.said = {"P": NOW}
+        _, _, logs = self.run_tick(pc, {})
+        self.assertEqual(pc.statuses, [])
+        self.assertTrue(any("listing may be truncated" in l for l in logs))
+        pc.all = pc.all[:-1]
+        self.run_tick(pc, {})
+        self.assertEqual(pc.statuses, [("P", "done")], "control: one row under the page acts")
+
+    def test_a_failed_cancel_is_not_left_on_the_exclusion_list(self):
+        state = {"unstick": {"cancelled": ["older"],
+                             "companies": {"co": {"child_wakes": {"c": [2, NOW - 3600]}}}}}
+        pc = self.pc([I("P", "in_progress", idle=60), I("c", "in_progress", "P", idle=3600, assignee="eng")])
+        pc.fail_writes = True
+        _, _, logs = self.run_tick(pc, state)
+        self.assertEqual(state["unstick"]["cancelled"], ["older"])
+        self.assertTrue(any("unstick cancel_child QAF-c failed" in l for l in logs))
+        pc.fail_writes = False
+        self.run_tick(pc, state, now=NOW + 300)
+        self.assertEqual(state["unstick"]["cancelled"], ["older", "c"], "the retry adds it back")
 
     def test_state_forgets_what_no_longer_applies(self):
         st = {"parent_woken": {"P": NOW, "gone": NOW}, "child_wakes": {"c": [1, NOW], "d": [2, NOW]},

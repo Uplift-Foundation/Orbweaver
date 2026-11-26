@@ -338,6 +338,9 @@ PARENT_WAKE_GRACE = 15 * 60  # after waking it, closed if still blocked
 CHILD_IDLE = 20 * 60         # a child with no run and no activity this long is stalled
 CHILD_WAKES = 2              # wakes before the sweep cancels it
 RESET_EVERY = 60 * 60        # one session reset per task per hour
+USAGE_FRESH = 60 * 60        # a usage cancel older than this no longer explains a stall
+WAKE_MARGIN = 60             # activity this long after a wake is the task's own, not our comment
+ISSUE_PAGE = 1000            # the listing size asked for; a full page may be truncated
 POOL_HEADROOM = 90           # an account under this on every limit can take work
 POOL_USAGE = os.path.expanduser("~/.paperclip/instances/default/pool-usage.json")
 USAGE_LIMIT_CODE = "ai_connection_pool_exhausted"
@@ -426,10 +429,14 @@ def unstick_actions(issues, runs, comments_at, state, now, pool_ok):
         idle = now - act if act is not None else None
         base = {"id": iid, "identifier": i.get("identifier") or iid[:8]}
 
-        # 3. Tied to an exhausted account. Decided first: a task waiting on
-        # usage is not stalled, so rule 2 never wakes or cancels it.
+        # 3. Tied to an exhausted account. Decided first, but only while the
+        # usage cancel is under an hour old: then the task is waiting on usage,
+        # not stalled, and rules 1 and 2 leave it alone. An older one explains
+        # nothing any more, so a blocked pass whose children settled since is
+        # closed by rule 1 instead of being reset every hour (QA, CB-479).
         run = latest_run.get(iid)
-        if run and usage_cancelled(run):
+        made = ts(run.get("createdAt")) if run else None
+        if run and usage_cancelled(run) and made is not None and now - made < USAGE_FRESH:
             last = resets.get(iid)
             if pool_ok and run.get("agentId") and (last is None or now - last >= RESET_EVERY):
                 key = (run.get("contextSnapshot") or {}).get("taskKey") or iid
@@ -458,6 +465,9 @@ def unstick_actions(issues, runs, comments_at, state, now, pool_ok):
         if (status in STALLABLE and i.get("parentId") and i.get("assigneeAgentId")
                 and idle is not None and idle >= CHILD_IDLE):
             n, at = (wakes.get(iid) or [0, None])
+            if at is not None and act > at + WAKE_MARGIN:
+                # It worked after the last wake: a new stall starts the count again.
+                n, at = 0, None
             if at is not None and now - at < CHILD_IDLE:
                 continue
             if n < CHILD_WAKES:
@@ -477,7 +487,6 @@ def prune_unstick_state(state, issues, now):
     state["child_wakes"] = {k: v for k, v in state.get("child_wakes", {}).items()
                             if by_id.get(k) not in SETTLED and k in by_id}
     state["resets"] = {k: v for k, v in state.get("resets", {}).items() if now - v < RESET_EVERY}
-    state["cancelled"] = state.get("cancelled", [])[-500:]
     return state
 
 
@@ -713,12 +722,19 @@ class Warden:
         for this tick; a failed action is logged and retried next tick, since
         state is only recorded after the call succeeds."""
         st = self.state.setdefault("unstick", {})
+        st["cancelled"] = st.get("cancelled", [])[-500:]
         main = self.cfg.get("company_id")
         for co in self.cfg.get("unstick_company_ids") or [main]:
             try:
                 if paused if co == main else self.pc.is_paused(co):
                     continue
                 issues = self.pc.all_issues(co)
+                if len(issues) >= ISSUE_PAGE:
+                    # A child missing from a cut-off page would make its
+                    # parent look settled; better to do nothing this tick.
+                    self.log(f"unstick skipped for company {str(co)[:8]}: {len(issues)} issues, "
+                             f"listing may be truncated")
+                    continue
                 runs = self.pc.company_runs(co)
                 comments_at = {}
                 for i in issues:
@@ -733,16 +749,28 @@ class Warden:
                 # No reading is no headroom: rule 3 waits, the others go on.
                 self.log(f"pool usage unreadable: {type(e).__name__}")
                 pool_ok = False
-            prune_unstick_state(st, issues, self.now)
-            for a in unstick_actions(issues, runs, comments_at, st, self.now, pool_ok):
+            # Wakes and resets are kept per company: pruning one company's
+            # against another's issues would forget them every tick (QA).
+            cst = st.setdefault("companies", {}).setdefault(str(co), {})
+            try:
+                prune_unstick_state(cst, issues, self.now)
+                actions = unstick_actions(issues, runs, comments_at, cst, self.now, pool_ok)
+            except Exception as e:
+                # The sweep never raises into the tick: state.json is saved
+                # only when tick() returns, and the brakes' state is in it.
+                self.log(f"unstick sweep failed for company {str(co)[:8]}: {type(e).__name__}")
+                continue
+            for a in actions:
                 try:
-                    self.do_unstick(a, st)
+                    self.do_unstick(a, cst, st)
                 except Exception as e:
                     self.log(f"unstick {a['kind']} {a['identifier']} failed: {type(e).__name__}")
                     continue
                 self.log(f"UNSTUCK: {a['kind']} {a['identifier']}")
 
-    def do_unstick(self, a, st):
+    def do_unstick(self, a, st, top):
+        """Carry out one action. `st` is the company's own unstick state,
+        `top` the shared one holding the sweep-cancel exclusion list."""
         k, iid = a["kind"], a["id"]
         if k == "close_parent":
             self.pc.set_issue_status(iid, "done")
@@ -755,8 +783,14 @@ class Warden:
         elif k == "cancel_child":
             # Recorded before the PATCH, so a tick that dies between the two
             # still never counts this cancel as a release.
-            st.setdefault("cancelled", []).append(iid)
-            self.pc.set_issue_status(iid, "cancelled")
+            top.setdefault("cancelled", []).append(iid)
+            try:
+                self.pc.set_issue_status(iid, "cancelled")
+            except Exception:
+                # Not cancelled, so not excluded: a later real release of it
+                # must still count. The retry adds it back.
+                top["cancelled"].remove(iid)
+                raise
             self.pc.comment(a["parent_id"], WAKE_PARENT_AFTER_CANCEL.format(child=a["identifier"]))
         elif k == "reset_session":
             self.pc.reset_session(a["agent_id"], a["task_key"])
@@ -884,7 +918,7 @@ class PaperclipHttp:
     # against the live instance before this was written.
 
     def all_issues(self, company):
-        rows = self.call("GET", f"/api/companies/{company}/issues?limit=1000") or []
+        rows = self.call("GET", f"/api/companies/{company}/issues?limit={ISSUE_PAGE}") or []
         return rows if isinstance(rows, list) else rows.get("issues", [])
 
     def company_runs(self, company):

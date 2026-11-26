@@ -84,9 +84,15 @@ a refused write is retried next tick.
 | --- | --- | --- |
 | `close_parent` | Task `blocked`, at least one child and every child `done` or `cancelled`, no live run on it or any child, untouched 10 min. The assignee's newest comment is newer than every child's last activity, or the parent was woken 15+ min ago and is still blocked. | `PATCH /api/issues/<id> {"status":"done"}`. Paperclip counts cancelled children as open blockers and refuses the lead's own `done` (CB-424's release); the board login is allowed. |
 | `wake_parent` | Same, with no newer report and no wake yet. | One board comment on the parent; a board comment on an open issue wakes its assignee. |
-| `wake_child` | Child task (has `parentId` and an assignee agent) `todo`, `in_progress` or `in_review`, no live run, no activity for 20 min, and 20 min since the last wake. At most twice. | Board comment on the child. |
+| `wake_child` | Child task (has `parentId` and an assignee agent) `todo`, `in_progress` or `in_review`, no live run, no activity for 20 min, and 20 min since the last wake. At most twice; activity of its own more than a minute after the last wake (beyond our comment's bump) starts the count again. | Board comment on the child. |
 | `cancel_child` | The same child, still stalled 20 min after its second wake. | Recorded in `state["unstick"]["cancelled"]` first, then `PATCH {"status":"cancelled"}`, then a board comment on the parent. That list keeps it out of the release brake: a sweep cancel is the warden's repair, not the lead giving up, and is logged as `not a release`. |
-| `reset_session` | Not settled, no live run, its latest run cancelled by the pool router (`errorCode` `ai_connection_pool_exhausted`, error "...over their usage limit..."), and `pool-usage.json` shows an `ok` account with every limit under 90% and none reached. Once per task per hour. | `POST /api/agents/<run's agent>/runtime-state/reset-session {"taskKey"}` (board-only route), then a wake comment. A task waiting on usage is never woken or cancelled by the child rule; an unreadable pool file means no headroom. |
+| `reset_session` | Not settled, no live run, its latest run cancelled under an hour ago by the pool router (`errorCode` `ai_connection_pool_exhausted`, error "...over their usage limit..."), and `pool-usage.json` shows an `ok` account with every limit under 90% and none reached. Once per task per hour. | `POST /api/agents/<run's agent>/runtime-state/reset-session {"taskKey"}` (board-only route), then a wake comment. While that cancel is under an hour old the task counts as waiting on usage and the other rules leave it alone; once it is older it explains nothing, and a blocked pass whose children settled is closed by the parent rule. An unreadable pool file means no headroom. |
+
+Wakes and resets are kept per company in `state["unstick"]["companies"]`; the sweep-cancel
+list is shared. A company whose listing comes back a full page (1000 rows) is skipped for the
+tick, since a child cut off the page would make its parent look settled. Any error deciding
+for a company is logged as `unstick sweep failed` and never reaches the rest of the tick,
+whose state is saved only when the tick returns.
 
 A blocked task with no children is not touched: that is what `stop_work` leaves behind on a
 pause, and it must not be closed once the company resumes. Measured read-only against the
