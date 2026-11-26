@@ -141,6 +141,11 @@ public partial class ClaudeCloudEventsTests
         events.TryWrite(Durable(41, "user", payload: SummaryRow));
         await Until(() => chat.History.FirstOrDefault()?.Compaction?.HasSummary == true);
 
+        // The fold is visible before the stream's handler has finished with the
+        // event: it raises TurnUpdated after it. Count the events as handled,
+        // or that late raise lands in `raised` below (CB-426).
+        await Until(() => chat.StreamEventsSeen == 2);
+
         var raised = 0;
         chat.TurnAdded += _ => raised++;
         chat.TurnUpdated += _ => raised++;
