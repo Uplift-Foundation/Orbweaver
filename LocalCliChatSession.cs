@@ -256,6 +256,7 @@ namespace Orbweaver
             if (!waiting)
             {
                 if (!_waiting) return;
+                if (_slashDialog) { _ = CheckSlashDialogGoneAsync(); return; }
 
                 _waiting = false;
                 SetPrompt(null);
@@ -1124,10 +1125,67 @@ namespace Orbweaver
         private string _pendingCaption = "";
         private DateTimeOffset _pendingAt;
 
-        public Task<ChatSendOutcome> SendAsync(string text) =>
-            _status.IsDesktopHosted
+        public async Task<ChatSendOutcome> SendAsync(string text)
+        {
+            var outcome = await (_status.IsDesktopHosted
                 ? SendViaBridgeAsync(text)
-                : SendCoreAsync(typedText: text, displayText: text, imageBytes: null);
+                : SendCoreAsync(typedText: text, displayText: text, imageBytes: null));
+
+            // CB-414: a slash command can open a menu (/exit with teammates running)
+            // while the session record never says "waiting", so nothing else reads it.
+            if (outcome == ChatSendOutcome.Sent && !_status.IsDesktopHosted && text.TrimStart().StartsWith('/'))
+                _ = WatchForDialogAfterSlashAsync();
+
+            return outcome;
+        }
+
+        // CB-414: how often and how long the screen is read after a panel-sent slash
+        // command, and whether the prompt on show came from that read rather than
+        // from a "waiting" record (so a scan that is not waiting does not clear it).
+        internal const int SlashWatchReads = 8;
+        internal static readonly TimeSpan SlashWatchEvery = TimeSpan.FromMilliseconds(500);
+        private bool _slashDialog;
+
+        // Reads the screen until a numbered menu is on it, or the reads run out.
+        // An idle prompt pane is not a menu: it reads as null and offers nothing.
+        internal async Task WatchForDialogAfterSlashAsync()
+        {
+            for (var i = 0; i < SlashWatchReads; i++)
+            {
+                await Delay(SlashWatchEvery, CancellationToken.None);
+                if (_waiting) return;
+
+                var screen = await Capture(_status);
+                if (screen is null) continue;
+
+                var parsed = ReadPrompt(screen);
+                if (parsed is not { Options.Count: > 0 }) continue;
+
+                _slashDialog = true;
+                _waiting = true;
+                _dialogHash = PromptFingerprint.Of(screen)?.Hash;
+                SetPrompt(parsed);
+                return;
+            }
+        }
+
+        // A prompt that came from the slash watch stays until the screen no longer
+        // shows a menu; the record is not waiting, so the scan cannot tell us.
+        private async Task CheckSlashDialogGoneAsync()
+        {
+            if (_refreshing) return;
+            _refreshing = true;
+            try
+            {
+                var screen = await Capture(_status);
+                if (screen is not null && ReadPrompt(screen) is { Options.Count: > 0 }) return;
+                if (!_slashDialog) return;
+
+                _waiting = false;
+                SetPrompt(null);
+            }
+            finally { _refreshing = false; }
+        }
 
         // The uuid the bridge send went out with, held beside _pending so the
         // transcript row that comes back — Claude Code keeps the uuid the event
@@ -1994,7 +2052,7 @@ namespace Orbweaver
         {
             // A cleared prompt is no overlay, so a later ordinary dialog is never
             // answered as one.
-            if (prompt is null) { _overlayHash = null; _loginHash = null; _shownLoginHash = null; _loginCodeEntry = false; }
+            if (prompt is null) { _slashDialog = false; _overlayHash = null; _loginHash = null; _shownLoginHash = null; _loginCodeEntry = false; }
             Prompt = prompt;
             Dispatcher.UIThread.Post(() => PromptChanged?.Invoke());
         }

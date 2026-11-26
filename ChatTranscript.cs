@@ -742,6 +742,22 @@ namespace Orbweaver
             // Usually "Do you want to proceed?". A rule or a frame edge is not a
             // question, so those fall through to the generic title.
             var title = t >= 0 ? cleaned[t] : "";
+
+            // CB-414: "Background work is running / The following will stop when
+            // you exit: / teammate · …" has body rows between its title and the
+            // options; the nearest line above the options is a body row, not the
+            // title. A "The following …:" lead-in names the body, and the line
+            // above it is the title.
+            for (var b = t; b >= Math.Max(0, t - MaxOptionGap); b--)
+            {
+                if (!cleaned[b].StartsWith("The following ", StringComparison.Ordinal) || !cleaned[b].EndsWith(':')) continue;
+
+                var above = b - 1;
+                while (above >= 0 && IsBlankOrFrame(cleaned[above])) above--;
+                if (above >= 0 && cleaned[above].Any(char.IsLetterOrDigit)) title = cleaned[above];
+                break;
+            }
+
             if (title.Length == 0 || !title.Any(char.IsLetterOrDigit)) title = "Waiting for input";
 
             firstOption = runStart;

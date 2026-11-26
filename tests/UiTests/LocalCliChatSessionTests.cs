@@ -2270,6 +2270,67 @@ public class LocalCliChatSessionTests : IDisposable
         Assert.NotEmpty(session.History);
     }
 
+    // CB-414: /exit sent from the panel opens a menu while the record stays "idle".
+    [AvaloniaFact]
+    public async Task AMenuOpenedByASlashCommandIsShownWhileTheRecordIsNotWaiting()
+    {
+        var session = new LocalCliChatSession("s1", new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "idle", Title = "", TmuxPane = "%42",
+        })
+        {
+            Capture = _ => Task.FromResult<string?>(PaneFixtures.MiniExitDialog),
+            Delay = (_, _) => Task.CompletedTask,
+        };
+
+        await session.WatchForDialogAfterSlashAsync();
+
+        Assert.Equal("Background work is running", session.Prompt!.Title);
+        Assert.Equal(3, session.Prompt.Options.Count);
+
+        // A scan that is not waiting does not take it away while the menu is up.
+        session.UpdateStatus(new SessionStatus { Source = SessionSource.ClaudeCode, State = "idle", Title = "", TmuxPane = "%42" });
+        await Task.Delay(50);
+        Assert.NotNull(session.Prompt);
+
+        // And it goes once the screen is back to the prompt.
+        var idle = new SessionStatus { Source = SessionSource.ClaudeCode, State = "idle", Title = "", TmuxPane = "%42" };
+        var screen = PaneFixtures.MiniExitDialog;
+        var reader = new LocalCliChatSession("s3", idle)
+        {
+            Capture = _ => Task.FromResult<string?>(screen),
+            Delay = (_, _) => Task.CompletedTask,
+        };
+        await reader.WatchForDialogAfterSlashAsync();
+        screen = PaneFixtures.MacPromptAfterEsc;
+        reader.UpdateStatus(idle);
+        for (var i = 0; i < 200 && reader.Prompt is not null; i++)
+        {
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            await Task.Delay(5);
+        }
+
+        Assert.Null(reader.Prompt);
+    }
+
+    // The negative control: a pane at its idle prompt offers no card after a slash command.
+    [AvaloniaFact]
+    public async Task AnIdlePromptAfterASlashCommandOffersNoCard()
+    {
+        var session = new LocalCliChatSession("s1", new SessionStatus
+        {
+            Source = SessionSource.ClaudeCode, State = "idle", Title = "", TmuxPane = "%42",
+        })
+        {
+            Capture = _ => Task.FromResult<string?>(PaneFixtures.MacPromptAfterEsc),
+            Delay = (_, _) => Task.CompletedTask,
+        };
+
+        await session.WatchForDialogAfterSlashAsync();
+
+        Assert.Null(session.Prompt);
+    }
+
     // A pane that cannot be captured: the form could not be read, so the honest
     // prompt is the one with nothing to click and the terminal link.
     [AvaloniaFact]
