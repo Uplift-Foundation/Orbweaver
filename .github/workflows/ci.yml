@@ -315,7 +315,7 @@ jobs:
         timeout-minutes: 10
         shell: bash
         env:
-          WATCHDOG_SECONDS: 480
+          WATCHDOG_SECONDS: 20
         run: |
           mkdir -p TestResults
           dotnet test tests/IntegrationTests -c Release --blame-hang-timeout 5m --blame-hang-dump-type none --logger "trx;LogFileName=integration-tests.trx" --logger "console;verbosity=normal" --results-directory TestResults &
