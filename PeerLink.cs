@@ -259,7 +259,8 @@ namespace Orbweaver
                     // either way. `machine` is reassigned only by an accepted
                     // hello and a refused one breaks the loop, so "still
                     // unnamed" is exactly "not yet accepted".
-                    if (IsUnnamed(machine) && message.Type != PeerProtocol.Hello)
+                    if (IsUnnamed(machine) && message.Type != PeerProtocol.Hello
+                        && !(message.Type == PeerProtocol.PairConfirm && AwaitingConfirm(machine)))
                     {
                         MirrorLog.SayOnce("peer-before-hello", $"t={message.Type} dropped");
                         continue;
@@ -284,6 +285,15 @@ namespace Orbweaver
                     // what this connection is called, which is why the loop
                     // carries `machine` in a local it is allowed to reassign
                     // rather than reading it back out of the dictionary.
+                    if (message.Type == PeerProtocol.PairConfirm)
+                    {
+                        var confirmed = await ConfirmedAsync(machine, message).ConfigureAwait(false);
+                        if (confirmed is null) break;
+
+                        machine = confirmed;
+                        continue;
+                    }
+
                     if (message.Type == PeerProtocol.Hello)
                     {
                         var named = await GreetedAsync(machine, message).ConfigureAwait(false);
@@ -305,11 +315,20 @@ namespace Orbweaver
                     // "198.51.100.10".
                     if (message.Type == PeerProtocol.Ok && IsGreetingAnswer(machine, message))
                     {
-                        if (PairingWith(machine) && !PairingConfirmed(machine, message))
+                        if (PairingWith(machine))
                         {
-                            MirrorLog.Say("peer-pair-unconfirmed", $"by={machine}");
-                            Drop(machine);
-                            break;
+                            // The accepting side has proved first; only if that
+                            // holds does this side prove in turn (CB-346).
+                            var ours = AnswerPairing(machine, message);
+                            if (ours is null)
+                            {
+                                MirrorLog.Say("peer-pair-unconfirmed", $"by={machine}");
+                                Drop(machine);
+                                break;
+                            }
+
+                            await SendAsync(machine, PeerProtocol.Message(
+                                PeerProtocol.PairConfirm, message.Id, proof: ours)).ConfigureAwait(false);
                         }
 
                         machine = Settle(machine, message.Name);
@@ -718,7 +737,8 @@ namespace Orbweaver
                     if (nameIsProvisional) _provisional.Add(machine);
                 }
 
-                if (pairing) BeginPairing(machine, pairingCode!, PeerIdentity.PinOf(own));
+                var pairingNonce = pairing ? PeerIdentity.NewNonce() : null;
+                if (pairing) BeginPairing(machine, pairingCode!, PeerIdentity.PinOf(own), pairingNonce!);
 
                 Adopt(machine, tls, offered, ct, endpoint: host + ":" + port);
                 adopted = true;
@@ -738,7 +758,7 @@ namespace Orbweaver
                 // session on to a machine called "(inbound)".
                 await SendAsync(machine, PeerProtocol.Message(
                     PeerProtocol.Hello, PeerProtocol.NewId(),
-                    name: MachineNames.Mine(), code: pairingCode))
+                    name: MachineNames.Mine(), nonce: pairingNonce))
                     .ConfigureAwait(false);
 
                 // Fired here, not left to Rename: Rename only runs for the
@@ -1042,6 +1062,7 @@ namespace Orbweaver
                 {
                     _peers.Remove(name);
                     _pairingWith.Remove(name);
+                    _awaiting.Remove(name);
                 }
             }
 
@@ -1124,15 +1145,15 @@ namespace Orbweaver
         //   when no window is open — CodeMatches already says no to a null
         //   expectation, and this states it rather than relying on it.
         internal static Greeting Judge(
-            PeerIdentity.Peer? known, string? offeredPin, string? openCode, string? offeredCode)
+            PeerIdentity.Peer? known, string? offeredPin, string? openCode, string? offeredNonce)
         {
             if (string.IsNullOrWhiteSpace(offeredPin)) return Greeting.Refused;
             if (PeerIdentity.Trusts(known, offeredPin)) return Greeting.Trusted;
             if (string.IsNullOrEmpty(openCode)) return Greeting.Refused;
 
-            return PeerIdentity.CodeMatches(openCode, offeredCode)
-                ? Greeting.Paired
-                : Greeting.Refused;
+            // The code is not in the greeting (CB-346); a pairing is proposed
+            // by a nonce, and decided only when the proofs have been checked.
+            return string.IsNullOrEmpty(offeredNonce) ? Greeting.Refused : Greeting.Paired;
         }
 
         // --- greeting ---------------------------------------------------------------
@@ -1149,6 +1170,15 @@ namespace Orbweaver
         {
             var claimed = hello.Name;
 
+            // A second greeting on a connection that is waiting to be confirmed
+            // is not part of any exchange this side knows.
+            if (AwaitingConfirm(machine))
+            {
+                MirrorLog.Say("peer-greeting-repeated", $"from={machine}");
+                Drop(machine);
+                return null;
+            }
+
             if (string.IsNullOrWhiteSpace(claimed))
             {
                 MirrorLog.Say("peer-greeting-nameless", $"from={machine}");
@@ -1164,7 +1194,7 @@ namespace Orbweaver
             // as no window at all, which is the whole point of having one.
             var open = OpenCode();
 
-            var verdict = Judge(_seams.KnownPeer(claimed), pin, open, hello.Code);
+            var verdict = Judge(_seams.KnownPeer(claimed), pin, open, hello.Nonce);
 
             if (verdict == Greeting.Refused)
             {
@@ -1178,26 +1208,30 @@ namespace Orbweaver
                 return null;
             }
 
-            string? proof = null;
-
             if (verdict == Greeting.Paired)
             {
-                // One window, one pairing. Leaving it open would turn a code
-                // read out once into a standing invitation — which the expiry
-                // above now also guards, but this is the stronger statement and
-                // does not wait five minutes to be true.
-                ClosePairing();
-                proof = PeerIdentity.PairingProof(
-                    open!, PeerIdentity.PinOf(await _seams.OwnCertificate(CancellationToken.None).ConfigureAwait(false)), pin);
+                // Nothing is remembered, renamed or closed yet (CB-346). This
+                // side proves it holds the code first, and the connection stays
+                // unnamed until the dialler's proof has been checked.
+                var ownPin = PeerIdentity.PinOf(await _seams.OwnCertificate(CancellationToken.None).ConfigureAwait(false));
+                var serverNonce = PeerIdentity.NewNonce();
 
-                PeerIdentity.Remember(new PeerIdentity.Peer(pin, claimed));
-                MirrorLog.Say("peer-paired", $"with={claimed}");
+                lock (_gate)
+                    _awaiting[machine] = new Awaiting(open!, hello.Nonce!, serverNonce, ownPin, pin, claimed);
+
+                await SendAsync(machine, PeerProtocol.Message(
+                    PeerProtocol.Ok, hello.Id, name: MachineNames.Mine(), nonce: serverNonce,
+                    proof: PeerIdentity.PairingProof(
+                        open!, PeerIdentity.ServerRole, hello.Nonce!, serverNonce, ownPin, pin)))
+                    .ConfigureAwait(false);
+
+                return machine;
             }
 
             Rename(machine, claimed);
 
             await SendAsync(claimed, PeerProtocol.Message(
-                PeerProtocol.Ok, hello.Id, name: MachineNames.Mine(), proof: proof))
+                PeerProtocol.Ok, hello.Id, name: MachineNames.Mine()))
                 .ConfigureAwait(false);
 
             return claimed;
@@ -1274,34 +1308,95 @@ namespace Orbweaver
             return named;
         }
 
-        // Machines we have greeted with a code and not yet heard back from.
+        // Machines we have greeted with a nonce and not yet heard back from,
         // with what each is waiting to check the answer against (CB-346).
-        private readonly Dictionary<string, (string Code, string OwnPin)> _pairingWith =
+        private readonly Dictionary<string, (string Code, string OwnPin, string Nonce)> _pairingWith =
             new(StringComparer.OrdinalIgnoreCase);
 
-        internal void BeginPairing(string machine, string code, string ownPin)
+        internal void BeginPairing(string machine, string code, string ownPin, string nonce)
         {
-            lock (_gate) _pairingWith[machine] = (code, ownPin);
+            lock (_gate) _pairingWith[machine] = (code, ownPin, nonce);
         }
 
-        // Whether an `ok` to a pairing greeting is from a machine that holds the
-        // code and is the one behind the certificate this connection is on.
-        // Judged against the pin the connection was adopted with, which is the
-        // certificate TLS actually presented.
-        private bool PairingConfirmed(string machine, PeerProtocol.PeerMessage ok)
+        // The accepting side's view of a pairing that has proved itself and is
+        // waiting for the dialler to do the same.
+        private sealed record Awaiting(
+            string Code, string ClientNonce, string ServerNonce, string ServerPin, string ClientPin, string Claimed);
+
+        private readonly Dictionary<string, Awaiting> _awaiting = new(StringComparer.Ordinal);
+
+        private bool AwaitingConfirm(string machine)
         {
-            (string Code, string OwnPin) expect;
+            lock (_gate) return _awaiting.ContainsKey(machine);
+        }
+
+        // The dialler's proof arrived. Only now is the pairing window closed,
+        // the pin remembered and the connection named; a wrong or late proof
+        // drops the connection and leaves everything as it was.
+        [ExcludeFromCodeCoverage]
+        private Task<string?> ConfirmedAsync(string machine, PeerProtocol.PeerMessage confirm)
+        {
+            Awaiting? pending;
+            lock (_gate)
+            {
+                if (!_awaiting.Remove(machine, out pending)) return Task.FromResult<string?>(null);
+            }
+
+            if (!PairConfirmed(pending, confirm.Proof, OpenCode()))
+            {
+                MirrorLog.Say("peer-pair-unconfirmed", $"from={pending.Claimed}");
+                Drop(machine);
+                return Task.FromResult<string?>(null);
+            }
+
+            // One window, one pairing.
+            ClosePairing();
+            PeerIdentity.Remember(new PeerIdentity.Peer(pending.ClientPin, pending.Claimed));
+            MirrorLog.Say("peer-paired", $"with={pending.Claimed}");
+
+            Rename(machine, pending.Claimed);
+            return Task.FromResult<string?>(pending.Claimed);
+        }
+
+        // Whether the dialler's proof is the one for this handshake, under the
+        // code of a window that is still open.
+        internal static bool PairConfirmed(
+            (string Code, string ClientNonce, string ServerNonce, string ServerPin, string ClientPin) pending,
+            string? proof, string? openCode) =>
+            openCode == pending.Code
+            && PeerIdentity.CodeMatches(
+                PeerIdentity.PairingProof(pending.Code, PeerIdentity.ClientRole,
+                    pending.ClientNonce, pending.ServerNonce, pending.ServerPin, pending.ClientPin),
+                proof);
+
+        private static bool PairConfirmed(Awaiting a, string? proof, string? openCode) =>
+            PairConfirmed((a.Code, a.ClientNonce, a.ServerNonce, a.ServerPin, a.ClientPin), proof, openCode);
+
+        // Checks the accepting side's proof against the certificate this
+        // connection was adopted with, which is the one TLS actually presented,
+        // and returns this side's own proof to send back, or null when it does
+        // not hold. The code is never sent: both proofs are keyed hashes over
+        // both nonces and both pins (CB-346).
+        internal string? AnswerPairing(string machine, PeerProtocol.PeerMessage ok)
+        {
+            (string Code, string OwnPin, string Nonce) expect;
             string presented;
 
             lock (_gate)
             {
-                if (!_pairingWith.TryGetValue(machine, out expect)) return false;
+                if (!_pairingWith.TryGetValue(machine, out expect)) return null;
                 presented = _peers.TryGetValue(machine, out var peer) ? peer.Pin : "";
             }
 
-            return !string.IsNullOrWhiteSpace(presented)
-                && PeerIdentity.CodeMatches(
-                    PeerIdentity.PairingProof(expect.Code, presented, expect.OwnPin), ok.Proof);
+            if (string.IsNullOrWhiteSpace(presented) || string.IsNullOrEmpty(ok.Nonce)) return null;
+
+            var theirs = PeerIdentity.PairingProof(
+                expect.Code, PeerIdentity.ServerRole, expect.Nonce, ok.Nonce, presented, expect.OwnPin);
+
+            return PeerIdentity.CodeMatches(theirs, ok.Proof)
+                ? PeerIdentity.PairingProof(
+                    expect.Code, PeerIdentity.ClientRole, expect.Nonce, ok.Nonce, presented, expect.OwnPin)
+                : null;
         }
 
         // Connections filed under a name we invented, waiting to be told a real
@@ -1427,6 +1522,7 @@ namespace Orbweaver
             {
                 _peers.Remove(machine, out peer);
                 _pairingWith.Remove(machine);
+                _awaiting.Remove(machine);
             }
 
             if (peer is null) return;

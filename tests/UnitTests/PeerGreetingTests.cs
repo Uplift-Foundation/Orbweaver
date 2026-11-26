@@ -23,7 +23,7 @@ public class PeerGreetingTests
         // The ordinary case: every reconnect after the first.
         Assert.Equal(
             PeerLink.Greeting.Trusted,
-            PeerLink.Judge(Known(OurPin), OurPin, openCode: null, offeredCode: null));
+            PeerLink.Judge(Known(OurPin), OurPin, openCode: null, offeredNonce: null));
     }
 
     [Fact]
@@ -31,7 +31,7 @@ public class PeerGreetingTests
     {
         Assert.Equal(
             PeerLink.Greeting.Trusted,
-            PeerLink.Judge(Known(OurPin), OurPin, openCode: "123456", offeredCode: null));
+            PeerLink.Judge(Known(OurPin), OurPin, openCode: "123456", offeredNonce: null));
     }
 
     [Fact]
@@ -39,7 +39,7 @@ public class PeerGreetingTests
     {
         Assert.Equal(
             PeerLink.Greeting.Paired,
-            PeerLink.Judge(null, TheirPin, openCode: "123456", offeredCode: "123456"));
+            PeerLink.Judge(null, TheirPin, openCode: "123456", offeredNonce: "n1"));
     }
 
     [Fact]
@@ -50,7 +50,7 @@ public class PeerGreetingTests
         // recovery. The code is the authority, and a person typed it.
         Assert.Equal(
             PeerLink.Greeting.Paired,
-            PeerLink.Judge(Known(OurPin), TheirPin, openCode: "123456", offeredCode: "123456"));
+            PeerLink.Judge(Known(OurPin), TheirPin, openCode: "123456", offeredNonce: "n1"));
     }
 
     [Fact]
@@ -61,15 +61,15 @@ public class PeerGreetingTests
         // certificate looks like.
         Assert.Equal(
             PeerLink.Greeting.Refused,
-            PeerLink.Judge(Known(OurPin), TheirPin, openCode: null, offeredCode: null));
+            PeerLink.Judge(Known(OurPin), TheirPin, openCode: null, offeredNonce: null));
     }
 
     [Fact]
-    public void AWrongCodeIsRefused()
+    public void AGreetingProposingNoPairingIsRefused()
     {
         Assert.Equal(
             PeerLink.Greeting.Refused,
-            PeerLink.Judge(null, TheirPin, openCode: "123456", offeredCode: "123457"));
+            PeerLink.Judge(null, TheirPin, openCode: "123456", offeredNonce: null));
     }
 
     [Fact]
@@ -77,7 +77,7 @@ public class PeerGreetingTests
     {
         Assert.Equal(
             PeerLink.Greeting.Refused,
-            PeerLink.Judge(null, TheirPin, openCode: null, offeredCode: "123456"));
+            PeerLink.Judge(null, TheirPin, openCode: null, offeredNonce: "n1"));
     }
 
     [Theory]
@@ -91,7 +91,7 @@ public class PeerGreetingTests
         // connections and then pin nothing.
         Assert.Equal(
             PeerLink.Greeting.Refused,
-            PeerLink.Judge(null, pin, openCode: "123456", offeredCode: "123456"));
+            PeerLink.Judge(null, pin, openCode: "123456", offeredNonce: "n1"));
     }
 
     // --- the pairing window --------------------------------------------------

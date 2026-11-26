@@ -337,21 +337,29 @@ namespace Orbweaver
             return difference == 0;
         }
 
-        // What the accepting side of a pairing sends back with its `ok` (CB-346).
+        // The two proofs of a pairing (CB-346).
         //
-        // The dialling side has no pin for a machine it is pairing with, so
-        // TLS alone cannot say who answered. The code is the one thing both
-        // real ends hold, so the answer is a keyed hash of the two certificates
-        // under that code: it is valid only for the certificates actually in
-        // this handshake, and only a holder of the code can make it.
-        internal static string PairingProof(string code, string serverPin, string clientPin)
+        // The code is never sent. Each side proves it holds it with a keyed
+        // hash over a fresh nonce from each side and the two certificates of
+        // this handshake, so a proof is valid for one handshake only and one
+        // certificate pair only. `role` keeps the two proofs from being
+        // replayed as one another: the accepting side proves first, and the
+        // dialler sends its own only after checking that one.
+        internal const string ServerRole = "server";
+        internal const string ClientRole = "client";
+
+        internal static string PairingProof(
+            string code, string role, string clientNonce, string serverNonce, string serverPin, string clientPin)
         {
-            var data = Encoding.UTF8.GetBytes(
-                "orbweaver-pair-v1|" + serverPin.ToLowerInvariant() + "|" + clientPin.ToLowerInvariant());
+            var data = Encoding.UTF8.GetBytes(string.Join("|",
+                "orbweaver-pair-v2", role, clientNonce, serverNonce,
+                serverPin.ToLowerInvariant(), clientPin.ToLowerInvariant()));
 
             using var mac = new HMACSHA256(Encoding.UTF8.GetBytes(code));
             return Convert.ToHexString(mac.ComputeHash(data)).ToLowerInvariant();
         }
+
+        internal static string NewNonce() => Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
 
         // --- disk -----------------------------------------------------------------
 
