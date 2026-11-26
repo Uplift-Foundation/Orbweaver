@@ -169,9 +169,15 @@ public partial class ClaudeCloudEventsTests
 
         // Not masked: the roster seeing the turn puts Stop back and starts a
         // loop to watch it, which ends it on its own first idle read.
+        //
+        // The new loop's first wait is parked: the fake clock returns at once, so
+        // otherwise the loop runs its idle read and clears busy on a pool thread
+        // while this thread is still on its way to the assert (CB-426).
+        var firstTick = clock.ParkNextWait();
         chat.UpdateStatus(BusyRow());
         Assert.True(chat.CanInterrupt);
         Assert.NotSame(loop, chat.LiveTask);
+        firstTick.SetResult();
         await Bounded(chat.LiveTask, "the live loop");
         Assert.Equal(1, Lines(chat, "turn over after 2s (joined)"));
     }
