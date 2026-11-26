@@ -69,6 +69,13 @@ CLASS_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]{0,199}$")
 SUITES = ("unit", "integration", "ui")
 MAX_N = 50
 RELEASES_IN_A_ROW = 2
+# The release brake is a cost brake, not a safety brake (CB-484): a pause whose
+# only reasons are these two lifts itself after BRAKE_COOL_OFF, unless the brake
+# tripped again within BRAKE_REPEAT of the last such resume.
+SPOOL_BRAKE = f"{RELEASES_IN_A_ROW} tickets released in a row"
+PAPERCLIP_BRAKE = f"{RELEASES_IN_A_ROW} releases in a row (Paperclip issue states)"
+BRAKE_COOL_OFF = 60 * 60
+BRAKE_REPEAT = 6 * 60 * 60
 AUDIT_FAILURES_BEFORE_PAUSE = 3
 DEFAULT_DIR = os.path.expanduser("~/.config/orbweaver-bugfix")
 ACCESS_FILE = "access.json"
@@ -527,6 +534,11 @@ def runs_problem(count, cap):
     return f"{count} runs started today, cap {cap}" if count > cap else None
 
 
+def is_release_brake(reasons):
+    """True when every pause reason is the release brake (and there is one)."""
+    return bool(reasons) and all(r in (SPOOL_BRAKE, PAPERCLIP_BRAKE) for r in reasons)
+
+
 def note_pause_state(windows, paused, now):
     """Pause windows [{paused_at, resumed_at}] (epoch seconds) after a tick
     that saw the company `paused` or not. A window opens on the first tick that
@@ -795,7 +807,7 @@ class Warden:
             self.state["consecutive_releases"] = next_release_state(self.state, "released")
             self.log(f"{req['ticket']} released ({self.state['consecutive_releases']} in a row)")
             if self.state["consecutive_releases"] >= RELEASES_IN_A_ROW:
-                self.pause(f"{RELEASES_IN_A_ROW} tickets released in a row")
+                self.pause(SPOOL_BRAKE)
         elif v == "push_refused":
             self.pause("GitHub refused a bot push on a ruleset")
         elif v == "rerun_failed":
@@ -880,7 +892,9 @@ class Warden:
         """A pause only defers new assignments: a run in flight keeps going
         (phase 0, measured). So while the company is paused, every tick cancels
         its queued and running runs and sets its in-progress issues to blocked.
-        The warden never resumes; a person or the lead does."""
+        The warden resumes only a pause of its own whose sole reason is the
+        release brake, after its cool-off (CB-484); any other pause is lifted
+        by a person or the lead."""
         # One refusal must not end the tick (CB-467): Paperclip answered a
         # PATCH to blocked with 422, the exception escaped, and the warden died
         # after pausing but before logging why or saving its state, on every
@@ -891,12 +905,18 @@ class Warden:
                 self.log(f"cancelled run {run_id[:8]}")
             except (urllib.error.URLError, OSError, ValueError) as e:
                 self.log(f"could not cancel run {run_id[:8]}: {type(e).__name__} {getattr(e, 'code', '')}".rstrip())
+        # A refusal is retried every tick but logged once per issue per pause:
+        # Paperclip refused one issue with 422 about 160 times in one 13-hour
+        # pause (CB-484). The list is cleared when the company is seen active.
+        refused = self.state.setdefault("block_refused", [])
         for issue_id in self.pc.in_progress_issue_ids():
             try:
                 self.pc.block_issue(issue_id)
                 self.log(f"blocked issue {issue_id[:8]}")
             except (urllib.error.URLError, OSError, ValueError) as e:
-                self.log(f"could not block issue {issue_id[:8]}: {type(e).__name__} {getattr(e, 'code', '')}".rstrip())
+                if issue_id not in refused:
+                    refused.append(issue_id)
+                    self.log(f"could not block issue {issue_id[:8]}: {type(e).__name__} {getattr(e, 'code', '')}".rstrip())
 
     def watch_releases(self):
         """Releases from Paperclip's own issue states. The spool's `released`
@@ -916,21 +936,24 @@ class Warden:
                 self.log(f"release signal unreadable for issue {issue_id[:8]}")
                 self.pause(f"release signal unreadable (issue {issue_id[:8]} has no readable description)")
             elif kind == "release":
-                # One release per ticket per fix pass. Releasing a ticket after
-                # its second fix round cancels both engineer issues, and counting
-                # each paused the org on a single release (CB-471). The pass is
-                # the parent issue; a row with no parent cannot be matched to
-                # one, so it is counted, which errs towards the brake.
-                parent = rows[issue_id].get("parentId")
-                counted = self.state.setdefault("paperclip_release_passes", [])
-                if parent and [key, parent] in counted:
-                    self.log(f"{key} already counted as released in this pass (issue {issue_id[:8]})")
+                # One release per ticket until the next merge, whatever pass its
+                # engineer issues belong to. CB-471 matched on [ticket, parent
+                # pass], but with the routine firing every 30 minutes a fix
+                # round's issue is made by a later pass than the first, so
+                # CB-346's two cancelled issues under two passes paused the org
+                # for 13 hours on one release (CB-484). Every row that reaches
+                # here has a key (classify_release); a row without one is
+                # `other` or `unreadable`, and the latter still pauses, which
+                # errs towards the brake. State from before this kept
+                # `paperclip_release_passes`; it is simply dropped.
+                self.state.pop("paperclip_release_passes", None)
+                counted = self.state.setdefault("paperclip_released_keys", [])
+                if key in counted:
+                    self.log(f"{key} already counted as released since the last merge (issue {issue_id[:8]})")
                     continue
-                if parent:
-                    counted.append([key, parent])
-                    del counted[:-50]
-                # Checked after the pass is recorded, so a second engineer
-                # issue of the same pass seen later is still deduplicated.
+                counted.append(key)
+                # Checked after the key is recorded, so a second engineer
+                # issue of the same ticket seen later is still deduplicated.
                 if paused_within(self.state.get("pauses", []), self.now):
                     self.log(f"{key} released, not counted: the company was paused during this "
                              f"ticket's window (issue {issue_id[:8]})")
@@ -938,7 +961,40 @@ class Warden:
                 n = self.state["paperclip_releases"] = self.state.get("paperclip_releases", 0) + 1
                 self.log(f"{key} released (Paperclip issue cancelled; {n} in a row)")
                 if n >= RELEASES_IN_A_ROW:
-                    self.pause(f"{RELEASES_IN_A_ROW} releases in a row (Paperclip issue states)")
+                    self.pause(PAPERCLIP_BRAKE)
+
+    def record_pause(self, reasons):
+        """Remember why the warden itself paused (CB-484). A pause the warden
+        did not make has no record and is never lifted by it. A release-brake
+        pause within BRAKE_REPEAT of the last cool-off resume is marked manual."""
+        rec = {"at": self.now, "reasons": list(reasons)}
+        last = self.state.get("brake_resumed_at")
+        if is_release_brake(reasons) and last is not None and self.now - last < BRAKE_REPEAT:
+            rec["manual"] = True
+            self.log("release brake tripped again within 6 hours of a cool-off resume; "
+                     "this pause stays until a person lifts it")
+        self.state["warden_pause"] = rec
+
+    def brake_cooled_off(self):
+        rec = self.state.get("warden_pause")
+        return bool(rec and not rec.get("manual") and is_release_brake(rec.get("reasons"))
+                    and self.now - rec.get("at", self.now) >= BRAKE_COOL_OFF)
+
+    def resume_brake(self):
+        """Lift a release-brake pause after its cool-off; True when lifted."""
+        try:
+            self.pc.resume()
+        except Exception as e:
+            self.log(f"could not resume after the release brake: {type(e).__name__} {getattr(e, 'code', '')}".rstrip())
+            return False
+        self.state["consecutive_releases"] = 0
+        self.state["paperclip_releases"] = 0
+        self.state["paperclip_released_keys"] = []
+        self.state["brake_resumed_at"] = self.now
+        self.state.pop("warden_pause", None)
+        self.state.pop("block_refused", None)
+        self.log("RESUMED: release brake cooled off")
+        return True
 
     def note_pauses(self, paused):
         """Record this tick's pause state (CB-472), counting a pause the tick
@@ -1029,6 +1085,7 @@ class Warden:
                 continue
             self.state["consecutive_releases"] = next_release_state(self.state, "merged")
             self.state["paperclip_releases"] = 0
+            self.state["paperclip_released_keys"] = []
             tag = label(pr["number"])
             qa = has_qa_comment(gh.comment_bodies(pr["number"], before=pr["merged_at"]), r["qa_names"])
             for why in audit_merge(qa, {}, r):
@@ -1081,10 +1138,22 @@ class Warden:
         if why:
             self.pause(why)
         paused = self.pc.is_paused()
+        if paused and not self.pause_reasons and self.brake_cooled_off():
+            paused = not self.resume_brake()
         self.note_pauses(paused or bool(self.pause_reasons))
         if self.pause_reasons and not paused:
             self.pc.pause("; ".join(self.pause_reasons))
+            self.record_pause(self.pause_reasons)
             paused = True
+        elif self.pause_reasons and self.state.get("warden_pause"):
+            # A new reason on a pause the warden made: it joins the record, so
+            # anything but the release brake keeps the pause manual.
+            rec = self.state["warden_pause"]
+            rec["reasons"] += [r for r in self.pause_reasons if r not in rec["reasons"]]
+        elif not paused:
+            # Active again, whoever resumed it: the next pause starts fresh.
+            self.state.pop("warden_pause", None)
+            self.state.pop("block_refused", None)
         # The reason goes in the log before anything that can fail (CB-467).
         for r in self.pause_reasons:
             self.log("PAUSED: " + r)
@@ -1490,6 +1559,9 @@ class PaperclipHttp:
 
     def pause(self, reason):
         self.call("PATCH", f"/api/companies/{self.company}", {"status": "paused"})
+
+    def resume(self):
+        self.call("PATCH", f"/api/companies/{self.company}", {"status": "active"})
 
     def _runs(self):
         return self.call("GET", f"/api/companies/{self.company}/heartbeat-runs?limit=200") or []
