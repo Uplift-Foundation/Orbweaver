@@ -1,0 +1,28 @@
+#!/bin/bash
+# A stand-in `git` for the bug-fix org's service PATH (CB-478); the partner of
+# the `gh` beside it. When BUGFIX_GH_TOKEN is set and GIT_CONFIG_PARAMETERS is
+# not, it gives git the same settings as the skill's export line: the `gh auth
+# git-credential` helper (the token reaches gh through GH_TOKEN, never through
+# git's arguments or output) and the App's bot as author. A caller that already
+# set GIT_CONFIG_PARAMETERS or GH_TOKEN keeps its values. It runs the first
+# real `git` on PATH outside this script's own folder.
+# Builtins only: the service PATH may not hold dirname.
+self_dir=$(cd "${BASH_SOURCE[0]%/*}" && pwd -P)
+real=
+IFS=: read -r -a dirs <<< "$PATH"
+for d in "${dirs[@]}"; do
+  [ -n "$d" ] || continue
+  [ "$(cd "$d" 2>/dev/null && pwd -P)" = "$self_dir" ] && continue
+  if [ -x "$d/git" ] && [ ! -d "$d/git" ]; then real="$d/git"; break; fi
+done
+if [ -z "$real" ]; then
+  echo "git: real git not found on PATH outside $self_dir" >&2
+  exit 127
+fi
+if [ -n "${BUGFIX_GH_TOKEN:-}" ]; then
+  [ -n "${GH_TOKEN:-}" ] || export GH_TOKEN="$BUGFIX_GH_TOKEN"
+  if [ -z "${GIT_CONFIG_PARAMETERS:-}" ]; then
+    export GIT_CONFIG_PARAMETERS="'credential.helper=' 'credential.https://github.com.helper=!gh auth git-credential' 'user.name=orbweaver-bugfix[bot]' 'user.email=360784342+orbweaver-bugfix[bot]@users.noreply.github.com'"
+  fi
+fi
+exec "$real" "$@"

@@ -1,0 +1,26 @@
+#!/bin/bash
+# A stand-in `gh` for the bug-fix org's service PATH (CB-478).
+#
+# Paperclip blanks GH_TOKEN in every run, so a bare `gh` reports "please run:
+# gh auth login". This sets GH_TOKEN from BUGFIX_GH_TOKEN, only when GH_TOKEN
+# is empty or unset, then runs the real gh with the arguments, stdin and exit
+# status unchanged. It never prints the token and never reads
+# BUGFIX_GH_WORKFLOW_TOKEN. The real gh is the first `gh` on PATH outside this
+# script's own folder, so it cannot call itself.
+# Builtins only: the service PATH may not hold dirname.
+self_dir=$(cd "${BASH_SOURCE[0]%/*}" && pwd -P)
+real=
+IFS=: read -r -a dirs <<< "$PATH"
+for d in "${dirs[@]}"; do
+  [ -n "$d" ] || continue
+  [ "$(cd "$d" 2>/dev/null && pwd -P)" = "$self_dir" ] && continue
+  if [ -x "$d/gh" ] && [ ! -d "$d/gh" ]; then real="$d/gh"; break; fi
+done
+if [ -z "$real" ]; then
+  echo "gh: real gh not found on PATH outside $self_dir" >&2
+  exit 127
+fi
+if [ -z "${GH_TOKEN:-}" ] && [ -n "${BUGFIX_GH_TOKEN:-}" ]; then
+  export GH_TOKEN="$BUGFIX_GH_TOKEN"
+fi
+exec "$real" "$@"
