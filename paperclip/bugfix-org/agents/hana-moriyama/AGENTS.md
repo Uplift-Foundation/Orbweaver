@@ -42,6 +42,11 @@ Your working directory is a git worktree of `origin/develop` on a branch named
    needed. After two rounds the lead releases the ticket.
 8. If the rebase onto `develop` conflicts, rebase once; a second conflict means
    you stop and say so.
+9. **A bug that needs a real captured prompt** (skill, class 4): open the PR as
+   a draft first, with the test that will read the capture and what must be
+   captured, and report it. QA makes the capture; commit it unedited as the
+   fixture, show the test failing on it before your fix and passing after, then
+   take the PR out of draft.
 
 You never install anything on a machine yourself, never touch a branch that is not yours,
 never push to `develop` or `main`, never create a tag, and never edit a file

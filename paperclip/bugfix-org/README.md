@@ -261,6 +261,32 @@ Then, none of which a package can carry:
 Install on any of the three machines itself (it asks the machines runner, which
 holds the keys and the lock; a PR that needed no machine says `Installed on: none`
 and why); touch the
-mobile repository; fix a bug that needs a real captured prompt; fix a security
+mobile repository; fix a security
 ticket; edit a
-workflow file; tag or release; push to `develop` or `main`.
+workflow file; tag or release; push to `develop` or `main`. Those three classes
+are **handed off**, not skipped: the lead adds the label `handoff-team` and one
+comment, and the pass's query excludes the label (CB-480). A bug that needs a
+real captured prompt is taken: QA captures it on the real machines.
+
+## Every bug gets an outcome (CB-480)
+
+On 2026-11-26 two passes in a row read 18 open bugs, took none and changed
+nothing, and the next pass would have said the same. Since CB-480 every ticket
+the query returns leaves a pass with one outcome: fixed, closed (already fixed,
+duplicate, or not reproduced after a real attempt, with the evidence in the
+comment, transition `41`, no claim), handed off (label `handoff-team`), waiting
+on triage, waiting on another team's PR (only when an open PR's title names the
+key), or taken. Closes and hand-offs are capped at five per pass so a pass
+cannot sweep the board on thin evidence. The report ends with the counts and
+names anything left untouched as a defect of the pass. The rules are the
+skill's **Every ticket gets an outcome**.
+
+**Host step for the label, not yet done.** Measured 2026-11-26 read-only
+against the live connector: the lead is allowed eight Jira actions, including
+`transitionJiraIssue` (so a close to Done works today) and
+`addCommentToJiraIssue`, but `editJiraIssue`, the only way to add a label, is
+`off`. Until it is allowed for the lead alone (a `block` policy for the three
+others first, then the connector's finish step with nine actions for the lead,
+as setup step 4), a hand-off is the comment without the label; the skill says
+how the lead recognises one on later passes. The JQL clause is harmless before
+then.

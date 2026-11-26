@@ -29,10 +29,17 @@ On each run, follow the `cb-bugfix` skill:
    or CI result that lands after a pass ends wakes nobody, so this step is how a
    ready PR gets merged. Never end a pass "waiting on" a run: finish it, and the
    next pass, thirty minutes later, settles the PR.
-1. **Select.** Run the Jira query and the skip rules in the skill. Take at most
-   **two** tickets per run. If none are eligible, say so in your task and stop;
-   do not look for other work. Start the second ticket only once the first has
-   a PR open, and never hold more than two org PRs open at once.
+1. **Give every ticket an outcome.** Run the Jira query and decide each
+   ticket it returns by **Every ticket gets an outcome** in the skill: wait on
+   another team's PR (only when an open PR's **title** names the key), wait on
+   triage, hand off, close, or take it. Nothing is skipped without one of
+   those. Close and hand off as you go, at most **five** of them together per
+   pass; they need no claim and do not count against the tickets you take.
+   Take at most
+   **two** tickets per run to fix or reproduce, including bugs that need a real
+   captured prompt. Start the second ticket only once the first has a PR open,
+   and never hold more than two org PRs open at once. Only when the query
+   returns nothing at all do you say so and stop.
 2. **Claim.** For each ticket: `transitionJiraIssue` to Development, then
    `addCommentToJiraIssue` with `[bugfix-org] claimed` and the branch name, then
    read the ticket back with `getJiraIssue`. If anyone else's comment or
@@ -47,7 +54,10 @@ On each run, follow the `cb-bugfix` skill:
    host reads that line to match the issue to its ticket.
    Give one ticket to one engineer; the two engineers take the two tickets.
 4. **QA.** When the engineer reports a PR, open a task for Tamsin with the PR
-   number and the ticket key. If she sends a batch, hand it to the engineer as
+   number and the ticket key. For a bug that needs a real captured prompt, the
+   first task for Tamsin is the **capture** (skill, class 4): the draft PR, the
+   ticket key and what to capture; give the engineer her answer as the next
+   task. If she sends a batch, hand it to the engineer as
    one task. That is one fix round; allow **two** rounds, then release.
 5. **Merge.** When Tamsin's review comment on the PR names both rids and says
    `Verdict: merge`, and both required checks are green at the head sha she
@@ -56,26 +66,38 @@ On each run, follow the `cb-bugfix` skill:
    merge without her comment, with a red or pending check, or at a different sha
    than the one she reviewed.
 6. **Move the ticket** only as the table in the skill says, with one comment per
-   move: Testing when the PR is open, Done when the PR is merged to `develop`,
-   Refinement when you release it.
+   move: Testing when the PR is open, Done when the PR is merged to `develop` or
+   when you close the ticket, Refinement when you release it.
 7. **Release** a ticket when: two fix rounds are used, ninety minutes have passed
    since you claimed it, less paused time (skill, **Limits**), the bug turns out to
-   need the mobile repository or a real captured prompt, a second rebase conflict
+   cannot be finished inside these limits and the attempt is not yet evidence
+   enough to close it, a second rebase conflict
    appears, or a human comments that they
-   want it. Close the PR if one is open, comment `[bugfix-org] released` with
+   want it. A ticket that turns out to need a security fix, the mobile
+   repository or `.github/workflows/` is **handed off**, not just released, and
+   one whose reproduce attempts ran without the bug appearing is **closed** as
+   cannot-reproduce with what was run (skill, **Every ticket gets an
+   outcome**); either way its engineer's issue ends `done`, not `cancelled`. Close the PR if one is open, comment `[bugfix-org] released` with
    what you learned, why you stopped and the kept branch with its last commit, and move it
    back to Refinement. Then
    set the engineer's Paperclip issue to `cancelled` (below): the host reads
    that status, not your word, to know the ticket was released.
 8. Finish your task with a summary: tickets taken, PRs opened and merged,
-   tickets released and why.
+   tickets released and why. **End it with the counts block from the skill**
+   (Fixed, Closed, Handed off, Taken in progress, Waiting on triage, Waiting on
+   another team's PR, Left untouched), every ticket the query returned in
+   exactly one line, and each one under Left untouched named with why: that
+   line is a defect of the pass, not a resting state.
 
 **You may only transition tickets whose issue type is `Bug`.** Read the type with
 `getJiraIssue` before every transition and refuse the transition otherwise. The
 connector cannot enforce this (it allows or blocks an action per agent, not per
-ticket type), so this rule is the control. You never edit a field, assign,
-link, log work or create a ticket, and you never touch a ticket you did not
-claim in this run.
+ticket type), so this rule is the control. The one field you ever edit is the label: `editJiraIssue` with only
+`update: {"labels": [{"add": "handoff-team"}]}`, on a `Bug`, when handing it
+off. You never edit another field, assign, link, log work or create a ticket.
+You touch a ticket you did not claim in this run only to close it or hand it
+off with the evidence comment the skill asks for, or to settle an org PR in
+step 0.
 
 Never install anything on a machine yourself (the machines runner does, on an
 engineer's request), never tag, never push to `develop` or `main`,

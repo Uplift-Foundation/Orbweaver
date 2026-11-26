@@ -314,7 +314,7 @@ class InstructionTests(unittest.TestCase):
 
     def test_released_work_is_retakable_and_pauses_do_not_count(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")
-        for needle in ("This org's own released work is not a reason to skip",
+        for needle in ("**This org's own released work** is a branch with no one working on it",
                        "orbweaver-bugfix[bot]", "--state open --head <branch>",
                        "continuing released work", "the branch\nname with its last commit sha",
                        "$BUGFIX_SPOOL/pauses.json", "`paused_minutes`"):
@@ -322,6 +322,95 @@ class InstructionTests(unittest.TestCase):
                 self.assertIn(needle, skill)
         self.assertIn("less the time the company was paused",
                       read("agents", "marisol-vandenberg", "AGENTS.md"))
+
+    # CB-480: two passes read 18 bugs, took none and changed nothing. Each
+    # rule below is one of the ticket's five outcomes, pinned in the text the
+    # lead actually reads, with a control that the old skip is gone.
+    def test_query_excludes_handed_off_tickets_without_dropping_unlabelled_ones(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        self.assertIn("AND (labels IS EMPTY OR labels != handoff-team) ORDER BY", skill)
+        # Control: the bare `!=` form would silently drop every ticket with no labels.
+        self.assertNotIn("AND labels != handoff-team ORDER BY", skill)
+
+    def test_every_ticket_gets_one_of_the_outcomes(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        for needle in ("## Every ticket gets an outcome",
+                       "**No ticket the query returns is skipped in silence.**",
+                       "**Wait: another team's PR.**", "**Wait: triage.**",
+                       "**Hand off.**", "**Close.**", "**Take it: fix or reproduce.**"):
+            with self.subTest(needle):
+                self.assertIn(needle, skill)
+        # Control: the old skip list, and the old leave-alone paragraph, are gone.
+        self.assertNotIn("Skip a ticket when **any** of these holds", skill)
+        self.assertNotIn("Leave alone, and say why if asked", skill)
+
+    def test_lead_may_close_with_evidence_and_no_claim(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        for needle in ("**already fixed:**", "**duplicate:**", "**cannot reproduce:**",
+                       "transition `41`", "`[bugfix-org] closed:`",
+                       "A close is\n   **not a release and needs no claim**",
+                       "Reading the code and concluding it looks fine is not an\n     attempt"):
+            with self.subTest(needle):
+                self.assertIn(needle, skill)
+        lead = read("agents", "marisol-vandenberg", "AGENTS.md")
+        self.assertIn("Done when the PR is merged to `develop` or\n   when you close the ticket", lead)
+
+    def test_closes_and_handoffs_are_capped_and_do_not_use_the_two_slots(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        self.assertIn("**Closes and hand-offs do not count against the two tickets, but at most five\nper pass, together.**", skill)
+        self.assertIn("plus at most five closes and hand-offs together", skill)
+        lead = read("agents", "marisol-vandenberg", "AGENTS.md")
+        self.assertIn("at most **five** of them together per\n   pass", lead)
+
+    def test_a_captured_prompt_is_taken_and_captured_by_qa(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        for needle in ("4. **Bugs that need a real captured prompt**",
+                       "`gh pr create ... --draft`", "capture task",
+                       "**If the capture cannot be made in two rounds**",
+                       "A ticket that needs only a machine, or\nonly a capture, is never handed off"):
+            with self.subTest(needle):
+                self.assertIn(needle, skill)
+        qa = read("agents", "tamsin-oyelaran", "AGENTS.md")
+        self.assertIn("**A capture task**", qa)
+        self.assertIn("always send\n`machine_release`", qa)
+        for slug in ("hana-moriyama", "rafaela-quintero"):
+            self.assertIn("open the PR as\n   a draft first", read("agents", slug, "AGENTS.md"))
+        # Control: the lead no longer releases a ticket for needing a capture.
+        self.assertNotIn("need the mobile repository or a real captured prompt",
+                         read("agents", "marisol-vandenberg", "AGENTS.md"))
+
+    def test_handoff_is_a_label_and_one_comment_once(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        for needle in ('`update: {"labels": [{"add": "handoff-team"}]}`',
+                       "`[bugfix-org] handoff-team:`", "Do it **once**",
+                       "If the label edit is refused, post the comment anyway"):
+            with self.subTest(needle):
+                self.assertIn(needle, skill)
+        lead = read("agents", "marisol-vandenberg", "AGENTS.md")
+        self.assertIn("The one field you ever edit is the label", lead)
+        # Control: only the lead is ever told to edit a Jira issue.
+        for slug in AGENTS:
+            has = "editJiraIssue" in read("agents", slug, "AGENTS.md")
+            self.assertEqual(has, slug == "marisol-vandenberg", slug)
+
+    def test_only_an_open_pr_title_holds_a_ticket_for_another_team(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        self.assertIn('--state open --search "<key> in:title" --json number,title', skill)
+        self.assertIn("A key named only in a PR body, a commit message or a branch is **not** a\n   reason to wait", skill)
+        # Control: the body search and the commit-mention skip are gone.
+        self.assertNotIn("in:title,body", skill)
+        self.assertNotIn("a pushed, unmerged commit names its key", skill)
+
+    def test_report_ends_with_counts_and_names_what_was_left(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        lines = ("Fixed: <n>", "Closed: <n>", "Handed off: <n>", "Taken, in progress: <n>",
+                 "Waiting on triage: <n>", "Waiting on another team's PR: <n>", "Left untouched: <n>")
+        block = re.search(r"```\n(Fixed: <n>.*?)```", skill, re.S)
+        self.assertIsNotNone(block)
+        self.assertEqual([l.split(" (")[0] for l in block.group(1).strip().splitlines()], list(lines))
+        lead = read("agents", "marisol-vandenberg", "AGENTS.md")
+        self.assertIn("**End it with the counts block from the skill**", lead)
+        self.assertIn("ending with the counts the skill asks for", read("tasks", "fix-cb-bugs", "TASK.md"))
 
     def test_nobody_is_told_to_install_or_take_the_lock(self):
         for slug in AGENTS:
