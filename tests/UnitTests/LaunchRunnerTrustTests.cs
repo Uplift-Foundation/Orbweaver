@@ -483,4 +483,21 @@ public class LaunchRunnerTrustTests
         Assert.Equal(["Down"], d.Presses);
         Assert.Empty(d.Closed);
     }
+
+    // CB-477: the imports dialog stops a launch before hooks run; it is named, not "never checked in".
+    [Theory]
+    [InlineData("tmux-claude-importdialog")]
+    [InlineData("wt-claude-importdialog")]
+    public async Task The_imports_dialog_is_reported_by_name_not_as_no_session(string fixture)
+    {
+        foreach (var policy in new[] { LaunchRunner.TrustPolicy.Ask, LaunchRunner.TrustPolicy.Close, LaunchRunner.TrustPolicy.Report })
+        {
+            var d = Pane(Screens(fixture));
+            var outcome = await d.Runner().RunAsync(F(), policy);
+            Assert.Equal(RelayReplies.LaunchFailed, outcome.Code);
+            Assert.Contains("\"Allow external CLAUDE.md file imports?\"", outcome.Why);
+            Assert.DoesNotContain("trust that folder", outcome.Why);
+            Assert.Empty(d.Presses);
+        }
+    }
 }
