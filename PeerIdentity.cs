@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -334,6 +335,22 @@ namespace Orbweaver
             for (var i = 0; i < expected.Length; i++) difference |= expected[i] ^ offered[i];
 
             return difference == 0;
+        }
+
+        // What the accepting side of a pairing sends back with its `ok` (CB-346).
+        //
+        // The dialling side has no pin for a machine it is pairing with, so
+        // TLS alone cannot say who answered. The code is the one thing both
+        // real ends hold, so the answer is a keyed hash of the two certificates
+        // under that code: it is valid only for the certificates actually in
+        // this handshake, and only a holder of the code can make it.
+        internal static string PairingProof(string code, string serverPin, string clientPin)
+        {
+            var data = Encoding.UTF8.GetBytes(
+                "orbweaver-pair-v1|" + serverPin.ToLowerInvariant() + "|" + clientPin.ToLowerInvariant());
+
+            using var mac = new HMACSHA256(Encoding.UTF8.GetBytes(code));
+            return Convert.ToHexString(mac.ComputeHash(data)).ToLowerInvariant();
         }
 
         // --- disk -----------------------------------------------------------------
