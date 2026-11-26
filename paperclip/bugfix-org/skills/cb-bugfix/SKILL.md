@@ -213,8 +213,8 @@ same way when they need to read it.
 
 **Check that mobile is reachable before relying on it.** The org's GitHub
 access to the mobile repository may be newer than these instructions on a
-given day. A clone proves nothing: the repository can be read without any
-credential. Before claiming a mobile ticket the lead runs, with the prefix,
+given day. A clone proves nothing: it can succeed through a credential helper
+the org's token has no part in. Before claiming a mobile ticket the lead runs, with the prefix,
 `gh api /installation/repositories --jq '.repositories[].full_name'`, which
 answers only for the org's own token and lists exactly the repositories it
 reaches. If `Uplift-Foundation/Orbweaver-Mobile` is not in that list, the
