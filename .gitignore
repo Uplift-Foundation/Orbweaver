@@ -35,3 +35,7 @@ Obj/
 __pycache__/
 *.pyc
 .profiles-assets/
+
+# Orbweaver-Mobile cloned beside the app, as people here and the bug-fix
+# org's engineers lay it out (CB-481). It is its own repository.
+/mobile/

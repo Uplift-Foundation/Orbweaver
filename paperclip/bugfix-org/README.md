@@ -260,11 +260,11 @@ Then, none of which a package can carry:
 
 Install on any of the three machines itself (it asks the machines runner, which
 holds the keys and the lock; a PR that needed no machine says `Installed on: none`
-and why); touch the
-mobile repository or edit a
-workflow file until its GitHub access covers them (a pass reports those bugs as
-waiting on org access and writes nothing to Jira); tag or release; push to
-`develop` or `main`. Security bugs are fixed like any other, with write-ups
+and why); edit a workflow file in Orbweaver-Mobile, or add or remove an
+environment, secret, permission, trigger or runner line in any workflow (such a
+ticket is put back for a person, counted as "Needs a protected workflow line");
+bump the mobile build number, upload to TestFlight or deploy the relay; tag or
+release; push to `develop` or `main` in either repository. Security bugs are fixed like any other, with write-ups
 that describe the class of flaw and the fix, never an exploit. A bug that needs
 a real captured prompt is taken: QA captures it on the real machines.
 
@@ -274,10 +274,49 @@ On 2026-11-26 two passes in a row read 18 open bugs, took none and changed
 nothing, and the next pass would have said the same. Since CB-480 every ticket
 the query returns leaves a pass with one outcome: fixed, closed (already fixed,
 duplicate, or not reproduced after a real attempt, with the evidence in the
-comment, transition `41`, no claim), waiting on triage, waiting on org access
-(mobile and workflow-file bugs, until the org's GitHub access covers them), waiting on another team's PR (only when an open PR's title names the
+comment, transition `41`, no claim), waiting on triage, waiting on another team's PR (only when an open PR's title names the
 key), or taken. Closes have their own cap (skill, **Limits**) so a pass
 cannot sweep the board on thin evidence. The report ends with the counts and
 names anything left untouched as a defect of the pass. The rules are the
 skill's **Every ticket gets an outcome**.
+
+## Two repositories and workflow files (CB-481)
+
+Since CB-481 the org also fixes bugs in `Uplift-Foundation/Orbweaver-Mobile`
+and bugs whose fix is a change to one of Orbweaver's workflow files. Both were
+"leave alone" before because the App could not reach them; the installation now
+covers Orbweaver-Mobile and carries the workflows permission (approved
+2026-11-26).
+
+- **Layout.** One code base, as people here lay it out: the engineer clones
+  Orbweaver-Mobile at `mobile/` inside the ticket's Orbweaver worktree, on the
+  same `bugfix/pc-<change>` branch name. There is no second Paperclip project.
+  `/mobile/` is in the root `.gitignore` so a worktree commit never picks up
+  the nested clone.
+- **One process, two rows.** The skill's **Two repositories, one code base**
+  table is everything that differs per repository: PR target, merge gate (mobile
+  has no rids; `relay`, `contracts` and `tools` always, `android` and
+  `snapshots` by path), local tests, flaky-test proof (none on mobile), the
+  machines runner (desktop only), and what is always unverifiable on mobile (a
+  real phone, APNs, TestFlight, the relay deploy). A fix in both repositories is
+  one ticket with two PRs, and counts once against the open-PR limit.
+- **Workflow files, Orbweaver only.** Smallest diff, never `release.yml` or
+  `publish-screenshots.yml`, never an environment, secret, permission, trigger
+  or runner line; pushed with a second token, `BUGFIX_GH_WORKFLOW_TOKEN`,
+  bound to the two engineers only. A fix that needs a protected line is put
+  back for a person. QA's comment carries a `Workflow change:` line the lead
+  requires before merging.
+- **Host side (not in this package):** the warden mints the everyday token for
+  both repositories, mints the workflow token, writes `access.json`, audits
+  both repositories and pauses on a protected workflow change; the machines
+  runner refuses an install for a PR that touches a workflow; Orbweaver-Mobile
+  gets rulesets matching Orbweaver's lane. See `host/README.md`.
+- **Before the warden's wider token is live** a mobile ticket cannot be
+  reached. The lead checks with one `git ls-remote` before claiming and counts
+  such tickets as "Mobile access not live yet", with no Jira write.
+
+**Setup step for the workflow token (host, after the warden mints it):** bind
+the new company secret into each engineer's `adapterConfig.env` as
+`BUGFIX_GH_WORKFLOW_TOKEN: {"type": "secret_ref", "secretId": "<its id>", "version": "latest"}`,
+the same way as `BUGFIX_GH_TOKEN` in setup step 5, and to nobody else.
 
