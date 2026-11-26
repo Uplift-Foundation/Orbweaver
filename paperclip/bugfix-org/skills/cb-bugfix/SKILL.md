@@ -31,7 +31,7 @@ this order; the first that applies is the one:
    If that PR is the org's own, it is settled by the lead's step 0, not here.
 - **Wait: triage.** It has no comment starting with `[triage]` yet. The triage
    org runs every four hours, so this wait is short and is counted, not fixed.
-- **Wait: org access.** Until the org's GitHub access covers them, a bug whose fix is in the mobile repository (`Orbweaver-Mobile`) or in `.github/workflows/` is left exactly as it is (no Jira comment, no transition, and not a defect of the pass), a claimed ticket that turns out to need one is released, and the report counts them on a line of their own at the end of the counts block, `Waiting on org access: <n> (<keys>)`.
+- **Wait: org access.** Until the org's GitHub access covers them, a bug whose fix is in the mobile repository (`Orbweaver-Mobile`) or in `.github/workflows/` is left exactly as it is (no Jira comment, no transition, and not a defect of the pass), a claimed ticket that turns out to need one is put back rather than released (close any draft PR, move the ticket to Refinement with the one comment `stopped: needs org access to <mobile repository | workflow files>; nothing merged; branch kept at <sha>`, and set the engineer's Paperclip issue to `done` with that same sentence as its `comment`, never `cancelled`), and the report counts all of them on a line of their own at the end of the counts block, `Waiting on org access: <n> (<keys>)`.
 - **Close.** The ticket is no longer a bug on `develop`, and the evidence is
    in hand, not inferred:
    - **already fixed:** a PR merged to `develop` fixed it. Name the PR and its
@@ -46,18 +46,20 @@ this order; the first that applies is the one:
      attempt. A first-time cannot-reproduce comes from a claimed
      reproduce-or-fix round (**Take it**), never from reading alone.
    Close by moving it to Done (transition `41`) and posting one comment that
-   starts `[bugfix-org] closed:` with the reason and the evidence. A close is
+   starts `[bugfix-org] closed:` with the reason and the evidence. Close only a
+   ticket in Refinement or one the org itself claimed, never one a person has
+   in Development or Testing. A close is
    **not a release and needs no claim**. When the close ends a ticket the org
    had claimed, set the engineer's Paperclip issue to `done`, not `cancelled`:
    the ticket was settled.
 - **Take it: fix or reproduce.** Everything else is eligible, including a
    security bug, a bug that needs a real captured prompt (class 4 below) and a
    bug that needs a real machine (class 3). Among them take the highest Jira
-   priority, then the lower class number, then the oldest. At most **two
-   tickets per run** are taken this way.
+   priority, then the lower class number, then the oldest, up to the run's
+   ticket limit (**Limits**).
 
-**Closes do not count against the two tickets, but at most five closes per
-pass.** That cap is what keeps one pass from sweeping the board
+**Closes do not use the ticket limit; they have their own cap (**Limits**).**
+That cap is what keeps one pass from sweeping the board
 on thin evidence. A ticket that would have been closed past the cap is left for the next pass and named in the report as such.
 
 **Commits that name the key are not a skip, but check whose they are.** When
@@ -97,7 +99,7 @@ Left untouched: <n> (<keys, and why>)
 ```
 
 Every ticket the query returned is in exactly one line. **Left untouched** is
-for a ticket that got no outcome: the two-ticket limit was full, the
+for a ticket that got no outcome: the ticket limit was full, the
 close cap was reached, or something failed. Each one there is a
 defect of the pass and says why; a pass whose `Left untouched` grows pass after
 pass for the same reason is reporting a problem with these rules, not a quiet
@@ -146,7 +148,7 @@ when you read the code.
    - the engineer commits that capture as the fixture, unedited, shows the test
      failing on it before the fix and passing after, and the PR leaves draft.
    Proof: the fixture as captured, the test failing then passing, plus CI green
-   on both rids. **If the capture cannot be made in two rounds**, the ticket
+   on both rids. **If the capture cannot be made within the ticket's fix rounds**, the ticket
    still gets an outcome: close it as cannot-reproduce (**Close** in **Every
    ticket gets an outcome**) when the attempts ran and the prompt did not
    appear, or release it when the capture needs something the runner cannot
@@ -308,9 +310,9 @@ key (its slug becomes the branch name), and its description starts with the line
 
 Settling a ticket also leaves one fact in Paperclip, which the host reads in
 place of anything an agent says: the engineer's Paperclip issue ends `done` when
-the ticket left the org with an outcome (the PR merged to `develop`, or the
-ticket was closed after a claim), and
-`cancelled` when the ticket was released. The
+the ticket left the org with an outcome (the PR merged to `develop`, the
+ticket was closed after a claim, or an outcome in **Every ticket gets an
+outcome** says so), and `cancelled` only when the ticket was released. The
 Jira comment is the human-readable record; the issue status is the machine one.
 The warden also cancels a child task that sat with no run through two of its
 wake comments, and says so on your task; that is not a release, so treat it as
@@ -329,7 +331,7 @@ connector cannot check this; the rule is the control.
 | PR open | Development to Testing | the PR link and what the fix is |
 | merged to `develop` | Testing to Done | the merge sha, what was verified and what was not |
 | gave up | back to Refinement | `[bugfix-org] released`, what it learned, why it stopped |
-| closed | any status to Done (`41`), no claim needed | `[bugfix-org] closed:`, the reason and the evidence (**Every ticket gets an outcome**, **Close**) |
+| closed | Refinement, or a ticket the org claimed, to Done (`41`); no claim needed | `[bugfix-org] closed:`, the reason and the evidence (**Every ticket gets an outcome**, **Close**) |
 
 ## GitHub access
 
@@ -448,11 +450,17 @@ a red check.
 
 ## Limits
 
-Two fix rounds per ticket, ninety minutes from the claim, one rebase onto
-`develop`. Past any of them the ticket is released, or closed or handed off when the
-attempt itself is the evidence (**Every ticket gets an outcome**). Two tickets
-taken per run, plus at most five closes, two org
-PRs open at once.
+**The limits are stated here and nowhere else;** every other file points
+here.
+
+- **Per run:** at most **two tickets taken** (to fix or reproduce), at most
+  **five closes** (which do not use the two), and at most **two org PRs open**
+  at once.
+- **Per ticket:** **two fix rounds**, **ninety minutes** from the claim (less
+  paused time, below), and **one rebase** onto `develop`.
+
+Past a per-ticket limit the ticket is released, or closed when the attempt
+itself is the evidence (**Every ticket gets an outcome**).
 
 **Time the company was paused does not count toward the ninety minutes.** The
 warden publishes every pause in `$BUGFIX_SPOOL/pauses.json`, a list of the last

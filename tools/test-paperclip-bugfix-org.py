@@ -286,14 +286,15 @@ class InstructionTests(unittest.TestCase):
         skill = read("skills", "cb-bugfix", "SKILL.md")
         self.assertIn('{"status": "cancelled"}', lead)
         self.assertIn('{"status": "done"}', lead)
-        self.assertIn("`cancelled` when the ticket was released", skill)
+        self.assertIn("`cancelled` only when the ticket was released", skill)
         # Control: the engineers are never told to settle a ticket.
         for slug in ("hana-moriyama", "rafaela-quintero"):
             self.assertNotIn("cancelled", read("agents", slug, "AGENTS.md"))
 
-    def test_lead_carries_the_run_limits_and_the_bug_only_rule(self):
+    def test_lead_points_at_the_limits_and_carries_the_bug_only_rule(self):
         lead = read("agents", "marisol-vandenberg", "AGENTS.md")
-        for needle in ("at most\n   **two** tickets", "**two** rounds", "ninety minutes",
+        for needle in ("the run limits in the skill's **Limits**", "past a per-ticket limit in the skill's\n   **Limits**",
+                       "past the skill's fix-round limit, release",
                        "`Bug`", "bugfix/pc-<slug>", "Verdict: merge", "both required checks"):
             with self.subTest(needle):
                 self.assertIn(needle, lead)
@@ -320,7 +321,7 @@ class InstructionTests(unittest.TestCase):
                        "$BUGFIX_SPOOL/pauses.json", "`paused_minutes`"):
             with self.subTest(needle):
                 self.assertIn(needle, skill)
-        self.assertIn("less the time the company was paused",
+        self.assertIn("the skill's **Limits** says (paused time does not count)",
                       read("agents", "marisol-vandenberg", "AGENTS.md"))
 
     # CB-480: two passes read 18 bugs, took none and changed nothing. Each
@@ -355,18 +356,36 @@ class InstructionTests(unittest.TestCase):
         lead = read("agents", "marisol-vandenberg", "AGENTS.md")
         self.assertIn("Done when the PR is merged to `develop` or\n   when you close the ticket", lead)
 
-    def test_closes_are_capped_and_do_not_use_the_two_slots(self):
+    def test_limits_are_stated_once_in_the_skill(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")
-        self.assertIn("**Closes do not count against the two tickets, but at most five closes per\npass.**", skill)
-        self.assertIn("plus at most five closes, two org", skill)
-        lead = read("agents", "marisol-vandenberg", "AGENTS.md")
-        self.assertIn("at most **five** closes per pass", lead)
+        limits = skill.split("## Limits", 1)[1].split("\n## ", 1)[0]
+        for needle in ("**The limits are stated here and nowhere else;**", "**two tickets taken**",
+                       "**five closes** (which do not use the two)", "**two org PRs open**",
+                       "**two fix rounds**", "**ninety minutes**", "**one rebase**"):
+            with self.subTest(needle):
+                self.assertIn(needle, limits)
+        self.assertIn("**Closes do not use the ticket limit; they have their own cap (**Limits**).**", skill)
+        # Outside Limits, the numbers are not restated anywhere an agent reads them.
+        rest = skill.replace(limits, "")
+        for pattern in (r"\bninety\b", r"\*\*two\*\*", r"\bfive closes\b", r"two tickets per", r"two fix rounds",
+                        r"two rounds\b", r"at most \*\*five\*\*"):
+            with self.subTest(pattern):
+                self.assertIsNone(re.search(pattern, rest), pattern)
+                for doc in [read("tasks", "fix-cb-bugs", "TASK.md")] + [read("agents", a, "AGENTS.md") for a in AGENTS]:
+                    self.assertIsNone(re.search(pattern, doc), pattern)
+
+    def test_close_never_takes_a_persons_ticket(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        self.assertIn("Close only a\n   ticket in Refinement or one the org itself claimed", skill)
+        self.assertIn("| closed | Refinement, or a ticket the org claimed, to Done (`41`)", skill)
+        # Control: the "any status" wording that could close a person's ticket is gone.
+        self.assertNotIn("any status to Done", skill)
 
     def test_a_captured_prompt_is_taken_and_captured_by_qa(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")
         for needle in ("4. **Bugs that need a real captured prompt**",
                        "`gh pr create ... --draft`", "capture task",
-                       "**If the capture cannot be made in two rounds**",
+                       "**If the capture cannot be made within the ticket's fix rounds**",
                        "or release it when the capture needs something the runner cannot\n   give"):
             with self.subTest(needle):
                 self.assertIn(needle, skill)
@@ -384,7 +403,7 @@ class InstructionTests(unittest.TestCase):
         self.assertIn("**Security bugs are taken like any other bug**", skill)
         self.assertIn("describe the class of flaw and\nthe fix, never a working exploit", skill)
         self.assertIn("Write a working exploit into a PR, a\ncommit or a comment.", skill)
-        self.assertIn("Security bugs are\n   taken like any other.", read("agents", "marisol-vandenberg", "AGENTS.md"))
+        self.assertIn("Security bugs are taken like any other.", read("agents", "marisol-vandenberg", "AGENTS.md"))
         # Control: no list of things the org leaves alone names security any more.
         for doc in (skill, read("README.md"), read("agents", "marisol-vandenberg", "AGENTS.md")):
             self.assertNotIn("a security fix", doc)
@@ -403,12 +422,16 @@ class InstructionTests(unittest.TestCase):
         self.assertNotIn(". ", body, "one sentence after the label")
         self.assertTrue(body.endswith("."))
         for needle in ("`Orbweaver-Mobile`", "`.github/workflows/`", "no Jira comment, no transition",
-                       "not a defect of the pass", "`Waiting on org access: <n> (<keys>)`"):
+                       "not a defect of the pass", "`Waiting on org access: <n> (<keys>)`",
+                       "put back rather than released", "move the ticket to Refinement with the one comment",
+                       "nothing merged; branch kept at <sha>", "`done` with that same sentence as its `comment`, never `cancelled`"):
             self.assertIn(needle, line)
         # Deleting that one line removes the wait everywhere the lead reads it:
         # the lead's own file never names it.
         self.assertNotIn("org access", read("agents", "marisol-vandenberg", "AGENTS.md"))
         self.assertNotIn("org access", skill.replace(line + "\n", ""))
+        # The lead can send that sentence: one PATCH carries status and comment.
+        self.assertIn('send it in the same body as `"comment"`', read("agents", "marisol-vandenberg", "AGENTS.md"))
 
     def test_only_an_open_pr_title_holds_a_ticket_for_another_team(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")

@@ -39,7 +39,8 @@ Your working directory is a git worktree of `origin/develop` on a branch named
    print.
 7. QA sends you one list of findings. Push exactly that list in one commit and
    nothing else; tell the lead if you think something outside the list is
-   needed. After two rounds the lead releases the ticket.
+   needed. Past the fix-round limit (skill, **Limits**) the lead releases
+   the ticket.
 8. If the rebase onto `develop` conflicts, rebase once; a second conflict means
    you stop and say so.
 9. **A bug that needs a real captured prompt** (skill, class 4): open the PR as
