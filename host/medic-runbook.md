@@ -74,6 +74,8 @@ medic resumed the company within the last six hours and it is paused again,
 2. **If a reason is not liftable:** `escalate` with one line saying what
    tripped and what you could not prove. Do not resume. Do not file a bug for
    a real safety stop.
+   (If you do not, `medic.py` escalates such a pause itself after your plan
+   has run; a line from you says more.)
 3. **`stuck`:**
    - a blocked pass whose children are all done or cancelled: `close-pass`;
    - a blocked task with no children and nothing pending: `wake`;
@@ -93,7 +95,7 @@ medic resumed the company within the last six hours and it is paused again,
 | `wake` | `{"issue": "QAF-n"}` | blocked to todo, plus a board comment that wakes the assignee | company paused; task not blocked or todo; woken by the medic within the hour |
 | `close-pass` | `{"issue": "QAF-n"}` | a blocked pass to done | not blocked; no children; any child not done or cancelled |
 | `restart-warden` | `{}` | `launchctl kickstart -k` the warden job | the warden saved its state within 15 minutes; restarted within the hour |
-| `file-bug` | `{"summary": "<one line>", "body": "<text>"}` | records the bug in `medic-bugs/` and gives the bug-fix lead a task to file it as a CB Bug | 5 already today |
+| `file-bug` | `{"summary": "<one line>", "body": "<text>"}` | records the bug in `medic-bugs/` and gives the bug-fix lead a task to file it as a CB Bug (one task per incident) | 5 already today |
 | `escalate` | `{"line": "<one line>"}` | a pending board approval Warren sees on the lead's orb | already escalated this incident; an earlier medic escalation is still pending |
 | `noop` | `{}` | nothing; logged | never |
 

@@ -661,16 +661,45 @@ class Hygiene(unittest.TestCase):
         self.assertEqual(task["status"], "todo")
         d = task["description"]
         self.assertFalse(d.startswith("Ticket: CB-"))  # never reads as a release to the warden
-        inner = d.split("----- BEGIN MEDIC BUG -----\n", 1)[1]
-        self.assertEqual([l for l in inner.splitlines() if l == "----- END MEDIC BUG -----"], ["----- END MEDIC BUG -----"])
-        self.assertTrue(d.rstrip().endswith("----- END MEDIC BUG -----"))
+        head, inner = d.split("----- BEGIN MEDIC BUG ", 1)
+        nonce = inner.split(" ", 1)[0]
+        fence = f"----- END MEDIC BUG {nonce} -----"
+        block = inner.split("\n", 1)[1]
+        self.assertEqual([l for l in block.splitlines() if l.startswith("----- END MEDIC BUG")], [fence])
+        self.assertTrue(d.rstrip().endswith(fence))
         self.assertIn("> ----- END MEDIC BUG -----", d)  # the forged fence is quoted, not a fence
-        self.assertIn("> Summary: Release brake miscount", d)
+        self.assertIn("> Summary: Release brake miscount", block)
+        self.assertNotIn("what happened", head)  # the medic's text is only inside the block
         self.assertEqual(len(os.listdir(os.path.join(e.dir, "medic-bugs"))), 1)
+
+    def test_one_bug_task_per_incident(self):
+        e = self.env(pc=FakePC(), medic_state={"incident": {"key": "paused", "since": NOW, "launches": 1, "escalated": None}})
+        self.assertTrue(e.act("file-bug", summary="first", body="b")[0])
+        self.assertTrue(e.act("file-bug", summary="second", body="b")[0])
+        tasks = [w for w in e.pc.writes if w[1] == f"/api/companies/{CO}/issues"]
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(len(os.listdir(os.path.join(e.dir, "medic-bugs"))), 2)  # both recorded
+        st = e.mstate()
+        st["incident"] = {"key": "stuck", "since": NOW, "launches": 1, "escalated": None}  # control: a new incident
+        with open(os.path.join(e.dir, "medic-state.json"), "w") as f:
+            json.dump(st, f)
+        self.assertTrue(e.act("file-bug", summary="third", body="b")[0])
+        self.assertEqual(len([w for w in e.pc.writes if w[1] == f"/api/companies/{CO}/issues"]), 2)
 
     def test_file_bug_task_body_is_capped(self):
         d = medic.bug_task_body("s", "x" * 20000, NOW)
         self.assertLess(len(d), medic.BODY_MAX + 1000)
+
+    def test_resume_leaves_cb484_restore_state_to_the_warden(self):
+        wst = dict(TODAY_STATE, warden_pause={"at": NOW, "reasons": [medic.RELEASE_BRAKE[1]]},
+                   stop_blocked=[uid("af028859")], block_refused=[uid("c16279bb")],
+                   restart_retry=[[uid("0d0d0d0d"), "comment"]], paperclip_released_keys=["CB-346"])
+        e = self.env(pc=FakePC("paused", PAUSED_AT, today_issues()), warden_state=wst, log_lines=TODAY_LOG)
+        self.assertTrue(e.act("resume")[0])
+        st = e.wstate()
+        self.assertEqual((st["consecutive_releases"], st["paperclip_releases"], st["paperclip_released_keys"]), (0, 0, []))
+        for k in ("warden_pause", "stop_blocked", "block_refused", "restart_retry"):
+            self.assertEqual(st[k], wst[k], k)
 
     def test_resume_keeps_state_mtime_as_the_warden_heartbeat(self):
         e = self.env(pc=FakePC("paused", PAUSED_AT, today_issues()), warden_state=dict(TODAY_STATE),
@@ -934,8 +963,41 @@ class Acceptance(unittest.TestCase):
         e = self.env(pc=pc, log_lines=merge_audit_log(), model=model)
         e.m.check()
         self.assertEqual(e.pc.company["status"], "paused")
-        self.assertEqual(e.pc.writes, [])
+        self.assertEqual([w for w in e.pc.writes if not w[1].endswith("/approvals")], [])
+        self.assertEqual(len(e.pc.escalations()), 1)  # Python tells Warren, whatever the plan did
         self.assertEqual(e.wstate(), {})
+
+    def test_unliftable_pause_escalates_in_the_same_cycle_whatever_the_plan(self):
+        for actions in ([{"verb": "resume", "args": {}}], []):
+            e = self.env(pc=FakePC("paused", PAUSED_AT), log_lines=merge_audit_log(),
+                         model={"diagnosis": "d", "actions": actions})
+            e.m.check()
+            self.assertEqual(len(e.pc.escalations()), 1, actions)
+            self.assertIn("may not lift", e.pc.escalations()[0][2]["payload"]["summary"])
+            self.assertFalse(e.pc.resumed())
+
+    def test_person_pause_and_repeat_pause_escalate_too(self):
+        e = self.env(pc=FakePC("paused", PAUSED_AT), log_lines=TODAY_LOG[:1], model={"diagnosis": "d", "actions": []})
+        e.m.check()
+        self.assertIn("a person paused it", e.pc.escalations()[0][2]["payload"]["summary"])
+        r = self.env(pc=FakePC("paused", PAUSED_AT), log_lines=TODAY_LOG, medic_state={"resumes": [NOW - 3600]},
+                     model={"diagnosis": "d", "actions": [{"verb": "resume", "args": {}}]})
+        r.m.check()
+        self.assertFalse(r.pc.resumed())
+        self.assertIn("paused again", r.pc.escalations()[0][2]["payload"]["summary"])
+
+    def test_liftable_pause_that_stays_paused_does_not_escalate_yet(self):
+        # control: a release-brake pause whose resume was refused (warden mid-tick) waits for the next cycle
+        e = self.env(pc=FakePC("paused", PAUSED_AT), log_lines=TODAY_LOG, busy=lambda: True,
+                     model={"diagnosis": "d", "actions": [{"verb": "resume", "args": {}}]})
+        e.m.check()
+        self.assertEqual(e.pc.company["status"], "paused")
+        self.assertEqual(e.pc.escalations(), [])
+        # and one whose plan did escalate is not escalated twice
+        e2 = self.env(pc=FakePC("paused", PAUSED_AT), log_lines=merge_audit_log(),
+                      model={"diagnosis": "d", "actions": [{"verb": "escalate", "args": {"line": "merge audit"}}]})
+        e2.m.check()
+        self.assertEqual(len(e2.pc.escalations()), 1)
 
 
 # ---------------------------------------------------------------- wiring
@@ -979,6 +1041,9 @@ class Wiring(unittest.TestCase):
         good = json.dumps({"is_error": False, "structured_output": {}})
         self.assertFalse(medic.account_trouble(0, good, "warning: sign-in ends soon"))
         self.assertTrue(medic.account_trouble(1, "", "Not logged in · Please run /login"))
+        # measured by QA on the mini's default ~/.claude, 2026-11-26
+        self.assertTrue(medic.account_trouble(1, json.dumps({"is_error": True, "result":
+            "Failed to authenticate: OAuth session expired and could not be refreshed"}), ""))
         self.assertTrue(medic.account_trouble(0, json.dumps({"is_error": True, "api_error_status": 429}), ""))
         self.assertTrue(medic.account_trouble(1, json.dumps({"is_error": True, "result": "Claude usage limit reached"}), ""))
         self.assertFalse(medic.account_trouble(1, "", "Error: unknown option --bogus"))  # not the account's fault
