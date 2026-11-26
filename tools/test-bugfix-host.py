@@ -44,6 +44,7 @@ def load(name, rel):
 
 create_app = load("create_app", "host/create_app.py")
 warden = load("warden", "host/warden.py")
+pool_usage = load("pool_usage", "host/pool_usage.py")
 stress = load("stress_run", "tools/stress-run.py")
 check_host = load("check_host", "host/check_host.py")
 
@@ -1957,6 +1958,162 @@ class WorkflowWiringTests(unittest.TestCase):
     def test_ci_runs_this_suite(self):
         ci = open(os.path.join(ROOT, ".github/workflows/ci.yml")).read()
         self.assertIn("python tools/test-bugfix-host.py", ci)
+
+
+# ---------------------------------------------------------------- pool usage (CB-468)
+
+FIXTURE = os.path.join(HERE, "fixtures", "claude-get-usage.jsonl")
+
+
+def fixture_stream():
+    with open(FIXTURE, encoding="utf-8") as f:
+        return f.read()
+
+
+class PoolUsageParseTests(unittest.TestCase):
+    """host/pool_usage.py turns `claude -p` get_usage output into Paperclip-shaped limits."""
+
+    def test_the_real_reply_gives_both_account_windows(self):
+        # Captured from a real account on the mini; behaviors and session dropped.
+        r = pool_usage.reading("noise\n{not json}\n" + fixture_stream(), "2026-11-25T04:25:00Z")
+        self.assertEqual(r["status"], "ok")
+        by = {l["id"]: l for l in r["limits"]}
+        self.assertEqual(sorted(by), ["five_hour", "seven_day"], "null model windows are left out")
+        self.assertEqual((by["five_hour"]["usedPercent"], by["seven_day"]["usedPercent"]), (24, 80))
+        self.assertIsNone(by["seven_day"]["scope"])
+        self.assertTrue(by["seven_day"]["resetsAt"].startswith("2026-11-26T04:00"))
+        self.assertIsNone(by["five_hour"]["limitReached"])
+
+    def payload(self, **rl):
+        return json.dumps({"type": "control_response", "response": {"subtype": "success", "request_id": "cb-usage",
+                           "response": {"rate_limits_available": True, "rate_limits": rl}}})
+
+    def test_model_windows_and_locks(self):
+        out = self.payload(seven_day_opus={"utilization": 97, "resets_at": "x", "locked_reason": "limit"},
+                           five_hour={"utilization": True})
+        by = {l["id"]: l for l in pool_usage.reading(out, "t")["limits"]}
+        self.assertEqual(by["seven_day_opus"]["scope"], "seven_day_opus")
+        self.assertTrue(by["seven_day_opus"]["limitReached"])
+        self.assertIsNone(by["five_hour"]["usedPercent"], "a bool is not a percentage")
+
+    def test_anything_unreadable_is_an_error_never_zero(self):
+        bad = ["", None, "{}", '{"type":"control_response","response":{"subtype":"error","error":"x"}}',
+               json.dumps({"type": "control_response", "response": {"subtype": "success",
+                           "response": {"rate_limits_available": False, "rate_limits": {}}}}),
+               self.payload()]
+        for out in bad:
+            with self.subTest(out=out):
+                self.assertEqual(pool_usage.reading(out, "t"), {"status": "error", "checkedAt": "t", "limits": []})
+
+    def test_the_default_login_removes_the_config_dir_variable(self):
+        env = pool_usage.usage_env(None, {"CLAUDE_CONFIG_DIR": "/x", "PATH": "/p"})
+        self.assertNotIn("CLAUDE_CONFIG_DIR", env)
+        env = pool_usage.usage_env("~/.claude-board", {"PATH": "/p"})
+        self.assertEqual(env["CLAUDE_CONFIG_DIR"], os.path.expanduser("~/.claude-board"))
+
+    def test_summary_names_the_worst_window(self):
+        doc = {"accounts": {"aaaaaaaa-1": pool_usage.reading(fixture_stream(), "t"),
+                            "bbbbbbbb-2": {"status": "error", "limits": []}}}
+        self.assertEqual(pool_usage.summary(doc), "aaaaaaaa 80%; bbbbbbbb unreadable")
+
+
+class PoolUsagePublishTests(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.out = os.path.join(self.d, "inst", "pool-usage.json")
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def cfg(self, accounts):
+        return {"output": self.out, "accounts": accounts}
+
+    def test_each_account_is_published_and_a_failure_is_marked(self):
+        seen = []
+
+        def run(config_dir):
+            seen.append(config_dir)
+            return fixture_stream() if config_dir == "~/.claude-board" else ""
+
+        doc = pool_usage.publish(self.cfg([{"connectionId": "c-board", "configDir": "~/.claude-board"},
+                                           {"connectionId": "c-default", "configDir": None},
+                                           {"configDir": "~/.claude-nobody"}]), run=run, clock=lambda: "T")
+        self.assertEqual(seen, ["~/.claude-board", None], "an entry with no connection id is skipped")
+        with open(self.out) as f:
+            self.assertEqual(json.load(f), doc)
+        self.assertEqual(doc["accounts"]["c-board"]["status"], "ok")
+        self.assertEqual(doc["accounts"]["c-default"], {"status": "error", "checkedAt": "T", "limits": []})
+        self.assertEqual(doc["version"], 1)
+        if os.name != "nt":
+            self.assertEqual(stat.S_IMODE(os.stat(self.out).st_mode), 0o600)
+        self.assertEqual([n for n in os.listdir(os.path.dirname(self.out)) if n.startswith(".pool-usage.")], [],
+                         "no temp file left behind")
+
+    def test_a_failed_write_leaves_the_old_file_and_no_temp(self):
+        os.makedirs(os.path.dirname(self.out))
+        with open(self.out, "w") as f:
+            f.write("old")
+
+        def boom(*a, **k):
+            raise OSError("disk full")
+
+        real = pool_usage.json.dump
+        pool_usage.json.dump = boom
+        try:
+            with self.assertRaises(OSError):
+                pool_usage.publish(self.cfg([{"connectionId": "c", "configDir": None}]), run=lambda d: "")
+        finally:
+            pool_usage.json.dump = real
+        with open(self.out) as f:
+            self.assertEqual(f.read(), "old")
+        self.assertEqual(sorted(os.listdir(os.path.dirname(self.out))), ["pool-usage.json"])
+
+    def test_a_missing_claude_binary_reads_as_unreadable(self):
+        old = os.environ.get("PATH")
+        os.environ["PATH"] = self.d
+        try:
+            self.assertEqual(pool_usage.run_claude(None), "")
+        finally:
+            os.environ["PATH"] = old
+
+    @unittest.skipIf(os.name == "nt", "a shebang stub needs a POSIX shell")
+    def test_run_once_against_a_stub_claude(self):
+        # The real contract with the CLI: argv, stdin and CLAUDE_CONFIG_DIR.
+        bindir = os.path.join(self.d, "bin")
+        os.makedirs(bindir)
+        log = os.path.join(self.d, "claude.log")
+        stub = os.path.join(bindir, "claude")
+        with open(stub, "w") as f:
+            f.write("#!/usr/bin/env python3\nimport json, os, sys\n"
+                    f"open({log!r}, 'a').write(json.dumps([sys.argv[1:], os.environ.get('CLAUDE_CONFIG_DIR'), sys.stdin.read()]) + '\\n')\n"
+                    f"sys.stdout.write(open({FIXTURE!r}).read())\n")
+        os.chmod(stub, 0o755)
+        cfg_path = os.path.join(self.d, "pool-accounts.json")
+        with open(cfg_path, "w") as f:
+            json.dump(self.cfg([{"connectionId": "c1", "configDir": "~/.claude-loginid"},
+                                {"connectionId": "c2", "configDir": None}]), f)
+        env = dict(os.environ, PATH=bindir + os.pathsep + os.environ.get("PATH", ""), CLAUDE_CONFIG_DIR="/leak")
+        p = subprocess.run([sys.executable, os.path.join(ROOT, "host", "pool_usage.py"), "run-once", "--config", cfg_path],
+                           capture_output=True, text=True, env=env, timeout=60)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertRegex(p.stdout, r"c1 80%; c2 80%")
+        calls = [json.loads(l) for l in open(log)]
+        self.assertEqual(calls[0][0], ["-p", "--verbose", "--no-session-persistence", "--settings",
+                                       '{"disableAllHooks":true}', "--input-format", "stream-json",
+                                       "--output-format", "stream-json"])
+        self.assertEqual(calls[0][1], os.path.expanduser("~/.claude-loginid"))
+        self.assertIsNone(calls[1][1], "the default login must not inherit CLAUDE_CONFIG_DIR")
+        self.assertIn('"subtype":"get_usage"', calls[0][2])
+        with open(self.out) as f:
+            self.assertEqual(sorted(json.load(f)["accounts"]), ["c1", "c2"])
+
+    def test_the_launchd_job_runs_it_with_claude_on_path(self):
+        with open(os.path.join(ROOT, "host", "launchd", "org.uplift.orbweaver-bugfix-pool-usage.plist"), "rb") as f:
+            pl = plistlib.load(f)
+        self.assertEqual(pl["ProgramArguments"][1:], ["__REPO__/host/pool_usage.py", "run-once"])
+        self.assertIn("/opt/homebrew/bin", pl["EnvironmentVariables"]["PATH"].split(":"))
+        self.assertEqual(pl["StartInterval"], 300)
 
 
 if __name__ == "__main__":
