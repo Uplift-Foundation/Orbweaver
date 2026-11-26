@@ -13,7 +13,9 @@ The lead runs each step; none of it is run by the tests.
    `git clone` fails under the sandbox profile; the fix is not a profile read of
    `~/.gitconfig`, which can carry credential helpers. Already applied on the mini by QA,
    so a run there changes nothing.
-2. `host/apply-rulesets.sh`, then `--apply` — the three rulesets; a dry run first.
+2. `host/apply-rulesets.sh`, then `--apply` — the three rulesets; a dry run first. Then the
+   same for Orbweaver-Mobile, **before the warden mints a token that reaches it**: see
+   [Orbweaver-Mobile rulesets](#orbweaver-mobile-rulesets-cb-481).
 3. `python3 host/create_app.py --public-host <mini LAN address>` — send Warren the URL it prints.
 4. Write `~/.config/orbweaver-bugfix/warden.json`: `company_id`, `paperclip_login`
    (`~/.config/paperclip-admin/board-login.txt`), `spool` (a folder inside the org's
@@ -123,6 +125,40 @@ run that never started (cancelled by a cap) answers 404 and is read as "no log",
 fault. Any other error reading a log is logged and the run is retried next tick; it neither
 pauses nor stops the tick.
 
+## Orbweaver-Mobile rulesets (CB-481)
+
+`host/rulesets-mobile/` holds five rulesets for `Uplift-Foundation/Orbweaver-Mobile`, which had
+none (and an unprotected `main`) when the warden's everyday token was widened to reach it. They
+mirror what Orbweaver's rulesets protect, adapted to mobile:
+
+| file | protects |
+| --- | --- |
+| `main-and-develop-prs-only.json` | `main` and `develop`: PR only, no deletion, no force push. Admins bypass only through a PR, as on Orbweaver, so nobody pushes straight to either |
+| `develop-required-checks.json` | `develop`: `relay`, `contracts` and `tools` (GitHub Actions) must pass. They are the checks that run on every PR to `develop`, read off the check runs of mobile's merged PRs. `android` and `snapshots` are path-filtered and so cannot be required; nothing runs on a PR to `main`, so `main` requires no check |
+| `main-admins-only.json` | `main`: updates, deletion and force push by admins only (the org's App never) |
+| `other-branches-admins-only.json` | every branch but `bugfix/pc-*`, `develop` and `main`: admins (and Dependabot) only. No `screenshots` exclusion, because no mobile workflow pushes a branch |
+| `tags-admins-only.json` | every tag: creation, update, deletion and force push by admins only (Orbweaver's two tag rulesets in one) |
+
+Before applying, read the collaborator list: a non-admin who pushes branches would be locked out
+of everything but `bugfix/pc-*`. On 2026-11-26 it was three admins and only `read` otherwise.
+
+```bash
+export REPO=Uplift-Foundation/Orbweaver-Mobile RULESETS_DIR=host/rulesets-mobile
+python3 host/check-rulesets.py                 # before: five "missing", the diff apply would make
+host/apply-rulesets.sh                         # dry run: five POSTs
+host/apply-rulesets.sh --apply
+python3 host/check-rulesets.py --push-probe    # after: five "matches", rules in force, pushes refused
+GH_TOKEN=<a token the warden minted> python3 host/check-rulesets.py --push-probe   # the org's own view
+```
+
+`check-rulesets.py` reads each ruleset back against its file (`missing`, `matches`, or `differs`
+naming the field), then GitHub's *effective* rules on `main` and `develop` (`GET
+rules/branches/<b>`), and with `--push-probe`, only when those are in force, asks GitHub to move
+each branch to a fresh commit object without force. Refused by a rule is the pass; refused for any
+other reason is a fail. If GitHub ever accepted it, the script puts the branch back with a forced
+update to the old head and exits non-zero. It works for Orbweaver too (`REPO`, `RULESETS_DIR`,
+`REQUIRED_CHECKS`), where its read-back matches the three live bug-fix-org rulesets.
+
 ## The machines runner (CB-470)
 
 The org's agents cannot hold an ssh key, install a build or touch the Windows PC, the
@@ -149,7 +185,11 @@ already lets agents write the first and read the second, because it allows all o
 
 **What it refuses**, each written to `result.json` as `ok: false` with a one-line
 `refused` sentence and nothing touched: a PR that is not open, not written by an allowed author or
-whose head is not `sha`; a second PR while one holds the machines; a `machine_run` without
+whose head is not `sha`; a PR that changes any file under `.github/workflows/` (CB-481: a Mac
+install runs the PR's own `release.yml` on an `e2e/` branch with the signing secrets, and the
+runner approves that deployment itself, so a workflow edit would meet the secrets before review;
+the PR's changed files are read with `gh api --paginate repos/<repo>/pulls/<n>/files`, a rename's
+old path included, and an unreadable list is a refusal too); a second PR while one holds the machines; a `machine_run` without
 a hold, on an unlisted machine, or after the PR's head moved since the install; any unknown
 verb, field or machine, and an `id` outside `[a-z0-9-]{1,40}`. Every answer has `id`, `verb`,
 `pr`, `ok`, `refused`, `started_at`, `finished_at`; a run is `ok` only on exit 0 without a
