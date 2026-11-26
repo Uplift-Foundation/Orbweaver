@@ -270,14 +270,14 @@ Then, none of which a package can carry:
 
    **Make a bare `gh` or `git` work too (CB-478).** A fresh session sometimes
    skips the prefix and reads "gh auth login" as broken access (QAF-50,
-   QAF-85, QAF-121, 2026-11-25). `host/bin/gh` and `host/bin/git` are stand-ins
+   QAF-85, QAF-121, 2026-11-25). `host/shims/gh` and `host/shims/git` are stand-ins
    that do what the prefix does, only when `BUGFIX_GH_TOKEN` is set: `gh` sets
    `GH_TOKEN` when it is empty, `git` also sets the `gh auth git-credential`
    helper and the bot author when `GIT_CONFIG_PARAMETERS` is empty. Each runs
    the next real binary on `PATH`, never prints the token and never touches
    `BUGFIX_GH_WORKFLOW_TOKEN`. The skill's prefix stays and still wins. A
    person installs them, after merge, like the `ps` stand-in in the triage
-   README: `cp host/bin/gh host/bin/git ~/.paperclip/tools/bin/` (that folder
+   README: `cp host/shims/gh host/shims/git ~/.paperclip/tools/bin/` (that folder
    is already first on the service's `PATH`), then restart the service so runs
    inherit it. Tested by `tools/test-bugfix-gh-wrapper.py`.
 6. **Build environment.** In each engineer's environment set

@@ -14,7 +14,7 @@ import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BIN = os.path.realpath(os.path.join(HERE, "..", "paperclip", "bugfix-org", "host", "bin"))
+BIN = os.path.realpath(os.path.join(HERE, "..", "paperclip", "bugfix-org", "host", "shims"))
 APP = "app-token-value"
 WORKFLOW = "workflow-token-value"
 
