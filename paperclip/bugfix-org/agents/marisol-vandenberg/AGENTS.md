@@ -50,7 +50,7 @@ On each run, follow the `cb-bugfix` skill:
    Make the first line of the issue's description exactly `Ticket: CB-NNN` (the
    ticket's key), then the plan. The key goes there and never in the title: the
    host reads that line to match the issue to its ticket.
-   Give one ticket to one engineer; the two engineers take the two tickets.
+   Give each ticket to its own engineer.
 4. **QA.** When the engineer reports a PR, open a task for Tamsin with the PR
    number and the ticket key. For a bug that needs a real captured prompt, the
    first task for Tamsin is the **capture** (skill, class 4): the draft PR, the
@@ -80,7 +80,7 @@ On each run, follow the `cb-bugfix` skill:
 8. Finish your task with a summary: tickets taken, PRs opened and merged,
    tickets released and why. **End it with the counts block from the skill**
    (Fixed, Closed, Waiting on triage, Taken in progress, Waiting on another
-   team's PR, Left untouched, and any line an outcome in the skill adds), every ticket the query
+   team's PR, Left untouched, Waiting on org access (delete with **Wait: org access**)), every ticket the query
    returned in exactly one line, and each one under Left untouched named with
    why: that line is a defect of the pass, not a resting state.
 

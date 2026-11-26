@@ -31,7 +31,7 @@ this order; the first that applies is the one:
    If that PR is the org's own, it is settled by the lead's step 0, not here.
 - **Wait: triage.** It has no comment starting with `[triage]` yet. The triage
    org runs every four hours, so this wait is short and is counted, not fixed.
-- **Wait: org access.** Until the org's GitHub access covers them, a bug whose fix is in the mobile repository (`Orbweaver-Mobile`) or in `.github/workflows/` is left exactly as it is (no Jira comment, no transition, and not a defect of the pass), a claimed ticket that turns out to need one is put back rather than released (close any draft PR, move the ticket to Refinement with the one comment `stopped: needs org access to <mobile repository | workflow files>; nothing merged; branch kept at <sha>`, and set the engineer's Paperclip issue to `done` with that same sentence as its `comment`, never `cancelled`), and the report counts all of them on a line of their own at the end of the counts block, `Waiting on org access: <n> (<keys>)`.
+- **Wait: org access.** Until the org's GitHub access covers them, a bug whose fix is in the mobile repository (`Orbweaver-Mobile`) or in `.github/workflows/` is left exactly as it is (no Jira comment, no transition, and not a defect of the pass), a claimed ticket that turns out to need one is put back rather than released (close any draft PR, move the ticket to Refinement with the one comment `stopped: needs org access to <mobile repository | workflow files>; nothing merged; branch kept at <sha>`, and set the engineer's Paperclip issue to `done` with that same sentence as its `comment`, never `cancelled`), and the report counts all of them on the `Waiting on org access` line of the counts block.
 - **Close.** The ticket is no longer a bug on `develop`, and the evidence is
    in hand, not inferred:
    - **already fixed:** a PR merged to `develop` fixed it. Name the PR and its
@@ -96,6 +96,7 @@ Waiting on triage: <n> (<keys>)
 Taken, in progress: <n> (<keys and PRs open>)
 Waiting on another team's PR: <n> (<keys and PR numbers>)
 Left untouched: <n> (<keys, and why>)
+Waiting on org access: <n> (<keys>)   (delete with **Wait: org access**)
 ```
 
 Every ticket the query returned is in exactly one line. **Left untouched** is

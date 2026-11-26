@@ -414,7 +414,8 @@ class InstructionTests(unittest.TestCase):
 
     def test_org_access_wait_writes_nothing_and_is_one_line_to_delete(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")
-        lines = [l for l in skill.splitlines() if "org access" in l]
+        tag = "(delete with **Wait: org access**)"
+        lines = [l for l in skill.splitlines() if "org access" in l and tag not in l]
         self.assertEqual(len(lines), 1, lines)
         line = lines[0]
         self.assertTrue(line.startswith("- **Wait: org access.** Until the org's GitHub access covers them"))
@@ -422,14 +423,19 @@ class InstructionTests(unittest.TestCase):
         self.assertNotIn(". ", body, "one sentence after the label")
         self.assertTrue(body.endswith("."))
         for needle in ("`Orbweaver-Mobile`", "`.github/workflows/`", "no Jira comment, no transition",
-                       "not a defect of the pass", "`Waiting on org access: <n> (<keys>)`",
+                       "not a defect of the pass", "the `Waiting on org access` line of the counts block",
                        "put back rather than released", "move the ticket to Refinement with the one comment",
                        "nothing merged; branch kept at <sha>", "`done` with that same sentence as its `comment`, never `cancelled`"):
             self.assertIn(needle, line)
-        # Deleting that one line removes the wait everywhere the lead reads it:
-        # the lead's own file never names it.
-        self.assertNotIn("org access", read("agents", "marisol-vandenberg", "AGENTS.md"))
-        self.assertNotIn("org access", skill.replace(line + "\n", ""))
+        # Every other mention, in the counts block and the lead's step 8, carries
+        # the tag, so deleting the rule and the tagged mentions removes the wait.
+        self.assertIn("Waiting on org access: <n> (<keys>)   " + tag, skill)
+        lead = read("agents", "marisol-vandenberg", "AGENTS.md")
+        self.assertIn("Waiting on org access " + tag, lead)
+        for doc in (skill.replace(line + "\n", ""), lead):
+            for l in doc.replace("\n   ", " ").splitlines():
+                if "org access" in l:
+                    self.assertIn(tag, l)
         # The lead can send that sentence: one PATCH carries status and comment.
         self.assertIn('send it in the same body as `"comment"`', read("agents", "marisol-vandenberg", "AGENTS.md"))
 
@@ -447,7 +453,8 @@ class InstructionTests(unittest.TestCase):
                  "Waiting on another team's PR: <n>", "Left untouched: <n>")
         block = re.search(r"```\n(Fixed: <n>.*?)```", skill, re.S)
         self.assertIsNotNone(block)
-        self.assertEqual([l.split(" (")[0] for l in block.group(1).strip().splitlines()], list(lines))
+        got = [l.split(" (")[0] for l in block.group(1).strip().splitlines()]
+        self.assertEqual(got, list(lines) + ["Waiting on org access: <n>"])
         lead = read("agents", "marisol-vandenberg", "AGENTS.md")
         self.assertIn("**End it with the counts block from the skill**", lead)
         self.assertIn("ending with the counts the skill asks for", read("tasks", "fix-cb-bugs", "TASK.md"))
