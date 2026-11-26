@@ -15,20 +15,71 @@ Jira project `CB` on `uplifttech.atlassian.net`. The `cloudId` is
 project = CB AND issuetype = Bug AND status = Refinement ORDER BY priority DESC, created ASC
 ```
 
-Skip a ticket when **any** of these holds:
+## Every ticket gets an outcome
 
-- its status is not Refinement;
-- an open PR names its key in the title or body
-  (`gh pr list --repo Uplift-Foundation/Orbweaver --state open --search "<key> in:title,body"`);
-- a pushed, unmerged commit names its key
-  (`git fetch origin` in your worktree, then `git log --remotes --not origin/develop --grep "<key>"`),
-  **unless that work is this org's own released work** (next paragraph);
-- it has no comment starting with `[triage]` yet (the triage org's likely cause is your input);
-- it is in a class this org leaves alone (below).
+**No ticket the query returns is skipped in silence.** A pass that read 18
+bugs, took none and changed nothing, then said the same thing thirty minutes
+later, is the failure this section exists to stop (CB-480). Every ticket the
+query returns leaves the pass with exactly one of these outcomes, decided in
+this order; the first that applies is the one:
 
-**This org's own released work is not a reason to skip.** When the rule above
-finds commits, check each branch that holds them. It is the org's own, with no
-one working on it, only if **both** hold:
+- **Wait: another team's PR.** An open PR's **title** names the key, in
+   either repository. Check with
+   `gh pr list --repo Uplift-Foundation/Orbweaver --state open --search "<key> in:title" --json number,title`
+   and the same with `--repo Uplift-Foundation/Orbweaver-Mobile`, and confirm the key is literally in a returned title (the search is fuzzy).
+   A key named only in a PR body, a commit message or a branch is **not** a
+   reason to wait: work named in passing is not somebody holding the ticket.
+   If that PR is the org's own, it is settled by the lead's step 0, not here.
+- **Wait: triage.** It has no comment starting with `[triage]` yet. The triage
+   org runs every four hours, so this wait is short and is counted, not fixed.
+- **Wait: put back.** The newest comment starting `[bugfix-org]` is a
+   `[bugfix-org] stopped:` put-back (**Putting a ticket back**). It stays a
+   wait, with no Jira write, counted on the line its sentence names
+   (`Mobile access not live yet` or `Needs a protected workflow line`), until a
+   person comments after it or, for mobile access, the check in **Two
+   repositories, one code base** passes; then it is decided afresh.
+- **Wait: mobile access.** The fix is in the mobile repository and the check in
+   **Two repositories, one code base** finds it unreachable: no Jira write,
+   counted on `Mobile access not live yet`, and not a defect of the pass.
+- **Close.** The ticket is no longer a bug on `develop`, and the evidence is
+   in hand, not inferred:
+   - **already fixed:** a PR merged to `develop` fixed it. Name the PR and its
+     merge sha, and say why it covers what this ticket describes (read the
+     PR's diff and the ticket's reproduction steps side by side; a PR that
+     mentions the key is not evidence it fixed it);
+   - **duplicate:** another ticket describes the same defect. Name it, and say
+     which one carries the work;
+   - **cannot reproduce:** a real attempt was made and the bug did not appear.
+     Say what was run, on which machine or in which test, at which sha, and
+     what was seen. Reading the code and concluding it looks fine is not an
+     attempt. A first-time cannot-reproduce comes from a claimed
+     reproduce-or-fix round (**Take it**), never from reading alone.
+   Close by moving it to Done (transition `41`) and posting one comment that
+   starts `[bugfix-org] closed:` with the reason and the evidence. Close only a
+   ticket in Refinement or one the org itself claimed, never one a person has
+   in Development or Testing. A close is
+   **not a release and needs no claim**. When the close ends a ticket the org
+   had claimed, set the engineer's Paperclip issue to `done`, not `cancelled`:
+   the ticket was settled.
+- **Take it: fix or reproduce.** Everything else is eligible, in either
+   repository, including a security bug, a fix to a workflow file, a bug that needs a real captured prompt (class 4 below) and a
+   bug that needs a real machine (class 3). Among them take the highest Jira
+   priority, then the lower class number, then the oldest, up to the run's
+   ticket limit (**Limits**).
+
+**Closes do not use the ticket limit; they have their own cap (**Limits**).**
+That cap is what keeps one pass from sweeping the board
+on thin evidence. A ticket that would have been closed past the cap is left for the next pass and named in the report as such.
+
+**Commits that name the key are not a skip, but check whose they are.** When
+`git fetch origin` then `git log --remotes --not origin/develop --grep "<key>"`
+finds commits, look at each branch that holds them. If it is **this org's own
+released work** it is continued rather than started over (next paragraph). If
+it is anybody else's and no open PR's title names the key, the ticket is still
+eligible: say in the claim comment which branch already mentions it.
+
+**This org's own released work** is a branch with no one working on it. It is
+the org's only if **both** hold:
 
 1. its name starts `bugfix/pc-` and the author of every commit on it that is not
    on `develop` is the App's bot:
@@ -37,20 +88,38 @@ one working on it, only if **both** hold:
 2. no PR from it is open: `gh pr list --repo Uplift-Foundation/Orbweaver --state open --head <branch>`
    prints nothing.
 
-Then the ticket is **eligible**, and the engineer continues from that branch
-instead of starting over: in the worktree, `git fetch origin`,
-`git checkout -B <branch> origin/<branch>`, rebase once onto `origin/develop`,
-and carry on (a closed PR can be reopened with `gh pr reopen <number>`, or open a
-new one from the branch with the same `gh pr create` as always). Keep the branch
-name; never rename a pushed branch. The claim comment names that branch and says
-`continuing released work`. If either test fails (a human's commit is on the
-branch, or a PR is open) the ticket is somebody's and you skip it as before.
-The work is yours to check: read what the branch changed before building on it.
+Then the engineer continues from that branch instead of starting over: in the
+worktree, `git fetch origin`, `git checkout -B <branch> origin/<branch>`,
+rebase once onto `origin/develop`, and carry on (a closed PR can be reopened
+with `gh pr reopen <number>`, or open a new one from the branch with the same
+`gh pr create` as always). Keep the branch name; never rename a pushed branch.
+The claim comment names that branch and says `continuing released work`. The
+work is yours to check: read what the branch changed before building on it.
 
-Among what is left take the highest Jira priority, then the lower class number first,
-then the oldest. At most **two tickets per run**.
+**The pass report ends with counts.** The last lines of the lead's summary are:
 
-## What this org fixes, and what it leaves
+```
+Fixed: <n> (<keys and PRs merged>)
+Closed: <n> (<keys, one reason each>)
+Waiting on triage: <n> (<keys>)
+Taken, in progress: <n> (<keys and PRs open>)
+Waiting on another team's PR: <n> (<keys and PR numbers>)
+Left untouched: <n> (<keys, and why>)
+Mobile access not live yet: <n> (<keys>)
+Needs a protected workflow line: <n> (<keys, and the line each needs>)
+```
+
+Every ticket the query returned is in exactly one line. **Left untouched** is
+for a ticket that got no outcome: the ticket limit was full, the
+close cap was reached, or something failed. Each one there is a
+defect of the pass and says why; a pass whose `Left untouched` grows pass after
+pass for the same reason is reporting a problem with these rules, not a quiet
+board.
+
+## What this org fixes
+
+The class comes from the summary and the triage comment, and you re-classify
+when you read the code.
 
 1. **Flaky tests in this repository.** Proof: the test class run 30 times on
    both rids on GitHub's runners. You cannot dispatch that run; the warden
@@ -72,12 +141,146 @@ then the oldest. At most **two tickets per run**.
    that shows the bug, then the same one on the fixed build installed on the
    machines it concerns, plus CI green on both rids.
 
-Leave alone, and say why if asked: a bug that needs a real captured prompt; a
-change to `.github/workflows/` (you may not edit it); a security fix; anything
-in the mobile repository (`Orbweaver-Mobile`); a ticket a human team holds. The
-class comes from the summary and the triage comment, and you re-classify when
-you read the code: a ticket that turns out to need one of those is released. A
-ticket that needs only a machine is not released for that reason.
+4. **Bugs that need a real captured prompt** (a permission dialog, a pane, a
+   transcript or rollout the parser has to read and no fixture holds). These
+   are taken, not skipped: the org has real machines (**Real machines**), and
+   the capture is made there. The order:
+   - the engineer opens the PR first, as a draft
+     (`gh pr create ... --draft`), with the test that will read the capture and
+     a note in the body of exactly what has to be captured; the runner only
+     serves an open org PR, so the PR has to exist before any capture;
+   - the lead hands QA a **capture task** with the PR number, the ticket key
+     and what to capture. QA sends `machine_install` for the machines the bug
+     concerns, then `machine_run` commands that produce the prompt and print it
+     (for example start the CLI in a detached `tmux` session, wait, then
+     `tmux capture-pane -p`), reads `stdout.txt`, and always sends
+     `machine_release`. QA's answer names the result folder holding the
+     capture;
+   - the engineer commits that capture as the fixture, unedited, shows the test
+     failing on it before the fix and passing after, and the PR leaves draft.
+   Proof: the fixture as captured, the test failing then passing, plus CI green
+   on both rids. **If the capture cannot be made within the ticket's fix rounds**, the ticket
+   still gets an outcome: close it as cannot-reproduce (**Close** in **Every
+   ticket gets an outcome**) when the attempts ran and the prompt did not
+   appear, or release it when the capture needs something the runner cannot
+   give, such as a person signing in. Either way the comment says what was
+   run, on which machine, and what came back.
+
+**Security bugs are taken like any other bug**, with one added rule: the PR
+body, the commit messages and every Jira comment describe the class of flaw and
+the fix, never a working exploit (no payload, no step-by-step to trigger it).
+The test that proves the fix may exercise the flaw; the prose around it does
+not explain how to use it.
+
+## Two repositories, one code base
+
+The org fixes bugs in two repositories and treats them as one code base, laid
+out the way a person here has them: Orbweaver-Mobile is cloned at `mobile/`
+inside the Orbweaver checkout. Paperclip gives each ticket its own Orbweaver
+worktree; a ticket that needs the mobile repository adds the clone there. The
+process (claim, branch, PR, QA, merge, limits) is the one this skill already
+describes. Only the rows of this table differ:
+
+| | Orbweaver | Orbweaver-Mobile (`mobile/`) |
+| --- | --- | --- |
+| Repository | `Uplift-Foundation/Orbweaver` | `Uplift-Foundation/Orbweaver-Mobile` |
+| Branch from, PR target | `origin/develop`, `--base develop` | `origin/develop`, `--base develop` (`main` takes only `release/` PRs) |
+| PR command | `gh pr create --repo Uplift-Foundation/Orbweaver ...` | inside `mobile/`: `gh pr create --repo Uplift-Foundation/Orbweaver-Mobile ...` |
+| Merge gate at the head sha | `build (macos-latest, osx-arm64)` and `build (windows-latest, win-x64)` green | `relay`, `contracts` and `tools` green always; `android` green when the diff touches `android/` or `contracts/`; `snapshots` green when it touches `app/`, `contracts/frames-v7-vectors.json` or `contracts/frames-v11-vectors.json`; no check pending or red |
+| QA comment names | both rids, `osx-arm64` and `win-x64` | each check it read, by name |
+| Local tests, targeted only | `dotnet test` per class (**Branch, commits, PR**) | **untried under the sandbox:** the contract checkers (`python3 -I contracts/check_*.py contracts/`), `app/Tools/test-*.py`, `./gradlew :crypto:test :relay:test --tests <class>`, `swift test --filter <class>` in `app/`; one that fails to run is named in `## Not verified` and is **not** a failed round, and CI is the gate. The relay suites (Docker), Android Robolectric and every simulator test are CI's |
+| Flaky-test proof | `stress.yml`, 30 runs on both rids (class 1) | none exists: the fix removes the race by construction, CI is green, and the PR says the failure rate was not measured |
+| Machines runner | yes (**Real machines**) | no: it serves Orbweaver PRs only |
+| Workflow files | allowed, under **Workflow files** | never |
+| Always in `## Not verified` | Windows behaviour not reproduced; any uncovered added line | no real phone or Watch; APNs delivery; Watch and UI simulator tests; no TestFlight build; the relay not deployed |
+| `Installed on:` | the machines used, or none and why | `none (mobile repository)` |
+
+**The clone.** In the engineer's worktree, with the usual prefix
+(**GitHub access**):
+
+```
+git clone https://github.com/Uplift-Foundation/Orbweaver-Mobile.git mobile
+git -C mobile checkout -b <the worktree's own branch name> origin/develop
+```
+
+The same branch name in both repositories, `bugfix/pc-<change>`, so the claim
+comment names one branch. The clone is fresh per ticket; `git -C mobile fetch
+origin` before a rebase is all the refreshing it needs. `/mobile/` is in
+Orbweaver's `.gitignore`, so a commit in the worktree never picks up the nested
+clone; commit mobile changes with `git -C mobile`. Every command in `mobile/`
+uses the everyday token, never `$BUGFIX_GH_WORKFLOW_TOKEN`. QA and the lead clone the
+same way when they need to read it.
+
+**Check that mobile is reachable before relying on it.** The org's GitHub
+access to the mobile repository may be newer than these instructions on a
+given day. A clone proves nothing: it can succeed through a credential helper
+the org's token has no part in. Before claiming a mobile ticket the lead runs, with the prefix,
+`gh api /installation/repositories --jq '.repositories[].full_name'`, which
+answers only for the org's own token and lists exactly the repositories it
+reaches. If `Uplift-Foundation/Orbweaver-Mobile` is not in that list, the
+ticket is not claimed and is counted on the report's `Mobile access not live
+yet` line, with no Jira write. After a claim the signal is a **refused push**
+to the mobile branch (not a failed clone): the ticket is put back (**Putting a
+ticket back**) with the sentence `[bugfix-org] stopped: mobile access not live
+yet; nothing merged; branch kept at <sha>`.
+
+**A fix in both repositories is one ticket with two PRs**, one in each, on the
+same branch name, each gated by its own row. QA reviews both and posts its
+comment on each. The ticket moves to Testing when the first PR opens and to
+Done only when both are merged; the Done comment names both merge shas. Merge
+the one the other depends on first (usually mobile's contracts, then the
+desktop reader); if the second cannot merge, the first stays merged and the
+ticket is released with that said.
+
+**Never on mobile:** edit `.github/workflows/`, bump
+`CURRENT_PROJECT_VERSION`, upload to TestFlight, deploy the relay, or push to
+`main` or `develop`.
+
+## Workflow files
+
+A bug whose fix is a change under `.github/workflows/` in **Orbweaver** is the
+org's. On mobile it never is (table above).
+
+- **The smallest diff, in one workflow file.** Never `release.yml` or
+  `publish-screenshots.yml`, and never an added or removed line about an
+  environment, a secret, permissions, a trigger (`on:`, `pull_request_target`,
+  `workflow_run`) or a runner (`runs-on`). The warden reads every org PR's
+  workflow diff and pauses the company on any of those, so a fix that needs
+  one cannot land through the org.
+- **A fix that needs one of those lines is put back** (**Putting a ticket
+  back**) with the sentence `[bugfix-org] stopped: needs a protected workflow
+  line (<the line it needs, e.g. "permissions: contents: write" in ci.yml>); nothing
+  merged; branch kept at <sha>`, and counted on the report's `Needs a protected
+  workflow line` line. It is not released and not closed: the bug is real and
+  a person makes that change.
+- **Push with the workflow token.** GitHub refuses a push that touches a
+  workflow file unless the token carries the workflows permission, and only the
+  engineers have one, `$BUGFIX_GH_WORKFLOW_TOKEN` (Orbweaver only). For that
+  branch, begin the push command with `export GH_TOKEN="$BUGFIX_GH_WORKFLOW_TOKEN";`
+  instead of the everyday prefix's first part. Everything else uses the everyday
+  token, and the workflow token is **never used inside `mobile/` or for any
+  mobile push**.
+- **The proof is the PR's own CI run** showing the changed step doing what the
+  fix says, named by run id in `## Verified`. A workflow PR never asks for a
+  machine install (the runner refuses one). A path that runs only on a push to
+  `develop` or `main`, or on a tag, cannot be seen before merge; name it in
+  `## Not verified`.
+- **QA adds one line** to its review comment on a workflow PR:
+  `Workflow change: <files>; no environment, secret, permission, trigger or runner line`.
+  The lead does not merge a PR that touches `.github/workflows/` without that
+  line at the reviewed sha.
+
+## Putting a ticket back
+
+Some stops are not the org failing, so they are not releases. Putting a ticket
+back means: close any open PR the ticket has (draft or not), move the ticket to
+Refinement with the one comment the rule gives (it always starts
+`[bugfix-org] stopped:`, which is how a later pass finds it, **Wait: put
+back**), and set the engineer's
+Paperclip issue to `done` with that same sentence as its `comment`, never
+`cancelled` (`cancelled` is a release, and the warden counts releases toward a
+pause). The branch is kept. The rules that put a ticket back are in **Two
+repositories, one code base** and **Workflow files**.
 
 ## Real machines
 
@@ -228,7 +431,9 @@ key (its slug becomes the branch name), and its description starts with the line
 
 Settling a ticket also leaves one fact in Paperclip, which the host reads in
 place of anything an agent says: the engineer's Paperclip issue ends `done` when
-the PR merged to `develop` and `cancelled` when the ticket was released. The
+the ticket left the org with an outcome (the PR merged to `develop`, the
+ticket was closed after a claim, or an outcome in **Every ticket gets an
+outcome** says so), and `cancelled` only when the ticket was released. The
 Jira comment is the human-readable record; the issue status is the machine one.
 The warden also cancels a child task that sat with no run through two of its
 wake comments, and says so on your task; that is not a release, so treat it as
@@ -247,6 +452,7 @@ connector cannot check this; the rule is the control.
 | PR open | Development to Testing | the PR link and what the fix is |
 | merged to `develop` | Testing to Done | the merge sha, what was verified and what was not |
 | gave up | back to Refinement | `[bugfix-org] released`, what it learned, why it stopped |
+| closed | Refinement, or a ticket the org claimed, to Done (`41`); no claim needed | `[bugfix-org] closed:`, the reason and the evidence (**Every ticket gets an outcome**, **Close**) |
 
 ## GitHub access
 
@@ -262,12 +468,15 @@ export GH_TOKEN="$BUGFIX_GH_TOKEN"; export GIT_CONFIG_PARAMETERS="'credential.he
 That makes `gh` and `git` use the App and author commits as its bot. Without
 it on a `git commit`, the commit is authored as the Mac mini's own user, which
 credits the org's work to a person. Never print
-the token, never write it to a file, and never use any other credential. The
+the token, never write it to a file, and never use any other credential. It
+reaches both repositories, Orbweaver and Orbweaver-Mobile, and never carries
+the workflows permission; the engineers' second token, `$BUGFIX_GH_WORKFLOW_TOKEN`,
+is used only as **Workflow files** says. The
 token lasts at least 45 minutes from the start of your run. If a push or `gh`
 call fails with 401 late in a long run, finish the task, say so, and ask for
 another round: the next run gets a fresh token. A push the rulesets refuse
 (GH013) means you left your lane, which is `bugfix/pc-*` branches and PRs into
-`develop`. Stop there, and say so in your answer.
+`develop`, in either repository. Stop there, and say so in your answer.
 
 ## Long commands
 
@@ -339,11 +548,15 @@ was tested costs more than one that admits a gap.
 
 QA reviews one sha, re-resolved just before reporting, and posts a **review
 comment** (not an approval, GitHub refuses that on the account's own PR) whose
-body starts `[bugfix-org] QA`, names both rids (`osx-arm64` and `win-x64`), says
-which suites ran and what was confirmed against what is assumed, and ends
-`Verdict: merge` or `Verdict: fix` with one list. The lead merges only when that
-comment exists, both required checks are green at the sha it names, and the PR
-head is still that sha.
+body starts `[bugfix-org] QA`, names what its repository's row in **Two
+repositories, one code base** says (both rids, `osx-arm64` and `win-x64`, on
+Orbweaver; each check read, on mobile), says which suites ran and what was
+confirmed against what is assumed, carries the `Workflow change:` line on a
+workflow PR, and ends `Verdict: merge` or `Verdict: fix` with one list. The
+lead merges only when that comment exists, the repository's merge gate holds at
+the sha it names (on Orbweaver: both required checks are green), and the PR
+head is still that sha:
+`gh pr merge <number> --repo <the PR's repository> --squash`.
 
 ## A red check your change did not cause
 
@@ -351,7 +564,14 @@ When a required check is red only on a test outside your change's footprint
 (another area, a timing test you did not touch, a class with a flaky-test
 ticket such as CB-461 or CB-463), ask the warden to rerun the failed jobs. Do
 not push to retry. Write one file, `$BUGFIX_SPOOL/rerun-<PR number>.json`,
-holding exactly `{"verb": "rerun_failed", "pr": <PR number>}`.
+holding exactly `{"verb": "rerun_failed", "pr": <PR number>}` for an
+Orbweaver PR. **A mobile PR's rerun** goes to a different file,
+`$BUGFIX_SPOOL/rerun-mobile-<PR number>.json`, holding
+`{"verb": "rerun_failed", "pr": <PR number>, "repo": "mobile"}`, and only when
+`$BUGFIX_SPOOL/access.json` lists `"mobile": true` under `repos` (an older
+warden ignores `repo` and would rerun the Orbweaver PR with that number). Until
+then a red mobile check you did not cause is a failed round, named in the PR
+body as a suspected flake.
 
 The warden reruns the failed jobs of the PR's latest CI run within five
 minutes. It does this once per head sha, and only for a completed red run;
@@ -365,9 +585,17 @@ a red check.
 
 ## Limits
 
-Two fix rounds per ticket, ninety minutes from the claim, one rebase onto
-`develop`. Past any of them the ticket is released. Two tickets per run, two org
-PRs open at once.
+**The limits are stated here and nowhere else;** every other file points
+here.
+
+- **Per run:** at most **two tickets taken** (to fix or reproduce), at most
+  **five closes** (which do not use the two), and at most **two tickets with
+  org PRs open** at once (a ticket with a PR in each repository counts once).
+- **Per ticket:** **two fix rounds**, **ninety minutes** from the claim (less
+  paused time, below), and **one rebase** onto `develop`.
+
+Past a per-ticket limit the ticket is released, or closed when the attempt
+itself is the evidence (**Every ticket gets an outcome**).
 
 **Time the company was paused does not count toward the ninety minutes.** The
 warden publishes every pause in `$BUGFIX_SPOOL/pauses.json`, a list of the last
@@ -402,5 +630,7 @@ Install on any machine yourself, or run `ssh` or anything else that reaches
 one: only the machines runner does that, when you write it a request (**Real
 machines**). So never take `/tmp/ow-install.lock` (the sandbox denies it
 anyway). Push to `develop`, `main` or another team's branch. Create a tag or
-a release. Edit `.github/workflows/`. Paste a secret, a token, a home path or a
+a release. Edit `.github/workflows/` other than as **Workflow files** says, or
+on mobile at all. Write a working exploit into a PR, a
+commit or a comment. Paste a secret, a token, a home path or a
 hostname into a PR, comment or commit.

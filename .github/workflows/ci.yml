@@ -156,6 +156,12 @@ jobs:
         if: ${{ !cancelled() && matrix.checks }}
         run: python tools/test-bugfix-host.py
 
+      # CB-481: Orbweaver-Mobile's ruleset JSON, the apply script run against
+      # it, and the read-back and push-refusal checker. Fakes only.
+      - name: Unit tests (bug-fix org mobile rulesets)
+        if: ${{ !cancelled() && matrix.checks }}
+        run: python tools/test-bugfix-rulesets-mobile.py
+
       # CB-470: the machine runner (spool rules, hold, cap, restore) and its
       # Windows seam, against fake machines, a fake gh and a fake clock. No
       # ssh and no machine; the run_once file-level cases skip on Windows,

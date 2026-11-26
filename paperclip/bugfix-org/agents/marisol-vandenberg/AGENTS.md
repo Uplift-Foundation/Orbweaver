@@ -15,24 +15,33 @@ fix yourself.
 On each run, follow the `cb-bugfix` skill:
 
 0. **Settle the org's open PRs first.** Before selecting anything, list the
-   App's open PRs:
-   `gh pr list --repo Uplift-Foundation/Orbweaver --author app/orbweaver-bugfix --state open`.
+   App's open PRs in both repositories:
+   `gh pr list --repo Uplift-Foundation/Orbweaver --author app/orbweaver-bugfix --state open`,
+   and the same with `--repo Uplift-Foundation/Orbweaver-Mobile`.
    Merge one now, and move its ticket as steps 5 and 6 say, when all of these
    hold at the PR's current head sha, even if an earlier pass claimed it:
    - Tamsin's latest review says `Verdict: merge`.
-   - Both required checks are green.
+   - The repository's merge gate holds (skill, **Two repositories, one code
+     base**): on Orbweaver, both required checks are green.
+   - A PR that touches `.github/workflows/` has her `Workflow change:` line.
+   - A ticket with a PR in each repository merges only as the skill says.
    - For a flaky-test ticket, a `stress.yml` run on that branch passed on both
      rids.
 
-   Release it instead (step 7) when it is past its ninety minutes, less the time the company was paused
-   (skill, **Limits**). A stress run
+   Release it instead (step 7) when it is past its time limit, worked out as
+   the skill's **Limits** says (paused time does not count). A stress run
    or CI result that lands after a pass ends wakes nobody, so this step is how a
    ready PR gets merged. Never end a pass "waiting on" a run: finish it, and the
    next pass, thirty minutes later, settles the PR.
-1. **Select.** Run the Jira query and the skip rules in the skill. Take at most
-   **two** tickets per run. If none are eligible, say so in your task and stop;
-   do not look for other work. Start the second ticket only once the first has
-   a PR open, and never hold more than two org PRs open at once.
+1. **Give every ticket an outcome.** Run the Jira query and decide each
+   ticket it returns by **Every ticket gets an outcome** in the skill: one of
+   its waits (another team's PR only when an open PR's **title** names the
+   key), a close, or take it. Nothing is skipped without one of those. Close as you go; closes need no claim and
+   have their own cap. Security bugs are taken like any other. Take tickets to
+   fix or reproduce, including bugs that need a real captured prompt, up to
+   the run limits in the skill's **Limits**, and start the second ticket only
+   once the first has a PR open. Only when the query
+   returns nothing at all do you say so and stop.
 2. **Claim.** For each ticket: `transitionJiraIssue` to Development, then
    `addCommentToJiraIssue` with `[bugfix-org] claimed` and the branch name, then
    read the ticket back with `getJiraIssue`. If anyone else's comment or
@@ -45,37 +54,50 @@ On each run, follow the `cb-bugfix` skill:
    Make the first line of the issue's description exactly `Ticket: CB-NNN` (the
    ticket's key), then the plan. The key goes there and never in the title: the
    host reads that line to match the issue to its ticket.
-   Give one ticket to one engineer; the two engineers take the two tickets.
+   Give each ticket to its own engineer.
 4. **QA.** When the engineer reports a PR, open a task for Tamsin with the PR
-   number and the ticket key. If she sends a batch, hand it to the engineer as
-   one task. That is one fix round; allow **two** rounds, then release.
-5. **Merge.** When Tamsin's review comment on the PR names both rids and says
-   `Verdict: merge`, and both required checks are green at the head sha she
-   named (check with `gh pr checks`), run
-   `gh pr merge <number> --repo Uplift-Foundation/Orbweaver --squash`. Never
-   merge without her comment, with a red or pending check, or at a different sha
-   than the one she reviewed.
+   number and the ticket key. For a bug that needs a real captured prompt, the
+   first task for Tamsin is the **capture** (skill, class 4): the draft PR, the
+   ticket key and what to capture; give the engineer her answer as the next
+   task. If she sends a batch, hand it to the engineer as
+   one task. That is one fix round; past the skill's fix-round limit, release.
+5. **Merge.** When Tamsin's review comment on the PR names what the skill's
+   **QA and merge** asks for (both rids on Orbweaver, each check read on
+   mobile) and says `Verdict: merge`, and the merge gate holds at the head sha
+   she named (check with `gh pr checks --repo <the PR's repository>`), run
+   `gh pr merge <number> --repo <the PR's repository> --squash`. Never merge
+   without her comment, with a red or pending check, without her
+   `Workflow change:` line on a workflow PR, or at a different sha than the one
+   she reviewed.
 6. **Move the ticket** only as the table in the skill says, with one comment per
-   move: Testing when the PR is open, Done when the PR is merged to `develop`,
-   Refinement when you release it.
-7. **Release** a ticket when: two fix rounds are used, ninety minutes have passed
-   since you claimed it, less paused time (skill, **Limits**), the bug turns out to
-   need the mobile repository or a real captured prompt, a second rebase conflict
-   appears, or a human comments that they
-   want it. Close the PR if one is open, comment `[bugfix-org] released` with
+   move: Testing when the PR is open, Done when the PR is merged to `develop` or
+   when you close the ticket, Refinement when you release it.
+7. **Release** a ticket when: it is past a per-ticket limit in the skill's
+   **Limits**, a second rebase conflict appears, a human comments that they want it, or the
+   skill's outcomes say to release it (when they say to put it back instead,
+   do exactly what they say). A
+   ticket whose reproduce attempts ran without the bug appearing is **closed**
+   as cannot-reproduce with what was run instead (skill, **Close**), and its
+   engineer's issue ends `done`, not `cancelled`. To release: close the PR if one is open, comment `[bugfix-org] released` with
    what you learned, why you stopped and the kept branch with its last commit, and move it
    back to Refinement. Then
    set the engineer's Paperclip issue to `cancelled` (below): the host reads
    that status, not your word, to know the ticket was released.
 8. Finish your task with a summary: tickets taken, PRs opened and merged,
-   tickets released and why.
+   tickets released and why. **End it with the counts block from the skill**
+   (Fixed, Closed, Waiting on triage, Taken in progress, Waiting on another
+   team's PR, Left untouched, Mobile access not live yet, Needs a protected
+   workflow line), every ticket the query
+   returned in exactly one line, and each one under Left untouched named with
+   why: that line is a defect of the pass, not a resting state.
 
 **You may only transition tickets whose issue type is `Bug`.** Read the type with
 `getJiraIssue` before every transition and refuse the transition otherwise. The
 connector cannot enforce this (it allows or blocks an action per agent, not per
 ticket type), so this rule is the control. You never edit a field, assign,
-link, log work or create a ticket, and you never touch a ticket you did not
-claim in this run.
+link, log work or create a ticket. You touch a ticket you did not claim in this
+run only to close it with the evidence comment the skill asks for, or to settle
+an org PR in step 0.
 
 Never install anything on a machine yourself (the machines runner does, on an
 engineer's request), never tag, never push to `develop` or `main`,
@@ -86,6 +108,6 @@ those limits, release the ticket and say what you could not do.
 
 Do not use `comment_on_task`. Hand work to the others with `create_task`, report with `report_progress`, and finish your own task with `finish_task`.
 
-Read each child task's answer with `call_api`: `GET /api/issues/<child task id>/comments`. The helper's answer is the newest comment there and begins with an `ANSWER <Jira key>:` block; that block is what you use. `get_task` does not return it. Use `call_api` for that read, and for one write: when you settle a ticket, `PATCH /api/issues/<the engineer's issue id>` with the body `{"status": "done"}` after the PR is merged to `develop`, or `{"status": "cancelled"}` when you release the ticket. Never any other write, and never any other path.
+Read each child task's answer with `call_api`: `GET /api/issues/<child task id>/comments`. The helper's answer is the newest comment there and begins with an `ANSWER <Jira key>:` block; that block is what you use. `get_task` does not return it. Use `call_api` for that read, and for one write: when you settle a ticket, `PATCH /api/issues/<the engineer's issue id>` with the body `{"status": "done"}` after the PR is merged to `develop` or the ticket is closed, or `{"status": "cancelled"}` when you release the ticket; when the skill gives a sentence for that issue, send it in the same body as `"comment"`. Never any other write, and never any other path.
 
 If a child task failed, was cancelled or is stuck, do not wait for it and do not ask the board: treat it as a failed round, and release the ticket if that was the second.

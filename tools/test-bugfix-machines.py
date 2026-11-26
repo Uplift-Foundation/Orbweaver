@@ -40,9 +40,20 @@ class FakeGh:
     def __init__(self, **prs):
         self.prs = {int(k[1:]): v for k, v in prs.items()}
         self.commits = {}
+        # Changed paths per PR; a PR with no entry changes one ordinary file.
+        self.files = {}
+        self.files_asked = []
+        self.head_after_files = {}
 
     def pr(self, n):
         return self.prs.get(n)
+
+    def pr_files(self, n):
+        self.files_asked.append(n)
+        if n in self.head_after_files:
+            # A push lands between the head check and the file list.
+            self.prs[n] = pr(head=self.head_after_files.pop(n))
+        return self.files.get(n, ["SessionManager.cs"])
 
     def commit(self, sha):
         return self.commits.get(sha)
@@ -317,6 +328,94 @@ class InstallTests(unittest.TestCase):
         refused_untouched(self, r, res, "not allowed")
         self.assertIsNone(r.hold)
         self.assertTrue(one(make_runner(), install())["ok"])
+
+    def test_pr_touching_a_workflow_file_is_refused_control_ordinary_pr_installs(self):
+        # CB-481: an install runs the PR's own release.yml with the signing
+        # secrets, so a workflow edit never reaches a machine before review.
+        gh = FakeGh(p7=pr())
+        gh.files[7] = ["SessionManager.cs", ".github/workflows/ci.yml"]
+        r = make_runner(gh=gh)
+        res = one(r, install())
+        shape(self, res)
+        refused_untouched(self, r, res, "the PR changes .github/workflows/ci.yml")
+        self.assertIn("never installed", res["refused"])
+        self.assertIn("own CI run", res["refused"])
+        self.assertIsNone(r.hold)
+        self.assertFalse(r.lock.held)
+        # Control: the same PR without the workflow file is served.
+        ok = FakeGh(p7=pr())
+        ok.files[7] = ["SessionManager.cs", "docs/workflows.md", ".github/CODEOWNERS"]
+        self.assertTrue(one(make_runner(gh=ok), install())["ok"])
+
+    def test_renamed_or_deleted_workflow_and_unreadable_files_are_refused(self):
+        for files, fragment in (([".github/workflows/release.yml"], "release.yml"),
+                                (None, "could not read the PR's changed files")):
+            gh = FakeGh(p7=pr())
+            gh.files[7] = files
+            r = make_runner(gh=gh)
+            refused_untouched(self, r, one(r, install()), fragment)
+            self.assertFalse(r.lock.held)
+
+    def test_head_moving_while_the_files_are_read_is_refused_control_still_head_installs(self):
+        # QA round 1: sha carried a workflow edit, a newer head reverted it,
+        # and the file list (read after the push) is clean. The head is read
+        # again after the files, so the stale sha is refused.
+        gh = FakeGh(p7=pr())
+        gh.head_after_files[7] = SHA2
+        r = make_runner(gh=gh)
+        res = one(r, install(sha=SHA))
+        refused_untouched(self, r, res, "sha is not the PR's current head")
+        self.assertFalse(r.lock.held)
+        # Control: the head does not move, the same request installs.
+        self.assertTrue(one(make_runner(gh=FakeGh(p7=pr())), install(sha=SHA))["ok"])
+
+    def test_composite_actions_are_refused_like_workflows(self):
+        gh = FakeGh(p7=pr())
+        gh.files[7] = [".github/actions/sign/action.yml"]
+        r = make_runner(gh=gh)
+        refused_untouched(self, r, one(r, install()), ".github/actions/sign/action.yml")
+        # Control: other .github files and a path merely containing "actions".
+        ok = FakeGh(p7=pr())
+        ok.files[7] = [".github/dependabot.yml", "docs/.github/actions/x.yml", "Actions/Run.cs"]
+        self.assertTrue(one(make_runner(gh=ok), install())["ok"])
+
+    def test_a_file_list_at_githubs_cap_is_refused_control_one_below_installs(self):
+        gh = FakeGh(p7=pr())
+        gh.files[7] = [f"f{i}.cs" for i in range(runner.FILES_CAP)]
+        r = make_runner(gh=gh)
+        refused_untouched(self, r, one(r, install()), "GitHub's cap")
+        ok = FakeGh(p7=pr())
+        ok.files[7] = [f"f{i}.cs" for i in range(runner.FILES_CAP - 1)]
+        self.assertTrue(one(make_runner(gh=ok), install())["ok"])
+
+    def test_workflow_rule_is_asked_only_after_the_pr_gate(self):
+        # A PR that may not use the machines is refused for that, and GitHub
+        # is not asked for its files at all.
+        gh = FakeGh(p7=pr(author="someone"))
+        gh.files[7] = [".github/workflows/ci.yml"]
+        res = one(make_runner(gh=gh), install())
+        self.assertIn("not allowed", res["refused"])
+        self.assertEqual(gh.files_asked, [])
+
+    def test_reinstall_at_a_new_head_that_adds_a_workflow_is_refused(self):
+        gh = FakeGh(p7=pr())
+        r = make_runner(gh=gh)
+        self.assertTrue(one(r, install())["ok"])
+        gh.prs[7] = pr(head=SHA2)
+        gh.files[7] = ["SessionManager.cs", ".github/workflows/ci.yml"]
+        res = one(r, install(i="i2", sha=SHA2))
+        self.assertFalse(res["ok"])
+        self.assertIn(".github/workflows/ci.yml", res["refused"])
+        self.assertEqual(r.machines["windows"].calls.count(("install", 7, SHA2)), 0)
+
+    def test_workflow_rule(self):
+        self.assertIsNone(runner.workflow_problem([]))
+        self.assertIsNone(runner.workflow_problem(["a.cs", ".github/dependabot.yml", "x/.github/workflows/y.yml"]))
+        why = runner.workflow_problem(["b.cs", ".github/workflows/z.yml", ".github/workflows/a.yml"])
+        self.assertIn(".github/workflows/a.yml, .github/workflows/z.yml", why)
+        self.assertIn(".github/actions/a/action.yml", runner.workflow_problem([".github/actions/a/action.yml"]))
+        self.assertEqual(runner.FILES_CAP, 3000)
+        self.assertIn("could not read", runner.workflow_problem(None))
 
     def test_empty_allowed_list_allows_nobody(self):
         res = one(make_runner(allowed_authors=[]), install())
@@ -1202,6 +1301,23 @@ class GhCliTests(unittest.TestCase):
             raise subprocess.TimeoutExpired(argv, 60)
         self.assertIsNone(runner.GhCli("o/r", hang).pr(7))
         self.assertIsNone(runner.GhCli("o/r", hang).commit(SHA))
+
+    def test_pr_files_pages_through_rest_and_keeps_renamed_paths(self):
+        seen = []
+
+        def sh(argv):
+            seen.append(argv)
+            return subprocess.CompletedProcess(argv, 0, "a.cs\n.github/workflows/new.yml\n.github/workflows/old.yml\n", "")
+        self.assertEqual(runner.GhCli("o/r", sh).pr_files(7),
+                         ["a.cs", ".github/workflows/new.yml", ".github/workflows/old.yml"])
+        self.assertEqual(seen[0], ["gh", "api", "--paginate", "repos/o/r/pulls/7/files",
+                                   "--jq", ".[] | .filename, (.previous_filename // empty)"])
+        self.assertEqual(runner.GhCli("o/r", lambda a: subprocess.CompletedProcess(a, 0, "", "")).pr_files(7), [])
+        self.assertIsNone(runner.GhCli("o/r", lambda a: subprocess.CompletedProcess(a, 1, "", "404")).pr_files(7))
+
+        def hang(argv):
+            raise subprocess.TimeoutExpired(argv, 60)
+        self.assertIsNone(runner.GhCli("o/r", hang).pr_files(7))
 
     def test_commit_lookup(self):
         seen = []

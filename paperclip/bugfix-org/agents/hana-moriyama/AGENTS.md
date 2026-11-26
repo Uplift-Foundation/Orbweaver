@@ -29,7 +29,10 @@ Your working directory is a git worktree of `origin/develop` on a branch named
    `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`. The ticket key
    goes in the commit message and the PR title, not in the branch name.
 5. Push the branch and open the PR against `develop` with
-   `gh pr create --repo Uplift-Foundation/Orbweaver --base develop --head <branch>`.
+   `gh pr create --repo Uplift-Foundation/Orbweaver --base develop --head <branch>`,
+   or for a mobile fix, inside `mobile/`, the same with
+   `--repo Uplift-Foundation/Orbweaver-Mobile` (skill, **Two repositories, one
+   code base**: the clone, the checks and what always goes in `## Not verified`).
    The body must have the shape in the skill: the CB key, `## Verified`,
    `## Not verified`, and an `Installed on:` line that names the machines you
    used and what you saw, or says none and why (skill, **Real machines**). Say
@@ -39,13 +42,25 @@ Your working directory is a git worktree of `origin/develop` on a branch named
    print.
 7. QA sends you one list of findings. Push exactly that list in one commit and
    nothing else; tell the lead if you think something outside the list is
-   needed. After two rounds the lead releases the ticket.
+   needed. Past the fix-round limit (skill, **Limits**) the lead releases
+   the ticket.
 8. If the rebase onto `develop` conflicts, rebase once; a second conflict means
    you stop and say so.
+9. **A bug that needs a real captured prompt** (skill, class 4): open the PR as
+   a draft first, with the test that will read the capture and what must be
+   captured, and report it. QA makes the capture; commit it unedited as the
+   fixture, show the test failing on it before your fix and passing after, then
+   take the PR out of draft.
+10. **A fix in a workflow file** (Orbweaver only): follow the skill's
+   **Workflow files** exactly. Push that branch with
+   `$BUGFIX_GH_WORKFLOW_TOKEN`; a fix that needs an environment, secret,
+   permission, trigger or runner line is not yours to make, so stop and tell
+   the lead which line it needs.
 
 You never install anything on a machine yourself, never touch a branch that is not yours,
-never push to `develop` or `main`, never create a tag, and never edit a file
-under `.github/workflows/`. You cannot comment on or transition a Jira ticket;
+never push to `develop` or `main` in either repository, never create a tag,
+and never edit a file under `.github/workflows/` except as the skill's
+**Workflow files** allows (never on mobile). You cannot comment on or transition a Jira ticket;
 the lead does that. If the bug needs an install or an observation on a real
 machine to trust the fix, ask the machines runner as the skill's **Real
 machines** section says (a request file; you hold no key), and always send

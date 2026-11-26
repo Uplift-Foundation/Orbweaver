@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Publishes each pooled Claude account's usage for the pool router (CB-468).
+     Install like the warden's plist: copy to ~/Library/LaunchAgents/ with
+     __REPO__ replaced by the checkout, then
+     launchctl bootstrap gui/$(id -u) <plist>. It runs outside the Paperclip
+     sandbox because it reads each account's Claude Code login, which the
+     sandboxed service cannot. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>org.uplift.orbweaver-bugfix-pool-usage</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>__REPO__/host/pool_usage.py</string>
+    <string>run-once</string>
+  </array>
+  <!-- launchd's own PATH has no claude (Homebrew installs it). -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>StartInterval</key><integer>300</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardErrorPath</key><string>/tmp/orbweaver-bugfix-pool-usage.err</string>
+  <key>StandardOutPath</key><string>/tmp/orbweaver-bugfix-pool-usage.out</string>
+</dict>
+</plist>
