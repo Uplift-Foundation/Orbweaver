@@ -7,6 +7,10 @@ copy of the build that was installed before, lives on disk), with:
     name                        "windows" | "mini" | "macbook"
     installed_commit()          the hex commit stamped in the installed build,
                                 lowercased, full or abbreviated (>= 7), or None
+    prepare(pr, sha, log)       fetch what install() needs without changing the
+                                machine (a signed build, cached by sha); the
+                                runner calls it before taking the install lock;
+                                a no-op when there is nothing slow to fetch
     install(pr, sha, log)       keep the current build aside, then install the
                                 build of `sha`; a retried install must not keep
                                 aside the PR's own build over the original

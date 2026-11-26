@@ -93,6 +93,7 @@ class FakeMachine:
     def __init__(self, name, stamp=OLD):
         self.name, self.stamp, self.kept, self.calls = name, stamp, None, []
         self.install_error = self.restore_error = self.read_error = None
+        self.prepare_error = self.on_prepare = self.on_install = None
         self.stamp_after_install = None  # None = the sha it was asked for
         self.restore_to = "kept"         # or a literal stamp, for a bad restore
         self.result = base.RunResult(0, "out", "err", False)
@@ -103,8 +104,17 @@ class FakeMachine:
             raise base.MachineError(self.read_error)
         return self.stamp
 
+    def prepare(self, pr_n, sha, log):
+        self.calls.append(("prepare", pr_n, sha))
+        if self.on_prepare:
+            self.on_prepare()
+        if self.prepare_error:
+            raise base.MachineError(self.prepare_error)
+
     def install(self, pr_n, sha, log):
         self.calls.append(("install", pr_n, sha))
+        if self.on_install:
+            self.on_install()
         log(f"fake install {sha}")
         if self.install_error:
             raise base.MachineError(self.install_error)
@@ -440,6 +450,54 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(one(make_runner(gh=FakeGh(p7=pr(state="MERGED"))), install())["refused"], "PR is not open")
         # GhCli turns a gh error or timeout into None: the gate fails closed.
         self.assertEqual(one(make_runner(gh=FakeGh()), install())["refused"], "PR not found")
+
+    def test_the_build_is_fetched_before_the_lock_is_taken(self):
+        lock = FakeLock()
+        r = make_runner(lock=lock)
+        seen = {}
+        r.machines["mini"].on_prepare = lambda: seen.update(prepare=lock.held, hold=r.hold)
+        r.machines["mini"].on_install = lambda: seen.update(install=lock.held)
+        self.assertTrue(one(r, install(machines=("mini",)))["ok"])
+        self.assertEqual(seen, {"prepare": False, "hold": None, "install": True})
+
+    def test_a_failed_build_takes_no_lock_and_touches_no_machine(self):
+        lock = FakeLock()
+        r = make_runner(lock=lock)
+        r.machines["mini"].prepare_error = "the signed build did not finish in 25 minutes"
+        res = one(r, install(machines=("windows", "mini")))
+        self.assertFalse(res["ok"])
+        self.assertIn("did not finish in 25 minutes", res["machines"]["mini"]["error"])
+        self.assertIn("did not finish", res["_stderr"])
+        self.assertFalse(lock.held)
+        self.assertEqual(lock.released, [])
+        self.assertIsNone(r.hold)
+        self.assertNotIn("hold", r.state)
+        for m in r.machines.values():
+            self.assertFalse([c for c in m.calls if c[0] in ("installed_commit", "install", "restore")], m.calls)
+
+    def test_a_refused_pr_triggers_no_build(self):
+        r = make_runner(gh=FakeGh(p7=pr(author="someone")))
+        self.assertFalse(one(r, install(machines=("mini",)))["ok"])
+        self.assertFalse([c for m in r.machines.values() for c in m.calls if c[0] == "prepare"])
+
+    def test_a_head_that_moved_during_the_build_is_refused_without_a_lock(self):
+        gh, lock = FakeGh(p7=pr()), FakeLock()
+        r = make_runner(gh=gh, lock=lock)
+        r.machines["mini"].on_prepare = lambda: gh.prs.update({7: pr(head=SHA2)})
+        res = one(r, install(machines=("mini",)))
+        refused_untouched(self, r, res, "head")
+        self.assertFalse(lock.held)
+        self.assertIsNone(r.hold)
+
+    def test_the_hold_clock_starts_after_the_build_not_at_the_request(self):
+        clock = Clock()
+        r = make_runner(clock=clock)
+        t0 = clock.t
+        r.machines["mini"].on_prepare = lambda: setattr(clock, "t", clock.t + 1238)
+        res = one(r, install(machines=("mini",)))
+        self.assertTrue(res["ok"])
+        self.assertEqual(r.hold["since"], t0 + 1238)
+        self.assertEqual(res["hold_expires_at"], runner.iso(t0 + 1238 + 45 * 60))
 
     def test_lock_held_elsewhere_waits_then_refuses(self):
         clock = Clock()
@@ -1098,7 +1156,7 @@ class RunOnceTests(unittest.TestCase):
         self.assertIn("install lock is held", self.result("i1")["refused"])
         self.assertEqual(self.clock.t - t0, 30)
         self.assertTrue(os.path.isdir(self.conf["lock_path"]))
-        self.assertEqual(self.machines["windows"].calls, [])
+        self.assertEqual([c for c in self.machines["windows"].calls if c[0] != "prepare"], [])  # built before the lock; nothing changed
 
     def test_a_second_runner_on_the_same_state_does_nothing(self):
         import fcntl

@@ -230,6 +230,10 @@ class WindowsMachine:
     def installed_commit(self):
         return parse_stamp(self._ps("stamp"))
 
+    def prepare(self, pr, sha, log):
+        """Nothing slow to fetch before the lock: CI's artifact is downloaded
+        by install()."""
+
     def install(self, pr, sha, log):
         setup = self.download(sha, log)
         self._push_script(log)

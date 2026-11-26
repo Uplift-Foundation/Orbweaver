@@ -479,6 +479,17 @@ class MacMachine:
                                f"{_tail(r.stderr or r.stdout) or 'timed out'}")
         return parse_stamp(results(r.stdout).get("stamp", ""))
 
+    def prepare(self, pr, sha, log):
+        """Fetch (or find cached) the signed build of `sha` without touching
+        the Mac, so the runner can do it before it takes the install lock
+        (CB-473). install() then finds the cached build."""
+        check_args(pr, sha)
+        try:
+            self.signed_build(pr, sha, log)
+        except MachineError:
+            self._delete_branch(pr, log)
+            raise
+
     def install(self, pr, sha, log):
         check_args(pr, sha)
         try:
