@@ -394,6 +394,23 @@ class Runner:
                        f"{marker.get('reason', 'see the file')}; installs are refused until it is deleted")
         if why is None:
             why = install_problem(req, self.hold, self.machines)
+        if why is None:
+            # The slow part, before the lock (CB-473): a signed Mac build takes
+            # 5 to 20 minutes and changes nothing on a machine, so every other
+            # team's install must not wait behind it. A build that fails takes
+            # no lock, records no hold and touches no machine.
+            for name in req["machines"]:
+                try:
+                    self.machines[name].prepare(pr_n, req["sha"], self.machine_log(pr_n, name))
+                except MachineError as e:
+                    self.log(f"prepare failed on {name}: {e}", pr=pr_n, machine=name)
+                    return self.answer(req, False, stderr=f"{name}: could not prepare the build: {e}\n",
+                                       machines={name: {"ok": False, "installed_commit": None,
+                                                        "pr_head": req["sha"], "previous_commit": None,
+                                                        "error": f"could not prepare the build: {e}"}},
+                                       hold_expires_at=None)
+            # The prepare can take twenty minutes: the head may have moved.
+            why = pr_problem(self.gh.pr(pr_n), self.cfg["allowed_authors"], sha=req["sha"])
         if why is None and self.hold is None:
             token = self.take_lock(pr_n)
             if token is None:

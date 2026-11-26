@@ -755,6 +755,23 @@ class SignedBuild(unittest.TestCase):
         with self.assertRaisesRegex(base.MachineError, "could not push"):
             self.build(sh)
 
+    def test_prepare_builds_and_caches_without_touching_the_mac(self):
+        fake = FakeGitHub()
+        m = self.machine(fake)
+        m.prepare(12, SHA_NEW, self.lines.append)
+        self.assertTrue(os.path.isfile(os.path.join(self.state, "mac-build", "build.json")))
+        self.assertEqual([c for c in fake.calls if c[0] not in ("gh", "xcrun")], [])
+        again = FakeGitHub()
+        self.machine(again).prepare(12, SHA_NEW, self.lines.append)
+        self.assertEqual(again.calls, [])  # cached by sha
+
+    def test_a_failed_prepare_deletes_the_e2e_branch(self):
+        fake = FakeGitHub()
+        fake.dmg_name = "BAD.dmg"
+        with self.assertRaisesRegex(base.MachineError, "not notarized"):
+            self.machine(fake).prepare(12, SHA_NEW, self.lines.append)
+        self.assertTrue(any(c[:3] == ["api", "-X", "DELETE"] for c in fake.gh()))
+
     def test_bad_args_refused_before_any_gh_call(self):
         fake = FakeGitHub()
         with self.assertRaises(base.MachineError):
