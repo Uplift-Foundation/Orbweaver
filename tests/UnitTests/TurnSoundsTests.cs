@@ -596,6 +596,7 @@ public class TurnSoundsTests : IDisposable
         OrbweaverSettings.TurnFinishedSound = null;
         OrbweaverSettings.NeedsAttentionSound = null;
 
+        TurnSounds.ManualPendingForTests = true; // CB-463: only FireDueAndDrainAsync fires it
         var start = DateTime.UtcNow;
         TurnSounds.Deliver(new[] { Finished("key-a", "session-a") }, NoSummary, start); // opens the gap
 
@@ -1043,30 +1044,37 @@ public class TurnSoundsTests : IDisposable
     [Fact]
     public async Task APendingSoundAndALiveOneAreNotPlayedInsideOneGap()
     {
-        var played = new List<(DateTime At, string Path)>();
-        ChimePlayer.PlayForTests = path => { lock (played) played.Add((DateTime.UtcNow, path)); };
+        var played = new List<string>();
+        ChimePlayer.PlayForTests = path => { lock (played) played.Add(path); };
 
         OrbweaverSettings.TurnSoundsEnabled = true;
         OrbweaverSettings.TurnFinishedSound = null;
         OrbweaverSettings.NeedsAttentionSound = null;
 
+        // CB-463: the logical clock and the timer are both driven by hand. The
+        // old version slept in real time and compared wall-clock play times, so
+        // a loaded runner could stretch either gap.
+        TurnSounds.ManualPendingForTests = true;
         var t0 = DateTime.UtcNow;
         TurnSounds.Deliver(new[] { Finished("key-a", "session-a") }, NoSummary, t0);
         TurnSounds.Deliver(
             new[] { NeedsAttention("key-b", "session-b") }, NoSummary, t0.AddSeconds(0.5),
-            currentStateFor: _ => "waiting"); // pending, fires at roughly t0+2 (real time)
+            currentStateFor: _ => "waiting"); // pending, due at t0+2
 
-        await Task.Delay(TimeSpan.FromSeconds(2.05));
-        TurnSounds.Deliver(new[] { Finished("key-c", "session-c") }, NoSummary, DateTime.UtcNow); // the next regular scan
-        await Task.Delay(TimeSpan.FromSeconds(1));
+        var pendingFiresAt = t0 + TurnSoundPolicy.MinimumGap + TimeSpan.FromSeconds(0.05);
+        TurnSounds.FirePending(pendingFiresAt);
+        await TurnSounds.ChimesEnqueuedSoFar();
+        lock (played) Assert.Equal(2, played.Count); // A, then the pending B
 
-        List<DateTime> starts;
-        lock (played) starts = played.Select(p => p.At).OrderBy(t => t).ToList();
-        for (var i = 1; i < starts.Count; i++)
-        {
-            Assert.True(starts[i] - starts[i - 1] >= TimeSpan.FromSeconds(1.9),
-                $"sounds {i} and {i + 1} started {(starts[i] - starts[i - 1]).TotalMilliseconds:F0} ms apart");
-        }
+        // The next regular scan lands right after the pending sound: it must
+        // wait for its own gap rather than double up.
+        TurnSounds.Deliver(new[] { Finished("key-c", "session-c") }, NoSummary, pendingFiresAt);
+        await TurnSounds.ChimesEnqueuedSoFar();
+        lock (played) Assert.Equal(2, played.Count);
+
+        TurnSounds.FirePending(pendingFiresAt + TurnSoundPolicy.MinimumGap);
+        await TurnSounds.ChimesEnqueuedSoFar();
+        lock (played) Assert.Equal(3, played.Count);
     }
 
     // CB-240. The gap is enforced for a live scan (Decide) but a deferred sound
