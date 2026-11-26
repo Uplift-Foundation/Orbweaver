@@ -75,6 +75,8 @@ class FakePaperclip:
         self.full = {}            # id -> full issue
         self.costs = []
         self.experimental = {}
+        self.comments = {}        # issue id -> [comment rows], newest first as measured
+        self.resets = []          # (agent id, body) of reset-session posts
         self.requests = []        # (method, path, body, origin)
         self.fail = {}            # path prefix -> status
         outer = self
@@ -145,6 +147,20 @@ class FakePaperclip:
                     if m.group(1) not in outer.logs:
                         return self._reply(404, {"error": "Heartbeat run not found"})
                     return self._reply(200, outer.logs[m.group(1)])
+                if path == c + "/issues?limit=1000":
+                    return self._reply(200, [r for rows in outer.issues.values() for r in rows])
+                m = re.fullmatch(r"/api/issues/(\w+)/comments", path)
+                if m and method == "GET":
+                    return self._reply(200, outer.comments.get(m.group(1), []))
+                if m and method == "POST":
+                    outer.comments.setdefault(m.group(1), []).insert(
+                        0, {"id": "new", "body": body["body"], "authorUserId": "board",
+                            "authorAgentId": None, "createdAt": "2099-01-01T00:00:00Z"})
+                    return self._reply(201, {})
+                m = re.fullmatch(r"/api/agents/(\w+)/runtime-state/reset-session", path)
+                if m and method == "POST":
+                    outer.resets.append((m.group(1), body))
+                    return self._reply(200, {})
                 m = re.fullmatch(re.escape(c) + r"/issues\?status=(\w+)", path)
                 if m:
                     return self._reply(200, outer.issues.get(m.group(1), []))
@@ -339,7 +355,10 @@ class World(unittest.TestCase):
         self.login = os.path.join(self.tmp, "login.txt")
         with open(self.login, "w") as f:
             f.write(f"url: {self.pc.base}\nemail: board@example.test\npassword: pw\n")
+        # Never this machine's real pool-usage.json.
+        self.pool = os.path.join(self.tmp, "pool-usage.json")
         self.cfg = {"dir": self.d, "company_id": "c1", "paperclip_login": self.login, "spool": self.spool,
+                    "pool_usage": self.pool,
                     "github_api": self.app.url if HAVE_OPENSSL else "http://127.0.0.1:1"}
         self.state = {"last_mint": 10 ** 12, "cancelled_seen": [], "audited": [], "scanned_runs": []}
 
@@ -625,6 +644,73 @@ class World(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError, msg=prefix):
                 call()
             del self.pc.fail[prefix]
+
+    # ---- the unstick sweep (CB-479), through run_once and the real client ----
+
+    OLD = "2000-01-01T00:00:00.000Z"
+
+    def released_pass(self):
+        """CB-424's release: pass blocked, engineer child cancelled, the lead's
+        report after it."""
+        self.pc.issues["blocked"] = [{"id": "P", "identifier": "QAF-126", "status": "blocked",
+                                      "parentId": None, "assigneeAgentId": "lead", "activeRun": None,
+                                      "lastActivityAt": self.OLD, "updatedAt": self.OLD}]
+        self.pc.issues["cancelled"] = [{"id": "e1", "identifier": "QAF-127", "status": "cancelled",
+                                        "parentId": "P", "assigneeAgentId": "eng", "activeRun": None,
+                                        "lastActivityAt": self.OLD, "updatedAt": self.OLD,
+                                        "description": "Ticket: CB-424\n"}]
+        self.pc.comments["P"] = [{"id": "c2", "authorAgentId": "lead", "createdAt": "2000-01-01T00:05:00Z"},
+                                 {"id": "c1", "authorAgentId": "lead", "createdAt": "1999-12-31T00:00:00Z"}]
+        self.state["cancelled_seen"] = ["e1"]
+
+    def test_unstick_closes_a_released_pass_with_origin(self):
+        self.released_pass()
+        self.assert_untouched(self.run_warden())
+        done = [(p, b, o) for m, p, b, o in self.pc.requests if m == "PATCH" and p == "/api/issues/P"]
+        self.assertEqual(done, [("/api/issues/P", {"status": "done"}, self.pc.base)])
+        log = open(os.path.join(self.d, "warden.log")).read()
+        self.assertIn("UNSTUCK: close_parent QAF-126", log)
+
+    def test_unstick_control_a_paused_company_is_not_touched(self):
+        self.released_pass()
+        self.pc.company["status"] = "paused"
+        self.run_warden()
+        self.assertEqual([r for r in self.pc.requests if r[1].startswith("/api/issues/P")], [])
+        self.assertNotIn("UNSTUCK", open(os.path.join(self.d, "warden.log")).read())
+
+    def test_unstick_resets_an_exhausted_task_when_the_pool_has_room(self):
+        self.pc.issues["in_progress"] = [{"id": "c", "identifier": "QAF-9", "status": "in_progress",
+                                          "parentId": "P", "assigneeAgentId": "eng", "activeRun": None,
+                                          "lastActivityAt": self.OLD, "updatedAt": self.OLD}]
+        self.pc.runs = [{"id": "r9", "issueId": "c", "agentId": "eng", "status": "cancelled",
+                         "createdAt": self.OLD, "errorCode": "ai_connection_pool_exhausted",
+                         "error": "All eligible pool accounts are over their usage limit.",
+                         "contextSnapshot": {"taskKey": "c"}}]
+        with open(self.pool, "w") as f:
+            json.dump({"accounts": {"b": {"status": "ok", "limits": [{"usedPercent": 12}]}}}, f)
+        self.assert_untouched(self.run_warden())
+        self.assertEqual(self.pc.resets, [("eng", {"taskKey": "c"})])
+        self.assertEqual(len(self.pc.comments["c"]), 1, "and the task is woken")
+        self.assertTrue(all(o == self.pc.base for m, p, b, o in self.pc.writes()))
+
+    def test_unstick_client_methods(self):
+        self.pc.comments["i1"] = [{"authorAgentId": "a", "createdAt": "2026-01-01T00:00:10Z"},
+                                  {"authorAgentId": "a", "createdAt": "2026-01-01T00:00:20Z",
+                                   "deletedAt": "2026-01-01T00:01:00Z"},
+                                  {"authorAgentId": "b", "createdAt": "2026-01-01T00:00:30Z"},
+                                  {"authorAgentId": "a", "createdAt": None}]
+        c = self.client()
+        self.assertEqual(c.newest_comment_at("i1", "a"), warden.ts("2026-01-01T00:00:10Z"),
+                         "deleted comments and other authors do not count")
+        self.assertIsNone(c.newest_comment_at("i1", None))
+        self.assertIsNone(c.newest_comment_at("none", "a"))
+        self.assertFalse(c.is_paused("c1"))
+        c.call = lambda method, path, body=None: {"comments": [], "issues": [{"id": "x"}]}
+        self.assertEqual(c.all_issues("c1"), [{"id": "x"}])
+        self.assertIsNone(c.newest_comment_at("i1", "a"))
+        with open(self.pool, "w") as f:
+            f.write("{}")
+        self.assertEqual(c.pool_usage(self.pool), {})
 
     def test_unauthenticated_requests_are_refused_by_the_stub(self):
         with self.assertRaises(urllib.error.HTTPError) as cm:

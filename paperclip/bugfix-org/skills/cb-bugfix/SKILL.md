@@ -230,6 +230,10 @@ Settling a ticket also leaves one fact in Paperclip, which the host reads in
 place of anything an agent says: the engineer's Paperclip issue ends `done` when
 the PR merged to `develop` and `cancelled` when the ticket was released. The
 Jira comment is the human-readable record; the issue status is the machine one.
+The warden also cancels a child task that sat with no run through two of its
+wake comments, and says so on your task; that is not a release, so treat it as
+a failed round. It closes your task itself when you have reported and only
+settled children are left blocking it.
 
 ## Transitions: Bug only
 

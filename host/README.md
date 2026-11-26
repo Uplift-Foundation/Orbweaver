@@ -66,7 +66,36 @@ logged and never pauses.
 
 Paperclip refuses `DELETE` on issues, agents and projects with 409 once they are referenced
 (measured by QA). The warden never deletes anything; it cancels runs, blocks issues and
-pauses the company, and that is all it writes besides the `GITHUB_TOKEN` secret.
+pauses the company, and besides the `GITHUB_TOKEN` secret the only other writes are the
+unstick sweep's below.
+
+## Unstick sweep (CB-479)
+
+Every stall of 2026-11-25 was cleared by hand with the board login. The warden now makes
+those moves itself, on each tick, for each company in `unstick_company_ids` in `warden.json`
+(default: `company_id`, so triage can be added later). It never acts on a paused company,
+including on the tick that pauses it. `unstick_actions` decides from the issue listing,
+the recent runs, the assignee's newest comment on each blocked parent, `state.json` and
+`pool-usage.json`; `Warden.unstick` only carries the answer out. Every action is logged as
+`UNSTUCK: <kind> <identifier>`, and its state is recorded only after the call succeeds, so
+a refused write is retried next tick.
+
+| Kind | When | What it does |
+| --- | --- | --- |
+| `close_parent` | Task `blocked`, at least one child and every child `done` or `cancelled`, no live run on it or any child, untouched 10 min. The assignee's newest comment is newer than every child's last activity, or the parent was woken 15+ min ago and is still blocked. | `PATCH /api/issues/<id> {"status":"done"}`. Paperclip counts cancelled children as open blockers and refuses the lead's own `done` (CB-424's release); the board login is allowed. |
+| `wake_parent` | Same, with no newer report and no wake yet. | One board comment on the parent; a board comment on an open issue wakes its assignee. |
+| `wake_child` | Child task (has `parentId` and an assignee agent) `todo`, `in_progress` or `in_review`, no live run, no activity for 20 min, and 20 min since the last wake. At most twice. | Board comment on the child. |
+| `cancel_child` | The same child, still stalled 20 min after its second wake. | Recorded in `state["unstick"]["cancelled"]` first, then `PATCH {"status":"cancelled"}`, then a board comment on the parent. That list keeps it out of the release brake: a sweep cancel is the warden's repair, not the lead giving up, and is logged as `not a release`. |
+| `reset_session` | Not settled, no live run, its latest run cancelled by the pool router (`errorCode` `ai_connection_pool_exhausted`, error "...over their usage limit..."), and `pool-usage.json` shows an `ok` account with every limit under 90% and none reached. Once per task per hour. | `POST /api/agents/<run's agent>/runtime-state/reset-session {"taskKey"}` (board-only route), then a wake comment. A task waiting on usage is never woken or cancelled by the child rule; an unreadable pool file means no headroom. |
+
+A blocked task with no children is not touched: that is what `stop_work` leaves behind on a
+pause, and it must not be closed once the company resumes. Measured read-only against the
+live instance before writing this: a live run shows as the row's `activeRun` (null when
+none) or a `queued`/`running` run naming the issue; comments list newest first; the issue
+listing returns up to 500 rows by default (the sweep asks for 1000); the reset route and the
+comment wake were read from the installed server's source. None of the sweep's writes has
+been run against the live org from this branch; the lead's deploy proof is a fixture task
+the deployed warden clears.
 
 ## Run logs
 
