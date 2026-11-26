@@ -65,6 +65,7 @@ namespace Orbweaver
             internal bool Online;
             internal bool EpochPersisted;
             internal DateTimeOffset? LastSeen;
+            internal DateTimeOffset RosterSentAt;                                   // CB-464: when this phone was last sent a whole roster
 
             internal byte[] KeyFor(ushort epoch)
             {
@@ -332,7 +333,7 @@ namespace Orbweaver
                     {
                         Note($"resync from {peer}: fresh roster");
                         if (Welcomed) PhoneNeedsPrompts(peer);
-                        return Collect(RosterFor(c));
+                        return Collect(RosterFor(c, "resync"));
                     }
                     // Said, not silent: a phone stuck waiting on a roster
                     // that never comes is otherwise undiagnosable.
@@ -503,7 +504,7 @@ namespace Orbweaver
                 ? new CanonicalJson().Str("t", "prefs.ok").Str("ref", envelopeId)
                 : new CanonicalJson().Str("t", "prefs.err").Str("ref", envelopeId).Str("code", "malformed");
             var frames = new List<string>(Collect(SealTo(c, "pair", "", Encoding.UTF8.GetBytes(reply.ToString()))));
-            if (personasFlipped && c.Online && Welcomed) frames.AddRange(Collect(RosterFor(c)));
+            if (personasFlipped && c.Online && Welcomed) frames.AddRange(Collect(RosterFor(c, "personas")));
             return frames;
         }
 
@@ -701,7 +702,11 @@ namespace Orbweaver
             // CB-428: the first scan after a welcome, changed or not, is the baseline breaks are judged from.
             var rebaseline = Welcomed && _rebaseline;
             if (Welcomed) _rebaseline = false;
-            if (update.IsEmpty || !Welcomed) return [];
+            if (!Welcomed) return [];
+            // CB-464: an arrival roster has no ack, and a quiet session sends no delta, so a phone that
+            // missed it would never see a seq gap. A phone not sent a roster for RosterRefresh is
+            // sent one on the next scan, changed or not.
+            if (update.IsEmpty) return StaleRosters();
 
             // Once per finished session, whoever is paired: the client turns it into
             // the phone's spoken-style summary (watched sessions only).
@@ -732,9 +737,9 @@ namespace Orbweaver
                         sentBroke.Add((c.Phone.PhoneId, d.SessionId));
                     }
                 if (!c.Online) continue;
-                if (update.NeedsRoster)
+                if (update.NeedsRoster || RosterStale(c))
                 {
-                    frames.AddRange(Collect(RosterFor(c)));
+                    frames.AddRange(Collect(RosterFor(c, update.NeedsRoster ? "arrival" : "refresh")));
                     continue;
                 }
                 // An online phone has always been sent a roster (presence,
@@ -743,6 +748,20 @@ namespace Orbweaver
                     if (SealTo(c, "state", RelayCrypto.Ck(c.CkKey, d.SessionId), c.Stream.Delta(d)!) is { } frame)
                         frames.Add(frame);
             }
+            return frames;
+        }
+
+        // CB-464: how long a phone may go without a roster before a scan sends it one. A resync from a
+        // phone that did notice resets the clock, as does any roster.
+        internal static readonly TimeSpan RosterRefresh = TimeSpan.FromSeconds(60);
+
+        private bool RosterStale(Channel c) => c.Online && _now() - c.RosterSentAt >= RosterRefresh;
+
+        private List<string> StaleRosters()
+        {
+            var frames = new List<string>();
+            foreach (var c in _channels.Values.Where(RosterStale))
+                frames.AddRange(Collect(RosterFor(c, "refresh")));
             return frames;
         }
 
@@ -1017,6 +1036,13 @@ namespace Orbweaver
         // session for coalescing, and a roster is every session at once.
         // Always the whole book, unconditionally — a resync asks for the book,
         // not the diff — and it restarts the phone's numbering at 1.
+        private string? RosterFor(Channel c, string why)
+        {
+            c.RosterSentAt = _now();
+            Note($"roster to {c.Phone.PhoneId}: {why}");
+            return RosterFor(c);
+        }
+
         private string? RosterFor(Channel c) =>
             SealTo(c, "state", "", c.Stream.Roster(RelayRoster.ForPhone(_book.Snapshot(), c.Alerts.PaperclipPersonas)));
 
@@ -1025,7 +1051,7 @@ namespace Orbweaver
         // roster"), when there has been a reading at all.
         private List<string> RosterAndUsage(Channel c)
         {
-            var frames = new List<string>(Collect(RosterFor(c)));
+            var frames = new List<string>(Collect(RosterFor(c, "online")));
             if (_latestUsage is { } usage)
                 frames.AddRange(Collect(SealTo(c, "state", RelayCrypto.Ck(c.CkKey, UsageCk), Encoding.UTF8.GetBytes(usage))));
             // CB-321: then the personas frame (frames-v5: after the roster and

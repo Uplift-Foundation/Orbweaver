@@ -502,6 +502,10 @@ class FakePC:
         self.active, self.issues = list(active), list(issues)
         self.secrets, self.pauses, self.cancelled, self.blocked = [], [], [], []
         self.resumed = False
+        # The unstick sweep's world (CB-479).
+        self.all, self.run_rows, self.said, self.pool = [], [], {}, {}
+        self.paused_cos, self.fail_reads, self.fail_writes = set(), False, False
+        self.statuses, self.comments, self.resets = [], [], []
 
     def runs_today(self):
         return self.runs
@@ -535,8 +539,40 @@ class FakePC:
     def put_secret(self, name, value):
         self.secrets.append((name, value))
 
-    def is_paused(self):
-        return self.paused
+    def is_paused(self, company=None):
+        return company in self.paused_cos if company else self.paused
+
+    def all_issues(self, company):
+        if self.fail_reads:
+            raise OSError("listing failed")
+        return self.all
+
+    def company_runs(self, company):
+        return self.run_rows
+
+    def newest_comment_at(self, issue_id, agent_id):
+        return self.said.get(issue_id)
+
+    def pool_usage(self, path):
+        if self.pool is None:
+            raise OSError("no pool file")
+        return self.pool
+
+    def _write(self):
+        if self.fail_writes:
+            raise OSError("write refused")
+
+    def set_issue_status(self, issue_id, status):
+        self._write()
+        self.statuses.append((issue_id, status))
+
+    def comment(self, issue_id, body):
+        self._write()
+        self.comments.append((issue_id, body))
+
+    def reset_session(self, agent_id, task_key):
+        self._write()
+        self.resets.append((agent_id, task_key))
 
     def pause(self, reason):
         self.paused = True
@@ -1025,6 +1061,37 @@ class ReleaseTickTests(unittest.TestCase):
         self.assertTrue(paused)
         self.assertTrue(any("CB-21 released" in l for l in logs))
 
+    def test_two_engineer_issues_of_one_ticket_in_one_pass_are_one_release(self):
+        # CB-471: CB-415 was released once after its second fix round, both of
+        # its engineer issues were cancelled, and the org paused on "2 in a row".
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state)
+        pc.cancelled_issues = [R("r1", 415, parentId="pass1"), R("r2", 415, parentId="pass1")]
+        _, paused, logs = tick(pc=pc, state=state)
+        self.assertFalse(paused, "one ticket released once, with two fix rounds, is one release")
+        self.assertEqual(state["paperclip_releases"], 1)
+        self.assertTrue(any("CB-415 already counted" in l for l in logs))
+
+    def test_the_same_ticket_released_in_a_second_pass_counts_again(self):
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state)
+        pc.cancelled_issues = [R("r1", 415, parentId="pass1")]
+        self.assertFalse(tick(pc=pc, state=state)[1])
+        pc.cancelled_issues = [R("r1", 415, parentId="pass1"), R("r3", 415, parentId="pass2")]
+        self.assertTrue(tick(pc=pc, state=state)[1], "a second pass that also gives up is a second release")
+
+    def test_two_tickets_released_in_one_pass_are_two_releases(self):
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state)
+        pc.cancelled_issues = [R("r1", 415, parentId="pass1"), R("r2", 416, parentId="pass1")]
+        self.assertTrue(tick(pc=pc, state=state)[1])
+
+    def test_issues_with_no_parent_are_each_counted(self):
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state)
+        pc.cancelled_issues = [R("r1", 415), R("r2", 415)]
+        self.assertTrue(tick(pc=pc, state=state)[1], "with no pass to match on, the brake counts both")
+
     def test_row_missing_its_description_is_fetched_and_counted_when_it_is_an_engineer_issue(self):
         state, pc = {}, FakePC()
         tick(pc=pc, state=state)
@@ -1061,6 +1128,122 @@ REAL_LOG = {"runId": "r1", "store": "local_file", "logRef": "x/r1.ndjson",
             "content": '{"ts":"2026-11-24T10:00:00Z","stream":"stdout","chunk":"pushing\\n"}\n'
                        '{"ts":"2026-11-24T10:00:01Z","stream":"stderr","chunk":"remote: error: GH0"}\n'
                        '{"ts":"2026-11-24T10:00:01Z","stream":"stderr","chunk":"13: Repository rule violations found\\n"}\n'}
+
+
+class PauseWindowTests(unittest.TestCase):
+    """CB-472: a pause does not stop a ticket's ninety minutes, so a release
+    soon after a pause is not counted toward two in a row."""
+
+    def test_windows_open_on_the_first_paused_tick_and_close_on_the_first_active_one(self):
+        w = warden.note_pause_state([], False, 100)
+        self.assertEqual(w, [])
+        w = warden.note_pause_state(w, True, 200)
+        w = warden.note_pause_state(w, True, 500)  # still paused: same window
+        self.assertEqual(w, [{"paused_at": 200, "resumed_at": None}])
+        w = warden.note_pause_state(w, False, 800)
+        w = warden.note_pause_state(w, False, 1100)
+        self.assertEqual(w, [{"paused_at": 200, "resumed_at": 800}])
+        w = warden.note_pause_state(w, True, 1400)
+        self.assertEqual(len(w), 2)
+
+    def test_only_the_last_twenty_are_kept(self):
+        w = []
+        for i in range(30):
+            w = warden.note_pause_state(w, True, i * 10)
+            w = warden.note_pause_state(w, False, i * 10 + 5)
+        self.assertEqual(len(w), 20)
+        self.assertEqual(w[0]["paused_at"], 100)
+
+    def test_paused_within_the_ticket_window(self):
+        T = warden.TICKET_WINDOW
+        now = 100_000
+        self.assertTrue(warden.paused_within([{"paused_at": now - 10, "resumed_at": None}], now))
+        self.assertTrue(warden.paused_within([{"paused_at": now - T - 600, "resumed_at": now - T}], now))
+        self.assertFalse(warden.paused_within([{"paused_at": now - T - 600, "resumed_at": now - T - 1}], now))
+        self.assertFalse(warden.paused_within([], now))
+        self.assertFalse(warden.paused_within([{"paused_at": now + 5, "resumed_at": None}], now))
+
+    def test_the_warden_records_its_own_pause_and_the_resume(self):
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state, now=1000)
+        pc.cancelled_issues = [R("x"), R("y")]
+        self.assertTrue(tick(pc=pc, state=state, now=1300)[1])
+        self.assertEqual(state["pauses"], [{"paused_at": 1300, "resumed_at": None}])
+        pc.paused = False  # a person resumes
+        tick(pc=pc, state=state, now=1600)
+        self.assertEqual(state["pauses"], [{"paused_at": 1300, "resumed_at": 1600}])
+
+    def test_a_pause_by_someone_else_is_recorded_when_seen(self):
+        state = {}
+        tick(pc=FakePC(paused=True), state=state, now=5000)
+        self.assertEqual(state["pauses"], [{"paused_at": 5000, "resumed_at": None}])
+
+    def test_releases_after_a_pause_are_not_counted_control_without_one_still_pauses(self):
+        # The 2026-11-25 shape: a pause, a resume, then two releases forced by
+        # the clocks that kept running through it.
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state, now=0)
+        pc.paused = True
+        tick(pc=pc, state=state, now=300)
+        pc.paused = False
+        tick(pc=pc, state=state, now=2700)
+        pc.cancelled_issues = [R("a", 461), R("b", 432)]
+        _, paused, logs = tick(pc=pc, state=state, now=3000)
+        self.assertFalse(paused)
+        self.assertEqual(state.get("paperclip_releases", 0), 0)
+        self.assertEqual(sum("not counted: the company was paused during this ticket's window" in l
+                             for l in logs), 2)
+        # Control: once the window has passed, two releases pause as before.
+        later = 2700 + warden.TICKET_WINDOW + 1
+        pc.cancelled_issues += [R("c", 500), R("d", 501)]
+        _, paused, logs = tick(pc=pc, state=state, now=later)
+        self.assertTrue(paused)
+        self.assertTrue(any("CB-501 released" in l and "2 in a row" in l for l in logs))
+
+    def test_one_per_pass_still_holds_across_an_uncounted_release(self):
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state, now=0)
+        state["pauses"] = [{"paused_at": 100, "resumed_at": 200}]
+        pc.cancelled_issues = [R("r1", 415, parentId="pass1")]
+        tick(pc=pc, state=state, now=300)
+        self.assertEqual(state.get("paperclip_releases", 0), 0)
+        # The pass's second engineer issue, seen after the window: still one release, already handled.
+        pc.cancelled_issues.append(R("r2", 415, parentId="pass1"))
+        _, _, logs = tick(pc=pc, state=state, now=300 + warden.TICKET_WINDOW + 200)
+        self.assertEqual(state.get("paperclip_releases", 0), 0)
+        self.assertTrue(any("CB-415 already counted" in l for l in logs))
+
+    def test_pauses_file_is_written_as_iso_and_skipped_by_the_spool_reader(self):
+        with tempfile.TemporaryDirectory() as d:
+            warden.write_pauses(d, [{"paused_at": 0, "resumed_at": 60}, {"paused_at": 120, "resumed_at": None}])
+            path = os.path.join(d, "pauses.json")
+            with open(path) as f:
+                self.assertEqual(json.load(f), [
+                    {"paused_at": "1970-01-01T00:00:00Z", "resumed_at": "1970-01-01T00:01:00Z"},
+                    {"paused_at": "1970-01-01T00:02:00Z", "resumed_at": None}])
+            if os.name != "nt":
+                self.assertEqual(os.stat(path).st_mode & 0o777, 0o644)
+            logs = []
+            self.assertEqual(warden.read_spool(d, logs.append), [])
+            self.assertTrue(os.path.exists(path), "pauses.json is not a request and stays put")
+            self.assertEqual(logs, [])
+            warden.write_pauses(d, [])
+            with open(path) as f:
+                self.assertEqual(json.load(f), [])
+
+    def test_the_tick_publishes_the_file_and_a_write_failure_does_not_stop_the_pause(self):
+        with tempfile.TemporaryDirectory() as d:
+            state, pc = {}, FakePC(paused=True)
+            tick(pc=pc, state=state, cfg={"spool": d}, now=0)
+            with open(os.path.join(d, "pauses.json")) as f:
+                self.assertEqual(json.load(f), [{"paused_at": "1970-01-01T00:00:00Z", "resumed_at": None}])
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state, now=0)
+        pc.cancelled_issues = [R("x"), R("y")]
+        _, paused, logs = tick(pc=pc, state=state, cfg={"spool": "/nonexistent/spool"}, now=300)
+        self.assertTrue(paused)
+        self.assertEqual(pc.pauses and len(pc.pauses), 1)
+        self.assertTrue(any("pauses.json not written" in l for l in logs))
 
 
 class RunLogTests(unittest.TestCase):
@@ -1128,6 +1311,357 @@ class RunLogTests(unittest.TestCase):
         pc = FakePC(logs={"run-44444444": ""})
         self.assertFalse(tick(pc=pc, state=state)[1])
         self.assertIn("run-44444444", state["scanned_runs"])
+
+
+# ---------------------------------------------------------------- unstick (CB-479)
+
+NOW = 1_800_000_000.0
+
+
+def I(i, status, parent=None, idle=3600, assignee="lead", **over):
+    """An issue row as the company listing returns it (measured fields)."""
+    row = {"id": i, "identifier": f"QAF-{i}", "status": status, "parentId": parent,
+           "assigneeAgentId": assignee, "activeRun": None,
+           "lastActivityAt": warden.iso(NOW - idle), "updatedAt": warden.iso(NOW - idle)}
+    row.update(over)
+    return row
+
+
+def RUN(issue, status="succeeded", agent="eng", at=NOW - 3600, **over):
+    row = {"id": f"run-{issue}-{status}", "issueId": issue, "agentId": agent, "status": status,
+           "createdAt": warden.iso(at), "contextSnapshot": {"taskKey": issue}}
+    row.update(over)
+    return row
+
+
+def EXHAUSTED(issue, at=NOW - 10 * 60, **over):
+    return RUN(issue, "cancelled", at=at, errorCode="ai_connection_pool_exhausted",
+               error="All eligible pool accounts are over their usage limit. Waiting for usage to reset.",
+               **over)
+
+
+POOL_OK = {"accounts": {"a": {"status": "ok", "limits": [{"usedPercent": 100}]},
+                        "b": {"status": "ok", "limits": [{"usedPercent": 7}, {"usedPercent": 88},
+                                                         {"usedPercent": None}]}}}
+POOL_FULL = {"accounts": {"a": {"status": "ok", "limits": [{"usedPercent": 100}]},
+                          "b": {"status": "ok", "limits": [{"usedPercent": 95}]}}}
+
+
+def decide(issues, runs=(), said=None, state=None, now=NOW, pool_ok=True):
+    return [(a["kind"], a["id"]) for a in
+            warden.unstick_actions(list(issues), list(runs), said or {}, state or {}, now, pool_ok)]
+
+
+# The CB-424 release of 2026-11-26: pass P blocked, its two engineer issues
+# cancelled on the release, QA child done, the lead's report after all three.
+def released_pass():
+    return [I("P", "blocked", idle=11 * 60),
+            I("e1", "cancelled", "P", idle=12 * 60, assignee="eng"),
+            I("e2", "cancelled", "P", idle=12 * 60, assignee="eng"),
+            I("q1", "done", "P", idle=20 * 60, assignee="qa")]
+
+
+class UnstickParentTests(unittest.TestCase):
+    def test_parent_is_closed_when_the_assignee_reported_after_its_children_settled(self):
+        self.assertEqual(decide(released_pass(), said={"P": NOW - 11 * 60}), [("close_parent", "P")])
+
+    def test_parent_with_no_newer_report_is_woken_then_closed_after_the_grace(self):
+        old_report = {"P": NOW - 3 * 3600}
+        self.assertEqual(decide(released_pass(), said=old_report), [("wake_parent", "P")])
+        st = {"parent_woken": {"P": NOW}}
+        self.assertEqual(decide(released_pass(), said=old_report, state=st, now=NOW + 14 * 60), [],
+                         "inside the 15-minute grace nothing happens")
+        self.assertEqual(decide(released_pass(), said=old_report, state=st, now=NOW + 15 * 60),
+                         [("close_parent", "P")])
+
+    def test_control_a_child_with_a_live_run_leaves_the_parent_alone(self):
+        issues = released_pass()
+        self.assertEqual(decide(issues, runs=[RUN("q1", "running")], said={"P": NOW}), [])
+        issues[3]["activeRun"] = {"id": "r"}
+        self.assertEqual(decide(issues, said={"P": NOW}), [])
+
+    def test_control_parent_with_its_own_live_run_is_left_alone(self):
+        self.assertEqual(decide(released_pass(), runs=[RUN("P", "queued")], said={"P": NOW}), [])
+
+    def test_control_an_open_child_leaves_the_parent_blocked(self):
+        issues = released_pass() + [I("e3", "in_review", "P", idle=5 * 60, assignee="eng")]
+        self.assertEqual(decide(issues, said={"P": NOW}), [])
+
+    def test_control_a_recently_touched_parent_is_not_yet_looked_at(self):
+        issues = released_pass()
+        issues[0] = I("P", "blocked", idle=9 * 60)
+        self.assertEqual(decide(issues, said={"P": NOW}), [])
+
+    def test_control_blocked_with_no_children_is_not_this_rule(self):
+        # stop_work blocks in-progress issues on a pause; those have no
+        # settled children and must not be closed once the company resumes.
+        self.assertEqual(decide([I("P", "blocked")]), [])
+
+
+class UnstickChildTests(unittest.TestCase):
+    def kids(self, idle=21 * 60, **over):
+        return [I("P", "in_progress", idle=60), I("c", "in_progress", "P", idle=idle, assignee="eng", **over)]
+
+    def test_stalled_child_is_woken_twice_then_cancelled(self):
+        self.assertEqual(decide(self.kids()), [("wake_child", "c")])
+        st = {"child_wakes": {"c": [1, NOW - 21 * 60]}}
+        self.assertEqual(decide(self.kids(), state=st), [("wake_child", "c")])
+        st = {"child_wakes": {"c": [2, NOW - 21 * 60]}}
+        self.assertEqual(decide(self.kids(), state=st), [("cancel_child", "c")])
+
+    def test_a_child_that_worked_after_its_wakes_starts_the_count_again(self):
+        # QA, CB-479: woken twice yesterday, worked, idle 21 minutes today.
+        st = {"child_wakes": {"c": [2, NOW - 86400]}}
+        self.assertEqual(decide(self.kids(), state=st), [("wake_child", "c")])
+        acts = warden.unstick_actions(self.kids(), [], {}, st, NOW, True)
+        self.assertEqual(acts[0]["wakes"], 1)
+
+    def test_our_own_wake_comment_does_not_reset_the_count(self):
+        # The comment bumps updatedAt to the wake time; inside the margin.
+        kids = [I("P", "in_progress", idle=60),
+                I("c", "in_progress", "P", idle=21 * 60 - 30, assignee="eng")]
+        st = {"child_wakes": {"c": [2, NOW - 21 * 60]}}
+        self.assertEqual(decide(kids, state=st), [("cancel_child", "c")])
+
+    def test_no_second_wake_inside_twenty_minutes_of_the_first(self):
+        self.assertEqual(decide(self.kids(), state={"child_wakes": {"c": [1, NOW - 19 * 60]}}), [])
+
+    def test_controls_recent_activity_live_run_no_assignee_or_no_parent(self):
+        self.assertEqual(decide(self.kids(idle=19 * 60)), [], "active inside 20 minutes")
+        self.assertEqual(decide(self.kids(), runs=[RUN("c", "running")]), [], "has a live run")
+        self.assertEqual(decide(self.kids(assigneeAgentId=None)), [], "nobody to wake")
+        self.assertEqual(decide([I("c", "todo", idle=3600)]), [], "a root task is not a child")
+        for s in ("done", "cancelled", "blocked", "backlog"):
+            self.assertEqual(decide([I("P", "in_progress", idle=60), I("c", s, "P", idle=3600)]), [], s)
+
+    def test_each_stallable_status_counts(self):
+        for s in ("todo", "in_progress", "in_review"):
+            self.assertEqual(decide([I("c", s, "P", idle=3600)]), [("wake_child", "c")], s)
+
+
+class UnstickUsageTests(unittest.TestCase):
+    def test_exhausted_task_gets_a_session_reset_when_another_account_has_room(self):
+        acts = warden.unstick_actions([I("c", "in_progress", "P")], [EXHAUSTED("c", agent="eng")],
+                                      {}, {}, NOW, True)
+        self.assertEqual([(a["kind"], a["agent_id"], a["task_key"]) for a in acts],
+                         [("reset_session", "eng", "c")])
+
+    def test_not_while_the_pool_is_full_and_not_woken_or_cancelled_either(self):
+        st = {"child_wakes": {"c": [2, NOW - 3600]}}
+        self.assertEqual(decide([I("c", "in_progress", "P")], [EXHAUSTED("c")], state=st, pool_ok=False), [])
+
+    def test_once_per_task_per_hour(self):
+        runs = [EXHAUSTED("c")]
+        self.assertEqual(decide([I("c", "todo", "P")], runs, state={"resets": {"c": NOW - 59 * 60}}), [])
+        self.assertEqual(decide([I("c", "todo", "P")], runs, state={"resets": {"c": NOW - 3600}}),
+                         [("reset_session", "c")])
+
+    def test_only_the_latest_run_decides(self):
+        runs = [EXHAUSTED("c", at=NOW - 7200), RUN("c", "succeeded", at=NOW - 3600)]
+        self.assertEqual(decide([I("c", "todo", "P")], runs), [("wake_child", "c")])
+        other = RUN("c", "cancelled", at=NOW - 60, error="cancelled by the board")
+        self.assertEqual(decide([I("c", "todo", "P")], [EXHAUSTED("c", at=NOW - 7200), other]),
+                         [("wake_child", "c")], "a cancel for another reason is not this rule")
+
+    def test_a_stale_usage_cancel_lets_a_settled_blocked_parent_be_closed(self):
+        # QA, CB-479: CB-469's run history must not shadow CB-424's release.
+        issues = [I("P", "blocked", idle=3600), I("e", "cancelled", "P", idle=3600, assignee="eng")]
+        runs = [EXHAUSTED("P", at=NOW - 7200)]
+        self.assertEqual(decide(issues, runs), [("wake_parent", "P")])
+        self.assertEqual(decide(issues, runs, said={"P": NOW - 600}), [("close_parent", "P")])
+
+    def test_a_fresh_usage_cancel_with_the_pool_full_does_nothing(self):
+        issues = [I("P", "blocked", idle=3600), I("e", "cancelled", "P", idle=3600, assignee="eng"),
+                  I("c", "in_progress", "P2", idle=3600)]
+        runs = [EXHAUSTED("P", at=NOW - 59 * 60), EXHAUSTED("c", at=NOW - 30 * 60)]
+        self.assertEqual(decide(issues, runs, said={"P": NOW - 600}, pool_ok=False), [])
+
+    def test_a_usage_cancel_with_no_time_does_not_count_as_fresh(self):
+        self.assertEqual(decide([I("c", "todo", "P")], [EXHAUSTED("c", createdAt=None)]),
+                         [("wake_child", "c")])
+
+    def test_pool_headroom(self):
+        self.assertTrue(warden.pool_has_headroom(POOL_OK))
+        self.assertFalse(warden.pool_has_headroom(POOL_FULL))
+        self.assertFalse(warden.pool_has_headroom({}))
+        self.assertFalse(warden.pool_has_headroom(None))
+        self.assertFalse(warden.pool_has_headroom(
+            {"accounts": {"b": {"status": "error", "limits": [{"usedPercent": 1}]}}}), "not ok")
+        self.assertFalse(warden.pool_has_headroom(
+            {"accounts": {"b": {"status": "ok", "limits": [{"usedPercent": 1, "limitReached": True}]}}}))
+        self.assertFalse(warden.pool_has_headroom(
+            {"accounts": {"b": {"status": "ok", "limits": [{"usedPercent": None}]}}}), "no numbers")
+        self.assertFalse(warden.pool_has_headroom(
+            {"accounts": {"b": {"status": "ok", "limits": [{"usedPercent": 90}]}}}), "90 is not under 90")
+
+
+class UnstickTickTests(unittest.TestCase):
+    def pc(self, issues, **over):
+        pc = FakePC(**over)
+        pc.all, pc.pool = issues, POOL_OK
+        return pc
+
+    def run_tick(self, pc, state, now=NOW, cfg=None):
+        return tick(pc=pc, state=state, now=now, cfg=cfg or {"company_id": "co"})
+
+    def test_released_pass_is_closed_and_logged(self):
+        pc = self.pc(released_pass())
+        pc.said = {"P": NOW - 11 * 60}
+        _, paused, logs = self.run_tick(pc, {})
+        self.assertFalse(paused)
+        self.assertEqual(pc.statuses, [("P", "done")])
+        self.assertIn("UNSTUCK: close_parent QAF-P", logs)
+
+    def test_wake_then_close_across_ticks(self):
+        state, pc = {}, self.pc(released_pass())
+        self.run_tick(pc, state)
+        self.assertEqual([c[0] for c in pc.comments], ["P"])
+        self.assertEqual(state["unstick"]["companies"]["co"]["parent_woken"], {"P": NOW})
+        self.run_tick(pc, state, now=NOW + 5 * 60)
+        self.assertEqual(pc.statuses, [], "no close inside the grace, and no second wake")
+        self.assertEqual(len(pc.comments), 1)
+        self.run_tick(pc, state, now=NOW + 15 * 60)
+        self.assertEqual(pc.statuses, [("P", "done")])
+
+    def test_paused_company_gets_no_action(self):
+        pc = self.pc(released_pass(), paused=True)
+        pc.said = {"P": NOW}
+        _, paused, logs = self.run_tick(pc, {})
+        self.assertTrue(paused)
+        self.assertEqual((pc.statuses, pc.comments, pc.resets), ([], [], []))
+        self.assertFalse(any("UNSTUCK" in l for l in logs))
+
+    def test_a_tick_that_pauses_the_company_takes_no_action(self):
+        pc = self.pc(released_pass())
+        pc.said, pc.tokens = {"P": NOW}, 10
+        _, paused, _ = self.run_tick(pc, {}, cfg={"company_id": "co", "token_ceiling": 1})
+        self.assertTrue(paused)
+        self.assertEqual((pc.statuses, pc.comments), ([], []))
+
+    def test_companies_come_from_config_and_each_pause_is_honoured(self):
+        pc = self.pc(released_pass())
+        pc.said = {"P": NOW}
+        pc.paused_cos = {"triage"}
+        self.run_tick(pc, {}, cfg={"company_id": "co", "unstick_company_ids": ["triage"]})
+        self.assertEqual(pc.statuses, [], "the only configured company is paused")
+        pc.paused_cos = set()
+        self.run_tick(pc, {}, cfg={"company_id": "co", "unstick_company_ids": ["triage"]})
+        self.assertEqual(pc.statuses, [("P", "done")])
+
+    def test_sweep_cancel_wakes_the_parent_and_is_not_a_release(self):
+        state = {}
+        kid = I("c", "in_progress", "P", idle=3600, assignee="eng",
+                description="Ticket: CB-500\nfix")
+        pc = self.pc([I("P", "in_progress", idle=60), kid])
+        self.run_tick(pc, state)                              # seeds the release history
+        state["unstick"]["companies"]["co"]["child_wakes"] = {"c": [2, NOW - 3600]}
+        _, _, logs = self.run_tick(pc, state, now=NOW + 1)
+        self.assertEqual(pc.statuses, [("c", "cancelled")])
+        self.assertEqual(pc.comments[-1][0], "P", "the parent is told")
+        self.assertIn("UNSTUCK: cancel_child QAF-c", logs)
+        # Paperclip now lists it cancelled, beside one real release.
+        pc.all = [I("P", "in_progress", idle=60), dict(kid, status="cancelled")]
+        pc.cancelled_issues = [R("c", 500, parentId="P"), R("real", 501, parentId="P2")]
+        _, paused, logs = self.run_tick(pc, state, now=NOW + 300)
+        self.assertFalse(paused, "a sweep cancel plus one release is one release")
+        self.assertEqual(state["paperclip_releases"], 1)
+        self.assertTrue(any("cancelled by the unstick sweep, not a release" in l for l in logs))
+
+    def test_control_a_cancel_by_anyone_else_still_counts(self):
+        state, pc = {}, self.pc([])
+        self.run_tick(pc, state)
+        pc.cancelled_issues = [R("c", 500, parentId="P"), R("real", 501, parentId="P2")]
+        self.assertTrue(self.run_tick(pc, state, now=NOW + 300)[1])
+
+    def test_usage_reset_through_the_tick_and_unreadable_pool_waits(self):
+        pc = self.pc([I("c", "in_progress", "P")], )
+        pc.run_rows = [EXHAUSTED("c", agent="eng")]
+        state = {}
+        self.run_tick(pc, state)
+        self.assertEqual(pc.resets, [("eng", "c")])
+        self.assertEqual(pc.comments[0][0], "c")
+        self.assertIn("c", state["unstick"]["companies"]["co"]["resets"])
+        pc2 = self.pc([I("c", "in_progress", "P")])
+        pc2.run_rows, pc2.pool = [EXHAUSTED("c")], None
+        _, _, logs = self.run_tick(pc2, {})
+        self.assertEqual(pc2.resets, [])
+        self.assertTrue(any("pool usage unreadable" in l for l in logs))
+
+    def test_unreadable_listing_is_logged_and_does_nothing(self):
+        pc = self.pc(released_pass())
+        pc.fail_reads = True
+        _, paused, logs = self.run_tick(pc, {})
+        self.assertFalse(paused)
+        self.assertTrue(any("unstick sweep unreadable" in l for l in logs))
+
+    def test_a_failed_write_is_logged_and_not_recorded(self):
+        state, pc = {}, self.pc(released_pass())
+        pc.fail_writes = True
+        _, _, logs = self.run_tick(pc, state)
+        self.assertTrue(any("unstick wake_parent QAF-P failed: OSError" in l for l in logs))
+        self.assertEqual(state["unstick"]["companies"]["co"].get("parent_woken", {}), {},
+                         "retried next tick, not skipped")
+
+    def test_two_companies_keep_each_others_wakes(self):
+        # QA, CB-479: company B's prune must not forget company A's wakes.
+        class TwoCos(FakePC):
+            def all_issues(self, company):
+                return self.by_co[company]
+        pc = TwoCos()
+        pc.pool = POOL_OK
+        pc.by_co = {"A": released_pass(), "B": [I("x", "in_progress", idle=60)]}
+        cfg = {"company_id": "A", "unstick_company_ids": ["A", "B"]}
+        state = {}
+        self.run_tick(pc, state, cfg=cfg)
+        self.assertEqual(state["unstick"]["companies"]["A"]["parent_woken"], {"P": NOW})
+        self.run_tick(pc, state, now=NOW + 5 * 60, cfg=cfg)
+        self.assertEqual(len(pc.comments), 1, "not re-woken every tick")
+        self.run_tick(pc, state, now=NOW + 15 * 60, cfg=cfg)
+        self.assertEqual(pc.statuses, [("P", "done")])
+
+    def test_a_malformed_row_is_logged_and_the_tick_still_finishes(self):
+        pc = self.pc([{"status": "todo"}] + released_pass())
+        state = {}
+        w, paused, logs = self.run_tick(pc, state)
+        self.assertFalse(paused)
+        self.assertTrue(any("unstick sweep failed for company co: KeyError" in l for l in logs))
+        self.assertEqual(state["last_mint"], NOW, "the rest of the tick ran and its state is kept")
+
+    def test_a_full_listing_page_skips_the_company(self):
+        pc = self.pc(released_pass() + [I(f"n{k}", "done", idle=3600) for k in range(996)])
+        pc.said = {"P": NOW}
+        _, _, logs = self.run_tick(pc, {})
+        self.assertEqual(pc.statuses, [])
+        self.assertTrue(any("listing may be truncated" in l for l in logs))
+        pc.all = pc.all[:-1]
+        self.run_tick(pc, {})
+        self.assertEqual(pc.statuses, [("P", "done")], "control: one row under the page acts")
+
+    def test_a_failed_cancel_is_not_left_on_the_exclusion_list(self):
+        state = {"unstick": {"cancelled": ["older"],
+                             "companies": {"co": {"child_wakes": {"c": [2, NOW - 3600]}}}}}
+        pc = self.pc([I("P", "in_progress", idle=60), I("c", "in_progress", "P", idle=3600, assignee="eng")])
+        pc.fail_writes = True
+        _, _, logs = self.run_tick(pc, state)
+        self.assertEqual(state["unstick"]["cancelled"], ["older"])
+        self.assertTrue(any("unstick cancel_child QAF-c failed" in l for l in logs))
+        pc.fail_writes = False
+        self.run_tick(pc, state, now=NOW + 300)
+        self.assertEqual(state["unstick"]["cancelled"], ["older", "c"], "the retry adds it back")
+
+    def test_state_forgets_what_no_longer_applies(self):
+        st = {"parent_woken": {"P": NOW, "gone": NOW}, "child_wakes": {"c": [1, NOW], "d": [2, NOW]},
+              "resets": {"x": NOW - 3600, "y": NOW - 60}}
+        warden.prune_unstick_state(st, [I("P", "in_progress"), I("c", "todo"), I("d", "done")], NOW)
+        self.assertEqual(st["parent_woken"], {})
+        self.assertEqual(st["child_wakes"], {"c": [1, NOW]})
+        self.assertEqual(st["resets"], {"y": NOW - 60})
+
+    def test_timestamps(self):
+        self.assertEqual(warden.ts("1970-01-01T00:01:00.000Z"), 60.0)
+        self.assertIsNone(warden.ts(None))
+        self.assertIsNone(warden.ts("not a time"))
+        self.assertIsNone(warden.activity_at({}))
 
 
 class CheckHostTests(unittest.TestCase):

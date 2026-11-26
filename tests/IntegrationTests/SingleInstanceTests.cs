@@ -104,7 +104,12 @@ public class SingleInstanceTests
                 // on a five-second wait for a signal that is never coming.
                 holderReady.Set();
             }
-        });
+        })
+        {
+            // CB-336: a foreground thread parked on releaseHolder keeps the test
+            // host alive after the run if anything throws before the finally.
+            IsBackground = true,
+        };
         holder.Start();
 
         try
@@ -136,6 +141,17 @@ public class SingleInstanceTests
             releaseHolder.Set();
             holder.Join();
         }
+    }
+
+    // CB-336: the helper threads park on events until the test releases them. A
+    // foreground thread left parked (a failed assert before the release) keeps
+    // the test host alive after the last test, until --blame-hang-timeout.
+    [Fact]
+    public void The_holder_thread_does_not_keep_the_test_host_alive()
+    {
+        using var holder = new Holder(FreshName());
+
+        Assert.True(holder.IsBackground);
     }
 
     [Fact]
@@ -231,7 +247,10 @@ public class SingleInstanceTests
             {
                 failure = ex;
             }
-        });
+        })
+        {
+            IsBackground = true,
+        };
         thread.Start();
         Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "the checking thread never finished");
         if (failure is not null) throw new Xunit.Sdk.XunitException("the checking thread failed: " + failure);
@@ -265,14 +284,23 @@ public class SingleInstanceTests
                     _failure = ex;
                     _ready.Set();
                 }
-            });
+            })
+            {
+                // CB-336: parked on _release until Dispose; if the constructor
+                // throws below nobody disposes, and a foreground thread here
+                // would keep the test host alive after the last test.
+                IsBackground = true,
+            };
             _thread.Start();
             Assert.True(_ready.Wait(TimeSpan.FromSeconds(5)), "holder thread never signalled");
             if (_failure is not null)
             {
+                _release.Set();
                 throw new Xunit.Sdk.XunitException("the holder failed before it could hold the mutex: " + _failure);
             }
         }
+
+        internal bool IsBackground => _thread.IsBackground;
 
         public void Dispose()
         {

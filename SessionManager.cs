@@ -681,14 +681,17 @@ namespace Orbweaver
         // CB-217: first it tells the job listing which transcripts the Claude
         // Code sessions here have, so `claude agents --json` is only run for
         // the accounts that own one of them. See BackgroundJobs.AccountsToAsk.
-        private ScanProbes GatherProbes(List<ScanEntry> found)
+        internal ScanProbes GatherProbes(List<ScanEntry> found)
         {
             BackgroundJobs.NoteLiveTranscripts(ClaudeTranscripts(found));
+            var firstScan = !_firstScanGathered;
+            _firstScanGathered = true;
 
             // CB-212: every pid's team first, in one read, because the plan's
             // gates need the leads and the UI half needs the rest.
             var teamPids = ScanProbePlan.TeamPids(found);
             var teams = Timed("agent teams (pids)", teamPids.Count, () => _teams(teamPids));
+            StartupTimeline.Default.Mark("agent teams (pids) done");
 
             // The sessions with no pid to ask about, from their files instead
             // (AgentTeamFiles): a WSL session records none, so its team was
@@ -703,11 +706,23 @@ namespace Orbweaver
                 ScanProbePlan.For(found, pid => teams.TryGetValue(pid, out var m) ? m.Lead : ""),
                 teams,
                 claims => Timed("tmux pane owners", claims.Count, () => _paneOwners(claims)),
-                () => Timed("background-job listing", found.Count, () => _jobListing()),
+                () =>
+                {
+                    StartupTimeline.Default.Mark("background-job listing begins");
+                    var jobs = Timed("background-job listing", found.Count, () => _jobListing());
+                    StartupTimeline.Default.Mark("background-job listing done");
+                    return jobs;
+                },
                 () => Timed("attach clients", found.Count, () => _attachClients()),
                 cwd => Timed("agent viewer", 1, () => _agentViewer(cwd)),
-                fileTeams);
+                fileTeams,
+                jobListingBudget: firstScan ? FirstScanJobListingBudget : null);
         }
+
+        // CB-424: how long the launch's first scan waits for the job listing
+        // before showing orbs without it. See ScanProbes.ListJobs.
+        internal static readonly TimeSpan FirstScanJobListingBudget = TimeSpan.FromMilliseconds(500);
+        private bool _firstScanGathered;
 
         internal static IEnumerable<string?> ClaudeTranscripts(IEnumerable<ScanEntry> found) =>
             found.Where(e => e.Status.Source == SessionSource.ClaudeCode).Select(e => e.Status.TranscriptPath);
@@ -891,6 +906,7 @@ namespace Orbweaver
         [ExcludeFromCodeCoverage]
         public void Start()
         {
+            StartupTimeline.Default.Mark("SessionManager.Start entered");
             Instance = this;
             OrbDragHost.Current = this;
 
@@ -955,6 +971,7 @@ namespace Orbweaver
             // UI thread, where the scan state lives; Paperclip-only.
             PaperclipSessions.Changed += () => Dispatcher.UIThread.Post(OnPaperclipChanged);
 
+            StartupTimeline.Default.Mark("first scan requested");
             _ = ScheduleScan();
         }
 
@@ -2568,15 +2585,21 @@ namespace Orbweaver
                     // phase below, and a starved pool at launch would hide there.
                     SlowPhase.Report("waiting for a worker thread", -1, ScanClock() - queued,
                         SlowPhaseThreshold, SlowPhaseSink);
+                    StartupTimeline.Default.Mark("scan worker running");
                     SyncAutoColorMarker();
                     var read = ReadStatusFilesTimed(now);
-                    return (read, GatherProbes(read));
+                    StartupTimeline.Default.Mark($"status files read ({read.Count} sessions)");
+                    var gathered = GatherProbes(read);
+                    StartupTimeline.Default.Mark("probes gathered");
+                    return (read, gathered);
                 }).ConfigureAwait(true);
 
                 passCount = found.Count;
 
                 // The apply runs on the UI thread, so a slow one is a frozen UI.
+                StartupTimeline.Default.Mark("apply begins");
                 Timed("apply", found.Count, () => { ScanAndUpdateCore(found, probes, now); return 0; });
+                StartupTimeline.Default.FirstApplyDone();
             }
             finally
             {
@@ -3495,7 +3518,11 @@ namespace Orbweaver
                     _order.Add(sessionId);
                     if (sessionId.StartsWith("rc:", StringComparison.Ordinal))
                         MirrorLog.Say("orb-created", "key=" + MirrorLog.ShortKey(sessionId));
-                    if (OrbsVisible) window.Show();
+                    if (OrbsVisible)
+                    {
+                        window.Show();
+                        StartupTimeline.Default.OrbShown(_windows.Count);
+                    }
                     setChanged = true;
                 }
 

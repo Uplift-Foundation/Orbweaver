@@ -295,10 +295,47 @@ namespace Orbweaver
                     else MirrorLog.Say("peer-dropped", $"t={frame.Type} no client bound");
                     break;
 
+                // CB-408: a request that can run for seconds (a roster build, a
+                // pane read for PROMPT, a typed INPUT) leaves the link's
+                // in-order queue, or one slow serve held every frame behind it
+                // past the asker's 10 s wait. Replies above stay inline, and so
+                // do the transfer and watch frames, whose order matters.
+                //
+                // INPUT and ANSWER type into a pane, so they keep their order
+                // among themselves on one lane; they just no longer wait for
+                // anything else. Replies on the wire stay whole because every
+                // write goes through PeerLink.SendAsync's per-connection lock.
                 default:
-                    if (server is not null) await server.HandleAsync(machine, frame).ConfigureAwait(false);
-                    else MirrorLog.Say("peer-dropped", $"t={frame.Type} no server bound");
+                    if (server is null) MirrorLog.Say("peer-dropped", $"t={frame.Type} no server bound");
+                    else if (frame.Type is MirrorProtocol.Hello or MirrorProtocol.Prompt)
+                        _ = Task.Run(() => ServeOffQueueAsync(server, machine, frame));
+                    else if (frame.Type is MirrorProtocol.Input or MirrorProtocol.Answer)
+                    {
+                        lock (_gate)
+                            _typingLane = _typingLane.ContinueWith(
+                                _ => ServeOffQueueAsync(server, machine, frame),
+                                TaskScheduler.Default).Unwrap();
+                    }
+                    else await server.HandleAsync(machine, frame).ConfigureAwait(false);
                     break;
+            }
+        }
+
+        // Serial lane for the requests that type into a pane (CB-408).
+        private Task _typingLane = Task.CompletedTask;
+
+        // Nothing may escape: this runs unobserved, off the queue, and the
+        // queue's own catch no longer sees it.
+        private static async Task ServeOffQueueAsync(
+            RemoteMirrorServer server, string machine, MirrorProtocol.MirrorFrame frame)
+        {
+            try
+            {
+                await server.HandleAsync(machine, frame).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                MirrorLog.Say("peer-serve-failed", $"from={machine} t={frame.Type} {e.GetType().Name}: {e.Message}");
             }
         }
 
