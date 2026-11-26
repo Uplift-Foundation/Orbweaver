@@ -33,8 +33,27 @@ The lead runs each step; none of it is run by the tests.
 A Paperclip pause only defers new assignments; a run in flight keeps going (measured in
 phase 0). So while the company is paused, every tick cancels its queued and running runs and
 sets its in-progress issues to `blocked`. Parking them as `blocked` makes the paused org's
-orbs go amber on the desktop; that is intended, because a warden pause needs a person. The warden never resumes the company; a person or
-the CB-455 lead does. `max_runs_per_day` is the run brake because Paperclip's
+orbs go amber on the desktop; that is intended, because a warden pause needs a person. A
+refusal to block an issue is retried every tick but logged once per issue per pause (CB-484).
+
+The warden resumes the company itself in one case only (CB-484). The release brake is a cost
+brake, not a safety brake, so a pause the warden made whose only reasons are "releases in a
+row" (the Paperclip counter, the spool's, or both) is lifted 60 minutes after it was made:
+`PATCH /api/companies/<id> {"status":"active"}`, both release counters and the set of released
+tickets reset, and `RESUMED: release brake cooled off` in the log. It does this every time the brake trips; the
+org must not freeze on a cost brake. Every other pause
+(merge audit, workflow guard, refusal, cost ceiling, run cap, unreadable signal), a release
+pause that gained any other reason while paused, and any pause the warden did not make itself,
+is lifted by a person or the CB-455 lead. The reasons are kept in `state.json` as
+`warden_pause`; a pause made before this change has none and stays manual.
+
+On any resume, the warden's or a person's, the first tick that sees the company active sets
+going what `stop_work` stopped: an issue it blocked that is still `blocked` is set to `todo`
+and gets one board comment, which wakes its assignee; an issue it could not block (the 422
+case) and that is still `in_progress` gets the comment only; anything that has moved on since
+is left alone. The unstick sweep never touches a blocked issue with no children, so before
+this an engineer task blocked by a pause sat forever. A failed restart is logged and retried
+on the next tick (`restart_retry` in `state.json`). `max_runs_per_day` is the run brake because Paperclip's
 `heartbeat.maxDailyRuns` is timer-only and does not bound assignment wakes.
 
 ## Where the warden's signals come from, and how far each can be trusted
@@ -45,7 +64,7 @@ write to directly:
 
 | Trigger | Source | Notes |
 | --- | --- | --- |
-| Two releases in a row | Newly `cancelled` engineer issues in the fix company (description starts `Ticket: CB-NNN`), read from Paperclip each tick. Issues of one ticket under one parent issue (one fix pass) count once, so a ticket released after its second fix round is one release (CB-471) | The lead sets the engineer's issue to `cancelled` on release and `done` on merge (its instructions; the PATCH has not been run). A cancelled issue without that first line (a QA or helper child task) is not a release; each release is logged with its CB key. Measured by QA: cancelled rows in the listing do carry `description`, so the next line is the rare path. A newly cancelled row that has no `description` field is read in full with `GET /api/issues/<id>`; if even that has none, the warden logs `release signal unreadable` and pauses, rather than skipping it or counting it blindly. The first tick only records what is already cancelled. A merge resets the count. The spool's `released` is a second, separate counter; the two are not added. |
+| Two releases in a row | Newly `cancelled` engineer issues in the fix company (description starts `Ticket: CB-NNN`), read from Paperclip each tick. A ticket counts once until the next merge, whatever fix pass its engineer issues belong to: the warden keeps the set of ticket keys released since the last merge (`paperclip_released_keys`) and the brake trips on two distinct tickets. CB-471 matched on ticket and parent pass, but with the routine firing every 30 minutes a fix round's issue has a later parent, and one release of CB-346 paused the org for 13 hours (CB-484) | The lead sets the engineer's issue to `cancelled` on release and `done` on merge (its instructions; the PATCH has not been run). A cancelled issue without that first line (a QA or helper child task) is not a release; each release is logged with its CB key. Measured by QA: cancelled rows in the listing do carry `description`, so the next line is the rare path. A newly cancelled row that has no `description` field is read in full with `GET /api/issues/<id>`; if even that has none, the warden logs `release signal unreadable` and pauses, rather than skipping it or counting it blindly. The first tick only records what is already cancelled. A merge resets the count and clears the set. The spool's `released` is a second, separate counter; the two are not added. |
 | Bot merge with no QA comment, red CI on a bot merge | GitHub | Known limit: the bot and the QA agent comment as the same GitHub identity, so "a QA comment" means any comment or review before the merge naming both rids. The warden cannot tell QA's comment from the lead's. |
 | Run cap, token ceiling | Paperclip runs and costs APIs | Off until set in `warden.json`. |
 | GitHub refused a push | git's ruleset-refusal output in a run's log, `remote: error: GH013: Repository rule violations` or `(push declined due to repository rule violations)`, each run read once. The bare code alone is not a refusal: the lead's instructions quote it (CB-462). The spool's `push_refused` is an extra signal. | **Not fully observable.** A refusal that never reaches a run log (a push the agent ran quietly, or the log truncated at 200 KB) is not seen. The idea of comparing a `bugfix/pc-*` branch's remote head against a "push attempt" in the issue was not built: Paperclip records no structured push attempt to compare against. |

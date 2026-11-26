@@ -625,6 +625,12 @@ class FakePC:
         self.paused = True
         self.pauses.append(reason)
 
+    def resume(self):
+        if self.fail_writes:
+            raise urllib.error.HTTPError("u", 500, "Server Error", {}, None)
+        self.paused = False
+        self.resumes = getattr(self, "resumes", 0) + 1
+
     def tokens_today(self):
         return self.tokens
 
@@ -982,11 +988,35 @@ class StopWorkTests(unittest.TestCase):
         self.assertFalse(paused)
         self.assertEqual((pc.cancelled, pc.blocked), ([], []))
 
-    def test_warden_never_resumes(self):
+    def test_warden_resumes_only_through_the_release_brake_cool_off(self):
+        # CB-484 gave the warden one way to resume; the PATCH to active must
+        # stay in that one place.
         self.assertFalse(hasattr(warden.Warden, "resume"))
-        self.assertFalse(hasattr(warden.PaperclipHttp, "resume"))
         src = open(os.path.join(ROOT, "host/warden.py")).read()
-        self.assertNotIn('"status": "active"', src)
+        self.assertEqual(src.count('"status": "active"'), 1)
+        self.assertEqual(src.count("self.pc.resume()"), 1)
+
+    def test_a_refused_block_is_logged_once_per_issue_per_pause(self):
+        # CB-484: one issue's 422 was logged on every tick of a 13-hour pause.
+        class Refusing(FakePC):
+            def block_issue(self, i):
+                if i == "iss-bad00000":
+                    raise urllib.error.HTTPError("u", 422, "Unprocessable Entity", {}, None)
+                super().block_issue(i)
+
+        state = {}
+        pc = Refusing(issues=["iss-bad00000"])
+        lines = []
+        for t in range(3):
+            pc.paused = t > 0
+            lines += tick(pc=pc, state=state, now=1000 + t * 300,
+                          requests=[{"verb": "push_refused"}] if t == 0 else [])[2]
+        self.assertEqual(sum("could not block issue iss-bad0" in l for l in lines), 1)
+        # Control: a new pause logs it again.
+        pc.paused = False
+        tick(pc=pc, state=state, now=5000)
+        _, _, logs = tick(pc=pc, state=state, now=5300, requests=[{"verb": "push_refused"}])
+        self.assertEqual(sum("could not block issue iss-bad0" in l for l in logs), 1)
 
     def test_daily_run_cap(self):
         self.assertIsNone(warden.runs_problem(999, None))
@@ -1017,10 +1047,10 @@ class PaperclipSignalTests(unittest.TestCase):
     def test_two_newly_cancelled_issues_pause_without_any_spool_file(self):
         state, pc = {}, FakePC(cancelled=[R("old")])
         tick(pc=pc, state=state)
-        pc.cancelled_issues = [R("old"), R("x")]
+        pc.cancelled_issues = [R("old"), R("x", 101)]
         _, paused, _ = tick(pc=pc, state=state)
         self.assertFalse(paused, "one release is not a pause")
-        pc.cancelled_issues = [R("old"), R("x"), R("y")]
+        pc.cancelled_issues = [R("old"), R("x", 101), R("y", 102)]
         _, paused, _ = tick(pc=pc, state=state)
         self.assertTrue(paused)
         self.assertIn("Paperclip issue states", pc.pauses[0])
@@ -1028,12 +1058,12 @@ class PaperclipSignalTests(unittest.TestCase):
     def test_a_merge_between_releases_resets_the_paperclip_streak(self):
         state, pc = {}, FakePC()
         tick(pc=pc, state=state)
-        pc.cancelled_issues = [R("x")]
+        pc.cancelled_issues = [R("x", 101)]
         tick(pc=pc, state=state)
         gh = FakeGH(merged=[merged_pr()], comments={7: ["osx-arm64 win-x64"]},
                     checks={"abc": {n: "success" for n in warden.REQUIRED_CHECKS}})
         tick(gh=gh, pc=pc, state=state)
-        pc.cancelled_issues = [R("x"), R("y")]
+        pc.cancelled_issues = [R("x", 101), R("y", 102)]
         _, paused, _ = tick(pc=pc, state=state)
         self.assertFalse(paused)
 
@@ -1041,13 +1071,13 @@ class PaperclipSignalTests(unittest.TestCase):
         # No spool requests at all in either tick; Paperclip alone pauses.
         state, pc = {}, FakePC()
         tick(pc=pc, state=state)
-        pc.cancelled_issues = [R("x"), R("y")]
+        pc.cancelled_issues = [R("x", 101), R("y", 102)]
         self.assertTrue(tick(pc=pc, state=state)[1])
 
     def test_spool_release_and_paperclip_release_are_not_added_together(self):
         state, pc = {}, FakePC()
         tick(pc=pc, state=state)
-        pc.cancelled_issues = [R("x")]
+        pc.cancelled_issues = [R("x", 101)]
         _, paused, _ = tick(pc=pc, state=state, requests=[{"verb": "released", "ticket": "CB-1"}])
         self.assertFalse(paused, "one release reported twice is still one release")
 
@@ -1119,13 +1149,60 @@ class ReleaseTickTests(unittest.TestCase):
         self.assertEqual(state["paperclip_releases"], 1)
         self.assertTrue(any("CB-415 already counted" in l for l in logs))
 
-    def test_the_same_ticket_released_in_a_second_pass_counts_again(self):
+    def test_one_ticket_cancelled_under_two_passes_is_one_release(self):
+        # CB-484, the 2026-11-26 shape: CB-346's engineer tasks QAF-179 (07:30
+        # pass) and QAF-185 (08:30 pass) were both cancelled on one release.
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state)
+        pc.cancelled_issues = [R("q179", 346, parentId="pass0730"), R("q185", 346, parentId="pass0830")]
+        _, paused, logs = tick(pc=pc, state=state)
+        self.assertFalse(paused, "one ticket released once is one release, whatever pass made its tasks")
+        self.assertEqual(state["paperclip_releases"], 1)
+        self.assertEqual(state["paperclip_released_keys"], ["CB-346"])
+        self.assertTrue(any("CB-346 already counted" in l for l in logs))
+        # Control: a second, different ticket still trips the brake.
+        pc.cancelled_issues.append(R("q190", 347, parentId="pass0900"))
+        _, paused, _ = tick(pc=pc, state=state)
+        self.assertTrue(paused)
+        self.assertIn(warden.PAPERCLIP_BRAKE, pc.pauses[0])
+
+    def test_the_same_ticket_seen_on_a_later_tick_is_still_one_release(self):
         state, pc = {}, FakePC()
         tick(pc=pc, state=state)
         pc.cancelled_issues = [R("r1", 415, parentId="pass1")]
         self.assertFalse(tick(pc=pc, state=state)[1])
-        pc.cancelled_issues = [R("r1", 415, parentId="pass1"), R("r3", 415, parentId="pass2")]
-        self.assertTrue(tick(pc=pc, state=state)[1], "a second pass that also gives up is a second release")
+        pc.cancelled_issues.append(R("r3", 415, parentId="pass2"))
+        self.assertFalse(tick(pc=pc, state=state)[1])
+        self.assertEqual(state["paperclip_releases"], 1)
+
+    def test_old_state_with_release_passes_is_tolerated(self):
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state)
+        state["paperclip_release_passes"] = [["CB-415", "pass1"]]
+        state["paperclip_releases"] = 1
+        pc.cancelled_issues = [R("r1", 415, parentId="pass1")]
+        _, paused, _ = tick(pc=pc, state=state)
+        self.assertNotIn("paperclip_release_passes", state)
+        self.assertEqual(state["paperclip_released_keys"], ["CB-415"])
+        self.assertTrue(paused, "the old counter still holds the earlier release; erring towards the brake")
+
+    def test_a_merge_clears_the_released_ticket_set(self):
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state)
+        pc.cancelled_issues = [R("r1", 415)]
+        tick(pc=pc, state=state)
+        self.assertEqual(state["paperclip_released_keys"], ["CB-415"])
+        gh = FakeGH(merged=[merged_pr()], comments={7: ["osx-arm64 win-x64 ok"]},
+                    checks={"abc": {n: "success" for n in warden.REQUIRED_CHECKS}})
+        tick(gh=gh, pc=pc, state=state)
+        self.assertEqual(state["paperclip_released_keys"], [])
+        self.assertEqual(state["paperclip_releases"], 0)
+        # After the merge the same ticket released again counts afresh, once.
+        pc.cancelled_issues.append(R("r2", 415))
+        _, paused, logs = tick(pc=pc, state=state)
+        self.assertFalse(paused)
+        self.assertEqual(state["paperclip_releases"], 1)
+        self.assertTrue(any("CB-415 released" in l for l in logs))
 
     def test_two_tickets_released_in_one_pass_are_two_releases(self):
         state, pc = {}, FakePC()
@@ -1133,11 +1210,13 @@ class ReleaseTickTests(unittest.TestCase):
         pc.cancelled_issues = [R("r1", 415, parentId="pass1"), R("r2", 416, parentId="pass1")]
         self.assertTrue(tick(pc=pc, state=state)[1])
 
-    def test_issues_with_no_parent_are_each_counted(self):
+    def test_issues_with_no_parent_count_by_ticket(self):
         state, pc = {}, FakePC()
         tick(pc=pc, state=state)
         pc.cancelled_issues = [R("r1", 415), R("r2", 415)]
-        self.assertTrue(tick(pc=pc, state=state)[1], "with no pass to match on, the brake counts both")
+        self.assertFalse(tick(pc=pc, state=state)[1], "the ticket key, not the parent, is what is counted")
+        pc.cancelled_issues.append(R("r3", 416))
+        self.assertTrue(tick(pc=pc, state=state)[1])
 
     def test_row_missing_its_description_is_fetched_and_counted_when_it_is_an_engineer_issue(self):
         state, pc = {}, FakePC()
@@ -1169,6 +1248,212 @@ class ReleaseTickTests(unittest.TestCase):
     def test_history_is_not_fetched(self):
         pc = FakePC(cancelled=[{"id": "old", "status": "cancelled"}])
         self.assertFalse(tick(pc=pc, state={})[1], "the first look seeds history without reading it")
+
+
+class BrakeCoolOffTests(unittest.TestCase):
+    """CB-484: a pause whose only reason is the release brake lifts itself
+    after an hour; anything else stays until a person lifts it."""
+
+    def trip(self, state, pc, now, a=346, b=347):
+        pc.cancelled_issues += [R(f"i{a}", a), R(f"i{b}", b)]
+        self.assertTrue(tick(pc=pc, state=state, now=now)[1])
+
+    def fresh(self):
+        state, pc = {}, FakePC()
+        tick(pc=pc, state=state, now=0)
+        return state, pc
+
+    def test_release_only_pause_resumes_after_sixty_minutes(self):
+        state, pc = self.fresh()
+        self.trip(state, pc, 10_000)
+        self.assertEqual(state["warden_pause"]["reasons"], [warden.PAPERCLIP_BRAKE])
+        _, paused, logs = tick(pc=pc, state=state, now=10_000 + warden.BRAKE_COOL_OFF - 1)
+        self.assertTrue(paused, "not before the hour")
+        self.assertFalse(any("RESUMED" in l for l in logs))
+        _, paused, logs = tick(pc=pc, state=state, now=10_000 + warden.BRAKE_COOL_OFF)
+        self.assertFalse(paused)
+        self.assertFalse(pc.paused)
+        self.assertIn("RESUMED: release brake cooled off", logs)
+        self.assertEqual((state["paperclip_releases"], state["consecutive_releases"],
+                          state["paperclip_released_keys"]), (0, 0, []))
+        self.assertNotIn("warden_pause", state)
+        self.assertEqual(state["pauses"][-1]["resumed_at"], 10_000 + warden.BRAKE_COOL_OFF,
+                         "the pause window closes on the resuming tick")
+
+    def test_spool_brake_also_cools_off(self):
+        state, pc = self.fresh()
+        rel = {"verb": "released", "ticket": "CB-1"}
+        tick(pc=pc, state=state, now=100, requests=[rel])
+        self.assertTrue(tick(pc=pc, state=state, now=200, requests=[rel])[1])
+        _, paused, logs = tick(pc=pc, state=state, now=200 + warden.BRAKE_COOL_OFF)
+        self.assertFalse(paused)
+        self.assertIn("RESUMED: release brake cooled off", logs)
+
+    def test_no_auto_resume_when_another_reason_is_present(self):
+        state, pc = self.fresh()
+        pc.cancelled_issues += [R("a", 1), R("b", 2)]
+        tick(pc=pc, state=state, now=100, requests=[{"verb": "push_refused"}])
+        self.assertTrue(pc.paused)
+        _, paused, logs = tick(pc=pc, state=state, now=100 + 3 * warden.BRAKE_COOL_OFF)
+        self.assertTrue(paused)
+        self.assertFalse(any("RESUMED" in l for l in logs))
+
+    def test_a_reason_added_while_paused_keeps_it_manual(self):
+        state, pc = self.fresh()
+        self.trip(state, pc, 100)
+        tick(pc=pc, state=state, now=400, requests=[{"verb": "push_refused"}])
+        self.assertEqual(len(state["warden_pause"]["reasons"]), 2)
+        tick(pc=pc, state=state, now=700, requests=[{"verb": "push_refused"}])
+        self.assertEqual(len(state["warden_pause"]["reasons"]), 2, "a repeated reason is not added twice")
+        self.assertTrue(tick(pc=pc, state=state, now=100 + 2 * warden.BRAKE_COOL_OFF)[1])
+
+    def test_a_pause_the_warden_did_not_make_never_auto_resumes(self):
+        state, pc = {}, FakePC(paused=True)
+        tick(pc=pc, state=state, now=0)
+        self.assertTrue(tick(pc=pc, state=state, now=10 * warden.BRAKE_COOL_OFF)[1])
+        self.assertNotIn("warden_pause", state)
+
+    def test_the_brake_cools_off_every_time(self):
+        # Lead's ruling: no limit on repeats; a release brake is only ever a
+        # one-hour breather.
+        state, pc = self.fresh()
+        self.trip(state, pc, 100)
+        resumed = 100 + warden.BRAKE_COOL_OFF
+        self.assertFalse(tick(pc=pc, state=state, now=resumed)[1])
+        again = resumed + warden.TICKET_WINDOW + 60
+        pc.cancelled_issues += [R("c", 10), R("d", 11)]
+        self.assertTrue(tick(pc=pc, state=state, now=again)[1], "the brake still trips after a resume")
+        _, paused, logs = tick(pc=pc, state=state, now=again + warden.BRAKE_COOL_OFF)
+        self.assertFalse(paused)
+        self.assertIn("RESUMED: release brake cooled off", logs)
+
+    def test_run_cap_seen_while_paused_keeps_it_manual(self):
+        state, pc = self.fresh()
+        self.trip(state, pc, 100)
+        pc.runs = 11
+        tick(pc=pc, state=state, now=400, cfg={"max_runs_per_day": 10})
+        pc.runs = 0
+        self.assertTrue(tick(pc=pc, state=state, now=100 + 2 * warden.BRAKE_COOL_OFF)[1])
+
+    def test_the_live_state_shape_never_auto_resumes(self):
+        # ~/.config/orbweaver-bugfix/state.json on 2026-11-26: an open window,
+        # the old pass list, and no record of why.
+        state = {"pauses": [{"paused_at": 0, "resumed_at": None}], "cancelled_seen": [],
+                 "paperclip_release_passes": [["CB-346", "p1"], ["CB-346", "p2"]], "paperclip_releases": 2}
+        pc = FakePC(paused=True)
+        _, paused, logs = tick(pc=pc, state=state, now=13 * 3600)
+        self.assertTrue(paused)
+        self.assertFalse(any("RESUMED" in l for l in logs))
+
+    def test_a_person_resuming_first_clears_the_record(self):
+        state, pc = self.fresh()
+        self.trip(state, pc, 100)
+        pc.paused = False
+        tick(pc=pc, state=state, now=400)
+        self.assertNotIn("warden_pause", state)
+
+    def test_a_failed_resume_stays_paused_and_says_so(self):
+        state, pc = self.fresh()
+        self.trip(state, pc, 100)
+        pc.fail_writes = True
+        _, paused, logs = tick(pc=pc, state=state, now=100 + warden.BRAKE_COOL_OFF)
+        self.assertTrue(paused)
+        self.assertTrue(any("could not resume after the release brake: HTTPError 500" in l for l in logs))
+        self.assertIn("warden_pause", state, "kept, so the next tick tries again")
+
+    def stopped(self, pc, statuses):
+        pc.full = {i: {"id": i, "status": st} for i, st in statuses.items()}
+
+    def test_any_resume_restarts_what_stop_work_stopped(self):
+        class Refusing(FakePC):
+            def block_issue(self, i):
+                if i == "iss-bad00000":
+                    raise urllib.error.HTTPError("u", 422, "Unprocessable Entity", {}, None)
+                super().block_issue(i)
+
+        state, pc = {}, Refusing(issues=["iss-aaaaaaaa", "iss-bbbbbbbb", "iss-bad00000"])
+        tick(pc=pc, state=state, now=0, requests=[{"verb": "push_refused"}])
+        self.assertEqual(state["stop_blocked"], ["iss-aaaaaaaa", "iss-bbbbbbbb"])
+        tick(pc=pc, state=state, now=300)
+        self.assertEqual(state["stop_blocked"], ["iss-aaaaaaaa", "iss-bbbbbbbb"], "listed once")
+        self.assertEqual(pc.statuses, [])
+        # A person resumes (push_refused is manual). One task was finished by hand meanwhile.
+        pc.paused, pc.issues = False, []
+        self.stopped(pc, {"iss-aaaaaaaa": "blocked", "iss-bbbbbbbb": "done", "iss-bad00000": "in_progress"})
+        _, _, logs = tick(pc=pc, state=state, now=600)
+        self.assertEqual(pc.statuses, [("iss-aaaaaaaa", "todo")])
+        self.assertEqual(pc.comments, [("iss-aaaaaaaa", warden.RESTART_COMMENT),
+                                       ("iss-bad00000", warden.RESTART_COMMENT)])
+        self.assertTrue(any("restarted issue iss-bad0" in l and "comment only" in l for l in logs))
+        self.assertNotIn("stop_blocked", state)
+        tick(pc=pc, state=state, now=900)
+        self.assertEqual(len(pc.comments), 2, "restarted once, not every tick")
+
+    def test_auto_resume_restarts_on_the_same_tick(self):
+        state, pc = self.fresh()
+        pc.issues = ["iss-cccccccc"]
+        self.trip(state, pc, 100)
+        pc.issues = []
+        self.stopped(pc, {"iss-cccccccc": "blocked"})
+        _, paused, logs = tick(pc=pc, state=state, now=100 + warden.BRAKE_COOL_OFF)
+        self.assertFalse(paused)
+        self.assertEqual(pc.statuses, [("iss-cccccccc", "todo")])
+        self.assertLess(logs.index("RESUMED: release brake cooled off"),
+                        next(i for i, l in enumerate(logs) if "restarted issue iss-cccc" in l))
+
+    def test_a_failed_restart_is_retried_and_does_not_end_the_tick(self):
+        state, pc = {}, FakePC(issues=["iss-dddddddd", "iss-eeeeeeee"])
+        tick(pc=pc, state=state, now=0, requests=[{"verb": "push_refused"}])
+        pc.paused, pc.issues = False, []
+        # dddd cannot be read (get_issue raises), eeee restarts.
+        pc.full = {"iss-eeeeeeee": {"status": "blocked"}}
+        _, paused, logs = tick(pc=pc, state=state, now=300)
+        self.assertFalse(paused)
+        self.assertEqual(pc.statuses, [("iss-eeeeeeee", "todo")])
+        self.assertTrue(any("could not restart issue iss-dddd: OSError" in l for l in logs))
+        self.assertEqual(state["restart_retry"], [["iss-dddddddd", "blocked"]])
+        self.assertTrue(pc.secrets, "the tick went on to mint")
+        pc.full["iss-dddddddd"] = {"status": "blocked"}
+        tick(pc=pc, state=state, now=600)
+        self.assertEqual(pc.statuses[-1], ("iss-dddddddd", "todo"))
+        self.assertNotIn("restart_retry", state)
+
+    def test_a_failed_comment_after_the_todo_patch_is_posted_next_tick(self):
+        # QA round 2: the PATCH went through, the comment did not; the retry
+        # must still post it, since the comment is what wakes the assignee.
+        class CommentFailsOnce(FakePC):
+            def comment(self, issue_id, body):
+                if not getattr(self, "failed", False):
+                    self.failed = True
+                    raise urllib.error.HTTPError("u", 500, "Server Error", {}, None)
+                super().comment(issue_id, body)
+
+        state, pc = {}, CommentFailsOnce(issues=["iss-ffffffff"])
+        tick(pc=pc, state=state, now=0, requests=[{"verb": "push_refused"}])
+        pc.paused, pc.issues = False, []
+        pc.full = {"iss-ffffffff": {"status": "blocked"}}
+        _, _, logs = tick(pc=pc, state=state, now=300)
+        self.assertEqual((pc.statuses, pc.comments), ([("iss-ffffffff", "todo")], []))
+        self.assertEqual(state["restart_retry"], [["iss-ffffffff", "comment"]])
+        pc.full["iss-ffffffff"]["status"] = "todo"
+        tick(pc=pc, state=state, now=600)
+        self.assertEqual(pc.statuses, [("iss-ffffffff", "todo")], "not PATCHed twice")
+        self.assertEqual(pc.comments, [("iss-ffffffff", warden.RESTART_COMMENT)])
+        self.assertNotIn("restart_retry", state)
+        # Control: an owed comment on an issue that has since moved on is dropped.
+        state["restart_retry"] = [["iss-ffffffff", "comment"]]
+        pc.full["iss-ffffffff"]["status"] = "in_progress"
+        tick(pc=pc, state=state, now=900)
+        self.assertEqual(len(pc.comments), 1)
+        self.assertNotIn("restart_retry", state)
+
+    def test_paperclip_http_resume_patches_active(self):
+        calls = []
+        pc = warden.PaperclipHttp.__new__(warden.PaperclipHttp)
+        pc.company = "co1"
+        pc.call = lambda *a: calls.append(a)
+        pc.resume()
+        self.assertEqual(calls, [("PATCH", "/api/companies/co1", {"status": "active"})])
 
 
 REAL_LOG = {"runId": "r1", "store": "local_file", "logRef": "x/r1.ndjson",
@@ -1213,7 +1498,7 @@ class PauseWindowTests(unittest.TestCase):
     def test_the_warden_records_its_own_pause_and_the_resume(self):
         state, pc = {}, FakePC()
         tick(pc=pc, state=state, now=1000)
-        pc.cancelled_issues = [R("x"), R("y")]
+        pc.cancelled_issues = [R("x", 101), R("y", 102)]
         self.assertTrue(tick(pc=pc, state=state, now=1300)[1])
         self.assertEqual(state["pauses"], [{"paused_at": 1300, "resumed_at": None}])
         pc.paused = False  # a person resumes
@@ -1286,7 +1571,7 @@ class PauseWindowTests(unittest.TestCase):
                 self.assertEqual(json.load(f), [{"paused_at": "1970-01-01T00:00:00Z", "resumed_at": None}])
         state, pc = {}, FakePC()
         tick(pc=pc, state=state, now=0)
-        pc.cancelled_issues = [R("x"), R("y")]
+        pc.cancelled_issues = [R("x", 101), R("y", 102)]
         _, paused, logs = tick(pc=pc, state=state, cfg={"spool": "/nonexistent/spool"}, now=300)
         self.assertTrue(paused)
         self.assertEqual(pc.pauses and len(pc.pauses), 1)
