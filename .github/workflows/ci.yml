@@ -156,6 +156,15 @@ jobs:
         if: ${{ !cancelled() && matrix.checks }}
         run: python tools/test-bugfix-host.py
 
+      # CB-485: the bug-fix org's medic (host/medic.py): its four checks, every
+      # verb and refusal, the lock and the rate limit, with Paperclip, GitHub
+      # and the model launcher faked. No model is started. macOS only: the
+      # medic runs on the mini alone and its lock is fcntl's, which Windows
+      # does not have.
+      - name: Unit tests (bug-fix org medic)
+        if: ${{ !cancelled() && matrix.checks && runner.os == 'macOS' }}
+        run: python tools/test-bugfix-medic.py
+
       # CB-481: Orbweaver-Mobile's ruleset JSON, the apply script run against
       # it, and the read-back and push-refusal checker. Fakes only.
       - name: Unit tests (bug-fix org mobile rulesets)

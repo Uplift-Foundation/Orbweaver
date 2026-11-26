@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The bug-fix org's medic (CB-485). Install like the warden's plist: copy to
+     ~/Library/LaunchAgents/ with __REPO__ replaced by the same checkout the
+     warden runs from, then launchctl bootstrap gui/$(id -u) <plist>. It runs as
+     the logged-in user, reads ~/.config/orbweaver-bugfix/warden.json, and only
+     starts a model when one of its checks trips (host/medic.py). -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>org.uplift.orbweaver-bugfix-medic</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>__REPO__/host/medic.py</string>
+    <string>check</string>
+  </array>
+  <!-- claude, gh and node live in /opt/homebrew/bin, which launchd's own PATH
+       does not have (the warden learned this on 2026-11-24). -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>StartInterval</key><integer>600</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardErrorPath</key><string>/tmp/orbweaver-bugfix-medic.err</string>
+  <key>StandardOutPath</key><string>/tmp/orbweaver-bugfix-medic.out</string>
+</dict>
+</plist>

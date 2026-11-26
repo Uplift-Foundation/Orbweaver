@@ -228,6 +228,51 @@ comment wake were read from the installed server's source. None of the sweep's w
 been run against the live org from this branch; the lead's deploy proof is a fixture task
 the deployed warden clears.
 
+## The medic (CB-485)
+
+The warden stops the org; until now nothing noticed that it had stopped. Five
+of its six pauses between 2026-11-24 and 11-26 were false alarms, and each
+lasted until a person looked, the last for 13 hours. `host/medic.py check`
+runs every 10 minutes from `launchd/org.uplift.orbweaver-bugfix-medic.plist`
+(installed like the warden's, from the same checkout, reading the same
+`warden.json`) and looks at the outcome instead of the causes. The org is
+stopped when the company has been paused over 10 minutes, no run has started
+in 45 with the routine active, a task has been blocked with nothing moving
+under it (or an approval has waited) for 30 minutes unswept by the warden, or
+the warden has not ticked in 15. While the company is paused only the first
+and last are read: the other two are the pause's own effects.
+
+When one holds, it asks a headless `claude -p` for a plan, with
+`host/medic-runbook.md` and a snapshot of what it read as the prompt (also kept
+in `medic-snapshot.txt`), under the pool accounts in turn
+(`medic_config_dirs` in `warden.json`, else every distinct `configDir` in
+`pool-accounts.json` in pool order, with the default `~/.claude` account last),
+moving to the next only on an auth or usage failure.
+One at a time (`medic.lock`), at most one launch per 20 minutes, 15-minute
+timeout, all of it in `medic.log`. **The model has no tools**: `--tools ""`,
+`--setting-sources ""`, `--strict-mcp-config`, an empty working directory. It
+answers `{diagnosis, actions}` under `--json-schema`, and `medic.py` validates
+every action against a closed list of verbs and arguments (issue references
+must be open tasks in the snapshot) before running any; one invalid action
+means none run and Warren is told once. An allow-listed Bash prefix was tried
+first and dropped: QA measured `; id` and `| cat` running after an allowed
+call. Each verb then re-checks its own preconditions: `resume` never lifts a
+merge-audit or workflow-guard pause, lifts a develop-red pause only when it
+reads develop green at head itself, a push-refusal pause only when it re-reads
+the run log and finds no git refusal line, and never a pause that came back
+within six hours of a medic resume.
+
+`escalate` posts one pending `request_board_approval` to the company per
+incident, which the app shows on the lead's orb as a waiting need titled
+"Bug-fix org stopped: ...". After three launches in one incident with no
+recovery, `medic.py` escalates on its own. `file-bug` writes the bug to
+`~/.config/orbweaver-bugfix/medic-bugs/` as the record and creates one
+Paperclip task, "File a CB bug: false org stop", for the bug-fix lead, who has
+the Jira connector; the medic's text sits quoted inside a fenced block in it.
+The host has no Jira credential of its own. Secrets (GitHub and Anthropic
+tokens, `x-access-token:` URLs, `Authorization:` values) are redacted from the
+snapshot, the prompt, `medic.log` (0600) and the bug before any is written.
+
 ## Run logs
 
 `GET /api/heartbeat-runs/<id>/log` returns `{runId, store, logRef, content}`, `content` being
