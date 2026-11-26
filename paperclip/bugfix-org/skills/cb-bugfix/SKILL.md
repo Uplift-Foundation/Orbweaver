@@ -32,6 +32,12 @@ this order; the first that applies is the one:
    If that PR is the org's own, it is settled by the lead's step 0, not here.
 - **Wait: triage.** It has no comment starting with `[triage]` yet. The triage
    org runs every four hours, so this wait is short and is counted, not fixed.
+- **Wait: put back.** The newest comment starting `[bugfix-org]` is a
+   `[bugfix-org] stopped:` put-back (**Putting a ticket back**). It stays a
+   wait, with no Jira write, counted on the line its sentence names
+   (`Mobile access not live yet` or `Needs a protected workflow line`), until a
+   person comments after it or, for mobile access, the check in **Two
+   repositories, one code base** passes; then it is decided afresh.
 - **Wait: mobile access.** The fix is in the mobile repository and the check in
    **Two repositories, one code base** finds it unreachable: no Jira write,
    counted on `Mobile access not live yet`, and not a defect of the pass.
@@ -182,7 +188,7 @@ describes. Only the rows of this table differ:
 | PR command | `gh pr create --repo Uplift-Foundation/Orbweaver ...` | inside `mobile/`: `gh pr create --repo Uplift-Foundation/Orbweaver-Mobile ...` |
 | Merge gate at the head sha | `build (macos-latest, osx-arm64)` and `build (windows-latest, win-x64)` green | `relay`, `contracts` and `tools` green always; `android` green when the diff touches `android/` or `contracts/`; `snapshots` green when it touches `app/`, `contracts/frames-v7-vectors.json` or `contracts/frames-v11-vectors.json`; no check pending or red |
 | QA comment names | both rids, `osx-arm64` and `win-x64` | each check it read, by name |
-| Local tests, targeted only | `dotnet test` per class (**Branch, commits, PR**) | the contract checkers (`python3 -I contracts/check_*.py contracts/`), `app/Tools/test-*.py`, `./gradlew :crypto:test :relay:test --tests <class>`, `swift test --filter <class>` in `app/`; the relay suites (Docker), Android Robolectric and every simulator test are CI's |
+| Local tests, targeted only | `dotnet test` per class (**Branch, commits, PR**) | **untried under the sandbox:** the contract checkers (`python3 -I contracts/check_*.py contracts/`), `app/Tools/test-*.py`, `./gradlew :crypto:test :relay:test --tests <class>`, `swift test --filter <class>` in `app/`; one that fails to run is named in `## Not verified` and is **not** a failed round, and CI is the gate. The relay suites (Docker), Android Robolectric and every simulator test are CI's |
 | Flaky-test proof | `stress.yml`, 30 runs on both rids (class 1) | none exists: the fix removes the race by construction, CI is green, and the PR says the failure rate was not measured |
 | Machines runner | yes (**Real machines**) | no: it serves Orbweaver PRs only |
 | Workflow files | allowed, under **Workflow files** | never |
@@ -201,18 +207,22 @@ The same branch name in both repositories, `bugfix/pc-<change>`, so the claim
 comment names one branch. The clone is fresh per ticket; `git -C mobile fetch
 origin` before a rebase is all the refreshing it needs. `/mobile/` is in
 Orbweaver's `.gitignore`, so a commit in the worktree never picks up the nested
-clone; commit mobile changes with `git -C mobile`. QA and the lead clone the
+clone; commit mobile changes with `git -C mobile`. Every command in `mobile/`
+uses the everyday token, never `$BUGFIX_GH_WORKFLOW_TOKEN`. QA and the lead clone the
 same way when they need to read it.
 
 **Check that mobile is reachable before relying on it.** The org's GitHub
 access to the mobile repository may be newer than these instructions on a
-given day. Before claiming a mobile ticket the lead runs, with the prefix,
-`git ls-remote https://github.com/Uplift-Foundation/Orbweaver-Mobile.git HEAD`.
-If it does not print a sha, the ticket is not claimed and is counted on the
-report's `Mobile access not live yet` line, with no Jira write. If an
-engineer's clone fails after a claim, the ticket is put back (**Putting a
-ticket back**) with the sentence `stopped: mobile access not live yet; nothing
-merged; branch kept at <sha>`.
+given day. A clone proves nothing: the repository can be read without any
+credential. Before claiming a mobile ticket the lead runs, with the prefix,
+`gh api /installation/repositories --jq '.repositories[].full_name'`, which
+answers only for the org's own token and lists exactly the repositories it
+reaches. If `Uplift-Foundation/Orbweaver-Mobile` is not in that list, the
+ticket is not claimed and is counted on the report's `Mobile access not live
+yet` line, with no Jira write. After a claim the signal is a **refused push**
+to the mobile branch (not a failed clone): the ticket is put back (**Putting a
+ticket back**) with the sentence `[bugfix-org] stopped: mobile access not live
+yet; nothing merged; branch kept at <sha>`.
 
 **A fix in both repositories is one ticket with two PRs**, one in each, on the
 same branch name, each gated by its own row. QA reviews both and posts its
@@ -238,8 +248,8 @@ org's. On mobile it never is (table above).
   workflow diff and pauses the company on any of those, so a fix that needs
   one cannot land through the org.
 - **A fix that needs one of those lines is put back** (**Putting a ticket
-  back**) with the sentence `stopped: needs a protected workflow line (<the
-  line it needs, e.g. "permissions: contents: write" in ci.yml>); nothing
+  back**) with the sentence `[bugfix-org] stopped: needs a protected workflow
+  line (<the line it needs, e.g. "permissions: contents: write" in ci.yml>); nothing
   merged; branch kept at <sha>`, and counted on the report's `Needs a protected
   workflow line` line. It is not released and not closed: the bug is real and
   a person makes that change.
@@ -248,7 +258,8 @@ org's. On mobile it never is (table above).
   engineers have one, `$BUGFIX_GH_WORKFLOW_TOKEN` (Orbweaver only). For that
   branch, begin the push command with `export GH_TOKEN="$BUGFIX_GH_WORKFLOW_TOKEN";`
   instead of the everyday prefix's first part. Everything else uses the everyday
-  token.
+  token, and the workflow token is **never used inside `mobile/` or for any
+  mobile push**.
 - **The proof is the PR's own CI run** showing the changed step doing what the
   fix says, named by run id in `## Verified`. A workflow PR never asks for a
   machine install (the runner refuses one). A path that runs only on a push to
@@ -263,7 +274,9 @@ org's. On mobile it never is (table above).
 
 Some stops are not the org failing, so they are not releases. Putting a ticket
 back means: close any open PR the ticket has (draft or not), move the ticket to
-Refinement with the one comment the rule gives, and set the engineer's
+Refinement with the one comment the rule gives (it always starts
+`[bugfix-org] stopped:`, which is how a later pass finds it, **Wait: put
+back**), and set the engineer's
 Paperclip issue to `done` with that same sentence as its `comment`, never
 `cancelled` (`cancelled` is a release, and the warden counts releases toward a
 pause). The branch is kept. The rules that put a ticket back are in **Two

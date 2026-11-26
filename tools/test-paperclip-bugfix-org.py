@@ -453,10 +453,39 @@ class InstructionTests(unittest.TestCase):
 
     def test_mobile_unreachable_is_counted_not_written(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")
-        self.assertIn("`git ls-remote https://github.com/Uplift-Foundation/Orbweaver-Mobile.git HEAD`", skill)
+        # The check needs the org's own token: the repository is readable
+        # anonymously, so a clone or ls-remote succeeding proves nothing.
+        self.assertIn("`gh api /installation/repositories --jq '.repositories[].full_name'`", skill)
+        self.assertIn("A clone proves nothing", skill)
+        self.assertNotIn("git ls-remote", skill)
+        self.assertNotIn("git ls-remote", read("README.md"))
+        self.assertIn("After a claim the signal is a **refused push**", skill)
         self.assertIn("- **Wait: mobile access.**", skill)
         self.assertIn("counted on `Mobile access not live yet`, and not a defect of the pass", skill)
-        self.assertIn("`stopped: mobile access not live yet; nothing\nmerged; branch kept at <sha>`", skill)
+        self.assertIn("`[bugfix-org] stopped: mobile access not live\nyet; nothing merged; branch kept at <sha>`", skill)
+
+    def test_a_put_back_ticket_stays_a_wait_until_something_changes(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        rule = skill.split("- **Wait: put back.**", 1)[1].split("\n- **", 1)[0]
+        for needle in ("`[bugfix-org] stopped:` put-back", "with no Jira write",
+                       "until a\n   person comments after it", "the check in **Two\n   repositories, one code base** passes"):
+            with self.subTest(needle):
+                self.assertIn(needle, rule)
+        self.assertIn("(it always starts\n`[bugfix-org] stopped:`", skill)
+        # Every put-back sentence carries the prefix a later pass searches for.
+        for m in re.finditer(r"`([^`]*)stopped: ", skill):
+            self.assertEqual(m.group(1), "[bugfix-org] ", m.group(0))
+
+    def test_the_workflow_token_never_touches_mobile(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        self.assertIn("the workflow token is **never used inside `mobile/` or for any\n  mobile push**", skill)
+        self.assertIn("Every command in `mobile/`\nuses the everyday token, never `$BUGFIX_GH_WORKFLOW_TOKEN`.", skill)
+
+    def test_mobile_local_tests_are_marked_untried(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        row = [l for l in skill.splitlines() if l.startswith("| Local tests, targeted only |")][0]
+        self.assertIn("**untried under the sandbox:**", row)
+        self.assertIn("is **not** a failed round", row)
 
     def test_a_fix_in_both_repositories_is_one_ticket_with_two_prs(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")
@@ -474,7 +503,7 @@ class InstructionTests(unittest.TestCase):
                        "`$BUGFIX_GH_WORKFLOW_TOKEN` (Orbweaver only)",
                        "**The proof is the PR's own CI run**",
                        "`Workflow change: <files>; no environment, secret, permission, trigger or runner line`",
-                       "`Needs a protected\n  workflow line`"):
+                       "`Needs a protected\n  workflow line`", "`[bugfix-org] stopped: needs a protected workflow\n  line"):
             with self.subTest(needle):
                 self.assertIn(needle, section)
         self.assertIn("| Workflow files | allowed, under **Workflow files** | never |", skill)
@@ -502,7 +531,7 @@ class InstructionTests(unittest.TestCase):
         skill = read("skills", "cb-bugfix", "SKILL.md")
         section = skill.split("## Putting a ticket back", 1)[1].split("\n## ", 1)[0]
         self.assertIn("set the engineer's\nPaperclip issue to `done` with that same sentence as its `comment`, never\n`cancelled`", section)
-        self.assertIn("`stopped: needs a protected workflow line (<the\n  line it needs", skill)
+        self.assertIn("`[bugfix-org] stopped: needs a protected workflow\n  line (<the line it needs", skill)
 
     def test_a_mobile_rerun_waits_for_the_per_repo_warden(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")

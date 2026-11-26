@@ -312,7 +312,7 @@ covers Orbweaver-Mobile and carries the workflows permission (approved
   runner refuses an install for a PR that touches a workflow; Orbweaver-Mobile
   gets rulesets matching Orbweaver's lane. See `host/README.md`.
 - **Before the warden's wider token is live** a mobile ticket cannot be
-  reached. The lead checks with one `git ls-remote` before claiming and counts
+  reached. The lead checks the token's own repository list before claiming and counts
   such tickets as "Mobile access not live yet", with no Jira write.
 
 **Setup step for the workflow token (host, after the warden mints it):** bind
