@@ -8,11 +8,14 @@ Paperclip sandbox. Each tick it:
 
   1. reads requests the org left in the spool folder (fixed schema, closed list
      of verbs) and acts on the ones it recognises;
-  2. audits bot merges into develop;
-  3. mints a one-hour installation token and writes it into the fix company's
-     GITHUB_TOKEN secret, if the last one is older than 10 minutes and the
-     company is not paused (a paused org stops being refreshed, so its access
-     lapses by itself);
+  2. audits bot merges into each configured repository's develop, and runs
+     the workflow-file guard on every open org PR at each new head (CB-481);
+  3. mints one-hour installation tokens and writes them into the fix company's
+     secrets, if the last ones are older than 10 minutes and the company is not
+     paused (a paused org stops being refreshed, so its access lapses by
+     itself): GITHUB_TOKEN for every configured repository the installation
+     covers, and GITHUB_TOKEN_WORKFLOWS, which adds `workflows: write`, for
+     Orbweaver only (CB-481);
   4. pauses the company on any trigger in plan §6;
   5. unless the company is paused, runs the unstick sweep (CB-479): closes a
      pass task left blocked on settled children, wakes and then cancels a
@@ -68,6 +71,53 @@ MAX_N = 50
 RELEASES_IN_A_ROW = 2
 AUDIT_FAILURES_BEFORE_PAUSE = 3
 DEFAULT_DIR = os.path.expanduser("~/.config/orbweaver-bugfix")
+ACCESS_FILE = "access.json"
+
+# The repositories the org works in (CB-481), from `repos` in warden.json. With
+# no `repos` the warden uses DEFAULT_REPOS, today's desktop values only, so a
+# config written before CB-481 and every older test behave exactly as before.
+# Desktop keeps its state at the top of state.json (`audited`, `audit_pending`,
+# `reruns`); any other repository keeps the same keys under state["repos"][key].
+DESKTOP = {
+    "key": "desktop", "repo": REPO, "base": "develop",
+    "post_merge_checks": list(REQUIRED_CHECKS), "qa_names": list(RIDS),
+    "ci_workflows": ["ci.yml"], "push_ci": True, "stress": True, "workflow_edits": True,
+    "protected_workflows": ["release.yml", "publish-screenshots.yml"],
+}
+DEFAULT_REPOS = [DESKTOP]
+# What warden.json's `repos` carries for the mobile repository, read off its
+# workflows and last PRs (plan comment 11762). Here for the README and tests;
+# the warden reads it only from the config.
+MOBILE = {
+    "key": "mobile", "repo": "Uplift-Foundation/Orbweaver-Mobile", "base": "develop",
+    "post_merge_checks": [], "qa_names": ["relay", "contracts", "tools"],
+    "head_checks": {"always": ["relay", "contracts", "tools"],
+                    "paths": {"android": ["android/", "contracts/"],
+                              "snapshots": ["app/", "contracts/frames-v7-vectors.json",
+                                            "contracts/frames-v11-vectors.json"]}},
+    "ci_workflows": ["relay-tests.yml", "android-tests.yml", "ios-snapshots.yml"],
+    "push_ci": False, "stress": False, "workflow_edits": False,
+}
+REPO_KEY_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+
+# The everyday token's permissions, asked for by name so it never inherits a
+# permission the App gains later (CB-481). Workflows is the one it must never
+# carry: that lives on the second token alone, for desktop alone, because a
+# workflow pushed to mobile could run on the mini's own runner with mobile's
+# Docker Hub secrets (plan comment 11762, "Tokens").
+EVERYDAY_PERMISSIONS = {"actions": "read", "checks": "read", "contents": "write",
+                        "metadata": "read", "pull_requests": "write", "statuses": "read"}
+WORKFLOW_PERMISSIONS = dict(EVERYDAY_PERMISSIONS, workflows="write")
+WORKFLOW_SECRET = "GITHUB_TOKEN_WORKFLOWS"
+
+
+def repos_from(cfg):
+    """The configured repository entries, DEFAULT_REPOS when none are given."""
+    return list(cfg.get("repos") or DEFAULT_REPOS)
+
+
+def repo_by_key(cfg, key):
+    return next((r for r in repos_from(cfg) if r.get("key") == key), None)
 # A ticket's time limit in the org (skill). A release seen within this long of
 # any pause may have been caused by the pause, not by the ticket (CB-472).
 TICKET_WINDOW = 90 * 60
@@ -98,12 +148,13 @@ def parse_request(raw):
             return None, f"n must be 1..{MAX_N}"
         if suite not in SUITES:
             return None, "suite must be one of " + "/".join(SUITES)
-        return {"verb": verb, "pr": pr, "test_class": cls, "n": n, "suite": suite}, None
+        out = {"verb": verb, "pr": pr, "test_class": cls, "n": n, "suite": suite}
+        return _with_repo(out, req)
     if verb == "rerun_failed":
         pr = req.get("pr")
         if not (isinstance(pr, int) and not isinstance(pr, bool) and pr > 0):
             return None, "pr must be a positive integer"
-        return {"verb": verb, "pr": pr}, None
+        return _with_repo({"verb": verb, "pr": pr}, req)
     if verb == "released":
         t = req.get("ticket")
         if not (isinstance(t, str) and re.fullmatch(r"CB-\d{1,6}", t)):
@@ -112,14 +163,26 @@ def parse_request(raw):
     return {"verb": verb}, None
 
 
-def dispatch_problem(pr):
+def _with_repo(out, req):
+    """An optional `repo` key (CB-481): absent means desktop. Its value is
+    checked against the config when the request is handled."""
+    if "repo" not in req:
+        return out, None
+    key = req["repo"]
+    if not (isinstance(key, str) and REPO_KEY_RE.match(key)):
+        return None, "repo outside pattern"
+    return dict(out, repo=key), None
+
+
+def dispatch_problem(pr, r=None):
     """Why the warden must NOT dispatch stress.yml for this PR (None = go).
 
-    `pr` is the GitHub PR object. "The org's own PRs only": opened by the bot,
-    from a branch in this repository (a fork PR is the one way to run someone
-    else's code on the runners at our expense), under the org's prefix, and
-    still open.
+    `pr` is the GitHub PR object, `r` the repository entry (desktop when
+    None). "The org's own PRs only": opened by the bot, from a branch in that
+    repository (a fork PR is the one way to run someone else's code on the
+    runners at our expense), under the org's prefix, and still open.
     """
+    r = r or DESKTOP
     if pr is None:
         return "PR not found"
     if pr.get("state") != "open":
@@ -127,12 +190,12 @@ def dispatch_problem(pr):
     if (pr.get("user") or {}).get("login") != BOT_LOGIN:
         return "PR was not opened by the bug-fix App"
     head = pr.get("head") or {}
-    if ((head.get("repo") or {}).get("full_name")) != REPO:
+    if ((head.get("repo") or {}).get("full_name")) != r["repo"]:
         return "PR head is not in this repository"
     if not str(head.get("ref", "")).startswith(BRANCH_PREFIX):
         return f"head branch lacks the {BRANCH_PREFIX} prefix"
-    if ((pr.get("base") or {}).get("ref")) != "develop":
-        return "PR does not target develop"
+    if ((pr.get("base") or {}).get("ref")) != r["base"]:
+        return f"PR does not target {r['base']}"
     return None
 
 
@@ -145,53 +208,199 @@ MAX_RERUNS_PER_SHA = 1
 RED_CONCLUSIONS = ("failure", "cancelled", "timed_out")
 
 
-def rerun_problem(pr, run, reruns):
-    """Why the warden must NOT rerun this PR's CI (None = go). `run` is the
-    latest CI workflow run at the PR's head, or None; `reruns` maps a head sha
-    to the reruns already made there. Same lane as a stress dispatch."""
-    why = dispatch_problem(pr)
+def rerun_targets(pr, runs, reruns, r=None):
+    """(runs to rerun, None), or ([], why the warden must NOT rerun).
+
+    `runs` is the latest run of each of the repository's CI workflows at the
+    PR's head (desktop has one, ci.yml; mobile three); `reruns` maps a head sha
+    to the reruns already made there. Same lane as a stress dispatch. Every
+    completed red run is rerun together, and that counts as the one rerun the
+    sha gets."""
+    why = dispatch_problem(pr, r)
     if why:
-        return why
+        return [], why
     sha = (pr.get("head") or {}).get("sha")
     if not sha:
-        return "PR head has no sha"
+        return [], "PR head has no sha"
     if reruns.get(sha, 0) >= MAX_RERUNS_PER_SHA:
-        return f"already reran once at {sha[:9]}; a second red there is real"
-    if run is None:
-        return "no CI run at the PR's head"
-    if run.get("head_sha") != sha:
-        return "the latest CI run is not at the PR's head"
-    if run.get("status") != "completed":
-        return "CI is still running"
-    if run.get("conclusion") not in RED_CONCLUSIONS:
-        return f"CI is not red ({run.get('conclusion')})"
-    return None
+        return [], f"already reran once at {sha[:9]}; a second red there is real"
+    runs = [x for x in runs if x]
+    if not runs:
+        return [], "no CI run at the PR's head"
+    at_head = [x for x in runs if x.get("head_sha") == sha]
+    if not at_head:
+        return [], "the latest CI run is not at the PR's head"
+    red = [x for x in at_head if x.get("status") == "completed" and x.get("conclusion") in RED_CONCLUSIONS]
+    if red:
+        return red, None
+    if any(x.get("status") != "completed" for x in at_head):
+        return [], "CI is still running"
+    return [], "CI is not red (" + ", ".join(str(x.get("conclusion")) for x in at_head) + ")"
 
 
-def has_qa_comment(bodies):
-    """A QA comment names both rids. `bodies` are comment and review texts
-    posted before the merge (the PR body itself is not one)."""
-    return any(all(r in b for r in RIDS) for b in bodies)
+def rerun_problem(pr, run, reruns, r=None):
+    """rerun_targets for one run: the reason, or None to go."""
+    return rerun_targets(pr, [run], reruns, r)[1]
 
 
-def audit_merge(has_qa, ci):
+def has_qa_comment(bodies, names=RIDS):
+    """A QA comment names every one of `names`: both rids on desktop, the
+    checks it read on mobile. `bodies` are comment and review texts posted
+    before the merge (the PR body itself is not one)."""
+    return any(all(n in b for n in names) for b in bodies)
+
+
+def audit_merge(has_qa, ci, r=None):
     """Pause reasons for one bot merge. `ci` maps check name -> conclusion
-    for the merge commit; a required check that is absent counts as not green
-    only when some check has already failed, since checks may still be queued."""
+    for the merge commit. On desktop only the required checks count; a
+    repository with no `post_merge_checks` (mobile, whose develop runs only
+    relay-image on a push) counts any check that ends red. A check that is
+    absent or pending is not red: checks may still be queued."""
+    r = r or DESKTOP
     reasons = []
     if not has_qa:
-        reasons.append("bot PR merged with no QA comment naming both rids")
-    failed = [n for n in REQUIRED_CHECKS if ci.get(n) in ("failure", "cancelled", "timed_out")]
+        names = list(r["qa_names"])
+        said = "both rids" if names == list(RIDS) else " and ".join(names)
+        reasons.append(f"bot PR merged with no QA comment naming {said}")
+    names = r["post_merge_checks"] or sorted(ci)
+    failed = [n for n in names if ci.get(n) in RED_CONCLUSIONS]
     if failed:
-        reasons.append("develop CI red on a bot merge: " + ", ".join(failed))
+        reasons.append(f"{r['base']} CI red on a bot merge: " + ", ".join(failed))
     return reasons
 
 
-def ci_settled(ci):
-    """True once every required check on a merge commit has a conclusion.
-    Until then the merge stays pending: CI takes longer than a tick, so a
-    merge seen with its checks queued has not been audited yet (CB-460)."""
-    return all(ci.get(n) is not None for n in REQUIRED_CHECKS)
+# How long a merge in a repository with no required post-merge checks stays
+# pending, so a push-triggered run (mobile's relay-image) is seen to its end.
+MERGE_QUIET = 30 * 60
+
+
+def ci_settled(ci, r=None, age=0):
+    """True once a merge commit's CI is done. Desktop: every required check
+    has a conclusion. Until then the merge stays pending: CI takes longer than
+    a tick, so a merge seen with its checks queued has not been audited yet
+    (CB-460). A repository with no required checks: MERGE_QUIET seconds have
+    passed since the merge was first seen and no check on it is pending."""
+    r = r or DESKTOP
+    if r["post_merge_checks"]:
+        return all(ci.get(n) is not None for n in r["post_merge_checks"])
+    return age >= MERGE_QUIET and all(v is not None for v in ci.values())
+
+
+def expected_head_checks(paths, r):
+    """The checks a PR's head must carry, from the paths it changed: the
+    always-run ones plus each path-filtered check whose paths it touched
+    (mobile's android and snapshots run only then)."""
+    hc = r.get("head_checks") or {}
+    out = list(hc.get("always", []))
+    for name, prefixes in (hc.get("paths") or {}).items():
+        if any(p.startswith(x) for p in paths for x in prefixes):
+            out.append(name)
+    return out
+
+
+def head_checks_problem(ci, paths, r):
+    """Pause reasons for a merged PR's head checks (CB-481). A path-filtered
+    check cannot be required by a ruleset, because one that never starts would
+    block every merge, so the warden audits it after the merge instead: every
+    check the changed paths call for must be `success` at the head."""
+    bad = []
+    for name in expected_head_checks(paths, r):
+        c = ci[name] if name in ci else "missing"
+        if c != "success":
+            bad.append(f"{name} {c or 'pending'}")
+    return [f"merged with head checks not green: {', '.join(bad)}"] if bad else []
+
+
+# ---------------------------------------------------------------- workflow guard (CB-481)
+#
+# The org may now change workflow files on desktop, with the Orbweaver-only
+# workflow token. A PR's own CI runs the PR's copy of a workflow as soon as it
+# is pushed, so the guard reads every open org PR at each new head sha, not
+# only at merge. Any of these pauses the org, naming the PR, the file and the
+# rule. It is a text match: it can pause on a harmless line (a pause costs one
+# resume), and it cannot see a script a workflow calls.
+
+WORKFLOW_DIRS = (".github/workflows/", ".github/actions/")
+RISKY_WORDS = ("environment", "secrets", "pull_request_target", "workflow_run", "id-token",
+               "permissions", ": write", "runs-on", "screenshot")
+_USES = re.compile(r"""\buses:\s*['"]?([^\s'"#]+)""")
+
+
+def is_workflow_path(path):
+    return any(str(path or "").startswith(d) for d in WORKFLOW_DIRS)
+
+
+def risky_line(text):
+    """Why one added or removed workflow line is risky, or None. A comment is
+    never risky; a `uses:` is unless it names `actions/...` or a local `./`."""
+    t = text.strip()
+    if not t or t.startswith("#"):
+        return None
+    low = t.lower()
+    for w in RISKY_WORDS:
+        if w in low:
+            return f"mentions '{w.strip()}'"
+    m = _USES.search(t)
+    if m and not (m.group(1).startswith("actions/") or m.group(1).startswith("./")):
+        return f"uses {m.group(1)}"
+    return None
+
+
+def workflow_problems(files, r):
+    """Pause reasons for one PR's changed files (GET /pulls/<n>/files rows),
+    one per file and rule, in the repository `r`."""
+    out = []
+    protected = set(r.get("protected_workflows") or ())
+    for f in files:
+        names = [f.get("filename"), f.get("previous_filename")]
+        if not any(is_workflow_path(n) for n in names):
+            continue
+        name = f.get("filename")
+        if not r.get("workflow_edits"):
+            out.append(f"{name}: workflow change in {r['repo']}, where the org may not edit workflows")
+            continue
+        if any(os.path.basename(str(n or "")) in protected for n in names if is_workflow_path(n)):
+            out.append(f"{name}: change to a protected workflow")
+            continue
+        if f.get("status") != "modified":
+            out.append(f"{name}: workflow file {f.get('status')}")
+            continue
+        patch = f.get("patch")
+        if not isinstance(patch, str):
+            out.append(f"{name}: GitHub returned no patch, so the change cannot be read")
+            continue
+        for line in patch.splitlines():
+            if line[:1] not in "+-" or line.startswith(("+++", "---")):
+                continue
+            why = risky_line(line[1:])
+            if why:
+                out.append(f"{name}: changed line {why}: {line[:120]}")
+                break
+    return out
+
+
+# ---------------------------------------------------------------- tokens (CB-481)
+
+def token_plan(repos, access):
+    """Which repositories each token names. `access` maps a repository key to
+    the installation object GitHub returns for that repository, or None when
+    the installation does not cover it.
+
+    everyday   every configured repository the installation covers
+    workflows  only those of them with `workflow_edits` (desktop), and only
+               while the installation shows `workflows: write`; else []
+    """
+    covered = [r for r in repos if access.get(r["key"])]
+    if not covered:
+        return {"installation": None, "everyday": [], "workflows": []}
+    inst = access[covered[0]["key"]]
+    # One installation holds them all; a repository under another is left out.
+    covered = [r for r in covered if access[r["key"]].get("id") == inst.get("id")]
+    has_wf = (inst.get("permissions") or {}).get("workflows") == "write"
+    names = lambda rs: [x["repo"].split("/")[1] for x in rs]
+    return {"installation": inst.get("id"),
+            "everyday": names(covered),
+            "workflows": names([x for x in covered if x.get("workflow_edits")]) if has_wf else []}
 
 
 # A bot merge whose required checks have not concluded this long after the
@@ -506,7 +715,10 @@ WAKE_AFTER_RESET = ("Warden: the last run on this task was cancelled because its
 
 class Warden:
     def __init__(self, cfg, github, minter, paperclip, state, now, log):
-        self.cfg, self.gh, self.minter, self.pc = cfg, github, minter, paperclip
+        """`github` is one seam for desktop, or a dict {repo key: seam}."""
+        self.ghs = github if isinstance(github, dict) else {"desktop": github}
+        self.gh = self.ghs.get("desktop")
+        self.cfg, self.minter, self.pc = cfg, minter, paperclip
         self.state, self.now, self.log = state, now, log
         self.pause_reasons = []
         self.develop_why = ""
@@ -514,15 +726,39 @@ class Warden:
     def pause(self, reason):
         self.pause_reasons.append(reason)
 
+    def repos(self):
+        return repos_from(self.cfg)
+
+    def gh_for(self, r):
+        return self.ghs.get(r["key"])
+
+    def repo_state(self, r):
+        """Desktop's audit state sits at the top of state.json, where it always
+        has; any other repository's under state["repos"][key]."""
+        if r["key"] == "desktop":
+            return self.state
+        return self.state.setdefault("repos", {}).setdefault(r["key"], {})
+
+    def request_repo(self, req):
+        """(repo entry, gh) for a spool request, or (None, None) when it names
+        a repository the config does not list."""
+        r = repo_by_key(self.cfg, req.get("repo", "desktop"))
+        return (r, self.gh_for(r)) if r and self.gh_for(r) else (None, None)
+
     def handle(self, req):
         v = req["verb"]
         if v == "dispatch_stress":
-            pr = self.gh.get_pr(req["pr"])
-            why = dispatch_problem(pr)
+            r, gh = self.request_repo(req)
+            if r is None:
+                return self.log(f"refused dispatch for PR {req['pr']}: unknown repo {req.get('repo')!r}")
+            if not r.get("stress"):
+                return self.log(f"refused dispatch for PR {req['pr']}: {r['key']} has no stress workflow")
+            pr = gh.get_pr(req["pr"])
+            why = dispatch_problem(pr, r)
             if why:
                 return self.log(f"refused dispatch for PR {req['pr']}: {why}")
             try:
-                self.gh.dispatch_stress(pr["head"]["ref"], req["test_class"], req["n"], req["suite"])
+                gh.dispatch_stress(pr["head"]["ref"], req["test_class"], req["n"], req["suite"])
             except (subprocess.CalledProcessError, OSError) as e:
                 return self.log(f"dispatch for PR {req['pr']} failed: {type(e).__name__}")
             self.log(f"dispatched stress.yml for PR {req['pr']} {req['test_class']} x{req['n']}")
@@ -534,7 +770,10 @@ class Warden:
         elif v == "push_refused":
             self.pause("GitHub refused a bot push on a ruleset")
         elif v == "rerun_failed":
-            self.rerun_failed(req["pr"])
+            r, gh = self.request_repo(req)
+            if r is None:
+                return self.log(f"refused rerun for PR {req['pr']}: unknown repo {req.get('repo')!r}")
+            self.rerun_failed(req["pr"], r)
 
     def rerun_develop(self, sha, n):
         """Rerun the failed jobs of develop's push CI at a bot merge while the
@@ -576,27 +815,37 @@ class Warden:
                  f"reran failed jobs of run {run['id']}, rerun {attempt} of {DEVELOP_RERUNS}")
         return True
 
-    def rerun_failed(self, n):
-        """Rerun the failed jobs of PR n's latest CI run, once per head sha
-        (CB-465). A refusal is logged and never pauses: asking is not a fault."""
-        reruns = self.state.setdefault("reruns", {})
+    def rerun_failed(self, n, r=None):
+        """Rerun the failed jobs of PR n's red CI runs, once per head sha
+        (CB-465), in repository `r` (desktop when None; CB-481). A refusal is
+        logged and never pauses: asking is not a fault."""
+        r = r or DESKTOP
+        gh = self.gh_for(r)
+        tag = f"PR {n}" if r["key"] == "desktop" else f"{r['key']} PR {n}"
+        reruns = self.repo_state(r).setdefault("reruns", {})
         try:
-            pr = self.gh.get_pr(n)
+            pr = gh.get_pr(n)
             sha = ((pr or {}).get("head") or {}).get("sha")
-            run = self.gh.latest_ci_run(sha) if sha and not dispatch_problem(pr) else None
+            runs = gh.latest_ci_runs(sha, r["ci_workflows"]) if sha and not dispatch_problem(pr, r) else []
         except (subprocess.CalledProcessError, OSError, ValueError, KeyError) as e:
-            return self.log(f"rerun for PR {n} unreadable: {type(e).__name__}")
-        why = rerun_problem(pr, run, reruns)
+            return self.log(f"rerun for {tag} unreadable: {type(e).__name__}")
+        targets, why = rerun_targets(pr, runs, reruns, r)
         if why:
-            return self.log(f"refused rerun for PR {n}: {why}")
-        try:
-            self.gh.rerun_failed(run["id"])
-        except (subprocess.CalledProcessError, OSError) as e:
-            return self.log(f"rerun for PR {n} failed: {type(e).__name__}")
+            return self.log(f"refused rerun for {tag}: {why}")
+        done = []
+        for run in targets:
+            try:
+                gh.rerun_failed(run["id"])
+            except (subprocess.CalledProcessError, OSError) as e:
+                self.log(f"rerun for {tag} failed: {type(e).__name__}")
+                continue
+            done.append(str(run["id"]))
+        if not done:
+            return
         reruns[sha] = reruns.get(sha, 0) + 1
         while len(reruns) > 200:
             reruns.pop(next(iter(reruns)))
-        self.log(f"reran failed jobs of CI run {run['id']} for PR {n} at {sha[:9]}")
+        self.log(f"reran failed jobs of CI run {', '.join(done)} for {tag} at {sha[:9]}")
 
     def stop_work(self):
         """A pause only defers new assignments: a run in flight keeps going
@@ -692,58 +941,103 @@ class Warden:
         self.state["scanned_runs"] = sorted(scanned)[-500:]
 
     def safe_audit(self):
-        """A GitHub outage must not stop the tick (no pause, no token refresh,
-        no run cancelling), but a brake that stays blind is no brake: three
-        failed audits in a row pause the company."""
-        try:
-            self.audit()
-            self.state["audit_failures"] = 0
-        except (subprocess.CalledProcessError, OSError, ValueError, KeyError) as e:
-            n = self.state["audit_failures"] = self.state.get("audit_failures", 0) + 1
-            self.log(f"merge audit unreadable ({type(e).__name__}); {n} in a row")
-            if n >= AUDIT_FAILURES_BEFORE_PAUSE:
-                self.pause(f"merge audit unreadable {n} ticks in a row")
+        """Each repository's audit and workflow guard, apart (CB-481). A GitHub
+        outage must not stop the tick (no pause, no token refresh, no run
+        cancelling), but a brake that stays blind is no brake: three failed
+        audits in a row of one repository pause the company."""
+        for r in self.repos():
+            st = self.repo_state(r)
+            tag = "" if r["key"] == "desktop" else f" ({r['key']})"
+            try:
+                if self.gh_for(r) is None:
+                    raise KeyError(r["key"])
+                self.audit(r)
+                self.guard_open_prs(r)
+                st["audit_failures"] = 0
+            except (subprocess.CalledProcessError, OSError, ValueError, KeyError) as e:
+                n = st["audit_failures"] = st.get("audit_failures", 0) + 1
+                self.log(f"merge audit unreadable{tag} ({type(e).__name__}); {n} in a row")
+                if n >= AUDIT_FAILURES_BEFORE_PAUSE:
+                    self.pause(f"merge audit unreadable{tag} {n} ticks in a row")
 
-    def audit(self):
-        """Audit bot merges into develop. The QA comment and the release-counter
-        reset happen once, when a merge is first seen. CI is re-read every tick
-        until both required checks have concluded: the first tick after a merge
-        almost always sees them queued, and marking the merge audited then
+    def guard(self, r, n, sha, tag):
+        """Run the workflow guard on PR n at head `sha` once (CB-481)."""
+        st = self.repo_state(r)
+        guarded = st.setdefault("guarded", [])
+        if not sha or sha in guarded:
+            return None
+        files = self.gh_for(r).pr_files(n)
+        for why in workflow_problems(files, r):
+            self.pause(f"{tag}: workflow guard: {why}")
+        guarded.append(sha)
+        del guarded[:-200]
+        return files
+
+    def guard_open_prs(self, r):
+        """The workflow guard on every open org PR at each new head sha. A
+        PR's CI runs its own copy of a workflow as soon as it is pushed, so a
+        guard at merge only would be too late."""
+        for pr in self.gh_for(r).open_bot_prs():
+            tag = f"PR {pr['number']}" if r["key"] == "desktop" else f"{r['key']} PR {pr['number']}"
+            self.guard(r, pr["number"], (pr.get("head") or {}).get("sha"), tag)
+
+    def audit(self, r=None):
+        """Audit bot merges into one repository's base branch (desktop when
+        None). The QA comment, the workflow guard for a head it never saw, the
+        head checks (a repository with `head_checks`) and the release-counter
+        reset happen once, when a merge is first seen. CI on the merge commit
+        is re-read every tick until it has settled: the first tick after a
+        merge almost always sees it queued, and marking the merge audited then
         meant a red develop never paused the org (CB-460)."""
-        seen = set(self.state.setdefault("audited", []))
-        pending = dict(self.state.get("audit_pending", {}))
-        for pr in self.gh.merged_bot_prs():
+        r = r or DESKTOP
+        gh, st = self.gh_for(r), self.repo_state(r)
+        label = lambda n: f"PR {n}" if r["key"] == "desktop" else f"{r['key']} PR {n}"
+        seen = set(st.setdefault("audited", []))
+        pending = dict(st.get("audit_pending", {}))
+        for pr in gh.merged_bot_prs():
             sha = pr["merge_commit_sha"]
             if sha in seen or sha in pending:
                 continue
             self.state["consecutive_releases"] = next_release_state(self.state, "merged")
             self.state["paperclip_releases"] = 0
-            qa = has_qa_comment(self.gh.comment_bodies(pr["number"], before=pr["merged_at"]))
-            for r in audit_merge(qa, {}):
-                self.pause(f"PR {pr['number']}: {r}")
+            tag = label(pr["number"])
+            qa = has_qa_comment(gh.comment_bodies(pr["number"], before=pr["merged_at"]), r["qa_names"])
+            for why in audit_merge(qa, {}, r):
+                self.pause(f"{tag}: {why}")
+            head = (pr.get("head") or {}).get("sha")
+            files = self.guard(r, pr["number"], head, tag)
+            if r.get("head_checks"):
+                if files is None:
+                    files = gh.pr_files(pr["number"])
+                paths = [f.get("filename", "") for f in files]
+                ci_head = gh.check_conclusions(head) if head else {}
+                for why in head_checks_problem(ci_head, paths, r):
+                    self.pause(f"{tag}: {why}")
             pending[sha] = {"pr": pr["number"], "since": self.now}
         for sha, entry in list(pending.items()):
-            ci = self.gh.check_conclusions(sha)
-            red = audit_merge(True, ci)
+            ci = gh.check_conclusions(sha)
+            red = audit_merge(True, ci, r)
             # A red develop on a bot merge is rerun while each attempt fails on
             # a different test (CB-467): CB-426's flake and then TurnSoundsTests
-            # paused the org for hours on a merge that touched neither.
-            if red and self.rerun_develop(sha, entry["pr"]):
+            # paused the org for hours on a merge that touched neither. Only
+            # desktop has push CI to rerun.
+            if red and r.get("push_ci") and self.rerun_develop(sha, entry["pr"]):
                 continue
-            for r in red:
-                self.pause(f"PR {entry['pr']}: {r}{self.develop_why}")
-            if red or ci_settled(ci):
+            why_dev = self.develop_why if r.get("push_ci") else ""
+            for why in red:
+                self.pause(f"{label(entry['pr'])}: {why}{why_dev}")
+            if red or ci_settled(ci, r, self.now - entry.get("since", self.now)):
                 del pending[sha]
                 seen.add(sha)
             elif self.now - entry.get("since", self.now) >= PENDING_CI_LIMIT:
-                self.pause(f"PR {entry['pr']}: develop CI never finished on a bot merge")
+                self.pause(f"{label(entry['pr'])}: {r['base']} CI never finished on a bot merge")
                 del pending[sha]
                 seen.add(sha)
-        failures = self.state.get("develop_failures", {})
+        failures = st.get("develop_failures", {})
         for sha in [k for k in failures if k not in pending]:
             del failures[sha]
-        self.state["audit_pending"] = pending
-        self.state["audited"] = sorted(seen)[-200:]
+        st["audit_pending"] = pending
+        st["audited"] = sorted(seen)[-200:]
 
     def tick(self, requests):
         for req in requests:
@@ -768,11 +1062,43 @@ class Warden:
         if paused:
             self.stop_work()
         if mint_due(self.state, self.now, paused):
-            self.pc.put_secret("GITHUB_TOKEN", self.minter.mint())
-            self.state["last_mint"] = self.now
-            self.log("token refreshed")
+            # A failed mint is logged and the tick goes on to the sweep; the
+            # next tick tries again, since last_mint only moves on success.
+            try:
+                self.mint_tokens()
+            except Exception as e:
+                self.log(f"token not refreshed: {type(e).__name__} {getattr(e, 'code', '')}".rstrip())
         self.unstick(paused)
         return paused
+
+    def mint_tokens(self):
+        """Both tokens (CB-481). The everyday one names every configured
+        repository the installation covers, with EVERYDAY_PERMISSIONS by name,
+        so it never carries Workflows. The workflow one names only the
+        repositories with `workflow_edits` (desktop), and is minted only while
+        the installation shows `workflows: write`. Each repository's coverage
+        is read on every mint and written to <spool>/access.json."""
+        access = {}
+        for r in self.repos():
+            access[r["key"]] = self.minter.installation(r["repo"])
+        plan = token_plan(self.repos(), access)
+        workflows = bool(plan["workflows"])
+        if self.cfg.get("spool"):
+            try:
+                write_access(self.cfg["spool"], {k: bool(v) for k, v in access.items()},
+                             workflows, self.now)
+            except OSError as e:
+                self.log(f"{ACCESS_FILE} not written: {type(e).__name__}")
+        if not plan["everyday"]:
+            raise LookupError("the installation covers none of the configured repositories")
+        self.pc.put_secret("GITHUB_TOKEN", self.minter.mint(
+            plan["installation"], plan["everyday"], EVERYDAY_PERMISSIONS))
+        self.state["last_mint"] = self.now
+        self.log("token refreshed (" + ", ".join(plan["everyday"]) + ")")
+        if workflows:
+            self.pc.put_secret(WORKFLOW_SECRET, self.minter.mint(
+                plan["installation"], plan["workflows"], WORKFLOW_PERMISSIONS))
+            self.log("workflow token refreshed (" + ", ".join(plan["workflows"]) + ")")
 
     def unstick(self, paused):
         """The unstick sweep (CB-479) for each company in `unstick_company_ids`
@@ -905,7 +1231,10 @@ def _run(cmd, **kw):
 
 
 class GhCli:
-    """GitHub via the host's own `gh` login."""
+    """GitHub via the host's own `gh` login, for one repository."""
+
+    def __init__(self, repo=REPO, base="develop"):
+        self.repo, self.base = repo, base
 
     def api(self, path, method="GET"):
         out = _run(["gh", "api", "-X", method, path])
@@ -913,39 +1242,61 @@ class GhCli:
 
     def get_pr(self, n):
         try:
-            return self.api(f"repos/{REPO}/pulls/{n}")
+            return self.api(f"repos/{self.repo}/pulls/{n}")
         except subprocess.CalledProcessError:
             return None
 
     def dispatch_stress(self, ref, test_class, n, suite):
-        _run(["gh", "api", "-X", "POST", f"repos/{REPO}/actions/workflows/stress.yml/dispatches",
+        _run(["gh", "api", "-X", "POST", f"repos/{self.repo}/actions/workflows/stress.yml/dispatches",
               "-f", f"ref={ref}", "-f", f"inputs[test_class]={test_class}",
               "-f", f"inputs[n]={n}", "-f", f"inputs[suite]={suite}"])
 
     def latest_ci_run(self, sha, event="pull_request"):
         """The newest run of ci.yml at this sha from `event`, or None."""
-        data = self.api(f"repos/{REPO}/actions/runs?head_sha={sha}&event={event}&per_page=30") or {}
+        data = self.api(f"repos/{self.repo}/actions/runs?head_sha={sha}&event={event}&per_page=30") or {}
         runs = [r for r in data.get("workflow_runs", [])
                 if str(r.get("path", "")).endswith("/ci.yml") or r.get("name") == "CI"]
         runs.sort(key=lambda r: r.get("created_at") or "", reverse=True)
         return runs[0] if runs else None
 
+    def latest_ci_runs(self, sha, workflows, event="pull_request"):
+        """The newest run of each of `workflows` (file names) at this sha."""
+        data = self.api(f"repos/{self.repo}/actions/runs?head_sha={sha}&event={event}&per_page=30") or {}
+        newest = {}
+        for r in data.get("workflow_runs", []):
+            wf = os.path.basename(str(r.get("path", "")))
+            if wf in workflows and (r.get("created_at") or "") >= (newest.get(wf, {}).get("created_at") or ""):
+                newest[wf] = r
+        return [newest[w] for w in workflows if w in newest]
+
     def rerun_failed(self, run_id):
-        _run(["gh", "api", "-X", "POST", f"repos/{REPO}/actions/runs/{int(run_id)}/rerun-failed-jobs"])
+        _run(["gh", "api", "-X", "POST", f"repos/{self.repo}/actions/runs/{int(run_id)}/rerun-failed-jobs"])
 
     def failed_tests(self, run_id, attempt):
         """Test names that failed in one attempt of a run, from its failed jobs' logs."""
-        return failed_tests_in(_run(["gh", "run", "view", str(int(run_id)), "--repo", REPO,
+        return failed_tests_in(_run(["gh", "run", "view", str(int(run_id)), "--repo", self.repo,
                                      "--attempt", str(int(attempt)), "--log-failed"]))
 
     def merged_bot_prs(self):
-        prs = self.api(f"repos/{REPO}/pulls?state=closed&base=develop&sort=updated&direction=desc&per_page=30")
+        prs = self.api(f"repos/{self.repo}/pulls?state=closed&base={self.base}&sort=updated&direction=desc&per_page=30")
         return [p for p in prs if p.get("merged_at") and (p["user"] or {}).get("login") == BOT_LOGIN]
+
+    def open_bot_prs(self):
+        prs = self.api(f"repos/{self.repo}/pulls?state=open&base={self.base}&per_page=100") or []
+        return [p for p in prs if (p["user"] or {}).get("login") == BOT_LOGIN
+                and p.get("state") == "open" and not p.get("merged_at")]
+
+    def pr_files(self, n):
+        """Every changed file of PR n: GitHub pages /files at 100 (and stops
+        at 3000). `--slurp` returns the pages as one array of arrays."""
+        out = _run(["gh", "api", "--paginate", "--slurp", f"repos/{self.repo}/pulls/{int(n)}/files?per_page=100"])
+        pages = json.loads(out) if out.strip() else []
+        return [f for page in pages for f in (page or [])]
 
     def comment_bodies(self, n, before):
         out = []
         for path in (f"issues/{n}/comments", f"pulls/{n}/reviews", f"pulls/{n}/comments"):
-            for c in self.api(f"repos/{REPO}/{path}?per_page=100") or []:
+            for c in self.api(f"repos/{self.repo}/{path}?per_page=100") or []:
                 when = c.get("created_at") or c.get("submitted_at") or ""
                 if when <= before and c.get("body"):
                     out.append(c["body"])
@@ -953,7 +1304,7 @@ class GhCli:
 
     def check_conclusions(self, sha):
         # filter=latest: after a rerun, the rerun's result replaces the red one.
-        data = self.api(f"repos/{REPO}/commits/{sha}/check-runs?filter=latest&per_page=100")
+        data = self.api(f"repos/{self.repo}/commits/{sha}/check-runs?filter=latest&per_page=100")
         return {c["name"]: c.get("conclusion") for c in data["check_runs"]}
 
 
@@ -981,13 +1332,26 @@ class AppMinter:
         with urllib.request.urlopen(req, timeout=30) as r:
             return json.load(r)
 
-    def mint(self):
+    def _jwt(self):
         app = json.load(open(os.path.join(self.dir, "app.json")))
-        jwt = self.jwt(app["app_id"])
-        inst = self._call(jwt, f"/repos/{REPO}/installation")["id"]
-        # Scoped to this one repository, on top of the App's own install scope.
-        return self._call(jwt, f"/app/installations/{inst}/access_tokens", "POST",
-                          {"repositories": [REPO.split("/")[1]]})["token"]
+        return self.jwt(app["app_id"])
+
+    def installation(self, repo):
+        """The App's installation object for `repo` (it carries `id` and the
+        `permissions` the installation accepted), or None when the installation
+        does not cover the repository (GitHub answers 404)."""
+        try:
+            return self._call(self._jwt(), f"/repos/{repo}/installation")
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return None
+            raise
+
+    def mint(self, installation_id, repositories, permissions):
+        """A token for `repositories` (names, not owner/name) with exactly
+        `permissions`. GitHub refuses a permission the installation lacks."""
+        return self._call(self._jwt(), f"/app/installations/{int(installation_id)}/access_tokens", "POST",
+                          {"repositories": list(repositories), "permissions": dict(permissions)})["token"]
 
 
 class PaperclipHttp:
@@ -1114,8 +1478,8 @@ def read_spool(spool, log):
     for sub in ("done", "bad"):
         os.makedirs(os.path.join(spool, sub), exist_ok=True)
     for path in sorted(glob.glob(os.path.join(spool, "*.json"))):
-        if os.path.basename(path) == PAUSES_FILE:
-            continue  # the warden's own answer to the org, not a request
+        if os.path.basename(path) in (PAUSES_FILE, ACCESS_FILE):
+            continue  # the warden's own answers to the org, not requests
         try:
             with open(path) as f:
                 raw = f.read(4096)
@@ -1152,6 +1516,20 @@ def write_pauses(spool, windows):
     os.replace(tmp, path)
 
 
+def write_access(spool, repos, workflows, now):
+    """<spool>/access.json (CB-481): which configured repositories the App's
+    installation covers and whether it holds `workflows: write`, as read on the
+    last mint. A health check for the lead; written like pauses.json."""
+    path = os.path.join(spool, ACCESS_FILE)
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    with os.fdopen(fd, "w") as f:
+        json.dump({"checked_at": iso(now), "repos": repos, "workflows": workflows}, f, indent=1)
+        f.write("\n")
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+
+
 def run_once(config_path):
     cfg = json.load(open(config_path))
     d = cfg.get("dir", DEFAULT_DIR)
@@ -1166,7 +1544,8 @@ def run_once(config_path):
         logf.write(f"{dt.datetime.now(dt.timezone.utc).isoformat()} {msg}\n")
         logf.flush()
 
-    w = Warden(cfg, GhCli(), AppMinter(d, api=cfg.get("github_api", "https://api.github.com")),
+    ghs = {r["key"]: GhCli(r["repo"], r["base"]) for r in repos_from(cfg)}
+    w = Warden(cfg, ghs, AppMinter(d, api=cfg.get("github_api", "https://api.github.com")),
                PaperclipHttp(cfg["paperclip_login"], cfg["company_id"]),
                state, time.time(), log)
     try:

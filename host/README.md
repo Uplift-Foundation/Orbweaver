@@ -17,7 +17,8 @@ The lead runs each step; none of it is run by the tests.
 3. `python3 host/create_app.py --public-host <mini LAN address>` — send Warren the URL it prints.
 4. Write `~/.config/orbweaver-bugfix/warden.json`: `company_id`, `paperclip_login`
    (`~/.config/paperclip-admin/board-login.txt`), `spool` (a folder inside the org's
-   directory), and optionally `token_ceiling` and `max_runs_per_day`.
+   directory), and optionally `token_ceiling`, `max_runs_per_day` and `repos` (below,
+   CB-481; without it the warden works in Orbweaver alone, as before).
 5. `python3 host/check_host.py` — read-only: warden.json, the empty gitconfig, the plist,
    and Paperclip's instance flags (`enableIsolatedWorkspaces` and
    `enableWorktreeRunExecution` on, `enableIsolatedWorkspacesByDefault` off; `git_worktree`
@@ -74,11 +75,83 @@ rerun-once rule paused the org on the second. The same test failing twice, an
 attempt whose log names no test (a build error), or a third red all pause, and
 the pause reason says which.
 
+## Two repositories and workflow files (CB-481)
+
+**Config.** `repos` in `warden.json` lists the repositories the org works in. Absent, the
+warden uses `warden.DEFAULT_REPOS`, Orbweaver alone, so an older config behaves exactly as
+before. To add the mobile repository, paste `warden.DESKTOP` and `warden.MOBILE` from
+`host/warden.py` as JSON. **Only after mobile's rulesets are read back as active:** the
+moment `repos` names mobile, the everyday token can push there.
+
+| key | desktop | mobile |
+| --- | --- | --- |
+| `repo`, `base` | `Uplift-Foundation/Orbweaver`, `develop` | `Uplift-Foundation/Orbweaver-Mobile`, `develop` |
+| `post_merge_checks` | the two `build (...)` checks | none: develop runs only `relay-image` on a push, so a merge stays pending 30 min (`MERGE_QUIET`) and any check on the merge commit that ends red pauses |
+| `qa_names` | `osx-arm64`, `win-x64` | `relay`, `contracts`, `tools` |
+| `head_checks` | none | `relay`, `contracts`, `tools` always; `android` when `android/` or `contracts/` changed; `snapshots` when `app/` or the v7/v11 vectors changed. Audited at the merged PR's head, every one must be `success`, because a path-filtered check cannot be required by a ruleset |
+| `ci_workflows` (reruns) | `ci.yml` | `relay-tests.yml`, `android-tests.yml`, `ios-snapshots.yml` |
+| `push_ci` (develop reruns, CB-467) | yes | no |
+| `stress` | yes | no: `dispatch_stress` with `"repo": "mobile"` is refused |
+| `workflow_edits` | yes, under the guard | no: any workflow change pauses |
+
+Desktop's state stays where it was in `state.json` (`audited`, `audit_pending`, `reruns`,
+`audit_failures`); any other repository keeps the same keys under `state["repos"][key]`, so
+nothing migrates. A merge in either repository resets the release count. Each repository
+has its own unreadable-audit counter; three in a row pause, naming it. The spool verbs
+`rerun_failed` and `dispatch_stress` take an optional `"repo"` key (default desktop); a key
+the config does not list is refused and logged. Releases and push refusals need no change:
+both are read from Paperclip.
+
+**Two tokens.** Every mint reads `GET /repos/<repo>/installation` with the App's JWT for
+each configured repository (404 means not covered) and then mints:
+
+* `GITHUB_TOKEN`: every configured repository the installation covers, with the six
+  permissions asked for by name (`warden.EVERYDAY_PERMISSIONS`). It never carries
+  Workflows, so a permission the App gains later does not reach it by default.
+* `GITHUB_TOKEN_WORKFLOWS`: the repositories with `workflow_edits` only, which is
+  Orbweaver alone, with the same six plus `workflows: write`. Minted only while the
+  installation shows `workflows: write`. Never mobile: a workflow pushed there could run on
+  the mini's own `orbweaver-ios` runner with mobile's Docker Hub secrets. Binding it to the
+  engineers is the org definition's job (task 2).
+
+The read is written to `<spool>/access.json`, `{"checked_at", "repos": {"desktop": true,
+"mobile": true}, "workflows": true}`, a health check for the lead. A failed mint is logged
+(`token not refreshed: ...`) and the tick goes on to the unstick sweep; `last_mint` moves
+only on success, so the next tick tries again. Before CB-481 a failed mint ended the tick.
+
+**The workflow guard.** Every tick, for every open org PR in every repository, at each new
+head sha (`guarded` in that repository's state), the warden reads `pulls/<n>/files` and
+pauses, naming the PR, the file and the rule, on:
+
+1. any change to `release.yml` or `publish-screenshots.yml` (`protected_workflows`),
+   including a rename away from one;
+2. a file under `.github/workflows/` or `.github/actions/` added, removed, renamed or
+   anything else but `modified`;
+3. in any other such file, an added or removed line that is not a comment and mentions
+   `environment`, `secrets`, `pull_request_target`, `workflow_run`, `id-token`,
+   `permissions`, `: write`, `runs-on` or `screenshot`, or a `uses:` outside `actions/` and
+   `./`;
+4. such a file whose patch GitHub did not return;
+5. any workflow change in a repository with `workflow_edits: false` (mobile).
+
+It runs on open PRs, not only at merge, because a PR's CI runs the PR's copy of a workflow
+as soon as it is pushed. A merged PR whose head the guard never saw is read at the merge
+audit. A head is read once; an unreadable file list counts as a failed audit and is retried.
+Limits: it is a text match and can pause on a harmless line (a pause costs one resume), and
+it cannot see a script a workflow calls, which is ordinary code the org can already change.
+Checked against three real desktop PRs (fixtures in `tools/test-bugfix-host.py`): #397's
+added test steps in `ci.yml` pass, #381's `release.yml` change pauses, #370's new
+`stress.yml` pauses.
+
+Not run live from this branch: a token minted with the narrowed permissions (that GitHub
+honours a subset as asked, and the status code it gives for a permission the installation
+lacks), the guard against a live PR, and a mobile merge audit. QA's live proof covers them.
+
 ## Deletes
 
 Paperclip refuses `DELETE` on issues, agents and projects with 409 once they are referenced
 (measured by QA). The warden never deletes anything; it cancels runs, blocks issues and
-pauses the company, and besides the `GITHUB_TOKEN` secret the only other writes are the
+pauses the company, and besides the `GITHUB_TOKEN` and `GITHUB_TOKEN_WORKFLOWS` secrets the only other writes are the
 unstick sweep's below.
 
 ## Unstick sweep (CB-479)

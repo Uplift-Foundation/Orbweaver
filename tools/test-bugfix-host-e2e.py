@@ -63,6 +63,7 @@ HAVE_OPENSSL = POSIX and shutil.which("openssl") is not None
 TODAY = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 REPO = warden.REPO
 BOT = warden.BOT_LOGIN
+MOBILE_REPO = warden.MOBILE["repo"]
 
 
 # ---------------------------------------------------------------- loopback Paperclip
@@ -208,6 +209,8 @@ class FakePaperclip:
 class FakeGitHubApp:
     def __init__(self, pubkey_path):
         self.pub, self.calls, self.jwts = pubkey_path, [], []
+        # repo -> installation object; a repo missing here answers 404 (CB-481).
+        self.installs = {REPO: {"id": 9, "permissions": dict(warden.EVERYDAY_PERMISSIONS)}}
         outer = self
 
         class H(http.server.BaseHTTPRequestHandler):
@@ -223,12 +226,14 @@ class FakeGitHubApp:
                     code, obj = 401, {"message": "no jwt"}
                 else:
                     outer.jwts.append(auth[7:])
-                    if self.path == f"/repos/{REPO}/installation":
-                        code, obj = 200, {"id": 9}
+                    m = re.fullmatch(r"/repos/([\w.-]+/[\w.-]+)/installation", self.path)
+                    if m and m.group(1) in outer.installs:
+                        code, obj = 200, outer.installs[m.group(1)]
                     elif self.path == "/app/installations/9/access_tokens":
-                        code, obj = 201, {"token": "ghs_FAKETOKEN"}
+                        wf = "workflows" in ((body or {}).get("permissions") or {})
+                        code, obj = 201, {"token": "ghs_FAKEWORKFLOW" if wf else "ghs_FAKETOKEN"}
                     else:
-                        code, obj = 404, {}
+                        code, obj = 404, {"message": "Not Found"}
                 data = json.dumps(obj).encode()
                 self.send_response(code)
                 self.send_header("Content-Length", str(len(data)))
@@ -275,14 +280,17 @@ if a[:2] == ["run", "view"]:
     sys.stdout.write(fx[key])
     sys.exit(0)
 assert a[0] == "api"
-method, path = a[2], a[3]
+rest = a[1:]
+slurp = "--slurp" in rest
+rest = [x for x in rest if x not in ("--paginate", "--slurp")]
+method, path = (rest[1], rest[2]) if rest[0] == "-X" else ("GET", rest[0])
 if method == "POST":
     sys.exit(0)
 key = path.split("?")[0]
 if key not in fx:
     sys.stderr.write("gh: Not Found (HTTP 404)\n")
     sys.exit(1)
-print(json.dumps(fx[key]))
+print(json.dumps([fx[key]] if slurp else fx[key]))
 '''
 
 DOTNET_STUB = r'''#!/usr/bin/env python3
@@ -773,6 +781,116 @@ class World(unittest.TestCase):
         with self.assertRaises(subprocess.CalledProcessError):
             gh.failed_tests(6, 3)
 
+    # ---- CB-481: two repositories, two tokens, the workflow guard ----
+
+    def two_repos(self):
+        self.cfg["repos"] = [warden.DESKTOP, warden.MOBILE]
+        self.fx[f"repos/{MOBILE_REPO}/pulls"] = []
+
+    def test_both_tokens_minted_scoped_and_access_json_written(self):
+        if not HAVE_OPENSSL:
+            self.skipTest("openssl")
+        self.two_repos()
+        wf = {"id": 9, "permissions": dict(warden.WORKFLOW_PERMISSIONS)}
+        self.app.installs = {REPO: wf, MOBILE_REPO: wf}
+        self.assert_untouched(self.run_warden(mint=True))
+        self.assertEqual([(s["name"], s["value"]) for s in self.pc.secrets],
+                         [("GITHUB_TOKEN", "ghs_FAKETOKEN"), ("GITHUB_TOKEN_WORKFLOWS", "ghs_FAKEWORKFLOW")])
+        bodies = [b for m, p, b in self.app.calls if p.endswith("/access_tokens")]
+        self.assertEqual(bodies, [
+            {"repositories": ["Orbweaver", "Orbweaver-Mobile"], "permissions": warden.EVERYDAY_PERMISSIONS},
+            {"repositories": ["Orbweaver"], "permissions": warden.WORKFLOW_PERMISSIONS}])
+        with open(os.path.join(self.spool, "access.json")) as f:
+            access = json.load(f)
+        self.assertEqual((access["repos"], access["workflows"]), ({"desktop": True, "mobile": True}, True))
+        log = open(os.path.join(self.d, "warden.log")).read()
+        self.assertNotIn("ghs_FAKE", log)
+        self.assertEqual(sorted(os.listdir(os.path.join(self.spool, "bad"))), [], "access.json is not a request")
+
+    def test_without_the_permission_only_the_everyday_token_and_mobile_404_is_reported(self):
+        if not HAVE_OPENSSL:
+            self.skipTest("openssl")
+        self.two_repos()   # the fake App covers only Orbweaver, without workflows
+        self.assert_untouched(self.run_warden(mint=True))
+        self.assertEqual([s["name"] for s in self.pc.secrets], ["GITHUB_TOKEN"])
+        bodies = [b for m, p, b in self.app.calls if p.endswith("/access_tokens")]
+        self.assertEqual(bodies, [{"repositories": ["Orbweaver"], "permissions": warden.EVERYDAY_PERMISSIONS}])
+        with open(os.path.join(self.spool, "access.json")) as f:
+            self.assertEqual(json.load(f)["repos"], {"desktop": True, "mobile": False})
+
+    def test_a_refused_mint_is_logged_and_the_tick_ends_cleanly(self):
+        if not HAVE_OPENSSL:
+            self.skipTest("openssl")
+        self.app.installs = {}
+        self.assert_untouched(self.run_warden(mint=True))
+        self.assertEqual(self.pc.secrets, [])
+        self.assertIn("token not refreshed", open(os.path.join(self.d, "warden.log")).read())
+        with open(os.path.join(self.d, "state.json")) as f:
+            self.assertNotIn("last_mint", json.load(f))
+
+    def guard_world(self, files):
+        self.fx[f"repos/{REPO}/pulls"] = [pr_obj(8, head={"ref": "bugfix/pc-x", "repo": {"full_name": REPO},
+                                                         "sha": "h8"})]
+        self.fx[f"repos/{REPO}/pulls/8/files"] = files
+
+    def test_workflow_guard_pauses_on_an_open_pr_and_leaves_a_benign_one(self):
+        self.guard_world([{"filename": ".github/workflows/ci.yml", "status": "modified",
+                           "patch": "@@ -1 +1 @@\n-    timeout-minutes: 30\n+    timeout-minutes: 45"}])
+        self.assert_untouched(self.run_warden())
+        self.state["guarded"] = []
+        self.guard_world([{"filename": ".github/workflows/ci.yml", "status": "modified",
+                           "patch": "@@ -1 +1 @@\n+    environment: release"}])
+        self.assert_paused_and_stopped(self.run_warden())
+        self.assertIn("PR 8: workflow guard: .github/workflows/ci.yml: changed line mentions 'environment'",
+                      open(os.path.join(self.d, "warden.log")).read())
+        args = [json.loads(l) for l in open(self.gh_log) if "/files" in l]
+        self.assertTrue(args and all(a[:3] == ["api", "--paginate", "--slurp"] for a in args))
+
+    def test_a_mobile_merge_with_no_qa_comment_pauses_and_one_with_it_does_not(self):
+        self.two_repos()
+        mob = f"repos/{MOBILE_REPO}"
+
+        def world(comment):
+            self.fx[f"{mob}/pulls"] = [pr_obj(5, merged_at="2026-11-26T10:00:00Z", merge_commit_sha="mm1",
+                                              head={"ref": "bugfix/pc-x", "repo": {"full_name": MOBILE_REPO},
+                                                    "sha": "mh1"})]
+            self.fx[f"{mob}/pulls/5/files"] = [{"filename": "relay/Tests/A.cs", "status": "modified", "patch": "+x"}]
+            self.fx[f"{mob}/issues/5/comments"] = [{"body": comment, "created_at": "2026-11-26T09:00:00Z"}]
+            self.fx[f"{mob}/pulls/5/reviews"] = []
+            self.fx[f"{mob}/pulls/5/comments"] = []
+            self.fx[f"{mob}/commits/mh1/check-runs"] = {"check_runs": [
+                {"name": n, "conclusion": "success"} for n in ("relay", "contracts", "tools")]}
+            self.fx[f"{mob}/commits/mm1/check-runs"] = {"check_runs": []}
+
+        world("QA: relay, contracts, tools green at mh1")
+        self.assert_untouched(self.run_warden())
+        with open(os.path.join(self.d, "state.json")) as f:
+            self.assertIn("mm1", json.load(f)["repos"]["mobile"]["audit_pending"])
+        world("looks fine")
+        self.assert_paused_and_stopped(self.run_warden())
+        self.assertIn("mobile PR 5: bot PR merged with no QA comment", open(os.path.join(self.d, "warden.log")).read())
+
+    def test_ghcli_reads_the_repository_it_was_given(self):
+        gh = warden.GhCli(MOBILE_REPO)
+        mob = f"repos/{MOBILE_REPO}"
+        self.fx[f"{mob}/pulls"] = [
+            pr_obj(1), pr_obj(2, user={"login": "wtvamp"}), pr_obj(3, state="closed", merged_at="t"),
+            pr_obj(4, merged_at="t")]
+        self.fx[f"{mob}/pulls/1/files"] = [{"filename": "a"}, {"filename": "b"}]
+        self.fx[f"{mob}/actions/runs"] = {"workflow_runs": [
+            {"id": 1, "path": ".github/workflows/relay-tests.yml", "created_at": "2026-01-01T00:00:00Z"},
+            {"id": 2, "path": ".github/workflows/relay-tests.yml", "created_at": "2026-01-02T00:00:00Z"},
+            {"id": 3, "path": ".github/workflows/ios-snapshots.yml", "created_at": "2026-01-01T00:00:00Z"},
+            {"id": 4, "path": ".github/workflows/relay-image.yml", "created_at": "2026-01-03T00:00:00Z"}]}
+        self.write_fx()
+        self.assertEqual([p["number"] for p in gh.open_bot_prs()], [1], "open, by the bot, never merged")
+        self.assertEqual([f["filename"] for f in gh.pr_files(1)], ["a", "b"])
+        self.assertEqual([r["id"] for r in gh.latest_ci_runs("s", warden.MOBILE["ci_workflows"])], [2, 3])
+        gh.rerun_failed(2)
+        paths = [json.loads(l) for l in open(self.gh_log)]
+        self.assertTrue(paths and all(any(MOBILE_REPO in x for x in a) for a in paths), "never the desktop repo")
+        self.assertFalse(any(f"repos/{REPO}/" in x for a in paths for x in a))
+
     # ---- AppMinter ----
 
     @unittest.skipUnless(HAVE_OPENSSL, "needs openssl")
@@ -802,18 +920,28 @@ class World(unittest.TestCase):
 
     @unittest.skipUnless(HAVE_OPENSSL, "needs openssl")
     def test_mint_returns_a_repo_scoped_installation_token_signed_with_the_key(self):
-        token = warden.AppMinter(self.d, api=self.app.url).mint()
+        m = warden.AppMinter(self.d, api=self.app.url)
+        inst = m.installation(REPO)
+        self.assertEqual(inst["id"], 9)
+        token = m.mint(9, ["Orbweaver"], warden.EVERYDAY_PERMISSIONS)
         self.assertEqual(token, "ghs_FAKETOKEN")
-        self.assertEqual([(m, p) for m, p, b in self.app.calls],
+        self.assertEqual([(m_, p) for m_, p, b in self.app.calls],
                          [("GET", f"/repos/{REPO}/installation"), ("POST", "/app/installations/9/access_tokens")])
-        self.assertEqual(self.app.calls[1][2], {"repositories": ["Orbweaver"]})
+        self.assertEqual(self.app.calls[1][2], {"repositories": ["Orbweaver"],
+                                                "permissions": warden.EVERYDAY_PERMISSIONS})
         self.assertTrue(all(verify_rs256(j, self.pub) for j in self.app.jwts))
+
+    @unittest.skipUnless(HAVE_OPENSSL, "needs openssl")
+    def test_an_uncovered_repository_reads_as_none_and_other_errors_raise(self):
+        m = warden.AppMinter(self.d, api=self.app.url)
+        self.assertIsNone(m.installation(warden.MOBILE["repo"]), "404 means not covered")
+        self.assertIsNotNone(m.installation(REPO), "control: a covered repository")
 
     @unittest.skipUnless(HAVE_OPENSSL, "needs openssl")
     def test_mint_fails_loudly_when_the_api_refuses(self):
         self.app.close()
         with self.assertRaises(OSError):
-            warden.AppMinter(self.d, api=self.app.url).mint()
+            warden.AppMinter(self.d, api=self.app.url).mint(9, ["Orbweaver"], warden.EVERYDAY_PERMISSIONS)
 
     # ---- check_host.main ----
 
