@@ -28,7 +28,48 @@ public class TrustPromptTests
         { "hooks-w80-no", TrustScreens.HooksFolder, "No", true },
         { "hooks-w80-yes", TrustScreens.HooksFolder, "Yes", true },
         { "hooks-w32-no", TrustScreens.HooksFolder, "No", true },
+        { "conhost-home-w120-no", TrustScreens.WindowsHome, "No", true },
+        { "conhost-home-w120-yes", TrustScreens.WindowsHome, "Yes", true },
+        { "conhost-plain-w120-no", TrustScreens.WindowsPlain, "No", false },
+        { "conhost-plain-w120-yes", TrustScreens.WindowsPlain, "Yes", false },
+        { "conhost-unicode-home-w120-no", TrustScreens.WindowsHome, "No", true },
+        { "conhost-unicode-home-w120-yes", TrustScreens.WindowsHome, "Yes", true },
     };
+
+    // CB-476: a Windows folder binds however a launch spells it (case, either
+    // slash, a trailing separator); a different folder never does.
+    [Theory]
+    [InlineData(@"C:\Users\warre")]
+    [InlineData(@"c:\users\WARRE")]
+    [InlineData(@"C:/Users/warre")]
+    [InlineData(@"C:\Users\warre\")]
+    [InlineData(@"c:/users/warre/")]
+    public void A_windows_folder_binds_however_it_is_spelled(string cwd)
+    {
+        Assert.Equal(new TrustPrompt.Reading(TrustPrompt.Kind.Answerable, TrustPrompt.Option.No, true), Read(TrustScreens.ConsoleOnNo, cwd));
+    }
+
+    [Theory]
+    [InlineData(@"C:\Users\warre2")]
+    [InlineData(@"C:\Users\warre\sub")]
+    [InlineData(@"C:\Users")]
+    [InlineData(@"D:\Users\warre")]
+    [InlineData(@"C:")]
+    [InlineData("/Users/warre")]
+    [InlineData(@"\\")]
+    public void A_different_windows_folder_never_binds(string cwd)
+    {
+        Assert.Equal(TrustPrompt.Kind.Unanswerable, Read(TrustScreens.ConsoleOnNo, cwd).Kind);
+    }
+
+    // The macOS comparison is untouched: case and a backslash still matter there.
+    [Fact]
+    public void A_posix_folder_is_still_compared_exactly()
+    {
+        Assert.Equal(TrustPrompt.Kind.Answerable, Read(TrustScreens.OnNo, TrustScreens.Folder + "/").Kind);
+        Assert.Equal(TrustPrompt.Kind.Unanswerable, Read(TrustScreens.OnNo, TrustScreens.Folder.ToUpperInvariant()).Kind);
+        Assert.Equal(TrustPrompt.Kind.Unanswerable, Read(TrustScreens.OnNo, TrustScreens.Folder + "\\").Kind);
+    }
 
     [Theory]
     [MemberData(nameof(Real))]

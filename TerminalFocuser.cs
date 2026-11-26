@@ -653,8 +653,10 @@ namespace Orbweaver
         {
             lock (ConsoleGate)
             {
+                // CB-476: put the standard handles back afterwards (WindowsConsoleRead.StdHandles).
+                var std = WindowsConsoleRead.StdHandles.Save();
                 NativeMethods.FreeConsole();
-                if (!NativeMethods.AttachConsole((uint)status.SessionPid)) return false;
+                if (!NativeMethods.AttachConsole((uint)status.SessionPid)) { std.Restore(); return false; }
                 try
                 {
                     using var input = NativeMethods.OpenConsoleInput();
@@ -665,6 +667,7 @@ namespace Orbweaver
                 finally
                 {
                     NativeMethods.FreeConsole();
+                    std.Restore();
                 }
             }
         }
@@ -904,9 +907,11 @@ namespace Orbweaver
                 // no-op — but "usually" is not "always" (a debugger, a
                 // console-allocating dependency), and AttachConsole fails
                 // outright if one is already attached.
+                // CB-476: put the standard handles back afterwards (WindowsConsoleRead.StdHandles).
+                var std = WindowsConsoleRead.StdHandles.Save();
                 NativeMethods.FreeConsole();
 
-                if (!NativeMethods.AttachConsole((uint)status.SessionPid)) return false;
+                if (!NativeMethods.AttachConsole((uint)status.SessionPid)) { std.Restore(); return false; }
 
                 try
                 {
@@ -924,6 +929,7 @@ namespace Orbweaver
                 finally
                 {
                     NativeMethods.FreeConsole();
+                    std.Restore();
                 }
             }
         }

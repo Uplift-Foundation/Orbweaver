@@ -49,8 +49,9 @@ namespace Orbweaver
         internal sealed record HeldTrust(string Pane, IReadOnlySet<string> Before, bool Hooks = false);
 
         // CB-397: what to do when the pane the CLI was started in is asking
-        // whether to trust the folder. None never reads the pane (Windows,
-        // and any caller with no trust seams). Report says so and leaves the
+        // whether to trust the folder. None never reads the pane (nor does a
+        // caller with no trust seams). On Windows the "pane" is the console
+        // the launch started (WindowsConsolePane, CB-476). Report says so and leaves the
         // pane for the desk (the phone). Ask hands the question to the
         // launching desktop. Close is Ask for a desktop that cannot ask: it
         // says so and closes the pane.
@@ -124,9 +125,10 @@ namespace Orbweaver
             if (resume.Length > 0 && f.FirstMessage.Length == 0 && LaunchGate.CliFor(f.Cli) == NewChatCli.Codex)
                 return new(PeerLaunchCodes.ResumeStarted, null, resume);
 
-            // Windows never reads: there is no seam that can read a console by
-            // the pid StartWindows returns (CB-397 plan, point 6).
-            var reads = policy != TrustPolicy.None && !_seams.Launch.IsWindows && _seams.Launch.Trust is not null && pane is not null;
+            // CB-476: Windows reads too. Its pane is the console StartWindows
+            // opened, which was the half CB-397 left out: a named account's
+            // home folder asks every session, so every such launch timed out.
+            var reads = policy != TrustPolicy.None && _seams.Launch.Trust is not null && pane is not null;
             var (sessionId, prompt) = await AwaitNewSessionAsync(f, before, reads ? pane : null).ConfigureAwait(false);
             if (sessionId is not null) return new(RelayReplies.Launched, null, sessionId);
             if (prompt is null) return new(RelayReplies.NoSession, null, null);
@@ -296,9 +298,10 @@ namespace Orbweaver
                     : NewChatCommand.ConsoleStartInfoForAccount(cli, binary, f.Cwd, args, profileDir, viaCmd: !inArgv);
                 if (start is null)
                     return (RelayReplies.LaunchFailed, "That launch's program path or arguments can't be carried safely into a console for " + name + ".");
-                return launch.StartWindows(start) is null
-                    ? (RelayReplies.LaunchFailed, "Couldn't open a console for " + name + ".")
-                    : null;
+                if (launch.StartWindows(start) is not { } host)
+                    return (RelayReplies.LaunchFailed, "Couldn't open a console for " + name + ".");
+                pane = WindowsConsolePane.For(host);
+                return null;
             }
             var (placed, why) = launch.PlaceMac(NewChatCommand.LaunchLine(launch.Shell(), binary, args, profileDir is null ? null : (cli, profileDir)), f.Cwd);
             pane = placed;
@@ -402,18 +405,28 @@ namespace Orbweaver
         [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
         internal static TrustSeams DefaultTrustSeams() => new(ReadPane, PressKey, ClosePane);
 
+        // CB-476: a console pane goes to the Windows console, anything else to
+        // tmux. Built when first used, so a Mac never touches it.
+        private static readonly Lazy<TrustSeams> Console = new(WindowsConsolePane.Default);
+
         // Null in production and unset by anything but a test, so a suite can
         // never read or kill a real pane.
         internal static TrustSeams? TrustForTests;
 
-        private static Task<string?> ReadPane(string pane) =>
-            TrustForTests is { } fake ? fake.ReadPane(pane) : TmuxScreenReader.Instance.ReadAsync(PaneStatus(pane));
+        internal static Task<string?> ReadPane(string pane) =>
+            TrustForTests is { } fake ? fake.ReadPane(pane)
+            : WindowsConsolePane.Host(pane) is not null ? Console.Value.ReadPane(pane)
+            : TmuxScreenReader.Instance.ReadAsync(PaneStatus(pane));
 
-        private static Task<(bool Pressed, string? Before)> PressKey(string pane, string key, Func<string?, bool> approved) =>
-            TrustForTests is { } fake ? fake.CaptureAndPress(pane, key, approved) : TerminalFocuser.CaptureAndPress(PaneStatus(pane), key, approved);
+        internal static Task<(bool Pressed, string? Before)> PressKey(string pane, string key, Func<string?, bool> approved) =>
+            TrustForTests is { } fake ? fake.CaptureAndPress(pane, key, approved)
+            : WindowsConsolePane.Host(pane) is not null ? Console.Value.CaptureAndPress(pane, key, approved)
+            : TerminalFocuser.CaptureAndPress(PaneStatus(pane), key, approved);
 
-        private static Task ClosePane(string pane) =>
-            TrustForTests is { } fake ? fake.ClosePane(pane) : Task.Run(() => TerminalFocuser.TryRun(
+        internal static Task ClosePane(string pane) =>
+            TrustForTests is { } fake ? fake.ClosePane(pane)
+            : WindowsConsolePane.Host(pane) is not null ? Console.Value.ClosePane(pane)
+            : Task.Run(() => TerminalFocuser.TryRun(
                 TerminalFocuser.ResolveTmuxBinary(null) ?? "tmux", out _, TerminalScripts.TmuxKillPaneArgs(pane)));
 
         internal static SessionStatus PaneStatus(string pane) =>
