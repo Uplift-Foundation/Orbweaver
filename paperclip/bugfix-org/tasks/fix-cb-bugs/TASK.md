@@ -1,5 +1,5 @@
 ---
-name: Fix open CB bugs
+name: Fix open CB bugs {{timestamp}}
 slug: fix-cb-bugs
 assignee: marisol-vandenberg
 project: orbweaver-develop
