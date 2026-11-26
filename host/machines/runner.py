@@ -172,6 +172,41 @@ def pr_problem(pr, allowed_authors, sha=None):
     return None
 
 
+WORKFLOW_DIRS = (".github/workflows/", ".github/actions/")
+# GitHub's pulls/<n>/files lists at most this many files; a list that long may
+# be cut short, so it is read as unknown rather than as clean.
+FILES_CAP = 3000
+
+
+def workflow_problem(files):
+    """Why a PR's changed files rule out an install (None = go). `files` is
+    the list of paths `GhCli.pr_files` returns, renamed files' old paths
+    included, or None when GitHub could not be asked.
+
+    A Mac install pushes the PR's code to an e2e/* branch, where release.yml
+    runs from that code with the signing secrets, and this runner approves
+    the `release` deployment itself. A PR that edits a workflow file, or a
+    composite action a workflow can call (.github/actions/), would therefore
+    meet the signing secrets before any review of the edit (CB-481, plan
+    section 3). The rule is per PR, not per machine: one rule is simpler to
+    state to the org, and a workflow change is proved by the PR's own CI run,
+    not by an install. Unreadable files, and a list at GitHub's cap, fail
+    closed, like every other GitHub answer this runner reads. Scripts a
+    workflow calls are ordinary code and are not covered.
+    """
+    if files is None:
+        return "could not read the PR's changed files from GitHub; try again later"
+    if len(files) >= FILES_CAP:
+        return (f"the PR lists {len(files)} changed files, GitHub's cap, so a workflow change "
+                "could be hidden past it; a PR that large is never installed")
+    touched = sorted(f for f in files if f.startswith(WORKFLOW_DIRS))
+    if touched:
+        return (f"the PR changes {', '.join(touched)}; a PR that touches {' or '.join(WORKFLOW_DIRS)} "
+                "is never installed, because an install runs the PR's own workflows with the signing "
+                "secrets. Prove a workflow change with the PR's own CI run instead")
+    return None
+
+
 def hold_expired(hold, now, cap_s):
     return hold is not None and now - hold["since"] >= cap_s
 
@@ -341,6 +376,14 @@ class Runner:
         # The PR gate first: a PR that may not use the machines learns
         # nothing about who holds them (QA round 1).
         why = pr_problem(self.gh.pr(pr_n), self.cfg["allowed_authors"], sha=req["sha"])
+        if why is None:
+            why = workflow_problem(self.gh.pr_files(pr_n))
+        if why is None:
+            # The file list is the head's at the moment GitHub answered, not
+            # necessarily `sha`'s: a push between the two reads could hide a
+            # workflow edit in `sha` that the newer head reverted (QA round 1).
+            # So the head is read again and must still be `sha`.
+            why = pr_problem(self.gh.pr(pr_n), self.cfg["allowed_authors"], sha=req["sha"])
         if why is None:
             marker = self.attention.read()
             if marker is not None:
@@ -625,6 +668,21 @@ class GhCli:
         except (subprocess.TimeoutExpired, OSError):
             return None
         return self._json(r)
+
+    def pr_files(self, n):
+        """Every path the PR changes, a rename's old path included, or None
+        for anything that is not a clean answer. REST rather than
+        `gh pr view --json files`, which stops at 100 files; --paginate
+        reads GitHub's whole list (it caps at 3000 files, past which the
+        PR is not one the org would open)."""
+        try:
+            r = self.sh(["gh", "api", "--paginate", f"repos/{self.repo}/pulls/{int(n)}/files",
+                         "--jq", ".[] | .filename, (.previous_filename // empty)"])
+        except (subprocess.TimeoutExpired, OSError):
+            return None
+        if r.returncode != 0:
+            return None
+        return [line for line in r.stdout.splitlines() if line]
 
     def commit(self, sha):
         """The commit object (sha, parents) for a stamp, or None."""
