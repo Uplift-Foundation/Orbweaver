@@ -463,11 +463,7 @@ namespace Orbweaver
             try
             {
                 Directory.CreateDirectory(_directory);
-                var temp = FilePath + ".tmp";
-                File.WriteAllText(temp, JsonSerializer.Serialize(_stored, Json));
-                if (!OperatingSystem.IsWindows())
-                    File.SetUnixFileMode(temp, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-                File.Move(temp, FilePath, overwrite: true);
+                OwnerOnlyFile.WriteAllText(FilePath, JsonSerializer.Serialize(_stored, Json));
                 return true;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

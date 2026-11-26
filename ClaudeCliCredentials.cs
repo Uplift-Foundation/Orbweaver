@@ -1055,7 +1055,7 @@ namespace Orbweaver
             }
         }
 
-        private void WriteDiskCache(string? stamp, string? credentialJson)
+        internal void WriteDiskCache(string? stamp, string? credentialJson)
         {
             if (stamp is null || credentialJson is null) return;
 
@@ -1066,13 +1066,7 @@ namespace Orbweaver
 
                 var path = CacheFilePath;
                 var json = $"{{\"stamp\":{JsonSerializer.Serialize(stamp)},\"credential\":{credentialJson}}}";
-                File.WriteAllText(path, json);
-
-                if (OperatingSystem.IsMacOS() || OperatingSystem.IsLinux())
-                {
-                    File.SetUnixFileMode(path,
-                        UnixFileMode.UserRead | UnixFileMode.UserWrite);
-                }
+                OwnerOnlyFile.WriteAllText(path, json);
             }
             catch
             {
