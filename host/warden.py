@@ -987,23 +987,28 @@ class Warden:
         keeps the issue listed for the next tick and never ends this one."""
         # Retries live apart from stop_work's lists, so an issue whose restart
         # failed does not silence its 422 line in the next pause.
-        todo = ([[i, False] for i in self.state.pop("stop_blocked", [])]
-                + [[i, True] for i in self.state.pop("block_refused", [])]
+        # Each entry carries what is still owed: "blocked" (PATCH to todo, then
+        # comment), "refused" (comment only, while in_progress) or "comment"
+        # (the PATCH went through but the comment failed; it is what wakes
+        # the assignee, so it is still owed while the issue sits in todo).
+        todo = ([[i, "blocked"] for i in self.state.pop("stop_blocked", [])]
+                + [[i, "refused"] for i in self.state.pop("block_refused", [])]
                 + self.state.pop("restart_retry", []))
         retry = []
-        for iid, was_refused in todo:
+        for iid, owed in todo:
             try:
                 status = (self.pc.get_issue(iid) or {}).get("status")
-                if not was_refused and status == "blocked":
+                if owed == "blocked" and status == "blocked":
                     self.pc.set_issue_status(iid, "todo")
-                elif not (was_refused and status == "in_progress"):
+                    owed = "comment"
+                elif status != {"refused": "in_progress", "comment": "todo"}.get(owed):
                     continue
                 self.pc.comment(iid, RESTART_COMMENT)
                 self.log(f"restarted issue {iid[:8]} after the pause"
-                         + (" (comment only)" if was_refused else ""))
+                         + (" (comment only)" if owed == "refused" else ""))
             except Exception as e:
                 self.log(f"could not restart issue {iid[:8]}: {type(e).__name__} {getattr(e, 'code', '')}".rstrip())
-                retry.append([iid, was_refused])
+                retry.append([iid, owed])
         if retry:
             self.state["restart_retry"] = retry
 

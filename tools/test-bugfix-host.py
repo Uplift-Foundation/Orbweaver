@@ -1411,11 +1411,40 @@ class BrakeCoolOffTests(unittest.TestCase):
         self.assertFalse(paused)
         self.assertEqual(pc.statuses, [("iss-eeeeeeee", "todo")])
         self.assertTrue(any("could not restart issue iss-dddd: OSError" in l for l in logs))
-        self.assertEqual(state["restart_retry"], [["iss-dddddddd", False]])
+        self.assertEqual(state["restart_retry"], [["iss-dddddddd", "blocked"]])
         self.assertTrue(pc.secrets, "the tick went on to mint")
         pc.full["iss-dddddddd"] = {"status": "blocked"}
         tick(pc=pc, state=state, now=600)
         self.assertEqual(pc.statuses[-1], ("iss-dddddddd", "todo"))
+        self.assertNotIn("restart_retry", state)
+
+    def test_a_failed_comment_after_the_todo_patch_is_posted_next_tick(self):
+        # QA round 2: the PATCH went through, the comment did not; the retry
+        # must still post it, since the comment is what wakes the assignee.
+        class CommentFailsOnce(FakePC):
+            def comment(self, issue_id, body):
+                if not getattr(self, "failed", False):
+                    self.failed = True
+                    raise urllib.error.HTTPError("u", 500, "Server Error", {}, None)
+                super().comment(issue_id, body)
+
+        state, pc = {}, CommentFailsOnce(issues=["iss-ffffffff"])
+        tick(pc=pc, state=state, now=0, requests=[{"verb": "push_refused"}])
+        pc.paused, pc.issues = False, []
+        pc.full = {"iss-ffffffff": {"status": "blocked"}}
+        _, _, logs = tick(pc=pc, state=state, now=300)
+        self.assertEqual((pc.statuses, pc.comments), ([("iss-ffffffff", "todo")], []))
+        self.assertEqual(state["restart_retry"], [["iss-ffffffff", "comment"]])
+        pc.full["iss-ffffffff"]["status"] = "todo"
+        tick(pc=pc, state=state, now=600)
+        self.assertEqual(pc.statuses, [("iss-ffffffff", "todo")], "not PATCHed twice")
+        self.assertEqual(pc.comments, [("iss-ffffffff", warden.RESTART_COMMENT)])
+        self.assertNotIn("restart_retry", state)
+        # Control: an owed comment on an issue that has since moved on is dropped.
+        state["restart_retry"] = [["iss-ffffffff", "comment"]]
+        pc.full["iss-ffffffff"]["status"] = "in_progress"
+        tick(pc=pc, state=state, now=900)
+        self.assertEqual(len(pc.comments), 1)
         self.assertNotIn("restart_retry", state)
 
     def test_paperclip_http_resume_patches_active(self):
