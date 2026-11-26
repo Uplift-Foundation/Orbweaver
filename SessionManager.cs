@@ -681,7 +681,7 @@ namespace Orbweaver
         // CB-217: first it tells the job listing which transcripts the Claude
         // Code sessions here have, so `claude agents --json` is only run for
         // the accounts that own one of them. See BackgroundJobs.AccountsToAsk.
-        private ScanProbes GatherProbes(List<ScanEntry> found)
+        internal ScanProbes GatherProbes(List<ScanEntry> found)
         {
             BackgroundJobs.NoteLiveTranscripts(ClaudeTranscripts(found));
             var firstScan = !_firstScanGathered;
