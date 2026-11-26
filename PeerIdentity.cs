@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -335,6 +336,30 @@ namespace Orbweaver
 
             return difference == 0;
         }
+
+        // The two proofs of a pairing (CB-346).
+        //
+        // The code is never sent. Each side proves it holds it with a keyed
+        // hash over a fresh nonce from each side and the two certificates of
+        // this handshake, so a proof is valid for one handshake only and one
+        // certificate pair only. `role` keeps the two proofs from being
+        // replayed as one another: the accepting side proves first, and the
+        // dialler sends its own only after checking that one.
+        internal const string ServerRole = "server";
+        internal const string ClientRole = "client";
+
+        internal static string PairingProof(
+            string code, string role, string clientNonce, string serverNonce, string serverPin, string clientPin)
+        {
+            var data = Encoding.UTF8.GetBytes(string.Join("|",
+                "orbweaver-pair-v2", role, clientNonce, serverNonce,
+                serverPin.ToLowerInvariant(), clientPin.ToLowerInvariant()));
+
+            using var mac = new HMACSHA256(Encoding.UTF8.GetBytes(code));
+            return Convert.ToHexString(mac.ComputeHash(data)).ToLowerInvariant();
+        }
+
+        internal static string NewNonce() => Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
 
         // --- disk -----------------------------------------------------------------
 
