@@ -41,7 +41,10 @@ that is safe, and how to tell Warren once if it is not.
 | `paperclip_unreadable` | the medic could not read Paperclip at all | the service is down |
 
 While the company is paused, `no_heartbeat` and `stuck` are not read: they are
-the pause's own effects.
+the pause's own effects. An incident is the set of checks that hold, so a pause
+where the warden also goes quiet becomes a new incident and you may be started
+again; `escalate` is still refused while an earlier medic escalation is pending,
+so Warren hears once.
 
 ## Pause reasons and what may lift them
 
@@ -90,7 +93,7 @@ medic resumed the company within the last six hours and it is paused again,
 | `wake` | `{"issue": "QAF-n"}` | blocked to todo, plus a board comment that wakes the assignee | company paused; task not blocked or todo; woken by the medic within the hour |
 | `close-pass` | `{"issue": "QAF-n"}` | a blocked pass to done | not blocked; no children; any child not done or cancelled |
 | `restart-warden` | `{}` | `launchctl kickstart -k` the warden job | the warden saved its state within 15 minutes; restarted within the hour |
-| `file-bug` | `{"summary": "<one line>", "body": "<text>"}` | writes a CB Bug for the lead to file | 5 already today |
+| `file-bug` | `{"summary": "<one line>", "body": "<text>"}` | records the bug in `medic-bugs/` and gives the bug-fix lead a task to file it as a CB Bug | 5 already today |
 | `escalate` | `{"line": "<one line>"}` | a pending board approval Warren sees on the lead's orb | already escalated this incident; an earlier medic escalation is still pending |
 | `noop` | `{}` | nothing; logged | never |
 

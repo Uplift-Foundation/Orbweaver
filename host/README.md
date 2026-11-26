@@ -225,8 +225,10 @@ and last are read: the other two are the pause's own effects.
 
 When one holds, it asks a headless `claude -p` for a plan, with
 `host/medic-runbook.md` and a snapshot of what it read as the prompt (also kept
-in `medic-snapshot.txt`), under a pool account's config dir
-(`medic_config_dir` in `warden.json`, else the first pool account with one).
+in `medic-snapshot.txt`), under the pool accounts in turn
+(`medic_config_dirs` in `warden.json`, else every distinct `configDir` in
+`pool-accounts.json` in pool order, with the default `~/.claude` account last),
+moving to the next only on an auth or usage failure.
 One at a time (`medic.lock`), at most one launch per 20 minutes, 15-minute
 timeout, all of it in `medic.log`. **The model has no tools**: `--tools ""`,
 `--setting-sources ""`, `--strict-mcp-config`, an empty working directory. It
@@ -244,10 +246,13 @@ within six hours of a medic resume.
 `escalate` posts one pending `request_board_approval` to the company per
 incident, which the app shows on the lead's orb as a waiting need titled
 "Bug-fix org stopped: ...". After three launches in one incident with no
-recovery, `medic.py` escalates on its own. `file-bug` writes to
-`~/.config/orbweaver-bugfix/medic-bugs/`, because the host has no Jira
-credential: the org's Jira goes through Paperclip's connector, comment and
-transition only.
+recovery, `medic.py` escalates on its own. `file-bug` writes the bug to
+`~/.config/orbweaver-bugfix/medic-bugs/` as the record and creates one
+Paperclip task, "File a CB bug: false org stop", for the bug-fix lead, who has
+the Jira connector; the medic's text sits quoted inside a fenced block in it.
+The host has no Jira credential of its own. Secrets (GitHub and Anthropic
+tokens, `x-access-token:` URLs, `Authorization:` values) are redacted from the
+snapshot, the prompt, `medic.log` (0600) and the bug before any is written.
 
 ## Run logs
 
