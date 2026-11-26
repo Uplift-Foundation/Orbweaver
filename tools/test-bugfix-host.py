@@ -363,8 +363,11 @@ UNREADABLE = object()
 
 
 class FakeGH:
-    def __init__(self, prs=None, merged=(), comments=None, checks=None, runs=None, push_runs=None):
+    def __init__(self, prs=None, merged=(), comments=None, checks=None, runs=None, push_runs=None,
+                 open_prs=(), files=None, rulesets=(), branch_rules=()):
         self.prs, self.merged = prs or {}, list(merged)
+        self.ruleset_rows, self.develop_rules = rulesets, branch_rules
+        self.open_prs, self.files, self.files_read = list(open_prs), files or {}, []
         self.comments, self.checks = comments or {}, checks or {}
         self.dispatched = []
         self.runs, self.reran = runs or {}, []
@@ -373,6 +376,34 @@ class FakeGH:
 
     def latest_ci_run(self, sha, event="pull_request"):
         return (self.push_runs if event == "push" else self.runs).get(sha)
+
+    def latest_ci_runs(self, sha, workflows, event="pull_request"):
+        got = self.runs.get(sha)
+        return list(got) if isinstance(got, list) else ([got] if got else [])
+
+    def open_bot_prs(self):
+        return self.open_prs
+
+    def rulesets(self):
+        if self.ruleset_rows is UNREADABLE:
+            raise subprocess.CalledProcessError(1, ["gh", "api"])
+        return list(self.ruleset_rows)
+
+    def branch_rules(self, branch):
+        """`branch_rules` is a dict {branch: rules}, or one list for both branches."""
+        rules = self.develop_rules
+        if isinstance(rules, dict):
+            rules = rules.get(branch, [])
+        if rules is UNREADABLE:
+            raise subprocess.CalledProcessError(1, ["gh", "api"])
+        return list(rules)
+
+    def pr_files(self, n):
+        self.files_read.append(n)
+        got = self.files.get(n, [])
+        if got is UNREADABLE:
+            raise subprocess.CalledProcessError(1, ["gh", "api"])
+        return got
 
     def rerun_failed(self, run_id):
         self.reran.append(run_id)
@@ -479,7 +510,7 @@ class RerunTickTests(unittest.TestCase):
 
     def test_an_unreadable_pr_or_run_is_logged_not_raised(self):
         class Boom(FakeGH):
-            def latest_ci_run(self, sha):
+            def latest_ci_runs(self, sha, workflows):
                 raise subprocess.CalledProcessError(1, "gh")
 
         _, paused, logs = tick(gh=Boom(prs={7: head_pr()}), requests=[self.REQ])
@@ -487,12 +518,27 @@ class RerunTickTests(unittest.TestCase):
         self.assertTrue(any("unreadable" in l for l in logs))
 
 
-class FakeMinter:
-    def __init__(self):
-        self.n = 0
+DESKTOP_INSTALL = {"id": 9, "permissions": dict(warden.EVERYDAY_PERMISSIONS)}
+WF_INSTALL = {"id": 9, "permissions": dict(warden.WORKFLOW_PERMISSIONS)}
+MOBILE_REPO = warden.MOBILE["repo"]
 
-    def mint(self):
+
+class FakeMinter:
+    """installs: repo -> installation object, None (404), or UNREADABLE."""
+
+    def __init__(self, installs=None):
+        self.n, self.minted = 0, []
+        self.installs = {warden.REPO: DESKTOP_INSTALL} if installs is None else installs
+
+    def installation(self, repo):
+        got = self.installs.get(repo)
+        if got is UNREADABLE:
+            raise OSError("api down")
+        return got
+
+    def mint(self, installation_id, repositories, permissions):
         self.n += 1
+        self.minted.append((installation_id, list(repositories), dict(permissions)))
         return f"tok{self.n}"
 
 
@@ -587,9 +633,9 @@ def merged_pr(n=7, sha="abc"):
     return {"number": n, "merge_commit_sha": sha, "merged_at": "2026-11-24T10:00:00Z"}
 
 
-def tick(gh=None, pc=None, requests=(), state=None, cfg=None, now=10_000.0):
+def tick(gh=None, pc=None, requests=(), state=None, cfg=None, now=10_000.0, minter=None):
     logs = []
-    w = warden.Warden(cfg or {}, gh or FakeGH(), FakeMinter(), pc or FakePC(),
+    w = warden.Warden(cfg or {}, gh or FakeGH(), minter or FakeMinter(), pc or FakePC(),
                       state if state is not None else {}, now, logs.append)
     paused = w.tick(list(requests))
     return w, paused, logs
@@ -1958,6 +2004,612 @@ class WorkflowWiringTests(unittest.TestCase):
     def test_ci_runs_this_suite(self):
         ci = open(os.path.join(ROOT, ".github/workflows/ci.yml")).read()
         self.assertIn("python tools/test-bugfix-host.py", ci)
+
+
+REAL_FILES = {
+ 397: [
+  {
+   "filename": ".github/workflows/ci.yml",
+   "status": "modified",
+   "patch": "@@ -156,6 +156,20 @@ jobs:\n         if: ${{ !cancelled() && matrix.checks }}\n         run: python tools/test-bugfix-host.py\n \n+      # CB-470: the machine runner (spool rules, hold, cap, restore) and its\n+      # Windows seam, against fake machines, a fake gh and a fake clock. No\n+      # ssh and no machine; the run_once file-level cases skip on Windows,\n+      # where the runner (which lives on the mini) never runs.\n+      - name: Unit tests (bug-fix org machine runner)\n+        if: ${{ !cancelled() && matrix.checks }}\n+        run: python tools/test-bugfix-machines.py\n+\n+      # CB-470: the Mac half of the machine runner (signed e2e build, install,\n+      # restore), same fakes-only rule.\n+      - name: Unit tests (bug-fix org machine runner, Macs)\n+        if: ${{ !cancelled() && matrix.checks }}\n+        run: python tools/test-bugfix-machines-mac.py\n+\n       # CB-455: the same host side against loopback stand-ins for Paperclip and the\n       # GitHub App API and stub gh/dotnet scripts, every pause trigger beside its\n       # control. POSIX only; the cases skip themselves on the Windows leg."
+  }
+ ],
+ 381: [
+  {
+   "filename": ".github/workflows/ci.yml",
+   "status": "modified",
+   "patch": "@@ -59,6 +59,13 @@ concurrency:\n   group: ci-${{ github.event.pull_request.number || github.run_id }}\n   cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n \n+# CB-466: nothing a workflow launches may count as a real install. The suites\n+# never reach the ping (see InstallPingSingleSiteTests); this covers any step that\n+# starts a built app, and marks it ours if it somehow does.\n+env:\n+  ORBWEAVER_INSTALL_PING: \"0\"\n+  ORBWEAVER_INTERNAL: \"1\"\n+\n jobs:\n   # One job definition; which suites each instance runs is in the matrix below.\n   suite:"
+  },
+  {
+   "filename": ".github/workflows/release.yml",
+   "status": "modified",
+   "patch": "@@ -18,6 +18,13 @@ on:\n permissions:\n   contents: read\n \n+# CB-466: nothing a workflow launches may count as a real install. The suites\n+# never reach the ping (see InstallPingSingleSiteTests); this covers any step that\n+# starts a built app, and marks it ours if it somehow does.\n+env:\n+  ORBWEAVER_INSTALL_PING: \"0\"\n+  ORBWEAVER_INTERNAL: \"1\"\n+\n jobs:\n   # Runs first and gates everything else. A tag whose number disagrees with the\n   # csproj would ship installers named one version while reporting another in"
+  }
+ ],
+ 370: [
+  {
+   "filename": ".github/workflows/stress.yml",
+   "status": "added",
+   "patch": "@@ -0,0 +1,79 @@\n+name: Stress\n+\n+# Runs ONE test class N times on both rids (CB-455, plan \u00a74). The bug-fix org's\n+# proof for a flaky-test fix is \"this class, 30 times, on GitHub's runners\",\n+# and the org itself cannot dispatch this (its App has Actions read only), so"
+  }
+ ]
+}
+
+# ---------------------------------------------------------------- CB-481: mobile repository and workflow files
+#
+# REAL_FILES above are GET /pulls/<n>/files rows of three merged desktop PRs,
+# read 2026-11-26 (only the .github/ rows, and #370's added file cut to its
+# first lines, since an added workflow pauses before its patch is read): #397
+# added test steps to ci.yml (benign), #381 added an env block to ci.yml and
+# release.yml, #370 added stress.yml.
+
+TWO = {"repos": [warden.DESKTOP, warden.MOBILE]}
+
+
+def wf(name, patch, status="modified", **over):
+    row = {"filename": ".github/workflows/" + name, "status": status, "patch": patch}
+    row.update(over)
+    return row
+
+
+def mobile_pr(sha="m1", **over):
+    pr = {"state": "open", "user": {"login": BOT}, "number": 5,
+          "head": {"ref": "bugfix/pc-relay-race", "repo": {"full_name": MOBILE_REPO}, "sha": sha},
+          "base": {"ref": "develop"}}
+    pr.update(over)
+    return pr
+
+
+class RepoConfigTests(unittest.TestCase):
+    def test_no_repos_key_means_desktop_only_and_a_list_is_taken_as_given(self):
+        self.assertEqual(warden.repos_from({}), [warden.DESKTOP])
+        self.assertEqual([r["key"] for r in warden.repos_from(TWO)], ["desktop", "mobile"])
+        self.assertIsNone(warden.repo_by_key({}, "mobile"), "mobile exists only once configured")
+
+    def test_the_lane_is_the_repository_it_is_asked_about(self):
+        self.assertIsNone(warden.dispatch_problem(mobile_pr(), warden.MOBILE))
+        self.assertIn("not in this repository", warden.dispatch_problem(mobile_pr(), warden.DESKTOP))
+        self.assertIn("not in this repository", warden.dispatch_problem(good_pr(), warden.MOBILE))
+        self.assertIsNone(warden.dispatch_problem(good_pr()), "desktop is the default")
+        self.assertIn("does not target develop",
+                      warden.dispatch_problem(mobile_pr(base={"ref": "main"}), warden.MOBILE))
+
+    def test_spool_repo_key_is_optional_and_patterned(self):
+        ok, _ = warden.parse_request('{"verb":"rerun_failed","pr":7,"repo":"mobile"}')
+        self.assertEqual(ok, {"verb": "rerun_failed", "pr": 7, "repo": "mobile"})
+        self.assertNotIn("repo", warden.parse_request('{"verb":"rerun_failed","pr":7}')[0])
+        for bad in ('"../x"', '7', '"Mobile"', '""', 'null'):
+            req, why = warden.parse_request('{"verb":"rerun_failed","pr":7,"repo":%s}' % bad)
+            self.assertIsNone(req, bad)
+            self.assertIn("repo", why)
+
+
+class MobileHeadCheckTests(unittest.TestCase):
+    ALL3 = {"relay": "success", "contracts": "success", "tools": "success"}
+
+    def test_expected_checks_follow_the_changed_paths(self):
+        m = warden.MOBILE
+        self.assertEqual(warden.expected_head_checks(["relay/Tests/X.cs"], m), ["relay", "contracts", "tools"])
+        self.assertIn("android", warden.expected_head_checks(["android/app/Y.kt"], m))
+        self.assertIn("android", warden.expected_head_checks(["contracts/check_frames.py"], m))
+        self.assertIn("snapshots", warden.expected_head_checks(["app/Sources/Z.swift"], m))
+        self.assertIn("snapshots", warden.expected_head_checks(["contracts/frames-v11-vectors.json"], m))
+        self.assertNotIn("snapshots", warden.expected_head_checks(["contracts/frames-v9-vectors.json"], m))
+        self.assertNotIn("android", warden.expected_head_checks(["relay/x"], m))
+
+    def test_all_green_passes_and_each_failure_is_named(self):
+        m = warden.MOBILE
+        self.assertEqual(warden.head_checks_problem(self.ALL3, ["relay/x"], m), [])
+        red = warden.head_checks_problem(dict(self.ALL3, tools="failure"), ["relay/x"], m)
+        self.assertIn("tools failure", red[0])
+        missing = warden.head_checks_problem(self.ALL3, ["android/a.kt"], m)
+        self.assertIn("android missing", missing[0])
+        pending = warden.head_checks_problem(dict(self.ALL3, android=None), ["android/a.kt"], m)
+        self.assertIn("android pending", pending[0])
+        self.assertEqual(warden.head_checks_problem(dict(self.ALL3, android="success"), ["android/a.kt"], m), [])
+
+    def test_mobile_merge_commit_reds_count_and_settle_after_the_quiet_window(self):
+        m = warden.MOBILE
+        self.assertEqual(warden.audit_merge(True, {}, m), [])
+        self.assertIn("relay-image", warden.audit_merge(True, {"relay-image": "failure"}, m)[0])
+        self.assertIn("relay and contracts and tools", warden.audit_merge(False, {}, m)[0])
+        self.assertFalse(warden.ci_settled({}, m, age=warden.MERGE_QUIET - 1))
+        self.assertTrue(warden.ci_settled({}, m, age=warden.MERGE_QUIET))
+        self.assertFalse(warden.ci_settled({"relay-image": None}, m, age=warden.MERGE_QUIET))
+        # Control: desktop still waits on its two required checks, not on time.
+        self.assertFalse(warden.ci_settled({}, warden.DESKTOP, age=10 ** 6))
+        self.assertIn("both rids", warden.audit_merge(False, {})[0])
+
+
+class WorkflowGuardTests(unittest.TestCase):
+    D = warden.DESKTOP
+
+    def test_real_benign_ci_step_change_is_left_alone(self):
+        self.assertEqual(warden.workflow_problems(REAL_FILES[397], self.D), [])
+        # The ci.yml half of #381 (an env block) is benign on its own too.
+        self.assertEqual(warden.workflow_problems(REAL_FILES[381][:1], self.D), [])
+
+    def test_real_release_yml_change_pauses(self):
+        got = warden.workflow_problems(REAL_FILES[381], self.D)
+        self.assertEqual(len(got), 1)
+        self.assertIn("release.yml: change to a protected workflow", got[0])
+
+    def test_real_added_workflow_pauses(self):
+        got = warden.workflow_problems(REAL_FILES[370], self.D)
+        self.assertEqual(got, [".github/workflows/stress.yml: workflow file added"])
+
+    def test_publish_screenshots_is_protected_even_for_a_comment(self):
+        got = warden.workflow_problems([wf("publish-screenshots.yml", "@@ -1 +1 @@\n-# a\n+# b")], self.D)
+        self.assertIn("protected", got[0])
+
+    def test_removed_and_renamed_files_pause(self):
+        self.assertIn("removed", warden.workflow_problems([wf("ci.yml", None, "removed")], self.D)[0])
+        got = warden.workflow_problems([wf("ci2.yml", "", "renamed", previous_filename=".github/workflows/ci.yml")], self.D)
+        self.assertIn("renamed", got[0])
+        # Renaming a protected workflow away is still a change to it.
+        got = warden.workflow_problems([wf("r.yml", "", "renamed", previous_filename=".github/workflows/release.yml")], self.D)
+        self.assertIn("protected", got[0])
+
+    def test_each_risky_line_pauses_and_its_harmless_neighbour_does_not(self):
+        risky = ["    environment: release", "      KEY: ${{ secrets.APPLE_KEY }}", "  pull_request_target:",
+                 "  workflow_run:", "  id-token: write", "permissions:", "      contents: write",
+                 "    runs-on: [self-hosted, orbweaver-ios]", "      - run: tools/publish-screenshot.sh",
+                 "      - uses: someone/thing@v1"]
+        for line in risky:
+            for sign in "+-":
+                got = warden.workflow_problems([wf("ci.yml", f"@@ -1 +1 @@\n{sign}{line}")], self.D)
+                self.assertEqual(len(got), 1, (sign, line))
+        harmless = ["    timeout-minutes: 45", "      - uses: actions/checkout@v4", "      - uses: ./.github/actions/setup",
+                    "    # environment: release would go here", "        run: python tools/test-bugfix-host.py", ""]
+        for line in harmless:
+            self.assertEqual(warden.workflow_problems([wf("ci.yml", f"@@ -1 +1 @@\n+{line}")], self.D), [], line)
+
+    def test_a_benign_timeout_edit_does_not_pause(self):
+        patch = "@@ -40,7 +40,7 @@ jobs:\n   suite:\n-    timeout-minutes: 30\n+    timeout-minutes: 45\n     steps:"
+        self.assertEqual(warden.workflow_problems([wf("ci.yml", patch)], self.D), [])
+
+    def test_unchanged_context_lines_are_not_read(self):
+        patch = "@@ -1,3 +1,3 @@\n     environment: release\n-    timeout-minutes: 30\n+    timeout-minutes: 45"
+        self.assertEqual(warden.workflow_problems([wf("ci.yml", patch)], self.D), [])
+
+    def test_a_workflow_file_with_no_patch_pauses(self):
+        got = warden.workflow_problems([{"filename": ".github/workflows/ci.yml", "status": "modified"}], self.D)
+        self.assertIn("no patch", got[0])
+
+    def test_actions_dir_is_guarded_and_other_files_are_not(self):
+        row = {"filename": ".github/actions/setup/action.yml", "status": "modified", "patch": "+  secrets: x"}
+        self.assertEqual(len(warden.workflow_problems([row], self.D)), 1)
+        other = {"filename": "host/warden.py", "status": "modified", "patch": "+ environment secrets runs-on"}
+        self.assertEqual(warden.workflow_problems([other], self.D), [])
+
+    def test_a_composite_action_is_guarded_like_a_workflow(self):
+        act = ".github/actions/setup/action.yml"
+        for status in ("added", "removed", "renamed"):
+            got = warden.workflow_problems([{"filename": act, "status": status, "patch": "+x"}], self.D)
+            self.assertIn(f"workflow file {status}", got[0], status)
+        moved_in = {"filename": "tools/setup.yml", "status": "renamed", "previous_filename": act}
+        self.assertEqual(len(warden.workflow_problems([moved_in], self.D)), 1, "moved out of .github/actions")
+        risky = {"filename": act, "status": "modified", "patch": "@@ -1 +1 @@\n+      KEY: ${{ secrets.X }}"}
+        self.assertIn("mentions 'secrets'", warden.workflow_problems([risky], self.D)[0])
+        benign = {"filename": act, "status": "modified", "patch": "@@ -1 +1 @@\n-      shell: bash\n+      shell: pwsh"}
+        self.assertEqual(warden.workflow_problems([benign], self.D), [], "control")
+        self.assertIn("may not edit workflows", warden.workflow_problems([benign], warden.MOBILE)[0])
+
+    def test_any_workflow_change_on_mobile_pauses_and_its_code_does_not(self):
+        got = warden.workflow_problems(REAL_FILES[397], warden.MOBILE)
+        self.assertIn("may not edit workflows", got[0])
+        code = {"filename": "relay/Relay/Hub.cs", "status": "modified", "patch": "+ x"}
+        self.assertEqual(warden.workflow_problems([code], warden.MOBILE), [])
+
+
+class TokenPlanTests(unittest.TestCase):
+    def test_both_repositories_on_the_everyday_token_and_desktop_alone_on_the_workflow_token(self):
+        plan = warden.token_plan([warden.DESKTOP, warden.MOBILE],
+                                 {"desktop": WF_INSTALL, "mobile": WF_INSTALL})
+        self.assertEqual(plan, {"installation": 9, "everyday": ["Orbweaver", "Orbweaver-Mobile"],
+                                "workflows": ["Orbweaver"]})
+
+    def test_the_workflow_token_never_names_mobile(self):
+        for inst in (DESKTOP_INSTALL, WF_INSTALL):
+            for access in ({"desktop": inst, "mobile": inst}, {"desktop": None, "mobile": inst}):
+                plan = warden.token_plan([warden.DESKTOP, warden.MOBILE], access)
+                self.assertNotIn("Orbweaver-Mobile", plan["workflows"], (inst, access))
+        # Control: the rule is not simply "never mint one".
+        self.assertEqual(warden.token_plan([warden.DESKTOP], {"desktop": WF_INSTALL})["workflows"], ["Orbweaver"])
+
+    def test_no_workflow_token_while_the_installation_lacks_the_permission(self):
+        plan = warden.token_plan([warden.DESKTOP, warden.MOBILE], {"desktop": DESKTOP_INSTALL, "mobile": DESKTOP_INSTALL})
+        self.assertEqual(plan["workflows"], [])
+        self.assertEqual(plan["everyday"], ["Orbweaver", "Orbweaver-Mobile"])
+
+    def test_uncovered_repositories_are_left_out(self):
+        plan = warden.token_plan([warden.DESKTOP, warden.MOBILE], {"desktop": DESKTOP_INSTALL, "mobile": None})
+        self.assertEqual(plan["everyday"], ["Orbweaver"])
+        other = dict(DESKTOP_INSTALL, id=10)
+        plan = warden.token_plan([warden.DESKTOP, warden.MOBILE], {"desktop": DESKTOP_INSTALL, "mobile": other})
+        self.assertEqual(plan["everyday"], ["Orbweaver"], "a repository under another installation")
+        self.assertEqual(warden.token_plan([warden.DESKTOP], {"desktop": None})["everyday"], [])
+
+    def test_the_everyday_permissions_are_the_six_by_name_without_workflows(self):
+        self.assertEqual(warden.EVERYDAY_PERMISSIONS, {
+            "actions": "read", "checks": "read", "contents": "write", "metadata": "read",
+            "pull_requests": "write", "statuses": "read"})
+        self.assertEqual(warden.WORKFLOW_PERMISSIONS, dict(warden.EVERYDAY_PERMISSIONS, workflows="write"))
+
+
+def read_json(path):
+    with open(path) as f:
+        return json.load(f)
+
+
+# Shaped like Orbweaver's own reads of 2026-11-26 (rulesets listing; rules/branches/develop).
+ACTIVE_RS = [{"id": 1, "name": "main and develop: PRs only", "target": "branch", "enforcement": "active"}]
+DEVELOP_RULES = [{"type": "deletion", "ruleset_id": 1}, {"type": "pull_request", "ruleset_id": 1},
+                 {"type": "required_status_checks", "ruleset_id": 1}]
+
+
+def protected_mobile(**kw):
+    return FakeGH(rulesets=ACTIVE_RS, branch_rules=DEVELOP_RULES, **kw)
+
+
+def both(rules):
+    return {"main": rules, "develop": rules}
+
+
+class RulesetGateTests(unittest.TestCase):
+    def test_both_branches_are_gated(self):
+        self.assertEqual(warden.gated_branches(warden.MOBILE), ["main", "develop"])
+
+    def test_an_active_pull_request_rule_on_main_and_develop_passes(self):
+        self.assertIsNone(warden.ruleset_gate(ACTIVE_RS, both(DEVELOP_RULES)))
+
+    def test_develop_only_or_main_only_is_not_enough(self):
+        self.assertEqual(warden.ruleset_gate(ACTIVE_RS, {"main": [], "develop": DEVELOP_RULES}),
+                         "no active pull_request rule on main")
+        self.assertEqual(warden.ruleset_gate(ACTIVE_RS, {"main": DEVELOP_RULES, "develop": []}),
+                         "no active pull_request rule on develop")
+        self.assertEqual(warden.ruleset_gate(ACTIVE_RS, {"main": [], "develop": []}),
+                         "no active pull_request rule on main and develop")
+
+    def test_each_way_of_not_being_protected_is_named(self):
+        disabled = [dict(ACTIVE_RS[0], enforcement="disabled")]
+        evaluate = [dict(ACTIVE_RS[0], enforcement="evaluate")]
+        cases = {
+            "empty": ([], [], "no rulesets"),
+            "disabled": (disabled, DEVELOP_RULES, "no active ruleset"),
+            "evaluate only": (evaluate, DEVELOP_RULES, "no active ruleset"),
+            "active but nothing on either branch": (ACTIVE_RS, [], "no active pull_request rule on main and develop"),
+            "deletion only": (ACTIVE_RS, [{"type": "deletion", "ruleset_id": 1}], "pull_request"),
+            "rule from another, inactive ruleset": (ACTIVE_RS + [dict(ACTIVE_RS[0], id=2, enforcement="disabled")],
+                                                    [{"type": "pull_request", "ruleset_id": 2}], "pull_request"),
+        }
+        for label, (rs, rules, why) in cases.items():
+            self.assertIn(why, warden.ruleset_gate(rs, both(rules)) or "", label)
+
+
+class MintTickTests(unittest.TestCase):
+    def setUp(self):
+        self.spool = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.spool, True))
+
+    def test_old_config_mints_one_desktop_token_with_the_six_permissions(self):
+        pc, m = FakePC(), FakeMinter()
+        tick(pc=pc, minter=m)
+        self.assertEqual(pc.secrets, [("GITHUB_TOKEN", "tok1")])
+        self.assertEqual(m.minted, [(9, ["Orbweaver"], warden.EVERYDAY_PERMISSIONS)])
+
+    def test_two_repositories_and_the_permission_mint_both_tokens_each_scoped(self):
+        pc, m = FakePC(), FakeMinter({warden.REPO: WF_INSTALL, MOBILE_REPO: WF_INSTALL})
+        gh = {"desktop": FakeGH(), "mobile": protected_mobile()}
+        _, _, logs = tick(gh=gh, pc=pc, minter=m, cfg=dict(TWO, spool=self.spool))
+        self.assertEqual([n for n, _ in pc.secrets], ["GITHUB_TOKEN", "GITHUB_TOKEN_WORKFLOWS"])
+        everyday, workflow = m.minted
+        self.assertEqual(everyday, (9, ["Orbweaver", "Orbweaver-Mobile"], warden.EVERYDAY_PERMISSIONS))
+        self.assertNotIn("workflows", everyday[2])
+        self.assertEqual(workflow, (9, ["Orbweaver"], warden.WORKFLOW_PERMISSIONS))
+        access = read_json(os.path.join(self.spool, "access.json"))
+        self.assertEqual(access["repos"], {"desktop": True, "mobile": True})
+        self.assertTrue(access["workflows"])
+        self.assertTrue(any("workflow token refreshed (Orbweaver)" in l for l in logs))
+
+    def test_workflow_token_is_withheld_while_the_permission_is_absent(self):
+        pc, m = FakePC(), FakeMinter({warden.REPO: DESKTOP_INSTALL, MOBILE_REPO: DESKTOP_INSTALL})
+        tick(gh={"desktop": FakeGH(), "mobile": protected_mobile()}, pc=pc, minter=m, cfg=dict(TWO, spool=self.spool))
+        self.assertEqual([n for n, _ in pc.secrets], ["GITHUB_TOKEN"])
+        self.assertEqual(len(m.minted), 1)
+        self.assertFalse(read_json(os.path.join(self.spool, "access.json"))["workflows"])
+
+    def test_uncovered_mobile_is_reported_and_left_off_the_token(self):
+        pc, m = FakePC(), FakeMinter({warden.REPO: DESKTOP_INSTALL})
+        tick(pc=pc, minter=m, cfg=dict(TWO, spool=self.spool))
+        self.assertEqual(m.minted[0][1], ["Orbweaver"])
+        self.assertEqual(read_json(os.path.join(self.spool, "access.json"))["repos"],
+                         {"desktop": True, "mobile": False})
+
+    def mint_with_mobile(self, mobile_gh, state=None):
+        if state is not None:
+            state.pop("last_mint", None)   # every call is a mint tick
+        pc, m = FakePC(), FakeMinter({warden.REPO: DESKTOP_INSTALL, MOBILE_REPO: DESKTOP_INSTALL})
+        _, _, logs = tick(gh={"desktop": FakeGH(), "mobile": mobile_gh}, pc=pc, minter=m,
+                          cfg=dict(TWO, spool=self.spool), state=state if state is not None else {})
+        return m.minted[0][1], read_json(os.path.join(self.spool, "access.json")), logs
+
+    def test_mobile_rulesets_present_puts_both_repositories_on_the_token(self):
+        repos, access, logs = self.mint_with_mobile(protected_mobile())
+        self.assertEqual(repos, ["Orbweaver", "Orbweaver-Mobile"])
+        self.assertEqual((access["repos"], access["withheld"]), ({"desktop": True, "mobile": True}, {}))
+        self.assertFalse(any("kept off" in l for l in logs))
+
+    def test_empty_failed_or_disabled_mobile_rulesets_mint_orbweaver_only(self):
+        disabled = [dict(ACTIVE_RS[0], enforcement="disabled")]
+        cases = {"empty": (FakeGH(), "no rulesets"),
+                 "failed read": (FakeGH(rulesets=UNREADABLE), "rulesets unreadable (CalledProcessError)"),
+                 "failed rules read": (FakeGH(rulesets=ACTIVE_RS, branch_rules=UNREADABLE), "rulesets unreadable"),
+                 "disabled": (FakeGH(rulesets=disabled, branch_rules=DEVELOP_RULES), "no active ruleset")}
+        for label, (gh, why) in cases.items():
+            repos, access, logs = self.mint_with_mobile(gh)
+            self.assertEqual(repos, ["Orbweaver"], label)
+            self.assertEqual(access["repos"], {"desktop": True, "mobile": False}, label)
+            self.assertIn(why, access["withheld"]["mobile"], label)
+            self.assertTrue(any(l.startswith("mobile kept off the token: " + why) for l in logs), label)
+
+    def test_mobile_needs_both_main_and_develop_protected(self):
+        cases = {"develop only": ({"develop": DEVELOP_RULES}, "on main"),
+                 "main only": ({"main": DEVELOP_RULES}, "on develop")}
+        for label, (rules, why) in cases.items():
+            repos, access, _ = self.mint_with_mobile(FakeGH(rulesets=ACTIVE_RS, branch_rules=rules))
+            self.assertEqual(repos, ["Orbweaver"], label)
+            self.assertIn(why, access["withheld"]["mobile"], label)
+        repos, _, _ = self.mint_with_mobile(FakeGH(rulesets=ACTIVE_RS, branch_rules=both(DEVELOP_RULES)))
+        self.assertEqual(repos, ["Orbweaver", "Orbweaver-Mobile"], "control: both protected")
+        rules = {"main": UNREADABLE, "develop": DEVELOP_RULES}
+        _, access, _ = self.mint_with_mobile(FakeGH(rulesets=ACTIVE_RS, branch_rules=rules))
+        self.assertIn("rulesets unreadable", access["withheld"]["mobile"], "a failed main read fails closed")
+
+    def test_a_failed_installation_lookup_on_mobile_still_refreshes_desktop(self):
+        pc = FakePC()
+        m = FakeMinter({warden.REPO: DESKTOP_INSTALL, MOBILE_REPO: UNREADABLE})
+        _, paused, logs = tick(gh={"desktop": FakeGH(), "mobile": protected_mobile()}, pc=pc, minter=m,
+                               cfg=dict(TWO, spool=self.spool))
+        self.assertFalse(paused)
+        self.assertEqual(pc.secrets, [("GITHUB_TOKEN", "tok1")])
+        self.assertEqual(m.minted[0][1], ["Orbweaver"])
+        access = read_json(os.path.join(self.spool, "access.json"))
+        self.assertEqual(access["repos"], {"desktop": True, "mobile": False})
+        self.assertEqual(access["withheld"]["mobile"], "installation unreadable (OSError)")
+        self.assertIn("mobile kept off the token: installation unreadable (OSError)", logs)
+
+    def test_the_withheld_line_is_logged_once_per_state_change(self):
+        state = {}
+        _, _, logs = self.mint_with_mobile(FakeGH(), state)
+        self.assertEqual(sum("kept off" in l for l in logs), 1)
+        _, _, logs = self.mint_with_mobile(FakeGH(), state)
+        self.assertEqual(sum("kept off" in l for l in logs), 0, "same reason, no new line")
+        _, _, logs = self.mint_with_mobile(FakeGH(rulesets=UNREADABLE), state)
+        self.assertEqual(sum("kept off" in l for l in logs), 1, "a new reason is a new line")
+        repos, _, logs = self.mint_with_mobile(protected_mobile(), state)
+        self.assertIn("mobile back on the token: its rulesets now protect it", logs)
+        self.assertIn("Orbweaver-Mobile", repos)
+
+    def test_desktop_never_waits_on_a_rulesets_read(self):
+        class NoRulesets(FakeGH):
+            def rulesets(self):
+                raise AssertionError("desktop's rulesets must not be read")
+        pc, m = FakePC(), FakeMinter()
+        tick(gh=NoRulesets(), pc=pc, minter=m)
+        self.assertEqual(m.minted[0][1], ["Orbweaver"])
+
+    def test_a_failed_mint_is_logged_and_the_tick_goes_on(self):
+        pc = FakePC()
+        pc.all = [{"id": "p1", "identifier": "FIX-1", "status": "blocked", "updatedAt": "2026-01-01T00:00:00Z"},
+                  {"id": "c1", "identifier": "FIX-2", "status": "done", "parentId": "p1",
+                   "updatedAt": "2026-01-01T00:00:00Z"}]
+        state = {}
+        w, paused, logs = tick(pc=pc, state=state, minter=FakeMinter({warden.REPO: UNREADABLE}),
+                               cfg={"company_id": "co"}, now=warden.ts("2026-01-02T00:00:00Z"))
+        self.assertFalse(paused, "a failed mint is not a pause")
+        self.assertEqual(pc.secrets, [])
+        self.assertNotIn("last_mint", state, "the next tick tries again")
+        self.assertIn("desktop kept off the token: installation unreadable (OSError)", logs)
+        self.assertTrue(any("token not refreshed: LookupError" in l for l in logs))
+        self.assertTrue(any("UNSTUCK" in l for l in logs), "the sweep still ran after the failed mint")
+        # Control: once the API answers, the next tick mints.
+        tick(pc=pc, state=state, minter=FakeMinter())
+        self.assertEqual(pc.secrets, [("GITHUB_TOKEN", "tok1")])
+
+    def test_no_covered_repository_mints_nothing(self):
+        pc = FakePC()
+        _, _, logs = tick(pc=pc, minter=FakeMinter({}))
+        self.assertEqual(pc.secrets, [])
+        self.assertTrue(any("token not refreshed: LookupError" in l for l in logs))
+
+    def test_access_json_is_not_read_as_a_request(self):
+        warden.write_access(self.spool, {"desktop": True}, False, 0)
+        logs = []
+        self.assertEqual(warden.read_spool(self.spool, logs.append), [])
+        self.assertTrue(os.path.exists(os.path.join(self.spool, "access.json")))
+        self.assertEqual(logs, [])
+
+
+def mobile_merged(n=5, sha="mm1", head="mh1"):
+    return {"number": n, "merge_commit_sha": sha, "merged_at": "2026-11-26T10:00:00Z",
+            "head": {"sha": head}}
+
+
+MOBILE_QA = "QA at mh1: relay, contracts and tools green."
+GREEN3 = {"relay": "success", "contracts": "success", "tools": "success"}
+
+
+class MobileAuditTickTests(unittest.TestCase):
+    def world(self, merged=(), comments=None, checks=None, files=None, desktop=None):
+        self.mob = FakeGH(merged=merged, comments=comments or {}, checks=checks or {}, files=files or {})
+        return {"desktop": desktop or FakeGH(), "mobile": self.mob}
+
+    def test_a_clean_mobile_merge_is_audited_and_retired_after_the_quiet_window(self):
+        gh = self.world([mobile_merged()], {5: [MOBILE_QA]}, {"mh1": GREEN3},
+                        {5: [{"filename": "relay/Tests/HubTests.cs", "status": "modified", "patch": "+x"}]})
+        state = {}
+        _, paused, _ = tick(gh=gh, state=state, cfg=TWO)
+        self.assertFalse(paused)
+        mob = state["repos"]["mobile"]
+        self.assertIn("mm1", mob["audit_pending"], "kept pending for push-triggered runs")
+        self.assertNotIn("mm1", state.get("audit_pending", {}), "desktop's state is apart")
+        _, paused, _ = tick(gh=gh, state=state, cfg=TWO, now=10_000.0 + warden.MERGE_QUIET)
+        self.assertFalse(paused)
+        self.assertIn("mm1", mob["audited"])
+        self.assertEqual(mob["audit_pending"], {})
+
+    def test_no_qa_comment_pauses_naming_the_mobile_pr(self):
+        gh = self.world([mobile_merged()], {5: ["looks fine"]}, {"mh1": GREEN3})
+        _, paused, logs = tick(gh=gh, cfg=TWO)
+        self.assertTrue(paused)
+        self.assertIn("PAUSED: mobile PR 5: bot PR merged with no QA comment naming relay and contracts and tools", logs)
+
+    def test_a_red_head_check_pauses_and_a_missing_path_check_too(self):
+        gh = self.world([mobile_merged()], {5: [MOBILE_QA]}, {"mh1": dict(GREEN3, relay="failure")})
+        _, paused, logs = tick(gh=gh, cfg=TWO)
+        self.assertTrue(paused)
+        self.assertTrue(any("relay failure" in l for l in logs))
+        gh = self.world([mobile_merged()], {5: [MOBILE_QA]}, {"mh1": GREEN3},
+                        {5: [{"filename": "android/app/src/A.kt", "status": "modified", "patch": "+x"}]})
+        _, paused, logs = tick(gh=gh, cfg=TWO)
+        self.assertTrue(paused)
+        self.assertTrue(any("android missing" in l for l in logs))
+
+    def test_a_red_check_on_the_merge_commit_pauses(self):
+        gh = self.world([mobile_merged()], {5: [MOBILE_QA]}, {"mh1": GREEN3})
+        state = {}
+        tick(gh=gh, state=state, cfg=TWO)
+        self.mob.checks["mm1"] = {"relay-image": "failure"}
+        _, paused, logs = tick(gh=gh, state=state, cfg=TWO, now=10_300.0)
+        self.assertTrue(paused)
+        self.assertIn("PAUSED: mobile PR 5: develop CI red on a bot merge: relay-image", logs)
+        self.assertEqual(self.mob.reran, [], "mobile has no push CI to rerun")
+
+    def test_a_mobile_merge_breaks_the_release_streak(self):
+        gh = self.world([mobile_merged()], {5: [MOBILE_QA]}, {"mh1": GREEN3})
+        state = {"consecutive_releases": 1, "paperclip_releases": 1}
+        tick(gh=gh, state=state, cfg=TWO)
+        self.assertEqual((state["consecutive_releases"], state["paperclip_releases"]), (0, 0))
+
+    def test_mobile_unreadable_three_ticks_pauses_on_its_own_counter(self):
+        class Down(FakeGH):
+            def merged_bot_prs(self):
+                raise OSError("down")
+        gh = {"desktop": FakeGH(), "mobile": Down()}
+        state = {}
+        for i in range(2):
+            _, paused, _ = tick(gh=gh, state=state, cfg=TWO)
+            self.assertFalse(paused)
+        _, paused, logs = tick(gh=gh, state=state, cfg=TWO)
+        self.assertTrue(paused)
+        self.assertIn("PAUSED: merge audit unreadable (mobile) 3 ticks in a row", logs)
+        self.assertEqual(state.get("audit_failures"), 0, "desktop's audit kept succeeding")
+
+    def test_old_config_never_touches_a_mobile_seam(self):
+        class Untouchable:
+            def __getattr__(self, name):
+                raise AssertionError("mobile seam used without mobile configured: " + name)
+        _, paused, _ = tick(gh={"desktop": FakeGH(), "mobile": Untouchable()}, cfg={})
+        self.assertFalse(paused)
+
+
+class GuardTickTests(unittest.TestCase):
+    def open_pr(self, n=8, sha="h1"):
+        return {"number": n, "head": {"sha": sha}}
+
+    def test_an_open_pr_touching_release_yml_pauses_once_per_head(self):
+        gh = FakeGH(open_prs=[self.open_pr()], files={8: REAL_FILES[381]})
+        state = {}
+        _, paused, logs = tick(gh=gh, state=state)
+        self.assertTrue(paused)
+        self.assertTrue(any(l.startswith("PAUSED: PR 8: workflow guard: .github/workflows/release.yml") for l in logs))
+        pc = FakePC()
+        _, paused, _ = tick(gh=gh, state=state, pc=pc)
+        self.assertEqual(gh.files_read, [8], "the same head is read once")
+        self.assertFalse(pc.pauses, "and not paused again after a person resumes")
+        gh.open_prs = [self.open_pr(sha="h2")]
+        tick(gh=gh, state=state)
+        self.assertEqual(gh.files_read, [8, 8], "a new head is read again")
+
+    def test_an_open_pr_with_a_benign_workflow_edit_is_left_alone(self):
+        gh = FakeGH(open_prs=[self.open_pr()], files={8: REAL_FILES[397]})
+        _, paused, _ = tick(gh=gh)
+        self.assertFalse(paused)
+        self.assertEqual(gh.files_read, [8])
+
+    def test_a_merged_head_the_guard_never_saw_is_read_at_the_audit(self):
+        pr = dict(merged_pr(), head={"sha": "h9"})
+        gh = FakeGH(merged=[pr], comments={7: ["osx-arm64 win-x64"]}, files={7: REAL_FILES[370]})
+        _, paused, logs = tick(gh=gh)
+        self.assertTrue(paused)
+        self.assertTrue(any("PR 7: workflow guard: .github/workflows/stress.yml: workflow file added" in l for l in logs))
+        # Control: a head already guarded while open is not read again at merge.
+        gh = FakeGH(merged=[pr], comments={7: ["osx-arm64 win-x64"]}, files={7: REAL_FILES[370]})
+        _, paused, _ = tick(gh=gh, state={"guarded": ["h9"]})
+        self.assertEqual(gh.files_read, [])
+        self.assertFalse(paused)
+
+    def test_a_mobile_open_pr_touching_any_workflow_pauses(self):
+        mob = FakeGH(open_prs=[self.open_pr(3, "mh")], files={3: [wf("relay-tests.yml", "+# x")]})
+        _, paused, logs = tick(gh={"desktop": FakeGH(), "mobile": mob}, cfg=TWO)
+        self.assertTrue(paused)
+        self.assertTrue(any("mobile PR 3: workflow guard" in l and "may not edit workflows" in l for l in logs))
+
+    def test_unreadable_files_count_as_an_audit_failure_not_a_pass(self):
+        gh = FakeGH(open_prs=[self.open_pr()], files={8: UNREADABLE})
+        state = {}
+        _, paused, logs = tick(gh=gh, state=state)
+        self.assertFalse(paused)
+        self.assertEqual(state["audit_failures"], 1)
+        self.assertNotIn("h1", state.get("guarded", []), "retried next tick")
+
+
+class RepoRerunTests(unittest.TestCase):
+    def mob_run(self, wf_, conclusion, run_id, sha="m1", status="completed"):
+        return {"id": run_id, "path": ".github/workflows/" + wf_, "head_sha": sha,
+                "status": status, "conclusion": conclusion}
+
+    def test_mobile_rerun_reruns_each_red_workflow_once_per_sha_in_its_own_state(self):
+        mob = FakeGH(prs={5: mobile_pr()}, runs={"m1": [self.mob_run("relay-tests.yml", "failure", 1),
+                                                        self.mob_run("android-tests.yml", "success", 2),
+                                                        self.mob_run("ios-snapshots.yml", "timed_out", 3)]})
+        gh, state = {"desktop": FakeGH(), "mobile": mob}, {}
+        req = {"verb": "rerun_failed", "pr": 5, "repo": "mobile"}
+        _, paused, logs = tick(gh=gh, state=state, cfg=TWO, requests=[req])
+        self.assertFalse(paused)
+        self.assertEqual(mob.reran, [1, 3])
+        self.assertEqual(state["repos"]["mobile"]["reruns"], {"m1": 1})
+        self.assertNotIn("reruns", state, "desktop's reruns are apart")
+        tick(gh=gh, state=state, cfg=TWO, requests=[req])
+        self.assertEqual(mob.reran, [1, 3], "once per sha")
+
+    def test_desktop_pr_number_is_not_rerun_on_mobile(self):
+        mob = FakeGH(prs={5: good_pr(head={"ref": "bugfix/pc-x", "repo": {"full_name": warden.REPO}, "sha": "m1"})},
+                     runs={"m1": [self.mob_run("relay-tests.yml", "failure", 1)]})
+        _, _, logs = tick(gh={"desktop": FakeGH(), "mobile": mob}, cfg=TWO,
+                          requests=[{"verb": "rerun_failed", "pr": 5, "repo": "mobile"}])
+        self.assertEqual(mob.reran, [])
+        self.assertTrue(any("refused rerun for mobile PR 5: PR head is not in this repository" in l for l in logs))
+
+    def test_unknown_or_unconfigured_repo_is_refused(self):
+        req = {"verb": "rerun_failed", "pr": 5, "repo": "mobile"}
+        _, paused, logs = tick(requests=[req])
+        self.assertFalse(paused)
+        self.assertTrue(any("unknown repo 'mobile'" in l for l in logs), "mobile is not configured here")
+
+    def test_no_stress_dispatch_on_mobile(self):
+        mob = FakeGH(prs={5: mobile_pr()})
+        req = {"verb": "dispatch_stress", "pr": 5, "test_class": "A.B", "n": 3, "suite": "unit", "repo": "mobile"}
+        _, _, logs = tick(gh={"desktop": FakeGH(), "mobile": mob}, cfg=TWO, requests=[req])
+        self.assertEqual(mob.dispatched, [])
+        self.assertTrue(any("mobile has no stress workflow" in l for l in logs))
+
+    def test_rerun_targets_waits_for_a_running_run_and_refuses_all_green(self):
+        runs = [self.mob_run("relay-tests.yml", "success", 1), self.mob_run("ios-snapshots.yml", None, 2, status="in_progress")]
+        self.assertEqual(warden.rerun_targets(mobile_pr(), runs, {}, warden.MOBILE), ([], "CI is still running"))
+        runs = [self.mob_run("relay-tests.yml", "success", 1)]
+        self.assertIn("not red", warden.rerun_targets(mobile_pr(), runs, {}, warden.MOBILE)[1])
 
 
 # ---------------------------------------------------------------- pool usage (CB-468)
