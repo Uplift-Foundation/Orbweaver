@@ -126,6 +126,20 @@ Then, none of which a package can carry:
    anything of your own (admin logins, session cookies) out of Paperclip's
    folder, because the agents can read that folder.
 
+   Then build the `ps` stand-in and put it first on the job's `PATH`:
+   `clang -O2 -o ~/.paperclip/tools/bin/ps host/ps-lstart.c`, and prepend
+   `~/.paperclip/tools/bin` to `EnvironmentVariables.PATH` in the launchd
+   plist (a plist change needs `launchctl bootout` then `bootstrap`, not a
+   kickstart). Paperclip decides that an old run has stopped by signalling its
+   recorded pid and, when something answers, comparing that process's start
+   time from `ps -o lstart= -p <pid>`. Under any sandbox macOS refuses to run
+   the setuid `/bin/ps` at all, and this profile's signal rule makes every
+   process outside the sandbox answer, so once the kernel hands an old run's
+   pid to an unrelated process, pausing that agent never finishes. That is
+   how the bug-fix org's lead sat in "pausing" for hours (CB-467). The
+   stand-in answers that one question from `sysctl`, needs no privilege, and
+   hands every other `ps` invocation to `/bin/ps` unchanged.
+
 7. **Let the lead comment, and nobody else.** First add a tool policy of type
    `block` whose selectors name the `addCommentToJiraIssue` catalog entry and
    the three non-lead agents (`agentIds`), at a priority ahead of the others.
