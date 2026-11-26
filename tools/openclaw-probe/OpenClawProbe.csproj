@@ -46,6 +46,8 @@
     <Compile Include="../../ChatZoom.cs" />
     <Compile Include="../../StatusDirectory.cs" />
     <Compile Include="../../OpenClawIdentity.cs" />
+    <!-- OpenClawIdentity writes its files through this (CB-423). -->
+    <Compile Include="../../OwnerOnlyFile.cs" />
     <Compile Include="../../OpenClawSocket.cs" />
     <Compile Include="../../OpenClawGateway.cs" />
     <Compile Include="../../OpenClawJson.cs" />

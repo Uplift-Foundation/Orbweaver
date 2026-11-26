@@ -174,13 +174,7 @@ namespace Orbweaver
         {
             try
             {
-                Directory.CreateDirectory(OrbweaverSettings.Directory);
-                File.WriteAllText(TokensPath, System.Text.Json.JsonSerializer.Serialize(Tokens));
-
-                if (!OperatingSystem.IsWindows())
-                {
-                    File.SetUnixFileMode(TokensPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-                }
+                OwnerOnlyFile.WriteAllText(TokensPath, System.Text.Json.JsonSerializer.Serialize(Tokens));
             }
             catch
             {
@@ -298,8 +292,6 @@ namespace Orbweaver
         {
             try
             {
-                Directory.CreateDirectory(OrbweaverSettings.Directory);
-
                 var json = System.Text.Json.JsonSerializer.Serialize(new
                 {
                     privateKey = Base64Url(identity.PrivateKey),
@@ -307,15 +299,10 @@ namespace Orbweaver
                     deviceId = identity.DeviceId
                 });
 
-                File.WriteAllText(Path_, json);
-
                 // This is a private key. Settings live in the same directory and
                 // are ordinary user data, so the directory's own permissions are
                 // not enough of a statement — say it about this file explicitly.
-                if (!OperatingSystem.IsWindows())
-                {
-                    File.SetUnixFileMode(Path_, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-                }
+                OwnerOnlyFile.WriteAllText(Path_, json);
             }
             catch
             {

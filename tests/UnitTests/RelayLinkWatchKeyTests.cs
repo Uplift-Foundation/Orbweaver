@@ -68,14 +68,15 @@ public partial class RelayLinkTests
     public void An_accepted_key_that_cannot_be_written_is_not_confirmed()
     {
         var (link, identity, phone, notes, _) = Paired();
-        Directory.CreateDirectory(identity.FilePath + ".tmp");       // where Save writes first: now it cannot
+        File.Delete(identity.FilePath);
+        Directory.CreateDirectory(identity.FilePath);                // where Save moves the new file to: now it cannot
         var watch = GenerateKeyPair();
         Assert.Empty(link.OnFrame(phone.Sealed("pair", KeyFrame("add", phone.IdKey, watch.Public, phone.Id, 100))));
         Assert.Contains($"key.add from {phone.Id}: accepted but not persisted; no reply", notes);
         Assert.Null(identity.WatchPublicOf(phone.Id));                // put back as it was
         Assert.Null(identity.PhoneById(phone.Id)!.WatchAt);
 
-        Directory.Delete(identity.FilePath + ".tmp");
+        Directory.Delete(identity.FilePath);
         Assert.Equal("key.ok", Reply(phone, link.OnFrame(phone.Sealed("pair", KeyFrame("add", phone.IdKey, watch.Public, phone.Id, 100)))).GetProperty("t").GetString());
     }
 

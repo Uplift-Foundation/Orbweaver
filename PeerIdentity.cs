@@ -420,15 +420,7 @@ namespace Orbweaver
         {
             try
             {
-                Directory.CreateDirectory(OrbweaverSettings.Directory);
-                File.WriteAllText(Path_, JsonSerializer.Serialize(stored, Json));
-
-                // Owner-only, the same as openclaw-devices.json. A no-op concept
-                // on Windows, where the call is simply not made rather than
-                // branched on behaviour — the file lives in the user's own
-                // AppData and inherits its protection from there.
-                if (!OperatingSystem.IsWindows())
-                    File.SetUnixFileMode(Path_, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                OwnerOnlyFile.WriteAllText(Path_, JsonSerializer.Serialize(stored, Json));
             }
             catch
             {
