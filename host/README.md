@@ -40,14 +40,20 @@ The warden resumes the company itself in one case only (CB-484). The release bra
 brake, not a safety brake, so a pause the warden made whose only reasons are "releases in a
 row" (the Paperclip counter, the spool's, or both) is lifted 60 minutes after it was made:
 `PATCH /api/companies/<id> {"status":"active"}`, both release counters and the set of released
-tickets reset, and `RESUMED: release brake cooled off` in the log. If the brake trips again
-within 6 hours of such a resume, that pause is marked manual and stays. Every other pause
+tickets reset, and `RESUMED: release brake cooled off` in the log. It does this every time the brake trips; the
+org must not freeze on a cost brake. Every other pause
 (merge audit, workflow guard, refusal, cost ceiling, run cap, unreadable signal), a release
 pause that gained any other reason while paused, and any pause the warden did not make itself,
 is lifted by a person or the CB-455 lead. The reasons are kept in `state.json` as
-`warden_pause`; a pause made before this change has none and stays manual. Issues `stop_work`
-set to `blocked` are not set back by the resume; see the unstick sweep below for what does and
-does not restart them. `max_runs_per_day` is the run brake because Paperclip's
+`warden_pause`; a pause made before this change has none and stays manual.
+
+On any resume, the warden's or a person's, the first tick that sees the company active sets
+going what `stop_work` stopped: an issue it blocked that is still `blocked` is set to `todo`
+and gets one board comment, which wakes its assignee; an issue it could not block (the 422
+case) and that is still `in_progress` gets the comment only; anything that has moved on since
+is left alone. The unstick sweep never touches a blocked issue with no children, so before
+this an engineer task blocked by a pause sat forever. A failed restart is logged and retried
+on the next tick (`restart_retry` in `state.json`). `max_runs_per_day` is the run brake because Paperclip's
 `heartbeat.maxDailyRuns` is timer-only and does not bound assignment wakes.
 
 ## Where the warden's signals come from, and how far each can be trusted

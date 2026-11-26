@@ -70,12 +70,13 @@ SUITES = ("unit", "integration", "ui")
 MAX_N = 50
 RELEASES_IN_A_ROW = 2
 # The release brake is a cost brake, not a safety brake (CB-484): a pause whose
-# only reasons are these two lifts itself after BRAKE_COOL_OFF, unless the brake
-# tripped again within BRAKE_REPEAT of the last such resume.
+# only reasons are these two always lifts itself after BRAKE_COOL_OFF. The org
+# must not freeze on it, so there is no limit on how often.
 SPOOL_BRAKE = f"{RELEASES_IN_A_ROW} tickets released in a row"
 PAPERCLIP_BRAKE = f"{RELEASES_IN_A_ROW} releases in a row (Paperclip issue states)"
 BRAKE_COOL_OFF = 60 * 60
-BRAKE_REPEAT = 6 * 60 * 60
+RESTART_COMMENT = ("Warden: the company was paused and is running again; the pause is in "
+                   "pauses.json and does not count against this ticket's limit. Carry on.")
 AUDIT_FAILURES_BEFORE_PAUSE = 3
 DEFAULT_DIR = os.path.expanduser("~/.config/orbweaver-bugfix")
 ACCESS_FILE = "access.json"
@@ -909,9 +910,12 @@ class Warden:
         # Paperclip refused one issue with 422 about 160 times in one 13-hour
         # pause (CB-484). The list is cleared when the company is seen active.
         refused = self.state.setdefault("block_refused", [])
+        blocked = self.state.setdefault("stop_blocked", [])
         for issue_id in self.pc.in_progress_issue_ids():
             try:
                 self.pc.block_issue(issue_id)
+                if issue_id not in blocked:
+                    blocked.append(issue_id)
                 self.log(f"blocked issue {issue_id[:8]}")
             except (urllib.error.URLError, OSError, ValueError) as e:
                 if issue_id not in refused:
@@ -963,22 +967,45 @@ class Warden:
                 if n >= RELEASES_IN_A_ROW:
                     self.pause(PAPERCLIP_BRAKE)
 
-    def record_pause(self, reasons):
-        """Remember why the warden itself paused (CB-484). A pause the warden
-        did not make has no record and is never lifted by it. A release-brake
-        pause within BRAKE_REPEAT of the last cool-off resume is marked manual."""
-        rec = {"at": self.now, "reasons": list(reasons)}
-        last = self.state.get("brake_resumed_at")
-        if is_release_brake(reasons) and last is not None and self.now - last < BRAKE_REPEAT:
-            rec["manual"] = True
-            self.log("release brake tripped again within 6 hours of a cool-off resume; "
-                     "this pause stays until a person lifts it")
-        self.state["warden_pause"] = rec
-
     def brake_cooled_off(self):
+        """The warden's own pause (`warden_pause`, recorded when it paused,
+        with every reason seen while paused) has only release-brake reasons and
+        is an hour old. A pause with no record, a person's or one made before
+        CB-484, never qualifies."""
         rec = self.state.get("warden_pause")
-        return bool(rec and not rec.get("manual") and is_release_brake(rec.get("reasons"))
+        return bool(rec and is_release_brake(rec.get("reasons"))
                     and self.now - rec.get("at", self.now) >= BRAKE_COOL_OFF)
+
+    def restart_stopped(self):
+        """After any resume, set going what stop_work stopped (CB-484). The
+        unstick sweep never touches a blocked issue with no children, so
+        without this an engineer task blocked by a pause sat forever. An issue
+        still `blocked` goes to `todo` with a board comment, which wakes its
+        assignee; `in_progress` with no run would only sit until the sweep's
+        stall timer. One stop_work could not block keeps its status and gets
+        the comment. Anything else has moved on and is left alone. A failure
+        keeps the issue listed for the next tick and never ends this one."""
+        # Retries live apart from stop_work's lists, so an issue whose restart
+        # failed does not silence its 422 line in the next pause.
+        todo = ([[i, False] for i in self.state.pop("stop_blocked", [])]
+                + [[i, True] for i in self.state.pop("block_refused", [])]
+                + self.state.pop("restart_retry", []))
+        retry = []
+        for iid, was_refused in todo:
+            try:
+                status = (self.pc.get_issue(iid) or {}).get("status")
+                if not was_refused and status == "blocked":
+                    self.pc.set_issue_status(iid, "todo")
+                elif not (was_refused and status == "in_progress"):
+                    continue
+                self.pc.comment(iid, RESTART_COMMENT)
+                self.log(f"restarted issue {iid[:8]} after the pause"
+                         + (" (comment only)" if was_refused else ""))
+            except Exception as e:
+                self.log(f"could not restart issue {iid[:8]}: {type(e).__name__} {getattr(e, 'code', '')}".rstrip())
+                retry.append([iid, was_refused])
+        if retry:
+            self.state["restart_retry"] = retry
 
     def resume_brake(self):
         """Lift a release-brake pause after its cool-off; True when lifted."""
@@ -990,9 +1017,6 @@ class Warden:
         self.state["consecutive_releases"] = 0
         self.state["paperclip_releases"] = 0
         self.state["paperclip_released_keys"] = []
-        self.state["brake_resumed_at"] = self.now
-        self.state.pop("warden_pause", None)
-        self.state.pop("block_refused", None)
         self.log("RESUMED: release brake cooled off")
         return True
 
@@ -1143,7 +1167,7 @@ class Warden:
         self.note_pauses(paused or bool(self.pause_reasons))
         if self.pause_reasons and not paused:
             self.pc.pause("; ".join(self.pause_reasons))
-            self.record_pause(self.pause_reasons)
+            self.state["warden_pause"] = {"at": self.now, "reasons": list(self.pause_reasons)}
             paused = True
         elif self.pause_reasons and self.state.get("warden_pause"):
             # A new reason on a pause the warden made: it joins the record, so
@@ -1151,9 +1175,10 @@ class Warden:
             rec = self.state["warden_pause"]
             rec["reasons"] += [r for r in self.pause_reasons if r not in rec["reasons"]]
         elif not paused:
-            # Active again, whoever resumed it: the next pause starts fresh.
+            # Active again, whoever resumed it: the next pause starts fresh,
+            # and the work the pause stopped is set going again.
             self.state.pop("warden_pause", None)
-            self.state.pop("block_refused", None)
+            self.restart_stopped()
         # The reason goes in the log before anything that can fail (CB-467).
         for r in self.pause_reasons:
             self.log("PAUSED: " + r)

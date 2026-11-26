@@ -1313,27 +1313,37 @@ class BrakeCoolOffTests(unittest.TestCase):
         self.assertTrue(tick(pc=pc, state=state, now=10 * warden.BRAKE_COOL_OFF)[1])
         self.assertNotIn("warden_pause", state)
 
-    def test_a_second_trip_within_six_hours_stays_paused(self):
+    def test_the_brake_cools_off_every_time(self):
+        # Lead's ruling: no limit on repeats; a release brake is only ever a
+        # one-hour breather.
         state, pc = self.fresh()
         self.trip(state, pc, 100)
         resumed = 100 + warden.BRAKE_COOL_OFF
         self.assertFalse(tick(pc=pc, state=state, now=resumed)[1])
-        # Past the 90-minute window, so the next two releases count.
         again = resumed + warden.TICKET_WINDOW + 60
         pc.cancelled_issues += [R("c", 10), R("d", 11)]
-        _, paused, logs = tick(pc=pc, state=state, now=again)
+        self.assertTrue(tick(pc=pc, state=state, now=again)[1], "the brake still trips after a resume")
+        _, paused, logs = tick(pc=pc, state=state, now=again + warden.BRAKE_COOL_OFF)
+        self.assertFalse(paused)
+        self.assertIn("RESUMED: release brake cooled off", logs)
+
+    def test_run_cap_seen_while_paused_keeps_it_manual(self):
+        state, pc = self.fresh()
+        self.trip(state, pc, 100)
+        pc.runs = 11
+        tick(pc=pc, state=state, now=400, cfg={"max_runs_per_day": 10})
+        pc.runs = 0
+        self.assertTrue(tick(pc=pc, state=state, now=100 + 2 * warden.BRAKE_COOL_OFF)[1])
+
+    def test_the_live_state_shape_never_auto_resumes(self):
+        # ~/.config/orbweaver-bugfix/state.json on 2026-11-26: an open window,
+        # the old pass list, and no record of why.
+        state = {"pauses": [{"paused_at": 0, "resumed_at": None}], "cancelled_seen": [],
+                 "paperclip_release_passes": [["CB-346", "p1"], ["CB-346", "p2"]], "paperclip_releases": 2}
+        pc = FakePC(paused=True)
+        _, paused, logs = tick(pc=pc, state=state, now=13 * 3600)
         self.assertTrue(paused)
-        self.assertTrue(state["warden_pause"]["manual"])
-        self.assertTrue(any("stays until a person lifts it" in l for l in logs))
-        self.assertTrue(tick(pc=pc, state=state, now=again + 10 * warden.BRAKE_COOL_OFF)[1])
-        # Control: a trip more than six hours after the resume cools off again.
-        pc.paused = False
-        tick(pc=pc, state=state, now=again + 11 * warden.BRAKE_COOL_OFF)
-        later = resumed + warden.BRAKE_REPEAT + warden.TICKET_WINDOW + 11 * warden.BRAKE_COOL_OFF
-        pc.cancelled_issues += [R("e", 20), R("f", 21)]
-        self.assertTrue(tick(pc=pc, state=state, now=later)[1])
-        self.assertNotIn("manual", state["warden_pause"])
-        self.assertFalse(tick(pc=pc, state=state, now=later + warden.BRAKE_COOL_OFF)[1])
+        self.assertFalse(any("RESUMED" in l for l in logs))
 
     def test_a_person_resuming_first_clears_the_record(self):
         state, pc = self.fresh()
@@ -1350,6 +1360,63 @@ class BrakeCoolOffTests(unittest.TestCase):
         self.assertTrue(paused)
         self.assertTrue(any("could not resume after the release brake: HTTPError 500" in l for l in logs))
         self.assertIn("warden_pause", state, "kept, so the next tick tries again")
+
+    def stopped(self, pc, statuses):
+        pc.full = {i: {"id": i, "status": st} for i, st in statuses.items()}
+
+    def test_any_resume_restarts_what_stop_work_stopped(self):
+        class Refusing(FakePC):
+            def block_issue(self, i):
+                if i == "iss-bad00000":
+                    raise urllib.error.HTTPError("u", 422, "Unprocessable Entity", {}, None)
+                super().block_issue(i)
+
+        state, pc = {}, Refusing(issues=["iss-aaaaaaaa", "iss-bbbbbbbb", "iss-bad00000"])
+        tick(pc=pc, state=state, now=0, requests=[{"verb": "push_refused"}])
+        self.assertEqual(state["stop_blocked"], ["iss-aaaaaaaa", "iss-bbbbbbbb"])
+        tick(pc=pc, state=state, now=300)
+        self.assertEqual(state["stop_blocked"], ["iss-aaaaaaaa", "iss-bbbbbbbb"], "listed once")
+        self.assertEqual(pc.statuses, [])
+        # A person resumes (push_refused is manual). One task was finished by hand meanwhile.
+        pc.paused, pc.issues = False, []
+        self.stopped(pc, {"iss-aaaaaaaa": "blocked", "iss-bbbbbbbb": "done", "iss-bad00000": "in_progress"})
+        _, _, logs = tick(pc=pc, state=state, now=600)
+        self.assertEqual(pc.statuses, [("iss-aaaaaaaa", "todo")])
+        self.assertEqual(pc.comments, [("iss-aaaaaaaa", warden.RESTART_COMMENT),
+                                       ("iss-bad00000", warden.RESTART_COMMENT)])
+        self.assertTrue(any("restarted issue iss-bad0" in l and "comment only" in l for l in logs))
+        self.assertNotIn("stop_blocked", state)
+        tick(pc=pc, state=state, now=900)
+        self.assertEqual(len(pc.comments), 2, "restarted once, not every tick")
+
+    def test_auto_resume_restarts_on_the_same_tick(self):
+        state, pc = self.fresh()
+        pc.issues = ["iss-cccccccc"]
+        self.trip(state, pc, 100)
+        pc.issues = []
+        self.stopped(pc, {"iss-cccccccc": "blocked"})
+        _, paused, logs = tick(pc=pc, state=state, now=100 + warden.BRAKE_COOL_OFF)
+        self.assertFalse(paused)
+        self.assertEqual(pc.statuses, [("iss-cccccccc", "todo")])
+        self.assertLess(logs.index("RESUMED: release brake cooled off"),
+                        next(i for i, l in enumerate(logs) if "restarted issue iss-cccc" in l))
+
+    def test_a_failed_restart_is_retried_and_does_not_end_the_tick(self):
+        state, pc = {}, FakePC(issues=["iss-dddddddd", "iss-eeeeeeee"])
+        tick(pc=pc, state=state, now=0, requests=[{"verb": "push_refused"}])
+        pc.paused, pc.issues = False, []
+        # dddd cannot be read (get_issue raises), eeee restarts.
+        pc.full = {"iss-eeeeeeee": {"status": "blocked"}}
+        _, paused, logs = tick(pc=pc, state=state, now=300)
+        self.assertFalse(paused)
+        self.assertEqual(pc.statuses, [("iss-eeeeeeee", "todo")])
+        self.assertTrue(any("could not restart issue iss-dddd: OSError" in l for l in logs))
+        self.assertEqual(state["restart_retry"], [["iss-dddddddd", False]])
+        self.assertTrue(pc.secrets, "the tick went on to mint")
+        pc.full["iss-dddddddd"] = {"status": "blocked"}
+        tick(pc=pc, state=state, now=600)
+        self.assertEqual(pc.statuses[-1], ("iss-dddddddd", "todo"))
+        self.assertNotIn("restart_retry", state)
 
     def test_paperclip_http_resume_patches_active(self):
         calls = []
