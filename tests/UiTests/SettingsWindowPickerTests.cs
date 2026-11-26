@@ -114,7 +114,7 @@ public class SettingsWindowPickerTests
         OrbweaverSettings.ArrangeShape = "heart";
 
         var combo = (ComboBox)window.ShapePicker();
-        combo.SelectedIndex = 3;
+        combo.SelectedIndex = 4;
 
         Assert.Equal("star", OrbweaverSettings.ArrangeShape);
     }
@@ -127,7 +127,66 @@ public class SettingsWindowPickerTests
 
         var combo = (ComboBox)window.ShapePicker();
 
-        Assert.Equal(4, combo.SelectedIndex);
+        Assert.Equal(5, combo.SelectedIndex);
+    }
+
+    [AvaloniaFact]
+    public void TheWebIsTheFirstShapeOfferedAndIsSelectable()
+    {
+        OrbweaverSettings.ArrangeShape = "heart";
+        var window = NewWindow();
+
+        var combo = (ComboBox)window.ShapePicker();
+        Assert.Equal("Web", ((System.Collections.IList)combo.ItemsSource!)[0]);
+
+        combo.SelectedIndex = 0;
+
+        Assert.Equal("web", OrbweaverSettings.ArrangeShape);
+    }
+
+    // --- the thread style ---
+
+    [AvaloniaFact]
+    public void TheThreadPickerOffersSilkThenArrowsAndWritesTheChoice()
+    {
+        OrbweaverSettings.ThreadStyle = OrbweaverSettings.ThreadStyleSilk;
+        var window = NewWindow();
+
+        var combo = (ComboBox)window.ThreadStylePicker();
+        Assert.Equal(new[] { "Silk", "Arrows" }, ((System.Collections.IList)combo.ItemsSource!).Cast<string>());
+        Assert.Equal(0, combo.SelectedIndex);
+
+        combo.SelectedIndex = 1;
+        Assert.Equal(OrbweaverSettings.ThreadStyleArrows, OrbweaverSettings.ThreadStyle);
+
+        combo.SelectedIndex = 0;
+        Assert.Equal(OrbweaverSettings.ThreadStyleSilk, OrbweaverSettings.ThreadStyle);
+    }
+
+    [AvaloniaFact]
+    public void TheThreadPickerOpensOnTheSavedStyle()
+    {
+        OrbweaverSettings.ThreadStyle = OrbweaverSettings.ThreadStyleArrows;
+        var window = NewWindow();
+
+        var combo = (ComboBox)window.ThreadStylePicker();
+
+        Assert.Equal(1, combo.SelectedIndex);
+
+        OrbweaverSettings.ThreadStyle = OrbweaverSettings.ThreadStyleSilk;
+    }
+
+    [AvaloniaFact]
+    public void TheThreadStyleRowSitsBesideTheShapeInAutoOrganize()
+    {
+        var window = NewWindow();
+
+        var rows = window.GetType()
+            .GetMethod("AutoOrganizeRows", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(window, null) as Control[];
+
+        Assert.NotNull(rows);
+        Assert.Equal(3, rows!.Length);
     }
 
     // Every shape the picker offers is one OrbArrangement actually knows. A

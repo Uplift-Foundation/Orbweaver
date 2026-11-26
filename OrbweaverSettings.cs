@@ -247,7 +247,25 @@ namespace Orbweaver
         public const int DefaultOrbLifetimeMinutes = 5;
         public const int OrbLifetimeForever = 0;
 
-        public const string DefaultArrangeShape = "heart";
+        // The web: the team shape. Roots gather on a ring, and every team is drawn
+        // as a spiderweb around its lead — members on spokes and rings, joined by
+        // silk. It is the default because it is what a team looks like when the app
+        // is leaning into being Orbweaver; a saved choice of any other shape is
+        // untouched by this, and behaves exactly as it always did.
+        public const string DefaultArrangeShape = "web";
+
+        // How a team member is tied to its lead. Silk is the default; arrows are
+        // what the app drew before there was a choice, and still are on request.
+        public const string ThreadStyleSilk = "silk";
+        public const string ThreadStyleArrows = "arrows";
+        public const string DefaultThreadStyle = ThreadStyleSilk;
+
+        // Anything that is not "arrows" is silk, so a hand-edited or newer value
+        // lands on the default and not on a style nothing knows how to draw.
+        internal static string NormalizeThreadStyle(string? value) =>
+            string.Equals(value, ThreadStyleArrows, StringComparison.OrdinalIgnoreCase)
+                ? ThreadStyleArrows
+                : ThreadStyleSilk;
         public const double DefaultArrangeSpacing = 0.85;
 
         // The shapes the timer-driven groups arrange into when the user gives
@@ -960,6 +978,10 @@ namespace Orbweaver
             // roots and this off answers the top level with an empty listing. Saved as
             // "phoneBrowseHome".
             public bool PhoneBrowseHome { get; set; }
+
+            // How team members are tied to their leads: "silk" or "arrows". Saved as
+            // "threadStyle".
+            public string ThreadStyle { get; set; } = DefaultThreadStyle;
 
             // Auto-organize: which shape and how much space between orbs.
             public string ArrangeShape
@@ -2088,6 +2110,12 @@ namespace Orbweaver
             set { Load(); lock (Gate) _model.ArrangeShape = value; Save(); }
         }
 
+        public static string ThreadStyle
+        {
+            get { Load(); lock (Gate) return NormalizeThreadStyle(_model.ThreadStyle); }
+            set { Load(); lock (Gate) _model.ThreadStyle = NormalizeThreadStyle(value); Save(); }
+        }
+
         public static double ArrangeSpacing
         {
             get { Load(); lock (Gate) return _model.ArrangeSpacing; }
@@ -2911,6 +2939,7 @@ namespace Orbweaver
                         TwoLetterGlyphs = root["twoLetterGlyphs"]?.GetValue<bool>() ?? false,
                         AccountUsageEnabled = root["accountUsageEnabled"]?.GetValue<bool>() ?? false,
                         ArrangeShape = root["arrangeShape"]?.GetValue<string>() ?? DefaultArrangeShape,
+                        ThreadStyle = NormalizeThreadStyle(root["threadStyle"]?.GetValue<string>()),
                         ArrangeSpacing = root["arrangeSpacing"]?.GetValue<double>() ?? DefaultArrangeSpacing,
 
                         // Clamped on the way in as well as on the way out: this
@@ -3709,6 +3738,7 @@ namespace Orbweaver
                         ["twoLetterGlyphs"] = _model.TwoLetterGlyphs,
                         ["accountUsageEnabled"] = _model.AccountUsageEnabled,
                         ["arrangeShape"] = _model.ArrangeShape,
+                        ["threadStyle"] = NormalizeThreadStyle(_model.ThreadStyle),
                         ["arrangeSpacing"] = _model.ArrangeSpacing,
                         ["chatTextScale"] = _model.ChatTextScale,
                         ["relayedMessages"] = RelayedMessageWords.Name(_model.RelayedMessages),

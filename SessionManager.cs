@@ -4308,8 +4308,27 @@ namespace Orbweaver
                 pairs.Add((_windows[id], _windows[leadId]));
             }
 
-            TeamLinks.Update(pairs);
+            // Which leads sit in a group whose shape is the web: only those get the
+            // web drawn round them. A lead's group is its team's root's, the same
+            // answer the arrangement uses to decide how to place its members.
+            var shapeOf = OrbweaverSettings.OrbGroupList()
+                .GroupBy(g => g.Id, StringComparer.Ordinal)
+                .ToDictionary(g => g.Key, g => g.First().Shape, StringComparer.Ordinal);
+            var webLeads = new HashSet<OrbWindow>();
+            foreach (var lead in pairs.Select(p => p.Lead).Distinct())
+            {
+                if (shapeOf.TryGetValue(GroupIdOf(tree, lead.SessionId), out var shape)
+                    && OrbArrangement.IsWeb(shape))
+                {
+                    webLeads.Add(lead);
+                }
+            }
+
+            TeamLinks.Update(pairs, webLeads);
         }
+
+        // The thread style changed in settings: redraw every team's links.
+        public void RefreshThreads() => UpdateTeamLinks();
 
         public void SetOrbsVisible(bool visible)
         {
@@ -4511,6 +4530,90 @@ namespace Orbweaver
             });
         }
 
+        // The stack: one orb per slot down the right edge, except that a team is
+        // drawn as a spiderweb. Its lead takes the slot and its members hang off
+        // the lead on spokes and rings, facing into the screen, so a team is one
+        // object on the board and not a column of unrelated orbs with arrows
+        // running up it.
+        //
+        // The lead's slot is pushed down far enough that the web fits above it,
+        // and the next slot starts below whatever the web actually reached, so
+        // teams stack without drawing over each other. A member takes no slot of
+        // its own. One the user has pinned or is dragging keeps its place, and
+        // anything hanging off it is still drawn around it.
+        private static void StackLoose(
+            List<OrbWindow> loose, TeamTree tree, PixelRect work, double scale, int spacing, int margin)
+        {
+            var onScreen = new HashSet<string>(loose.Select(w => w.SessionId));
+            var membersOf = new Dictionary<string, List<OrbWindow>>();
+            var isMember = new HashSet<string>();
+
+            foreach (var window in loose)
+            {
+                if (tree.LeadOf(window.SessionId) is not { } lead
+                    || lead == window.SessionId || !onScreen.Contains(lead)) continue;
+
+                if (!membersOf.TryGetValue(lead, out var team)) membersOf[lead] = team = new List<OrbWindow>();
+                team.Add(window);
+                isMember.Add(window.SessionId);
+            }
+
+            // Hangs `lead`'s members off wherever it now is, then theirs off
+            // them, and reports the lowest edge anything reached.
+            int Web(OrbWindow lead)
+            {
+                var bottom = lead.Position.Y + OrbPixels(lead, scale);
+                if (!membersOf.TryGetValue(lead.SessionId, out var team)) return bottom;
+
+                var free = team.Where(m => !m.IsPinned && !m.HeldByDrag).ToList();
+
+                if (free.Count > 0)
+                {
+                    var size = OrbPixels(lead, scale);
+                    var circle = OrbArrangement.CircleDip * scale * lead.OrbSize;
+
+                    // Turned away from a point far to the right, so the web
+                    // faces left — into the screen, from a column on its edge.
+                    var at = OrbArrangement.WebAround(
+                        lead.Position,
+                        (lead.Position.X + size / 2.0 + 100000, lead.Position.Y + size / 2.0),
+                        free.Count, circle, work, size);
+
+                    for (var i = 0; i < free.Count; i++) free[i].Position = at[i];
+                }
+
+                foreach (var member in team) bottom = Math.Max(bottom, Web(member));
+                return bottom;
+            }
+
+            var y = work.Y + margin;
+
+            foreach (var window in loose)
+            {
+                if (isMember.Contains(window.SessionId)) continue;
+
+                var size = OrbPixels(window, scale);
+
+                if (window.IsPinned || window.HeldByDrag)
+                {
+                    Web(window);
+                    continue;
+                }
+
+                // Room for the web above the lead, before the lead is placed.
+                var direct = membersOf.TryGetValue(window.SessionId, out var team)
+                    ? team.Count(m => !m.IsPinned && !m.HeldByDrag)
+                    : 0;
+                var circle = OrbArrangement.CircleDip * scale * window.OrbSize;
+                var reach = OrbArrangement.WebReach(
+                    direct, OrbArrangement.ArrowRadius(circle, scale), circle * OrbArrangement.MemberScale);
+                var top = y + Math.Max(0, (int)Math.Ceiling(reach - size / 2.0));
+
+                window.Position = new PixelPoint(work.Right - size - margin, top);
+                y = Math.Max(top + size, Web(window)) + spacing;
+            }
+        }
+
         private void ReflowPositions()
         {
             if (_order.Count == 0 || !OrbsVisible) return;
@@ -4558,14 +4661,24 @@ namespace Orbweaver
             // shared 56, so a 2x orb pushes the next one down by what it
             // actually occupies. Right edges line up, the column keeps the
             // same margin from the screen edge at every size.
-            int y = work.Y + margin;
-            foreach (var window in loose)
+            // Teams hang off their lead as a web only on the web shape. On any
+            // other shape the stack is what it always was: one slot per orb,
+            // members included, with the arrows running up the column.
+            if (OrbArrangement.IsWeb(OrbweaverSettings.ArrangeShape))
             {
-                if (window.IsPinned || window.HeldByDrag) continue;
+                StackLoose(loose, tree, work, scale, spacing, margin);
+            }
+            else
+            {
+                int y = work.Y + margin;
+                foreach (var window in loose)
+                {
+                    if (window.IsPinned || window.HeldByDrag) continue;
 
-                int size = OrbPixels(window, scale);
-                window.Position = new PixelPoint(work.Right - size - margin, y);
-                y += size + spacing;
+                    int size = OrbPixels(window, scale);
+                    window.Position = new PixelPoint(work.Right - size - margin, y);
+                    y += size + spacing;
+                }
             }
 
             // F1/F2: the user groups, laid out where the loose orbs are not —
@@ -6028,6 +6141,7 @@ namespace Orbweaver
             if (!_isArranged)
             {
                 ReflowPositions();
+                UpdateTeamLinks();
                 return;
             }
 
@@ -6045,6 +6159,10 @@ namespace Orbweaver
                 orb.Position = target;
 
             RefreshOverlays();
+
+            // A shape change can switch a team's web on or off, which is not
+            // something a position update knows.
+            UpdateTeamLinks();
         }
 
         // --- CB-268 S7: teams and groups -----------------------------------------

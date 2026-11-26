@@ -84,7 +84,7 @@ namespace Orbweaver.Tests
         }
 
         internal static readonly string[] Shapes =
-            { "heart", "circle", "diamond", "star", "grid", "line", "vline" };
+            { "heart", "circle", "diamond", "star", "grid", "line", "vline", "web" };
 
         internal static readonly double[] Spacings = { 0.3, 0.85, 2.0 };
 

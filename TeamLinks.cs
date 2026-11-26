@@ -55,8 +55,16 @@ namespace Orbweaver
         // orb is topmost).
         private const double ArrowOpacity = 0.55;
 
+        // The silk: spokes a little stronger than the threads between them, which
+        // is how a real one catches the light.
+        private const double SpokeOpacity = 0.5;
+        private const double RingOpacity = 0.35;
+
         private static readonly List<(OrbWindow Member, OrbWindow Lead)> Pairs = new();
         private static readonly List<LinkWindow> Windows = new();
+        private static readonly HashSet<OrbWindow> WebLeads = new();
+        private static readonly List<WebWindow> WebWindows = new();
+        private static readonly Stack<WebWindow> WebParked = new();
 
         // Parked and reused, never closed — the same rule as
         // ClaudeDesktopOverlay, and for the same reason: tearing an Avalonia
@@ -74,10 +82,17 @@ namespace Orbweaver
         // Excluded from coverage: creates and shows real transparent arrow windows
         // over live orb windows.
         [ExcludeFromCodeCoverage]
-        public static void Update(IEnumerable<(OrbWindow Member, OrbWindow Lead)> pairs)
+        public static void Update(
+            IEnumerable<(OrbWindow Member, OrbWindow Lead)> pairs, IEnumerable<OrbWindow>? webLeads = null)
         {
             Pairs.Clear();
             Pairs.AddRange(pairs);
+
+            // The leads whose team is on the web shape. Only those get the web
+            // drawn; on any other shape a link is a link, as it always was.
+            WebLeads.Clear();
+            if (webLeads is not null) WebLeads.UnionWith(webLeads);
+
             Refresh();
         }
 
@@ -96,24 +111,75 @@ namespace Orbweaver
                 return;
             }
 
-            while (Windows.Count < Pairs.Count)
+            // What the links look like is the thread style's to say: silk, or the
+            // arrows the app has always drawn. Silk on a web-shaped team is the
+            // whole web — spokes and the threads round them — and a lead needs
+            // enough members for that to be a web at all; anywhere else silk is a
+            // thread per link and arrows are arrows.
+            var silk = OrbweaverSettings.ThreadStyle == OrbweaverSettings.ThreadStyleSilk;
+
+            // Every member's state, so a tug starts when its session does something.
+            // Only silk tugs; arrows never move, so with them nothing is tracked and
+            // no frames are asked for. Members that have left are forgotten first, so
+            // a stale one cannot keep the timer going.
+            if (silk)
+            {
+                ThreadTug.Retain(Pairs.Select(p => (object)p.Member));
+                foreach (var (member, _) in Pairs) ThreadTug.Observe(member, member.State);
+            }
+            else
+            {
+                ThreadTug.Reset();
+            }
+
+            var webs = silk
+                ? Pairs
+                    .GroupBy(p => p.Lead)
+                    .Where(g => WebLeads.Contains(g.Key)
+                        && g.Count(p => p.Member.IsVisible) >= OrbArrangement.WebMinimum)
+                    .ToList()
+                : new List<IGrouping<OrbWindow, (OrbWindow Member, OrbWindow Lead)>>();
+            var webbed = new HashSet<OrbWindow>(webs.SelectMany(g => g.Select(p => p.Member)));
+            var arrows = Pairs.Where(p => !webbed.Contains(p.Member)).ToList();
+
+            while (Windows.Count < arrows.Count)
             {
                 Windows.Add(Parked.Count > 0 ? Parked.Pop() : new LinkWindow());
             }
 
-            for (var i = 0; i < Pairs.Count; i++)
+            for (var i = 0; i < arrows.Count; i++)
             {
-                var (member, lead) = Pairs[i];
-                Windows[i].Apply(member, lead);
+                var (member, lead) = arrows[i];
+                Windows[i].Apply(member, lead, silk);
             }
 
             // Spare windows are parked rather than dropped, so a member that
             // comes and goes reuses the same window each time.
-            for (var i = Windows.Count - 1; i >= Pairs.Count; i--)
+            for (var i = Windows.Count - 1; i >= arrows.Count; i--)
             {
                 Park(Windows[i]);
                 Windows.RemoveAt(i);
             }
+
+            while (WebWindows.Count < webs.Count)
+            {
+                WebWindows.Add(WebParked.Count > 0 ? WebParked.Pop() : new WebWindow());
+            }
+
+            for (var i = 0; i < webs.Count; i++)
+            {
+                WebWindows[i].Apply(webs[i].Key, webs[i].Select(p => p.Member).ToList());
+            }
+
+            for (var i = WebWindows.Count - 1; i >= webs.Count; i--)
+            {
+                WebWindows[i].Park();
+                if (WebParked.Count < MaxParked) WebParked.Push(WebWindows[i]);
+                WebWindows.RemoveAt(i);
+            }
+
+            // Frames keep coming while a thread is moving, and stop when none is.
+            ThreadTug.Drive(Refresh);
         }
 
         // Orbs hidden means arrows hidden: an arrow between two invisible orbs
@@ -134,6 +200,7 @@ namespace Orbweaver
         private static void HideAll()
         {
             foreach (var window in Windows) window.Park();
+            foreach (var window in WebWindows) window.Park();
         }
 
         // Excluded from coverage: hides a real arrow window and returns it to the
@@ -161,7 +228,9 @@ namespace Orbweaver
         private sealed class LinkWindow : Window
         {
             private readonly ArrowPath _arrow;
+            private readonly ArrowPath _thread;
             private readonly SolidColorBrush _brush = new(Colors.White, ArrowOpacity);
+            private readonly SolidColorBrush _threadBrush = new(Colors.White, ArrowOpacity);
             private bool _shown;
 
             public LinkWindow()
@@ -181,7 +250,22 @@ namespace Orbweaver
                     Stretch = Stretch.None,      // geometry is already in window coordinates
                     IsHitTestVisible = false
                 };
-                Content = _arrow;
+
+                // The silk style's link: a stroke and not a filled outline, so it
+                // is its own shape. Only one of the two has geometry at a time.
+                _thread = new ArrowPath
+                {
+                    Stroke = _threadBrush,
+                    StrokeThickness = 1.2,
+                    StrokeLineCap = PenLineCap.Round,
+                    Stretch = Stretch.None,
+                    IsHitTestVisible = false
+                };
+
+                var layers = new Grid();
+                layers.Children.Add(_arrow);
+                layers.Children.Add(_thread);
+                Content = layers;
 
                 // Follows its orbs across Spaces, since they do.
                 Opened += (_, _) =>
@@ -198,7 +282,7 @@ namespace Orbweaver
                 _shown = false;
             }
 
-            public void Apply(OrbWindow member, OrbWindow lead)
+            public void Apply(OrbWindow member, OrbWindow lead, bool silk = false)
             {
                 // Nothing to join yet, or nothing to see: an orb with no
                 // platform window can't be measured, and a hidden one has no
@@ -244,7 +328,9 @@ namespace Orbweaver
                 // all, so it lives in TeamLinkGeometry next to the clearance rule
                 // it has to agree with — see the note there about the two
                 // drifting apart and every arrow silently vanishing.
-                if (TeamLinkGeometry.Place(from, to, member.OrbRadius, lead.OrbRadius, scale)
+                if (TeamLinkGeometry.Place(
+                        from, to, member.OrbRadius, lead.OrbRadius, scale,
+                        silk ? ThreadRoom : 0)
                     is not { } placement)
                 {
                     Park();
@@ -255,8 +341,23 @@ namespace Orbweaver
                 Width = placement.Width;
                 Height = placement.Height;
 
-                _arrow.Data = ArrowGeometry(
-                    placement.Start, placement.End, placement.Ux, placement.Uy);
+                if (silk)
+                {
+                    // A fine thread that sags a little between its ends and
+                    // shivers when its member is working. In the member's colour,
+                    // since without arrowheads that is what says whose it is.
+                    var (offset, glow) = ThreadTug.Now(member);
+                    _arrow.Data = null;
+                    _thread.Data = ThreadGeometry(placement.Start, placement.End, offset);
+                    _threadBrush.Color = member.LinkColor;
+                    _threadBrush.Opacity = Math.Min(1, ArrowOpacity + glow * 0.4);
+                }
+                else
+                {
+                    _thread.Data = null;
+                    _arrow.Data = ArrowGeometry(
+                        placement.Start, placement.End, placement.Ux, placement.Uy);
+                }
 
                 // The member's colour, not the lead's: several members pointing
                 // at one lead stay distinguishable, and an arrow is the member's
@@ -285,6 +386,36 @@ namespace Orbweaver
                 return new Point(centre.X, centre.Y);
             }
 
+            // Room a silk link needs beyond a straight arrow's: its sag, plus the
+            // widest a tug swings it.
+            private const double ThreadRoom = 10;
+
+            // A single quadratic curve from the member to the lead, bowed a little
+            // to one side the way silk hangs, plus whatever a tug has added.
+            private static StreamGeometry ThreadGeometry(Point start, Point end, double tug)
+            {
+                var dx = end.X - start.X;
+                var dy = end.Y - start.Y;
+                var length = Math.Sqrt(dx * dx + dy * dy);
+                var nx = length > 0 ? -dy / length : 0;
+                var ny = length > 0 ? dx / length : 0;
+
+                // The control point is twice as far out as the curve's middle.
+                var bow = (length * 0.03 + tug) * 2;
+                var control = new Point(
+                    (start.X + end.X) / 2 + nx * bow, (start.Y + end.Y) / 2 + ny * bow);
+
+                var geometry = new StreamGeometry();
+                using (var context = geometry.Open())
+                {
+                    context.BeginFigure(start, false);
+                    context.QuadraticBezierTo(control, end);
+                    context.EndFigure(false);
+                }
+
+                return geometry;
+            }
+
             // Streams TeamLinkGeometry.ArrowOutline into the one Avalonia type
             // that has to be built here. The shape itself is decided there, so
             // that it can be asserted on without a window — this method is only
@@ -306,49 +437,231 @@ namespace Orbweaver
 
             // An arrow that ate clicks would be worse than no arrow: it lies
             // across the gap between two orbs, which is exactly where you drag
-            // one to. IsHitTestVisible only settles it inside Avalonia — the
-            // window itself still takes the click — so this has to be told to
-            // the window server on both platforms.
-            private void MakeClickThrough()
-            {
-                var handle = TryGetPlatformHandle();
-                if (handle is null) return;
+            // one to. See OverlayClickThrough for how the window server is told.
+            private void MakeClickThrough() => OverlayClickThrough.Apply(this);
+        }
 
-                if (OperatingSystem.IsMacOS())
+        // A team's silk: its spokes and the threads round them, in one transparent
+        // click-through window centred on the lead. Same rules as LinkWindow —
+        // parked and reused, never closed — and excluded from coverage for the
+        // same reason; the shape is TeamWebGeometry.Build, which is tested.
+        [ExcludeFromCodeCoverage]
+        private sealed class WebWindow : Window
+        {
+            private readonly ArrowPath _spokes;
+            private readonly Grid _layers = new();
+            private readonly List<ArrowPath> _pulses = new();
+            private readonly ArrowPath _rings;
+            private bool _shown;
+
+            // Room past the outermost point for the stroke and the sag.
+            private const double Pad = 6;
+
+            public WebWindow()
+            {
+                WindowDecorations = WindowDecorations.None;
+                Background = Brushes.Transparent;
+                TransparencyLevelHint = new[] { WindowTransparencyLevel.Transparent };
+                Topmost = true;
+                ShowInTaskbar = false;
+                ShowActivated = false;
+                CanResize = false;
+                SizeToContent = SizeToContent.Manual;
+
+                _spokes = new ArrowPath
                 {
-                    if (handle is IMacOSTopLevelPlatformHandle mac && mac.NSWindow != IntPtr.Zero)
-                    {
-                        objc_msgSend_bool(mac.NSWindow,
-                            sel_registerName("setIgnoresMouseEvents:"), true);
-                    }
+                    Stroke = new SolidColorBrush(Colors.White, SpokeOpacity),
+                    StrokeThickness = 1.1,
+                    StrokeLineCap = PenLineCap.Round,
+                    Stretch = Stretch.None,
+                    IsHitTestVisible = false
+                };
+                _rings = new ArrowPath
+                {
+                    Stroke = new SolidColorBrush(Colors.White, RingOpacity),
+                    StrokeThickness = 0.8,
+                    StrokeLineCap = PenLineCap.Round,
+                    Stretch = Stretch.None,
+                    IsHitTestVisible = false
+                };
+
+                // Spokes being tugged are drawn over the calm ones, each in its own
+                // shape because each pulses in its own member's colour and a path
+                // has one brush. They are made as they are needed and reused.
+                _layers.Children.Add(_rings);
+                _layers.Children.Add(_spokes);
+                Content = _layers;
+
+                Opened += (_, _) =>
+                {
+                    this.ShowOnAllSpaces();
+                    OverlayClickThrough.Apply(this);
+                };
+            }
+
+            public void Park()
+            {
+                if (!_shown) return;
+                Hide();
+                _shown = false;
+            }
+
+            public void Apply(OrbWindow lead, IReadOnlyList<OrbWindow> members)
+            {
+                if (!lead.IsVisible)
+                {
+                    Park();
                     return;
                 }
 
-                if (OperatingSystem.IsWindows() && handle.Handle != IntPtr.Zero)
+                double scale;
+                Point hub;
+                var offsets = new List<Point>();
+                var visible = new List<OrbWindow>();
+
+                try
                 {
-                    var style = GetWindowLongPtrW(handle.Handle, GWL_EXSTYLE);
-                    SetWindowLongPtrW(handle.Handle, GWL_EXSTYLE,
-                        style | WS_EX_TRANSPARENT | WS_EX_LAYERED);
+                    var origin = lead.PointToScreen(new Point(0, 0));
+                    scale = (lead.PointToScreen(new Point(64, 0)).X - origin.X) / 64.0;
+                    if (scale <= 0) scale = 1;
+
+                    var c = lead.PointToScreen(new Point(lead.CentreDip, lead.CentreDip));
+                    hub = new Point(c.X, c.Y);
+
+                    foreach (var member in members.Where(m => m.IsVisible))
+                    {
+                        var m = member.PointToScreen(new Point(member.CentreDip, member.CentreDip));
+                        offsets.Add(new Point((m.X - hub.X) / scale, (m.Y - hub.Y) / scale));
+                        visible.Add(member);
+                    }
                 }
+                catch
+                {
+                    // An orb torn down mid-scan. The next refresh has it.
+                    Park();
+                    return;
+                }
+
+                if (TeamWebGeometry.Build(offsets, lead.OrbRadius) is not { } frame)
+                {
+                    Park();
+                    return;
+                }
+
+                var half = frame.Reach + Pad;
+                Position = new PixelPoint(
+                    (int)Math.Floor(hub.X - half * scale), (int)Math.Floor(hub.Y - half * scale));
+                Width = half * 2;
+                Height = half * 2;
+
+                Point At(Point p) => new(p.X + half, p.Y + half);
+
+                var calm = new StreamGeometry();
+                var pulses = new List<(StreamGeometry Shape, Color Colour, double Glow)>();
+
+                using (var calmCtx = calm.Open())
+                {
+                    for (var i = 0; i < frame.Spokes.Count; i++)
+                    {
+                        var (from, to) = frame.Spokes[i];
+
+                        // The spoke's tug is its loudest member's: several members
+                        // out along one thread shake the one thread, and it pulses
+                        // in that member's colour.
+                        var offset = 0.0;
+                        var glow = 0.0;
+                        OrbWindow? loudest = null;
+                        foreach (var index in frame.SpokeMembers[i])
+                        {
+                            var (o, g) = ThreadTug.Now(visible[index]);
+                            if (g > glow || loudest is null && g > 0)
+                            {
+                                glow = g;
+                                offset = o;
+                                loudest = visible[index];
+                            }
+                        }
+
+                        if (loudest is null)
+                        {
+                            calmCtx.BeginFigure(At(from), false);
+                            calmCtx.LineTo(At(to));
+                            calmCtx.EndFigure(false);
+                            continue;
+                        }
+
+                        var shape = new StreamGeometry();
+                        using (var ctx = shape.Open())
+                        {
+                            ctx.BeginFigure(At(from), false);
+
+                            // Bowed sideways: the control point is twice as far
+                            // out as the middle of the curve it draws.
+                            var dx = to.X - from.X;
+                            var dy = to.Y - from.Y;
+                            var length = Math.Sqrt(dx * dx + dy * dy);
+                            var nx = -dy / length;
+                            var ny = dx / length;
+                            var control = new Point(
+                                (from.X + to.X) / 2 + nx * offset * 2, (from.Y + to.Y) / 2 + ny * offset * 2);
+
+                            ctx.QuadraticBezierTo(At(control), At(to));
+                            ctx.EndFigure(false);
+                        }
+
+                        pulses.Add((shape, loudest.LinkColor, glow));
+                    }
+                }
+
+                // One shape per pulsing spoke, in the member's colour and as bright
+                // as the tug is; any left over from last frame are emptied.
+                while (_pulses.Count < pulses.Count)
+                {
+                    var path = new ArrowPath
+                    {
+                        Stroke = new SolidColorBrush(Colors.White, 1),
+                        StrokeThickness = 1.8,
+                        StrokeLineCap = PenLineCap.Round,
+                        Stretch = Stretch.None,
+                        IsHitTestVisible = false
+                    };
+                    _pulses.Add(path);
+                    _layers.Children.Add(path);
+                }
+
+                for (var i = 0; i < _pulses.Count; i++)
+                {
+                    if (i >= pulses.Count)
+                    {
+                        _pulses[i].Data = null;
+                        continue;
+                    }
+
+                    var (shape, colour, glow) = pulses[i];
+                    var brush = (SolidColorBrush)_pulses[i].Stroke!;
+                    brush.Color = colour;
+                    brush.Opacity = Math.Min(1, SpokeOpacity + glow * 0.5);
+                    _pulses[i].Data = shape;
+                }
+
+                var rings = new StreamGeometry();
+                using (var ctx = rings.Open())
+                {
+                    foreach (var strand in frame.Rings)
+                    {
+                        ctx.BeginFigure(At(strand.From), false);
+                        ctx.QuadraticBezierTo(At(strand.Control), At(strand.To));
+                        ctx.EndFigure(false);
+                    }
+                }
+
+                _spokes.Data = calm;
+                _rings.Data = rings;
+
+                if (_shown) return;
+                _shown = true;
+                Show();
             }
-
-            private const int GWL_EXSTYLE = -20;
-            private const long WS_EX_TRANSPARENT = 0x00000020;
-            private const long WS_EX_LAYERED = 0x00080000;
-
-            [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
-            private static extern long GetWindowLongPtrW(IntPtr hWnd, int index);
-
-            [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
-            private static extern long SetWindowLongPtrW(IntPtr hWnd, int index, long value);
-
-            [DllImport("/usr/lib/libobjc.A.dylib")]
-            private static extern IntPtr sel_registerName(
-                [MarshalAs(UnmanagedType.LPUTF8Str)] string name);
-
-            [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
-            private static extern void objc_msgSend_bool(IntPtr receiver, IntPtr selector,
-                [MarshalAs(UnmanagedType.U1)] bool value);
         }
     }
 }

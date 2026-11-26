@@ -103,7 +103,8 @@ namespace Orbweaver
         // radii are in DIPs, and `scale` is how many units of Window.Position
         // there are to a DIP — 1 on macOS, the display scaling on Windows.
         internal static ArrowPlacement? Place(
-            Point from, Point to, double memberRadius, double leadRadius, double scale)
+            Point from, Point to, double memberRadius, double leadRadius, double scale,
+            double extraPad = 0)
         {
             var dx = to.X - from.X;
             var dy = to.Y - from.Y;
@@ -129,7 +130,11 @@ namespace Orbweaver
             var endX = to.X - ux * endGap;
             var endY = to.Y - uy * endGap;
 
-            var pad = (HeadHalfWidth + 1) * scale;
+            // `extraPad` is room beyond the arrow's own, for a thread that bows out
+            // from the straight line between its ends — a silk link sags, and
+            // swings when it is tugged, and would be clipped by a window cut to
+            // the line.
+            var pad = (HeadHalfWidth + 1 + extraPad) * scale;
 
             var left = Math.Min(startX, endX) - pad;
             var top = Math.Min(startY, endY) - pad;
