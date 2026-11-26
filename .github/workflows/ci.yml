@@ -297,10 +297,46 @@ jobs:
         timeout-minutes: 15
         run: dotnet test tests/UnitTests -c Release --blame-hang-timeout 5m --blame-hang-dump-type none --logger "trx;LogFileName=unit-tests.trx" --results-directory TestResults
 
+      # CB-382: on macOS this step sometimes hangs until the job limit cancels
+      # it (run 45786131268: step 27 still in_progress 32 minutes in, neither
+      # `timeout-minutes` nor `--blame-hang-timeout` fired, no log blob, no
+      # `always()` step). Both of those are enforced by something that has to
+      # keep working for them to fire -- the runner's step timer, and the test
+      # host's own blame monitor -- so this step carries a third limit that is
+      # plain bash around `dotnet test`: WATCHDOG_SECONDS, below the step's 10
+      # minutes. It prints a heartbeat to the live log every minute (the
+      # `console` logger names each test as it finishes, so the last line says
+      # where it stopped), and past the limit it prints a process listing,
+      # `sample`s the test host (macOS) into TestResults/watchdog-*.txt, kills
+      # the tree and fails the step. If the whole VM is frozen no in-VM limit
+      # can fire; that is not ruled out, only made less likely to go unseen.
       - name: Integration tests (xUnit)
         if: ${{ !cancelled() && matrix.unit }}
         timeout-minutes: 10
-        run: dotnet test tests/IntegrationTests -c Release --blame-hang-timeout 5m --blame-hang-dump-type none --logger "trx;LogFileName=integration-tests.trx" --results-directory TestResults
+        shell: bash
+        env:
+          WATCHDOG_SECONDS: 480
+        run: |
+          mkdir -p TestResults
+          dotnet test tests/IntegrationTests -c Release --blame-hang-timeout 5m --blame-hang-dump-type none --logger "trx;LogFileName=integration-tests.trx" --logger "console;verbosity=normal" --results-directory TestResults &
+          pid=$!
+          start=$SECONDS
+          while kill -0 "$pid" 2>/dev/null; do
+            sleep 5
+            elapsed=$((SECONDS - start))
+            if [ $((elapsed % 60)) -lt 5 ]; then echo "watchdog: ${elapsed}s, dotnet test still running"; fi
+            if [ "$elapsed" -ge "$WATCHDOG_SECONDS" ]; then
+              echo "::error::watchdog: integration tests ran ${elapsed}s (limit ${WATCHDOG_SECONDS}s); the last test line above is where it stopped"
+              ps -axo pid,ppid,etime,stat,command 2>/dev/null | grep -E 'dotnet|testhost' | grep -v grep || true
+              for host in $(pgrep -f testhost 2>/dev/null || true); do
+                sample "$host" 5 -file "TestResults/watchdog-sample-$host.txt" 2>&1 | tail -n 5 || true
+              done
+              pkill -KILL -f testhost 2>/dev/null || true
+              kill -KILL "$pid" 2>/dev/null || true
+              exit 1
+            fi
+          done
+          wait "$pid"
 
       # xUnit v3 now (see tests/UiTests/Orbweaver.UiTests.csproj's own
       # comment for why), which drops the old VSTest-hosted `dotnet test`
@@ -646,6 +682,7 @@ jobs:
           path: |
             TestResults/*.trx
             TestResults/**/Sequence_*.xml
+            TestResults/watchdog-*.txt
           if-no-files-found: error
           retention-days: 14
 
