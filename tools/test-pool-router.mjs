@@ -6,6 +6,7 @@
 // tools/test-paperclip-bugfix-org.py runs this too, so CI covers it.
 import test from "node:test";
 import assert from "node:assert/strict";
+import path from "node:path";
 import { choose, bindingLimits, usageFor, usagePath, STALE_MS, UNKNOWN_RETRY_MS }
   from "../paperclip/bugfix-org/host/pool-router/choose.js";
 
@@ -138,9 +139,13 @@ test("no candidates is unavailable", () => {
 });
 
 test("the usage file defaults into Paperclip's instance folder", () => {
-  assert.equal(usagePath({ PAPERCLIP_HOME: "/p", PAPERCLIP_INSTANCE_ID: "x" }), "/p/instances/x/pool-usage.json");
+  // usagePath joins with the host's own separator, as Paperclip's own paths
+  // do, so the expected value is built the same way rather than spelled in
+  // POSIX: on the Windows leg that spelling failed against a correct answer.
+  assert.equal(usagePath({ PAPERCLIP_HOME: "/p", PAPERCLIP_INSTANCE_ID: "x" }),
+    path.join("/p", "instances", "x", "pool-usage.json"));
   assert.equal(usagePath({ ORBWEAVER_POOL_USAGE: "/o.json" }), "/o.json");
-  assert.match(usagePath({}), /\.paperclip\/instances\/default\/pool-usage\.json$/);
+  assert.match(usagePath({}), /\.paperclip[\\/]instances[\\/]default[\\/]pool-usage\.json$/);
 });
 
 test("the package is a Paperclip router plugin the host will accept", async () => {
