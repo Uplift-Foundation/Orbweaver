@@ -172,7 +172,10 @@ def pr_problem(pr, allowed_authors, sha=None):
     return None
 
 
-WORKFLOW_DIR = ".github/workflows/"
+WORKFLOW_DIRS = (".github/workflows/", ".github/actions/")
+# GitHub's pulls/<n>/files lists at most this many files; a list that long may
+# be cut short, so it is read as unknown rather than as clean.
+FILES_CAP = 3000
 
 
 def workflow_problem(files):
@@ -182,20 +185,25 @@ def workflow_problem(files):
 
     A Mac install pushes the PR's code to an e2e/* branch, where release.yml
     runs from that code with the signing secrets, and this runner approves
-    the `release` deployment itself. A PR that edits a workflow file would
-    therefore meet the signing secrets before any review of the edit
-    (CB-481, plan section 3). The rule is per PR, not per machine: one rule
-    is simpler to state to the org, and a workflow change is proved by the
-    PR's own CI run, not by an install. Unreadable files fail closed, like
-    every other GitHub answer this runner reads.
+    the `release` deployment itself. A PR that edits a workflow file, or a
+    composite action a workflow can call (.github/actions/), would therefore
+    meet the signing secrets before any review of the edit (CB-481, plan
+    section 3). The rule is per PR, not per machine: one rule is simpler to
+    state to the org, and a workflow change is proved by the PR's own CI run,
+    not by an install. Unreadable files, and a list at GitHub's cap, fail
+    closed, like every other GitHub answer this runner reads. Scripts a
+    workflow calls are ordinary code and are not covered.
     """
     if files is None:
         return "could not read the PR's changed files from GitHub; try again later"
-    touched = sorted(f for f in files if f.startswith(WORKFLOW_DIR))
+    if len(files) >= FILES_CAP:
+        return (f"the PR lists {len(files)} changed files, GitHub's cap, so a workflow change "
+                "could be hidden past it; a PR that large is never installed")
+    touched = sorted(f for f in files if f.startswith(WORKFLOW_DIRS))
     if touched:
-        return (f"the PR changes {', '.join(touched)}; a PR that touches {WORKFLOW_DIR} is never "
-                "installed, because an install runs the PR's own workflows with the signing secrets. "
-                "Prove a workflow change with the PR's own CI run instead")
+        return (f"the PR changes {', '.join(touched)}; a PR that touches {' or '.join(WORKFLOW_DIRS)} "
+                "is never installed, because an install runs the PR's own workflows with the signing "
+                "secrets. Prove a workflow change with the PR's own CI run instead")
     return None
 
 
@@ -369,10 +377,13 @@ class Runner:
         # nothing about who holds them (QA round 1).
         why = pr_problem(self.gh.pr(pr_n), self.cfg["allowed_authors"], sha=req["sha"])
         if why is None:
-            # Asked after the head check, so the files are the head's; a push
-            # between the two calls moves the head, and the stamp check after
-            # the install then refuses a build that is not `sha`.
             why = workflow_problem(self.gh.pr_files(pr_n))
+        if why is None:
+            # The file list is the head's at the moment GitHub answered, not
+            # necessarily `sha`'s: a push between the two reads could hide a
+            # workflow edit in `sha` that the newer head reverted (QA round 1).
+            # So the head is read again and must still be `sha`.
+            why = pr_problem(self.gh.pr(pr_n), self.cfg["allowed_authors"], sha=req["sha"])
         if why is None:
             marker = self.attention.read()
             if marker is not None:

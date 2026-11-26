@@ -185,16 +185,22 @@ already lets agents write the first and read the second, because it allows all o
 
 **What it refuses**, each written to `result.json` as `ok: false` with a one-line
 `refused` sentence and nothing touched: a PR that is not open, not written by an allowed author or
-whose head is not `sha`; a PR that changes any file under `.github/workflows/` (CB-481: a Mac
-install runs the PR's own `release.yml` on an `e2e/` branch with the signing secrets, and the
-runner approves that deployment itself, so a workflow edit would meet the secrets before review;
-the PR's changed files are read with `gh api --paginate repos/<repo>/pulls/<n>/files`, a rename's
-old path included, and an unreadable list is a refusal too); a second PR while one holds the machines; a `machine_run` without
+whose head is not `sha`; a PR that changes any file under `.github/workflows/` or
+`.github/actions/` (CB-481: a Mac install runs the PR's own `release.yml` on an `e2e/` branch with
+the signing secrets, and the runner approves that deployment itself, so a workflow or composite
+action edit would meet the secrets before review; the PR's changed files are read with
+`gh api --paginate repos/<repo>/pulls/<n>/files`, a rename's old path included, the head is read
+again afterwards and must still be `sha`, and an unreadable list or one at GitHub's 3000-file cap
+is a refusal too); a second PR while one holds the machines; a `machine_run` without
 a hold, on an unlisted machine, or after the PR's head moved since the install; any unknown
 verb, field or machine, and an `id` outside `[a-z0-9-]{1,40}`. Every answer has `id`, `verb`,
 `pr`, `ok`, `refused`, `started_at`, `finished_at`; a run is `ok` only on exit 0 without a
 timeout, and a failure after work started is `ok: false` with `refused: null`. A hold ends on
 `machine_release` or after 45 minutes, when the runner restores and releases by itself.
+
+The workflow refusal does not cover the scripts `release.yml` calls (`tools/build-macos-dmg.sh` and
+the like): those are ordinary code the org can already change, and an install still runs them
+with the signing secrets.
 
 **When a restore fails twice**, or the runner's `state.json` cannot be read (it is kept aside
 as `state.json.unreadable-<epoch>`), the runner writes `machine-results/NEEDS-ATTENTION.json`

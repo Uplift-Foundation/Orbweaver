@@ -43,12 +43,16 @@ class FakeGh:
         # Changed paths per PR; a PR with no entry changes one ordinary file.
         self.files = {}
         self.files_asked = []
+        self.head_after_files = {}
 
     def pr(self, n):
         return self.prs.get(n)
 
     def pr_files(self, n):
         self.files_asked.append(n)
+        if n in self.head_after_files:
+            # A push lands between the head check and the file list.
+            self.prs[n] = pr(head=self.head_after_files.pop(n))
         return self.files.get(n, ["SessionManager.cs"])
 
     def commit(self, sha):
@@ -352,6 +356,38 @@ class InstallTests(unittest.TestCase):
             refused_untouched(self, r, one(r, install()), fragment)
             self.assertFalse(r.lock.held)
 
+    def test_head_moving_while_the_files_are_read_is_refused_control_still_head_installs(self):
+        # QA round 1: sha carried a workflow edit, a newer head reverted it,
+        # and the file list (read after the push) is clean. The head is read
+        # again after the files, so the stale sha is refused.
+        gh = FakeGh(p7=pr())
+        gh.head_after_files[7] = SHA2
+        r = make_runner(gh=gh)
+        res = one(r, install(sha=SHA))
+        refused_untouched(self, r, res, "sha is not the PR's current head")
+        self.assertFalse(r.lock.held)
+        # Control: the head does not move, the same request installs.
+        self.assertTrue(one(make_runner(gh=FakeGh(p7=pr())), install(sha=SHA))["ok"])
+
+    def test_composite_actions_are_refused_like_workflows(self):
+        gh = FakeGh(p7=pr())
+        gh.files[7] = [".github/actions/sign/action.yml"]
+        r = make_runner(gh=gh)
+        refused_untouched(self, r, one(r, install()), ".github/actions/sign/action.yml")
+        # Control: other .github files and a path merely containing "actions".
+        ok = FakeGh(p7=pr())
+        ok.files[7] = [".github/dependabot.yml", "docs/.github/actions/x.yml", "Actions/Run.cs"]
+        self.assertTrue(one(make_runner(gh=ok), install())["ok"])
+
+    def test_a_file_list_at_githubs_cap_is_refused_control_one_below_installs(self):
+        gh = FakeGh(p7=pr())
+        gh.files[7] = [f"f{i}.cs" for i in range(runner.FILES_CAP)]
+        r = make_runner(gh=gh)
+        refused_untouched(self, r, one(r, install()), "GitHub's cap")
+        ok = FakeGh(p7=pr())
+        ok.files[7] = [f"f{i}.cs" for i in range(runner.FILES_CAP - 1)]
+        self.assertTrue(one(make_runner(gh=ok), install())["ok"])
+
     def test_workflow_rule_is_asked_only_after_the_pr_gate(self):
         # A PR that may not use the machines is refused for that, and GitHub
         # is not asked for its files at all.
@@ -377,6 +413,8 @@ class InstallTests(unittest.TestCase):
         self.assertIsNone(runner.workflow_problem(["a.cs", ".github/dependabot.yml", "x/.github/workflows/y.yml"]))
         why = runner.workflow_problem(["b.cs", ".github/workflows/z.yml", ".github/workflows/a.yml"])
         self.assertIn(".github/workflows/a.yml, .github/workflows/z.yml", why)
+        self.assertIn(".github/actions/a/action.yml", runner.workflow_problem([".github/actions/a/action.yml"]))
+        self.assertEqual(runner.FILES_CAP, 3000)
         self.assertIn("could not read", runner.workflow_problem(None))
 
     def test_empty_allowed_list_allows_nobody(self):
