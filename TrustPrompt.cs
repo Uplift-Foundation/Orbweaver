@@ -38,6 +38,13 @@ namespace Orbweaver
         private const string NoLine = "No, exit";
         private const string YesLine = "Yes, I trust this folder";
         private const string Marker = "❯";
+
+        // CB-476: Claude Code in a plain conhost window (the console a Windows
+        // launch opens, read on the PC in the logged-on session) draws its
+        // marker as ">" and the hooks sign as "‼", its ASCII fallbacks; the
+        // same screen read from a console with Unicode glyphs draws ❯. Either
+        // marker counts, and only on the two exact option lines.
+        private static readonly string[] Markers = { Marker, ">" };
         private const string HooksWarning = "This folder configures hooks that can run commands without asking";
 
         // The trust wording FirstRunDialogs already knows for the other CLIs
@@ -84,8 +91,8 @@ namespace Orbweaver
             var no = lines.Where(l => Strip(l) == NoLine).ToArray();
             var yes = lines.Where(l => Strip(l) == YesLine).ToArray();
             if (no.Length != 1 || yes.Length != 1) return null;
-            var onNo = no[0].StartsWith(Marker, StringComparison.Ordinal);
-            var onYes = yes[0].StartsWith(Marker, StringComparison.Ordinal);
+            var onNo = MarkerOf(no[0]) is not null;
+            var onYes = MarkerOf(yes[0]) is not null;
             if (onNo == onYes) return null;
             return onNo ? Option.No : Option.Yes;
         }
@@ -106,13 +113,37 @@ namespace Orbweaver
             bool Is(string? folder)
             {
                 var wanted = Regex.Replace(folder ?? "", @"\s+", "");
-                return wanted.Length > 0 && Trim(shown) == Trim(wanted);
+                if (wanted.Length == 0) return false;
+                if (IsWindowsPath(shown) && IsWindowsPath(wanted))
+                    return string.Equals(WindowsForm(shown), WindowsForm(wanted), StringComparison.OrdinalIgnoreCase);
+                return Trim(shown) == Trim(wanted);
             }
             return Is(cwd) || Is(resolved);
         }
 
+        // CB-476: a Windows folder is one folder however it is spelled: a
+        // launch can name C:\Users\me as c:\users\ME, C:/Users/me or with a
+        // trailing separator, and Windows' file system ignores case. So when
+        // both the folder Claude printed and the folder asked for are Windows
+        // paths (a drive letter, or a UNC \\server), they are compared with
+        // either slash as \, no trailing one, ignoring case. Every other path
+        // (macOS, Linux) is compared exactly as CB-397 did.
+        private static bool IsWindowsPath(string p) => Regex.IsMatch(p, @"^([A-Za-z]:([\\/]|$)|\\\\)");
+
+        private static string WindowsForm(string p)
+        {
+            var slashed = p.Replace('/', '\\');
+            var trimmed = slashed.TrimEnd('\\');
+            // A drive root keeps its separator, so C:\ and C: stay the same folder
+            // and never become a match for C:\x.
+            return trimmed.Length == 2 && trimmed[1] == ':' ? trimmed + "\\" : trimmed.Length == 0 ? slashed : trimmed;
+        }
+
+        private static string? MarkerOf(string line) =>
+            Markers.FirstOrDefault(m => line.StartsWith(m, StringComparison.Ordinal));
+
         private static string Strip(string line) =>
-            (line.StartsWith(Marker, StringComparison.Ordinal) ? line[Marker.Length..] : line).Trim();
+            (MarkerOf(line) is { } m ? line[m.Length..] : line).Trim();
 
         private static string Collapse(string s) => Regex.Replace(s, @"\s+", " ").Trim();
     }

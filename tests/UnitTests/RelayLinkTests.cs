@@ -409,6 +409,34 @@ public partial class RelayLinkTests : IDisposable
     }
 
     [Fact]
+    public void A_phone_that_missed_the_arrival_roster_is_sent_a_fresh_one_without_reconnecting()
+    {
+        var (link, _, phone, _, _) = Paired();
+        var notes = new List<string>();
+        link.Note += notes.Add;
+        var arrival = link.OnScan([Row("s1")]);                     // the phone is backgrounded and misses this
+        Assert.Equal("roster", phone.OpenFromDesktop(arrival.Single()).GetProperty("t").GetString());
+
+        _now = _now.AddSeconds(30);
+        Assert.Empty(link.OnScan([Row("s1")]));                     // quiet and recent: nothing
+
+        _now = _now.AddSeconds(31);
+        var refresh = phone.OpenFromDesktop(link.OnScan([Row("s1")]).Single());
+        Assert.Equal("roster", refresh.GetProperty("t").GetString());
+        Assert.Equal("s1", refresh.GetProperty("sessions")[0].GetProperty("session_id").GetString());
+        Assert.Contains(notes, n => n.StartsWith("roster to ") && n.EndsWith(": refresh"));
+        Assert.Empty(link.OnScan([Row("s1")]));                     // the clock restarted
+
+        _now = _now.AddSeconds(61);                                  // stale and the scan also has a change: roster, not a delta
+        var withChange = phone.OpenFromDesktop(link.OnScan([Row("s1", "generating")]).Single());
+        Assert.Equal("roster", withChange.GetProperty("t").GetString());
+
+        _now = _now.AddSeconds(61);
+        Assert.Single(link.OnScan([]));                              // an empty scan refreshes too
+        Assert.Contains(notes, n => n.EndsWith(": arrival") || n.EndsWith(": refresh"));
+    }
+
+    [Fact]
     public void Scans_become_deltas_or_rosters_numbered_per_phone()
     {
         var (link, _, phone, _, _) = Paired();

@@ -55,6 +55,44 @@ public class AskFormTranscriptTests
 
     private static object Input(params object[] questions) => new { questions };
 
+    // CB-429: PendingPlan reads the plan off the latest unanswered ExitPlanMode.
+    private static string PlanUse(string id, object input) => ToolUse(id, input, AskFormTranscript.PlanToolName);
+
+    [Fact]
+    public void A_pending_plan_is_the_trimmed_plan_of_the_latest_unanswered_ExitPlanMode()
+    {
+        var rows = new[] { PlanUse("p1", new { plan = "old" }), PlanUse("p2", new { plan = "  new plan \n" }) };
+        Assert.Equal("new plan", AskFormTranscript.PendingPlan(rows));
+        Assert.Null(AskFormTranscript.PendingPlan(rows.Append(ToolResult("p2"))));
+    }
+
+    [Fact]
+    public void A_torn_row_and_rows_that_are_not_objects_are_skipped_and_the_plan_survives()
+    {
+        var rows = new[]
+        {
+            PlanUse("p1", new { plan = "keep me" }),
+            "{\"message\":{\"content\":[{\"type\":\"tool_u", // torn mid-write
+            "[1,2,3]",
+            "42",
+            "{\"type\":\"assistant\"}",
+            "{\"message\":\"text\"}",
+            "{\"message\":{\"content\":\"text\"}}",
+            "{\"message\":{\"content\":[\"str\",7,null]}}",
+        };
+        Assert.Equal("keep me", AskFormTranscript.PendingPlan(rows));
+    }
+
+    [Fact]
+    public void A_plan_call_with_no_usable_plan_or_another_tools_result_changes_nothing()
+    {
+        Assert.Null(AskFormTranscript.PendingPlan([PlanUse("p1", new { plan = "  " })]));
+        Assert.Null(AskFormTranscript.PendingPlan([PlanUse("p1", new { other = 1 })]));
+        Assert.Null(AskFormTranscript.PendingPlan([PlanUse("p1", "not an object")]));
+        Assert.Null(AskFormTranscript.PendingPlan([ToolUse("p1", new { plan = "x" })]));
+        Assert.Equal("x", AskFormTranscript.PendingPlan([PlanUse("p1", new { plan = "x" }), ToolResult("other")]));
+    }
+
     private static readonly object Good = new { question = "Q?", header = "H", options = new[] { new { label = "A", description = "a" } } };
 
     [Fact]

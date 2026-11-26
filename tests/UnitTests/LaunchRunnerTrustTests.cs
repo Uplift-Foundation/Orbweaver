@@ -98,17 +98,97 @@ public class LaunchRunnerTrustTests
         Assert.Empty(d.Closed);
     }
 
-    [Theory]
-    [InlineData(true, true)]
-    [InlineData(false, false)]
-    public async Task Windows_and_a_desk_with_no_trust_seams_never_read_and_fall_to_no_session(bool windows, bool trustOn)
+    [Fact]
+    public async Task A_desk_with_no_trust_seams_never_reads_and_falls_to_no_session()
     {
-        var d = new LaunchRunnerTests.Desk { Windows = windows, Binary = windows ? "C:\\c\\claude.exe" : "/bin/claude", TrustOn = trustOn, Screen = _ => OnNo };
-        var f = windows ? F() with { Cwd = "C:\\w" } : F();
-        var outcome = await d.Runner().RunAsync(f, LaunchRunner.TrustPolicy.Ask);
+        var d = new LaunchRunnerTests.Desk { TrustOn = false, Screen = _ => OnNo };
+        var outcome = await d.Runner().RunAsync(F(), LaunchRunner.TrustPolicy.Ask);
         Assert.Equal(new LaunchRunner.Outcome(RelayReplies.NoSession, null, null), outcome);
         Assert.Equal(0, d.Reads);
         Assert.Equal(RelayRemote.LaunchCheckIn, d.Now - DateTimeOffset.FromUnixTimeSeconds(1794111792));
+    }
+
+    // ---- Windows (CB-476) -------------------------------------------------------------
+
+    private static LaunchRunnerTests.Desk Console(Func<int, string?> screen) =>
+        new() { Windows = true, Binary = "C:\\c\\claude.exe", TrustOn = true, Screen = screen };
+
+    private static LaunchFields Home() => F() with { Cwd = TrustScreens.WindowsHome, Account = ".claude-b" };
+
+    [Fact]
+    public async Task Windows_reads_the_console_it_started_and_hands_the_question_back()
+    {
+        var d = Console(_ => TrustScreens.ConsoleOnNo);
+
+        var outcome = await d.Runner().RunAsync(Home(), LaunchRunner.TrustPolicy.Ask);
+
+        Assert.Equal(PeerLaunchCodes.TrustNeeded, outcome.Code);
+        Assert.Equal("con:42", outcome.Held!.Pane);
+        Assert.True(outcome.Held.Hooks);
+        Assert.Equal(1, d.Reads);
+        Assert.Empty(d.Presses);
+    }
+
+    // The logged-on console draws ">" (bryn's captures); an ssh-started one draws ❯.
+    // The answer path must see the marker move to Yes on both before it presses Enter.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Windows_answers_down_then_enter_on_the_console_and_waits_for_the_check_in(bool unicode)
+    {
+        var (no, yes) = unicode ? (TrustScreens.UnicodeConsoleOnNo, TrustScreens.UnicodeConsoleOnYes) : (TrustScreens.ConsoleOnNo, TrustScreens.ConsoleOnYes);
+        var d = Console(n => n == 0 || n == 1 ? no : yes);
+        d.OnPress = key => { if (key == "Enter") d.ChecksIn("new", LaunchRunnerTests.Status(cwd: TrustScreens.WindowsHome)); };
+
+        var outcome = await d.Runner().AnswerTrustAsync(Home(), new LaunchRunner.HeldTrust("con:42", new HashSet<string>(), true));
+
+        Assert.Equal(new LaunchRunner.Outcome(RelayReplies.Launched, null, "new"), outcome);
+        Assert.Equal(["Down", "Enter"], d.Presses);
+        Assert.Empty(d.Closed);
+    }
+
+    [Fact]
+    public async Task Windows_with_no_console_pid_never_reads()
+    {
+        var d = Console(_ => TrustScreens.ConsoleOnNo);
+        d.WindowsPid = null;
+        var outcome = await d.Runner().RunAsync(Home(), LaunchRunner.TrustPolicy.Ask);
+        Assert.Equal(RelayReplies.LaunchFailed, outcome.Code);
+        Assert.Equal(0, d.Reads);
+    }
+
+    // Cancel, expiry, a replaced question and a dropped link all close through
+    // CloseIfStillAskingAsync: a console is killed only while it still shows the
+    // prompt for that folder, never once somebody at the PC has answered it.
+    [Fact]
+    public async Task A_windows_console_is_closed_only_while_it_still_asks()
+    {
+        var asking = Console(_ => TrustScreens.ConsoleOnNo);
+        await asking.Runner().CloseIfStillAskingAsync(TrustScreens.WindowsHome, NewChatCli.ClaudeCode, "con:42");
+        Assert.Equal(["con:42"], asking.Closed);
+
+        var answered = Console(_ => Idle);
+        await answered.Runner().CloseIfStillAskingAsync(TrustScreens.WindowsHome, NewChatCli.ClaudeCode, "con:42");
+        Assert.Empty(answered.Closed);
+
+        var unreadable = Console(_ => null);
+        await unreadable.Runner().CloseIfStillAskingAsync(TrustScreens.WindowsHome, NewChatCli.ClaudeCode, "con:42");
+        Assert.Empty(unreadable.Closed);
+    }
+
+    [Fact]
+    public async Task Windows_reports_to_the_phone_and_closes_for_a_desktop_that_cannot_ask()
+    {
+        var phone = Console(_ => TrustScreens.ConsoleOnNo);
+        var reported = await phone.Runner().RunAsync(Home(), LaunchRunner.TrustPolicy.Report);
+        Assert.Equal(RelayReplies.LaunchFailed, reported.Code);
+        Assert.Contains("Answer it on the desk", reported.Why);
+        Assert.Empty(phone.Closed);
+
+        var old = Console(_ => TrustScreens.ConsoleOnNo);
+        var closed = await old.Runner().RunAsync(Home(), LaunchRunner.TrustPolicy.Close);
+        Assert.Equal(RelayReplies.LaunchFailed, closed.Code);
+        Assert.Equal(["con:42"], old.Closed);
     }
 
     [Fact]

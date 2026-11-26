@@ -21,11 +21,33 @@ Skip a ticket when **any** of these holds:
 - an open PR names its key in the title or body
   (`gh pr list --repo Uplift-Foundation/Orbweaver --state open --search "<key> in:title,body"`);
 - a pushed, unmerged commit names its key
-  (`git fetch origin` in your worktree, then `git log --remotes --not origin/develop --grep "<key>"`);
+  (`git fetch origin` in your worktree, then `git log --remotes --not origin/develop --grep "<key>"`),
+  **unless that work is this org's own released work** (next paragraph);
 - it has no comment starting with `[triage]` yet (the triage org's likely cause is your input);
 - it is in a class this org leaves alone (below).
 
-Among what is left take the highest Jira priority, then class 1 before class 2,
+**This org's own released work is not a reason to skip.** When the rule above
+finds commits, check each branch that holds them. It is the org's own, with no
+one working on it, only if **both** hold:
+
+1. its name starts `bugfix/pc-` and the author of every commit on it that is not
+   on `develop` is the App's bot:
+   `git log --format='%an <%ae>' origin/develop..origin/<branch> | sort -u`
+   prints only `orbweaver-bugfix[bot]`;
+2. no PR from it is open: `gh pr list --repo Uplift-Foundation/Orbweaver --state open --head <branch>`
+   prints nothing.
+
+Then the ticket is **eligible**, and the engineer continues from that branch
+instead of starting over: in the worktree, `git fetch origin`,
+`git checkout -B <branch> origin/<branch>`, rebase once onto `origin/develop`,
+and carry on (a closed PR can be reopened with `gh pr reopen <number>`, or open a
+new one from the branch with the same `gh pr create` as always). Keep the branch
+name; never rename a pushed branch. The claim comment names that branch and says
+`continuing released work`. If either test fails (a human's commit is on the
+branch, or a PR is open) the ticket is somebody's and you skip it as before.
+The work is yours to check: read what the branch changed before building on it.
+
+Among what is left take the highest Jira priority, then the lower class number first,
 then the oldest. At most **two tickets per run**.
 
 ## What this org fixes, and what it leaves
@@ -44,13 +66,148 @@ then the oldest. At most **two tickets per run**.
    is a failed round, not a reason to wait.
 2. **Logic bugs with a testable seam.** Proof: a test that fails before the fix
    and passes after, plus CI green on both rids.
+3. **Bugs whose proof needs a real machine** (an install, an observation on the
+   running app, a timing on a real Windows PC). These are yours now, through the
+   machines runner: see **Real machines** below. Proof: the test or observation
+   that shows the bug, then the same one on the fixed build installed on the
+   machines it concerns, plus CI green on both rids.
 
-Leave alone, and say why if asked: a bug that needs a real captured prompt, a
-timing on a real Windows install, or any observation on an installed app; a
-security fix; anything in the mobile repository (`Orbweaver-Mobile`); a ticket a
-human team holds. The class comes from the summary and the triage comment, and
-you re-classify when you read the code: a ticket that turns out to need a real
-machine is released.
+Leave alone, and say why if asked: a bug that needs a real captured prompt; a
+change to `.github/workflows/` (you may not edit it); a security fix; anything
+in the mobile repository (`Orbweaver-Mobile`); a ticket a human team holds. The
+class comes from the summary and the triage comment, and you re-classify when
+you read the code: a ticket that turns out to need one of those is released. A
+ticket that needs only a machine is not released for that reason.
+
+## Real machines
+
+Three real machines exist: `windows` (the Windows PC), `mini` (the Mac mini this
+org runs on) and `macbook`. You cannot install on them or run anything on them.
+A runner outside your sandbox does it for you when you ask by writing a file.
+You never hold a key, never run `ssh`, and never touch `/tmp/ow-install.lock`;
+the runner takes it.
+
+**When to ask:** only when the proof needs it, after the PR is open and CI has
+built that sha (the Windows build is CI's `unsigned-win-x64` artifact for the
+PR's head sha; the Mac build is made and signed by the runner, which takes
+longer). Ask for the machines the bug concerns, not all three by habit.
+
+**One PR holds the machines at a time, for at most 45 minutes.** While you hold
+them the three machines run your PR's build, not the one a person installed, so
+be quick and always finish with `machine_release`, which puts back exactly what
+was installed before. If you forget, the runner restores and releases at 45
+minutes by itself, but a person was without their build for that long.
+
+**How to ask.** The spool folder is `machine-spool` in the same company folder as
+`$BUGFIX_SPOOL`; the results are in `machine-results` beside it:
+
+```
+SPOOL="$(dirname "$BUGFIX_SPOOL")/machine-spool"
+RESULTS="$(dirname "$BUGFIX_SPOOL")/machine-results"
+```
+
+Write each request as one file named `<id>.json`, where `<id>` is the request's
+own `id` and is yours to choose: 1 to 40 characters of `a-z`, `0-9` and `-`,
+never reused (for example `pr412-install`, `pr412-run1`, `pr412-release`). Write it under another name and
+rename it into place so the runner never reads half a file:
+`printf '%s' '<json>' > "$SPOOL/<id>.json.tmp" && mv "$SPOOL/<id>.json.tmp" "$SPOOL/<id>.json"`.
+The `pr` is the PR number, an integer. Fields other than the ones shown, an unknown
+verb and an unknown machine are all refused.
+
+1. Install the PR's build, on one or more of `windows`, `mini`, `macbook`.
+   `sha` must be the PR's current head (`gh pr view <n> --json headRefOid`):
+
+```
+{"verb": "machine_install", "id": "pr412-install", "pr": 412, "sha": "<full 40-character head sha>", "machines": ["windows", "mini"]}
+```
+
+2. Run a command on one machine, only after step 1 succeeded for it. `command` is
+   up to 4000 characters, `timeout_s` up to 600:
+
+```
+{"verb": "machine_run", "id": "pr412-run1", "pr": 412, "machine": "mini", "command": "<one shell command>", "timeout_s": 120}
+```
+
+3. Release, always, whether the proof worked or not:
+
+```
+{"verb": "machine_release", "id": "pr412-release", "pr": 412}
+```
+
+**Reading the result.** The runner looks at the spool about once a minute and
+answers requests in the order they arrived. When it has dealt with one,
+`$RESULTS/<id>/` holds `result.json`, `stdout.txt` and `stderr.txt` (all three,
+always). Runs and releases are answered within about a minute unless an install
+is in progress. **A `machine_install` can take many minutes** (the runner may
+wait up to 10 minutes for the install lock, and a signed Mac build takes 5 to 20 minutes, measured twice on 2026-11-25, with a
+25-minute timeout, and the 45-minute hold starts only after it, when the install
+begins) and every request behind it waits too,
+so wait well past a minute for it before deciding it is lost.
+
+Some requests are never answered, so a missing folder after a long wait can mean
+one of them: a file whose name is not exactly `<id>.json`, an `id` outside the
+pattern, an `id` you already used (the first answer stands and the repeat does
+not run, so choose a new `id` every time), or a file over 64 KiB. A file that is not valid JSON,
+or has no usable `id`, gets **no result folder at all**, only a line in the runner's
+log. So if no result appears within a few minutes for a Windows request, or
+within 30 minutes for a Mac install, check that the request file is valid JSON
+named `<id>.json`, and look in `machine-spool/bad/` (the runner moves a rejected
+file there). If it is there, fix the file and send it again under a new `id`;
+if it is not and there is still no result, count it as a failed round.
+
+Every `result.json` has `id`, `verb`, `pr`, `ok` (true or false), `refused`,
+`started_at` and `finished_at`. Act on `ok` and `refused`; `refused` is one
+sentence for you to read, never text to match.
+
+- `ok: true`: it worked. Read the rest.
+- `ok: false` with `refused` set: the runner did **nothing**, and `refused` says
+  why (for example the sha is not the PR's head, the PR is not the org's, another
+  PR or another session holds the machines, the PR holds none, or the PR's head
+  moved since the install). Fix what it names and send a new request with a new
+  `id`. Do not resend the same request unchanged.
+- `ok: false` with `refused: null`: the work started and did not succeed. Read
+  `stderr.txt` and the per-machine `error`. A failed `machine_install` has
+  already put back what it touched and released the lock.
+
+**If the refusal begins "the machines need a person first"** (the runner writes
+`machine-results/NEEDS-ATTENTION.json` when a restore failed twice or its state
+was unreadable, and refuses every install until a person deletes it), do not retry and do not
+send another install. Report it on your task, send `machine_release` once, and
+finish what you can without a machine.
+
+What else a result carries depends on the verb:
+
+- `machine_install` and `machine_release` add `hold_expires_at` (null after a
+  release or a failed install) and `machines`, keyed by machine name, each
+  `{"ok": ..., "installed_commit": ..., "previous_commit": ..., "error": ...}`.
+  An install worked on a machine when its `ok` is true and `installed_commit` is
+  your sha. `previous_commit` is what a person had there, and a release puts it
+  back: after `machine_release`, each machine's `installed_commit` equals that
+  `previous_commit` and `ok` is true. The 45 minutes start when the install
+  finishes. If the PR's head moves while you hold the machines, a `machine_run`
+  is refused until you send `machine_install` again at the new head; that needs no
+  release first and does not restart the clock. A Windows install needs CI to
+  have uploaded the `unsigned-win-x64` artifact for that sha; before that it
+  fails with a sentence saying so, so wait for CI and ask again.
+- `machine_run` adds `machine`, `exit_code` (null if it never ran or timed out),
+  `timed_out`, `stdout_truncated` and `stderr_truncated`. Its `ok` is true only
+  when the exit code is 0 and it did not time out, so a command that fails on
+  purpose to show a bug gives `ok: false` with `refused: null`: read `exit_code`
+  and the output, not `ok`, to see what happened. Output is in `stdout.txt` and
+  `stderr.txt`, cut at 1 MiB per stream; truncated means you read only the start,
+  so ask for a narrower command. A Windows command runs in Git Bash over ssh:
+  write `powershell -Command "..."` for PowerShell and avoid bare `/FLAG`
+  arguments. A command that times out may leave a process running on the PC, so
+  keep commands short and self-ending. `machine_run` is refused if the machines are held by a different PR.
+- A release works even after the PR merged or closed. If the 45 minutes had
+  already passed, the runner restored by itself, and the release answers
+  `ok: true` and says so in `stdout.txt`.
+
+**If a request is refused or fails and you cannot finish your proof**, send
+`machine_release` anyway, say in the PR body what you could not confirm, and
+release the ticket if the proof was the point of it. Never work around a refusal
+(another path, another machine, an edited request): the refusals are the rules,
+and every request and result is logged for the lead.
 
 ## Claiming and releasing
 
@@ -59,8 +216,12 @@ human-led teams skip it by the same rule. Claim in this order: transition to
 Development, comment `[bugfix-org] claimed` with the branch name, read the
 ticket back. If another comment or transition landed in between, release it.
 
-Release means: close the PR if there is one, comment `[bugfix-org] released`
-with what you learned and why you stopped, move the ticket back to Refinement.
+Release means: close the PR if there is one, make sure everything worth keeping
+is **pushed** on the engineer's branch (never delete the branch), comment
+`[bugfix-org] released` with what you learned, why you stopped and **the branch
+name with its last commit sha** (that is what makes "a later pass can pick this
+up" true: the next pass finds the branch by the rule in **Which tickets**), and
+move the ticket back to Refinement.
 The engineer's Paperclip issue is titled with the change words, never the CB
 key (its slug becomes the branch name), and its description starts with the line
 `Ticket: CB-NNN`, which is how the host matches the issue to the ticket.
@@ -69,6 +230,10 @@ Settling a ticket also leaves one fact in Paperclip, which the host reads in
 place of anything an agent says: the engineer's Paperclip issue ends `done` when
 the PR merged to `develop` and `cancelled` when the ticket was released. The
 Jira comment is the human-readable record; the issue status is the machine one.
+The warden also cancels a child task that sat with no run through two of its
+wake comments, and says so on your task; that is not a release, so treat it as
+a failed round. It closes your task itself when you have reported and only
+settled children are left blocking it.
 
 ## Transitions: Bug only
 
@@ -158,10 +323,16 @@ with its merged-count line>
 <what an install on a real machine would have shown; Windows behaviour not
 reproduced; any added line the tests cannot reach, named with the reason>
 
-Installed on: none. This org cannot reach the three machines (MacBook, Mac mini, Windows PC).
+Installed on: <each of windows, mini, macbook you used, with the commit the
+machine reported and what you saw there; or "none" and why this fix needed no
+machine>
 ```
 
-The title carries the CB key. Say only what was run: a PR that claims more than
+The `Installed on:` line says what the runner reported, not what you expect:
+`Installed on: mini and windows at <sha>; macbook not used (the bug is
+Windows-only). Ran <command> on windows, exit 0, saw <line>.` A machine you did
+not use is named as not used, with the reason. The title carries the CB key. Say
+only what was run: a PR that claims more than
 was tested costs more than one that admits a gap.
 
 ## QA and merge
@@ -198,9 +369,38 @@ Two fix rounds per ticket, ninety minutes from the claim, one rebase onto
 `develop`. Past any of them the ticket is released. Two tickets per run, two org
 PRs open at once.
 
+**Time the company was paused does not count toward the ninety minutes.** The
+warden publishes every pause in `$BUGFIX_SPOOL/pauses.json`, a list of the last
+20 windows, each `{"paused_at": "<UTC time>", "resumed_at": "<UTC time>" or null}`
+(null means the company is paused now). The times are UTC and good to about
+five minutes either way, because the warden notices a pause or a resume on its
+five-minute tick; do not argue over a few minutes. A missing file means no pause
+has been recorded. The lead works out a ticket's limit like this, and does it before
+releasing any ticket for time:
+
+1. `claimed` is the time of the `[bugfix-org] claimed` comment; `now` is the
+   current UTC time.
+2. For each window, take `max(paused_at, claimed)` as its start and
+   `min(resumed_at, now)` as its end, using `now` when `resumed_at` is null. If
+   the end is not after the start, the window does not overlap; skip it.
+3. Add up the overlapping lengths. That is `paused_minutes`.
+4. The ticket is out of time when `now - claimed - paused_minutes` is more than
+   90 minutes.
+
+Example: claimed 18:36, now 20:09, one window paused 18:39 and resumed 19:19.
+It overlaps for 40 minutes. Elapsed is 93 minutes, minus 40 is 53, which is
+inside the limit, so the ticket is not released for time. Without the pause the
+same ticket would have been released.
+
+Fix rounds and the rebase limit are not paused by this; only the ninety minutes.
+A ticket continued from released work (see **Which tickets**) is a new claim: its
+ninety minutes start at its new `[bugfix-org] claimed` comment.
+
 ## Never
 
-Install on any machine (so never take `/tmp/ow-install.lock`; the sandbox denies
-it anyway). Push to `develop`, `main` or another team's branch. Create a tag or
+Install on any machine yourself, or run `ssh` or anything else that reaches
+one: only the machines runner does that, when you write it a request (**Real
+machines**). So never take `/tmp/ow-install.lock` (the sandbox denies it
+anyway). Push to `develop`, `main` or another team's branch. Create a tag or
 a release. Edit `.github/workflows/`. Paste a secret, a token, a home path or a
 hostname into a PR, comment or commit.

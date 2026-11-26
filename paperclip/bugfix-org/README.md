@@ -157,7 +157,8 @@ Then, none of which a package can carry:
 2. **Sandbox profile.** Re-render `paperclip/triage-org/host/paperclip-service.sb.template`
    (the command is in the triage README) so the profile gains the deny for
    `/private/tmp/ow-install.lock`, then restart the service through its launchd
-   job. The org never installs, so it never takes that lock.
+   job. The org never takes that lock itself: the machines runner (`host/README.md`)
+   does, on the org's request.
 3. **AI connection** bound to each of the four agents, as for the triage org.
    **Bind each agent explicitly.** Starting the sign-in with `allAgents: true`
    did not bind agents that were still `verifying`. Verification then passed
@@ -303,8 +304,9 @@ Then, none of which a package can carry:
 
 ## What the org does not do
 
-Install on any of the three machines (so its PR bodies say `Installed on: none`
-and list what an install would have shown under `## Not verified`); touch the
-mobile repository; fix a bug that needs a real captured prompt, a real Windows
-timing or any observation on an installed app; fix a security ticket; edit a
+Install on any of the three machines itself (it asks the machines runner, which
+holds the keys and the lock; a PR that needed no machine says `Installed on: none`
+and why); touch the
+mobile repository; fix a bug that needs a real captured prompt; fix a security
+ticket; edit a
 workflow file; tag or release; push to `develop` or `main`.

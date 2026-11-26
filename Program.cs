@@ -45,6 +45,7 @@ namespace Orbweaver
         [STAThread]
         public static void Main(string[] args)
         {
+            StartupTimeline.Default.Mark("Main entered");
             // The order these run in is Startup.Run's, and the first two
             // are the fixes for CB-44 and CB-178 respectively — see
             // Startup.Run's own comment for why claimSingleInstance sits where

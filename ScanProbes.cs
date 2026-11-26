@@ -243,6 +243,22 @@ namespace Orbweaver
         // The directory as AgentTeamViewer caches it.
         internal static string ViewerKey(string cwd) => cwd.TrimEnd('/');
 
+        // CB-424: the launch's first scan applies nothing until its probes are
+        // back, and on the Windows PC `claude agents --json` took 2 to 7 s, so
+        // no orb existed until it answered. With a budget, a listing that is not
+        // back in time is answered null ("knows nothing about which sessions are
+        // jobs", which the scan already handles) so the first apply goes ahead,
+        // and the listing keeps running to fill BackgroundJobs' cache for the
+        // next tick two seconds later. Without a budget it is the plain call.
+        internal static Dictionary<string, string>? ListJobs(
+            Func<Dictionary<string, string>?> jobListing, TimeSpan? budget)
+        {
+            if (budget is not { } wait) return jobListing();
+
+            var listing = System.Threading.Tasks.Task.Run(jobListing);
+            return listing.Wait(wait) ? listing.Result : null;
+        }
+
         // Runs the plan. Every argument is a seam, so this is the one place the
         // scan spends a subprocess and it can be exercised without spending one.
         //
@@ -256,7 +272,8 @@ namespace Orbweaver
             Func<Dictionary<string, string>?> jobListing,
             Func<HashSet<string>?> attachClients,
             Func<string, AgentViewer?> viewerFor,
-            IReadOnlyDictionary<string, AgentTeam.Membership>? fileTeams = null)
+            IReadOnlyDictionary<string, AgentTeam.Membership>? fileTeams = null,
+            TimeSpan? jobListingBudget = null)
         {
             var owners = plan.PaneClaims.Count > 0
                 ? paneOwners(plan.PaneClaims)
@@ -267,7 +284,7 @@ namespace Orbweaver
 
             return new ScanProbes(
                 owners,
-                plan.AskTheDaemon ? jobListing() : null,
+                plan.AskTheDaemon ? ListJobs(jobListing, jobListingBudget) : null,
                 plan.AskAttachClients ? attachClients() : null,
                 viewers,
                 teams,
