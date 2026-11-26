@@ -389,9 +389,13 @@ class FakeGH:
         return list(self.ruleset_rows)
 
     def branch_rules(self, branch):
-        if self.develop_rules is UNREADABLE:
+        """`branch_rules` is a dict {branch: rules}, or one list for both branches."""
+        rules = self.develop_rules
+        if isinstance(rules, dict):
+            rules = rules.get(branch, [])
+        if rules is UNREADABLE:
             raise subprocess.CalledProcessError(1, ["gh", "api"])
-        return list(self.develop_rules) if branch == "develop" else []
+        return list(rules)
 
     def pr_files(self, n):
         self.files_read.append(n)
@@ -2247,9 +2251,24 @@ def protected_mobile(**kw):
     return FakeGH(rulesets=ACTIVE_RS, branch_rules=DEVELOP_RULES, **kw)
 
 
+def both(rules):
+    return {"main": rules, "develop": rules}
+
+
 class RulesetGateTests(unittest.TestCase):
-    def test_an_active_pull_request_rule_on_develop_passes(self):
-        self.assertIsNone(warden.ruleset_gate(ACTIVE_RS, DEVELOP_RULES))
+    def test_both_branches_are_gated(self):
+        self.assertEqual(warden.gated_branches(warden.MOBILE), ["main", "develop"])
+
+    def test_an_active_pull_request_rule_on_main_and_develop_passes(self):
+        self.assertIsNone(warden.ruleset_gate(ACTIVE_RS, both(DEVELOP_RULES)))
+
+    def test_develop_only_or_main_only_is_not_enough(self):
+        self.assertEqual(warden.ruleset_gate(ACTIVE_RS, {"main": [], "develop": DEVELOP_RULES}),
+                         "no active pull_request rule on main")
+        self.assertEqual(warden.ruleset_gate(ACTIVE_RS, {"main": DEVELOP_RULES, "develop": []}),
+                         "no active pull_request rule on develop")
+        self.assertEqual(warden.ruleset_gate(ACTIVE_RS, {"main": [], "develop": []}),
+                         "no active pull_request rule on main and develop")
 
     def test_each_way_of_not_being_protected_is_named(self):
         disabled = [dict(ACTIVE_RS[0], enforcement="disabled")]
@@ -2258,13 +2277,13 @@ class RulesetGateTests(unittest.TestCase):
             "empty": ([], [], "no rulesets"),
             "disabled": (disabled, DEVELOP_RULES, "no active ruleset"),
             "evaluate only": (evaluate, DEVELOP_RULES, "no active ruleset"),
-            "active but nothing on develop": (ACTIVE_RS, [], "no active pull_request rule on develop"),
+            "active but nothing on either branch": (ACTIVE_RS, [], "no active pull_request rule on main and develop"),
             "deletion only": (ACTIVE_RS, [{"type": "deletion", "ruleset_id": 1}], "pull_request"),
             "rule from another, inactive ruleset": (ACTIVE_RS + [dict(ACTIVE_RS[0], id=2, enforcement="disabled")],
                                                     [{"type": "pull_request", "ruleset_id": 2}], "pull_request"),
         }
         for label, (rs, rules, why) in cases.items():
-            self.assertIn(why, warden.ruleset_gate(rs, rules) or "", label)
+            self.assertIn(why, warden.ruleset_gate(rs, both(rules)) or "", label)
 
 
 class MintTickTests(unittest.TestCase):
@@ -2333,6 +2352,32 @@ class MintTickTests(unittest.TestCase):
             self.assertIn(why, access["withheld"]["mobile"], label)
             self.assertTrue(any(l.startswith("mobile kept off the token: " + why) for l in logs), label)
 
+    def test_mobile_needs_both_main_and_develop_protected(self):
+        cases = {"develop only": ({"develop": DEVELOP_RULES}, "on main"),
+                 "main only": ({"main": DEVELOP_RULES}, "on develop")}
+        for label, (rules, why) in cases.items():
+            repos, access, _ = self.mint_with_mobile(FakeGH(rulesets=ACTIVE_RS, branch_rules=rules))
+            self.assertEqual(repos, ["Orbweaver"], label)
+            self.assertIn(why, access["withheld"]["mobile"], label)
+        repos, _, _ = self.mint_with_mobile(FakeGH(rulesets=ACTIVE_RS, branch_rules=both(DEVELOP_RULES)))
+        self.assertEqual(repos, ["Orbweaver", "Orbweaver-Mobile"], "control: both protected")
+        rules = {"main": UNREADABLE, "develop": DEVELOP_RULES}
+        _, access, _ = self.mint_with_mobile(FakeGH(rulesets=ACTIVE_RS, branch_rules=rules))
+        self.assertIn("rulesets unreadable", access["withheld"]["mobile"], "a failed main read fails closed")
+
+    def test_a_failed_installation_lookup_on_mobile_still_refreshes_desktop(self):
+        pc = FakePC()
+        m = FakeMinter({warden.REPO: DESKTOP_INSTALL, MOBILE_REPO: UNREADABLE})
+        _, paused, logs = tick(gh={"desktop": FakeGH(), "mobile": protected_mobile()}, pc=pc, minter=m,
+                               cfg=dict(TWO, spool=self.spool))
+        self.assertFalse(paused)
+        self.assertEqual(pc.secrets, [("GITHUB_TOKEN", "tok1")])
+        self.assertEqual(m.minted[0][1], ["Orbweaver"])
+        access = read_json(os.path.join(self.spool, "access.json"))
+        self.assertEqual(access["repos"], {"desktop": True, "mobile": False})
+        self.assertEqual(access["withheld"]["mobile"], "installation unreadable (OSError)")
+        self.assertIn("mobile kept off the token: installation unreadable (OSError)", logs)
+
     def test_the_withheld_line_is_logged_once_per_state_change(self):
         state = {}
         _, _, logs = self.mint_with_mobile(FakeGH(), state)
@@ -2364,7 +2409,8 @@ class MintTickTests(unittest.TestCase):
         self.assertFalse(paused, "a failed mint is not a pause")
         self.assertEqual(pc.secrets, [])
         self.assertNotIn("last_mint", state, "the next tick tries again")
-        self.assertTrue(any("token not refreshed: OSError" in l for l in logs))
+        self.assertIn("desktop kept off the token: installation unreadable (OSError)", logs)
+        self.assertTrue(any("token not refreshed: LookupError" in l for l in logs))
         self.assertTrue(any("UNSTUCK" in l for l in logs), "the sweep still ran after the failed mint")
         # Control: once the API answers, the next tick mints.
         tick(pc=pc, state=state, minter=FakeMinter())

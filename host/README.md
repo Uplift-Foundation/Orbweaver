@@ -106,8 +106,9 @@ both are read from Paperclip.
 each configured repository (404 means not covered) and then mints:
 
 * **Ruleset gate.** A repository other than desktop joins the everyday token only while
-  `GET /repos/<repo>/rules/branches/<base>` shows a `pull_request` rule from a ruleset
-  that `GET /repos/<repo>/rulesets` lists as `active`. Both are read with the host's `gh`.
+  `GET /repos/<repo>/rules/branches/<branch>` shows, for **both** `main` and its base
+  (`develop`), a `pull_request` rule from a ruleset that `GET /repos/<repo>/rulesets`
+  lists as `active`. One protected branch is not enough. Both are read with the host's `gh`.
   An empty listing, a failed read, a disabled or evaluate-only ruleset, or active rules
   with no `pull_request` among them (a deletion rule alone does not keep the org off
   develop) each keep it off the token and the mint goes ahead for the rest. One line is
@@ -130,7 +131,10 @@ The read is written to `<spool>/access.json`: `{"checked_at", "repos": {"desktop
 means "on the everyday token as of the last mint"; `withheld` names why a covered repository
 is not. The org reads it: a warden older than CB-481 never writes the file, so its
 existence with `"mobile": true` is what tells an engineer a mobile `rerun_failed` will be
-read as mobile, not as a desktop PR of the same number. A failed mint is logged
+read as mobile, not as a desktop PR of the same number. A failed installation lookup for one repository (anything but 404, e.g. a 5xx) keeps
+that repository off the token for the tick, with `installation unreadable (...)` under
+`withheld`, and the others are still minted: one bad lookup must not let desktop's
+token lapse. A failed mint is logged
 (`token not refreshed: ...`) and the tick goes on to the unstick sweep; `last_mint` moves
 only on success, so the next tick tries again. Before CB-481 a failed mint ended the tick.
 

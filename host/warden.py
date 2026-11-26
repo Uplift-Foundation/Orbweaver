@@ -381,23 +381,33 @@ def workflow_problems(files, r):
 
 # ---------------------------------------------------------------- tokens (CB-481)
 
-def ruleset_gate(rulesets, branch_rules, base="develop"):
-    """Why a repository must NOT go on the everyday token (None = go), from
-    GET /repos/<repo>/rulesets and GET /repos/<repo>/rules/branches/<base>.
+def gated_branches(r):
+    """The branches a ruleset must protect before `r` joins the token: its
+    default branch and its base (lead ruling: both main and develop)."""
+    return list(dict.fromkeys(["main", r["base"]]))
 
-    The token can push, so a repository joins it only once a ruleset keeps the
-    org off its base branch (lead ruling): an active ruleset contributing a
-    `pull_request` rule to that branch. Measured on Orbweaver 2026-11-26: the
-    branch-rules read names each rule's `type` and `ruleset_id`; the rulesets
-    listing gives each ruleset's `enforcement`. A deletion-only rule is not
-    enough, and a rule from a ruleset not listed as active does not count."""
+
+def ruleset_gate(rulesets, branch_rules):
+    """Why a repository must NOT go on the everyday token (None = go), from
+    GET /repos/<repo>/rulesets and, per branch in `branch_rules`,
+    GET /repos/<repo>/rules/branches/<branch>.
+
+    The token can push, so a repository joins it only once rulesets keep the
+    org off both its default branch and its base (lead rulings): each branch
+    must carry a `pull_request` rule from a ruleset listed as active. Measured
+    on Orbweaver 2026-11-26: the branch-rules read names each rule's `type` and
+    `ruleset_id`; the rulesets listing gives each ruleset's `enforcement`. A
+    deletion-only rule is not enough, and a rule from a ruleset not listed as
+    active does not count."""
     if not rulesets:
         return "no rulesets"
     active = {r.get("id") for r in rulesets if r.get("enforcement") == "active"}
     if not active:
         return "no active ruleset"
-    if not any(x.get("type") == "pull_request" and x.get("ruleset_id") in active for x in branch_rules or []):
-        return f"no active pull_request rule on {base}"
+    bare = [b for b, rules in branch_rules.items()
+            if not any(x.get("type") == "pull_request" and x.get("ruleset_id") in active for x in rules or [])]
+    if bare:
+        return "no active pull_request rule on " + " and ".join(bare)
     return None
 
 def token_plan(repos, access):
@@ -1095,7 +1105,7 @@ class Warden:
         read withholds the repository too: the gate cannot be shown to hold."""
         gh = self.gh_for(r)
         try:
-            return ruleset_gate(gh.rulesets(), gh.branch_rules(r["base"]), r["base"])
+            return ruleset_gate(gh.rulesets(), {b: gh.branch_rules(b) for b in gated_branches(r)})
         except (subprocess.CalledProcessError, OSError, ValueError, KeyError, AttributeError) as e:
             return f"rulesets unreadable ({type(e).__name__})"
 
@@ -1120,7 +1130,15 @@ class Warden:
         is read on every mint and written to <spool>/access.json."""
         access, withheld = {}, {}
         for r in self.repos():
-            access[r["key"]] = self.minter.installation(r["repo"])
+            # One repository's lookup failing must not stop the others' token
+            # (QA, CB-481): a 5xx on mobile used to abort the whole mint, so
+            # desktop's token lapsed within the hour.
+            try:
+                access[r["key"]] = self.minter.installation(r["repo"])
+            except Exception as e:
+                access[r["key"]] = None
+                withheld[r["key"]] = f"installation unreadable ({type(e).__name__} {getattr(e, 'code', '')})".replace(" )", ")")
+                continue
             if access[r["key"]] and r["key"] != "desktop":
                 why = self.rulesets_problem(r)
                 if why:

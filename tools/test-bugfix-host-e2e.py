@@ -211,6 +211,7 @@ class FakeGitHubApp:
         self.pub, self.calls, self.jwts = pubkey_path, [], []
         # repo -> installation object; a repo missing here answers 404 (CB-481).
         self.installs = {REPO: {"id": 9, "permissions": dict(warden.EVERYDAY_PERMISSIONS)}}
+        self.broken = set()   # repos whose installation lookup answers 500
         outer = self
 
         class H(http.server.BaseHTTPRequestHandler):
@@ -227,7 +228,9 @@ class FakeGitHubApp:
                 else:
                     outer.jwts.append(auth[7:])
                     m = re.fullmatch(r"/repos/([\w.-]+/[\w.-]+)/installation", self.path)
-                    if m and m.group(1) in outer.installs:
+                    if m and m.group(1) in outer.broken:
+                        code, obj = 500, {"message": "Server Error"}
+                    elif m and m.group(1) in outer.installs:
                         code, obj = 200, outer.installs[m.group(1)]
                     elif self.path == "/app/installations/9/access_tokens":
                         wf = "workflows" in ((body or {}).get("permissions") or {})
@@ -812,9 +815,10 @@ class World(unittest.TestCase):
         # Shaped like Orbweaver's own reads of 2026-11-26.
         self.fx[f"repos/{MOBILE_REPO}/rulesets"] = [
             {"id": 31, "name": "develop: PRs only", "target": "branch", "enforcement": "active"}]
-        self.fx[f"repos/{MOBILE_REPO}/rules/branches/develop"] = [
-            {"type": "deletion", "ruleset_id": 31, "ruleset_source_type": "Repository"},
-            {"type": "pull_request", "ruleset_id": 31, "ruleset_source_type": "Repository"}]
+        for b in ("main", "develop"):
+            self.fx[f"repos/{MOBILE_REPO}/rules/branches/{b}"] = [
+                {"type": "deletion", "ruleset_id": 31, "ruleset_source_type": "Repository"},
+                {"type": "pull_request", "ruleset_id": 31, "ruleset_source_type": "Repository"}]
 
     def test_covered_but_unprotected_mobile_is_kept_off_the_token(self):
         if not HAVE_OPENSSL:
@@ -837,6 +841,35 @@ class World(unittest.TestCase):
         self.assert_untouched(self.run_warden(mint=True))
         bodies = [b for m, p, b in self.app.calls if p.endswith("/access_tokens")]
         self.assertEqual([b["repositories"] for b in bodies], [["Orbweaver", "Orbweaver-Mobile"]])
+
+    def test_develop_protected_but_main_not_keeps_mobile_off(self):
+        if not HAVE_OPENSSL:
+            self.skipTest("openssl")
+        self.two_repos()
+        inst = {"id": 9, "permissions": dict(warden.EVERYDAY_PERMISSIONS)}
+        self.app.installs = {REPO: inst, MOBILE_REPO: inst}
+        self.protect_mobile()
+        self.fx[f"repos/{MOBILE_REPO}/rules/branches/main"] = []
+        self.assert_untouched(self.run_warden(mint=True))
+        bodies = [b for m, p, b in self.app.calls if p.endswith("/access_tokens")]
+        self.assertEqual([b["repositories"] for b in bodies], [["Orbweaver"]])
+        with open(os.path.join(self.spool, "access.json")) as f:
+            self.assertEqual(json.load(f)["withheld"], {"mobile": "no active pull_request rule on main"})
+
+    def test_a_5xx_on_the_mobile_installation_lookup_still_refreshes_desktop(self):
+        if not HAVE_OPENSSL:
+            self.skipTest("openssl")
+        self.two_repos()
+        self.protect_mobile()
+        self.app.broken = {MOBILE_REPO}
+        self.assert_untouched(self.run_warden(mint=True))
+        self.assertEqual([(s["name"], s["value"]) for s in self.pc.secrets], [("GITHUB_TOKEN", "ghs_FAKETOKEN")])
+        bodies = [b for m, p, b in self.app.calls if p.endswith("/access_tokens")]
+        self.assertEqual([b["repositories"] for b in bodies], [["Orbweaver"]])
+        with open(os.path.join(self.spool, "access.json")) as f:
+            access = json.load(f)
+        self.assertEqual(access["repos"], {"desktop": True, "mobile": False})
+        self.assertEqual(access["withheld"], {"mobile": "installation unreadable (HTTPError 500)"})
 
     def test_without_the_permission_only_the_everyday_token_and_mobile_404_is_reported(self):
         if not HAVE_OPENSSL:
@@ -967,6 +1000,10 @@ class World(unittest.TestCase):
         m = warden.AppMinter(self.d, api=self.app.url)
         self.assertIsNone(m.installation(warden.MOBILE["repo"]), "404 means not covered")
         self.assertIsNotNone(m.installation(REPO), "control: a covered repository")
+        self.app.broken = {REPO}
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            m.installation(REPO)
+        self.assertEqual(cm.exception.code, 500, "anything but 404 is raised, not read as uncovered")
 
     @unittest.skipUnless(HAVE_OPENSSL, "needs openssl")
     def test_mint_fails_loudly_when_the_api_refuses(self):
