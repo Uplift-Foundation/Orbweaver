@@ -110,7 +110,8 @@ namespace Orbweaver
             [property: JsonPropertyName("id")] string Id,
             [property: JsonPropertyName("n")] string? Name = null,
             [property: JsonPropertyName("code")] string? Code = null,
-            [property: JsonPropertyName("body")] JsonElement? Body = null);
+            [property: JsonPropertyName("body")] JsonElement? Body = null,
+            [property: JsonPropertyName("proof")] string? Proof = null);
 
         // Reflection-based on purpose, matching the rest of this app: there is no
         // source-generated context anywhere here, and introducing one for a
@@ -226,8 +227,9 @@ namespace Orbweaver
         internal static string NewId() => Guid.NewGuid().ToString("N")[..8];
 
         internal static PeerMessage Message(
-            string type, string id, string? name = null, string? code = null, JsonElement? body = null) =>
-            new(Version, type, id, name, code, body);
+            string type, string id, string? name = null, string? code = null, JsonElement? body = null,
+            string? proof = null) =>
+            new(Version, type, id, name, code, body, proof);
 
         internal static JsonElement BodyOf<T>(T value) =>
             JsonSerializer.SerializeToElement(value, Json);

@@ -265,6 +265,18 @@ namespace Orbweaver
                         continue;
                     }
 
+                    // CB-346: the same for a dial that is pairing. It Adopts
+                    // before the far side has answered, and the certificate it
+                    // accepted was never checked against anything, so whoever
+                    // answered is unconfirmed until its `ok` proves it knows the
+                    // code for the certificates in this handshake. Only the
+                    // answer itself is looked at before then.
+                    if (PairingWith(machine) && message.Type is not (PeerProtocol.Ok or PeerProtocol.Err))
+                    {
+                        MirrorLog.SayOnce("peer-before-confirm", $"t={message.Type} dropped");
+                        continue;
+                    }
+
                     MirrorLog.Say("peer-in", $"from={machine} t={message.Type} id={message.Id}");
 
                     // The greeting is the link's own business and never reaches
@@ -293,6 +305,13 @@ namespace Orbweaver
                     // "198.51.100.10".
                     if (message.Type == PeerProtocol.Ok && IsGreetingAnswer(machine, message))
                     {
+                        if (PairingWith(machine) && !PairingConfirmed(machine, message))
+                        {
+                            MirrorLog.Say("peer-pair-unconfirmed", $"by={machine}");
+                            Drop(machine);
+                            break;
+                        }
+
                         machine = Settle(machine, message.Name);
                         continue;
                     }
@@ -696,9 +715,10 @@ namespace Orbweaver
 
                 lock (_gate)
                 {
-                    if (pairing) _pairingWith.Add(machine);
                     if (nameIsProvisional) _provisional.Add(machine);
                 }
+
+                if (pairing) BeginPairing(machine, pairingCode!, PeerIdentity.PinOf(own));
 
                 Adopt(machine, tls, offered, ct, endpoint: host + ":" + port);
                 adopted = true;
@@ -732,7 +752,11 @@ namespace Orbweaver
                 // before this connect does, and there was nothing left to
                 // retry it (CB-132). A provisional dial still gets exactly one
                 // firing, later, once Settle knows the real name to report.
-                if (!nameIsProvisional) PeerConnected?.Invoke(machine);
+                //
+                // Not for a pairing (CB-346): that connection is unconfirmed
+                // until the far side's `ok` has been checked, and Settle
+                // announces it then.
+                if (!nameIsProvisional && !pairing) PeerConnected?.Invoke(machine);
 
                 return true;
             }
@@ -1014,7 +1038,11 @@ namespace Orbweaver
                     break;
                 }
 
-                if (name is not null) _peers.Remove(name);
+                if (name is not null)
+                {
+                    _peers.Remove(name);
+                    _pairingWith.Remove(name);
+                }
             }
 
             MirrorLog.Say("peer-dropped", $"machine={name ?? "(already gone)"}");
@@ -1150,6 +1178,8 @@ namespace Orbweaver
                 return null;
             }
 
+            string? proof = null;
+
             if (verdict == Greeting.Paired)
             {
                 // One window, one pairing. Leaving it open would turn a code
@@ -1157,6 +1187,8 @@ namespace Orbweaver
                 // above now also guards, but this is the stronger statement and
                 // does not wait five minutes to be true.
                 ClosePairing();
+                proof = PeerIdentity.PairingProof(
+                    open!, PeerIdentity.PinOf(await _seams.OwnCertificate(CancellationToken.None).ConfigureAwait(false)), pin);
 
                 PeerIdentity.Remember(new PeerIdentity.Peer(pin, claimed));
                 MirrorLog.Say("peer-paired", $"with={claimed}");
@@ -1165,7 +1197,7 @@ namespace Orbweaver
             Rename(machine, claimed);
 
             await SendAsync(claimed, PeerProtocol.Message(
-                PeerProtocol.Ok, hello.Id, name: MachineNames.Mine()))
+                PeerProtocol.Ok, hello.Id, name: MachineNames.Mine(), proof: proof))
                 .ConfigureAwait(false);
 
             return claimed;
@@ -1225,19 +1257,52 @@ namespace Orbweaver
                     // which for an add-by-address was an IP. Move it, or the
                     // pairing is remembered under something the far machine will
                     // never call itself and the next reconnect is refused.
-                    if (_pairingWith.Remove(machine)) _pairingWith.Add(named);
+                    if (_pairingWith.Remove(machine, out var secret)) _pairingWith[named] = secret;
                 }
 
                 MirrorLog.Say("peer-named", $"{machine} -> {named}");
             }
 
-            if (PairingWith(named)) RememberFromGreeting(named);
+            var paired = PairingWith(named);
+            if (paired) RememberFromGreeting(named);
+
+            // Rename announces a connection, so only a pairing that was not
+            // renamed still has to (CB-346).
+            if (paired && string.Equals(named, machine, StringComparison.OrdinalIgnoreCase))
+                PeerConnected?.Invoke(named);
 
             return named;
         }
 
         // Machines we have greeted with a code and not yet heard back from.
-        private readonly HashSet<string> _pairingWith = new(StringComparer.OrdinalIgnoreCase);
+        // with what each is waiting to check the answer against (CB-346).
+        private readonly Dictionary<string, (string Code, string OwnPin)> _pairingWith =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        internal void BeginPairing(string machine, string code, string ownPin)
+        {
+            lock (_gate) _pairingWith[machine] = (code, ownPin);
+        }
+
+        // Whether an `ok` to a pairing greeting is from a machine that holds the
+        // code and is the one behind the certificate this connection is on.
+        // Judged against the pin the connection was adopted with, which is the
+        // certificate TLS actually presented.
+        private bool PairingConfirmed(string machine, PeerProtocol.PeerMessage ok)
+        {
+            (string Code, string OwnPin) expect;
+            string presented;
+
+            lock (_gate)
+            {
+                if (!_pairingWith.TryGetValue(machine, out expect)) return false;
+                presented = _peers.TryGetValue(machine, out var peer) ? peer.Pin : "";
+            }
+
+            return !string.IsNullOrWhiteSpace(presented)
+                && PeerIdentity.CodeMatches(
+                    PeerIdentity.PairingProof(expect.Code, presented, expect.OwnPin), ok.Proof);
+        }
 
         // Connections filed under a name we invented, waiting to be told a real
         // one. Only an add-by-address dial puts anything in here.
@@ -1245,7 +1310,7 @@ namespace Orbweaver
 
         private bool PairingWith(string machine)
         {
-            lock (_gate) return _pairingWith.Contains(machine);
+            lock (_gate) return _pairingWith.ContainsKey(machine);
         }
 
         // Excluded from coverage: one write to the identity file, on a path that
@@ -1358,7 +1423,11 @@ namespace Orbweaver
         internal void Drop(string machine)
         {
             Connected? peer;
-            lock (_gate) _peers.Remove(machine, out peer);
+            lock (_gate)
+            {
+                _peers.Remove(machine, out peer);
+                _pairingWith.Remove(machine);
+            }
 
             if (peer is null) return;
 
