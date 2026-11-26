@@ -97,10 +97,18 @@ namespace Orbweaver
             lock (Gate) return _chimeChain;
         }
 
+        // Test seam (CB-463): when set, SchedulePendingLocked records the
+        // pending events but arms no real timer, so a test that drives the
+        // logical clock fires FirePending itself and cannot race a timer
+        // callback that has already taken the events but not yet enqueued
+        // its chime. Cleared by ResetForTests; production never sets it.
+        internal static bool ManualPendingForTests;
+
         internal static void ResetForTests()
         {
             lock (Gate)
             {
+                ManualPendingForTests = false;
                 _lastPlayed = DateTime.MinValue;
                 ClearPendingLocked();
                 _chimeChain = Task.CompletedTask;
@@ -265,6 +273,8 @@ namespace Orbweaver
             // deferred against the same _lastPlayed), and simpler than
             // reasoning about when it would be safe to skip.
             _pendingTimer?.Dispose();
+            _pendingTimer = null;
+            if (ManualPendingForTests) return;
             _pendingTimer = new Timer(_ => FirePending(), null, delay, Timeout.InfiniteTimeSpan);
         }
 
