@@ -424,5 +424,65 @@ class SandboxProfileTests(unittest.TestCase):
         self.assertNotRegex(text, r"deny file-read\*[^\n]*ow-install\.lock")
 
 
+PS_LSTART = os.path.join(HERE, "..", "paperclip", "triage-org", "host", "ps-lstart.c")
+CAN_BUILD_PS = (os.uname().sysname == "Darwin" if hasattr(os, "uname") else False) \
+    and shutil.which("clang") is not None and os.path.exists("/usr/bin/sandbox-exec")
+
+
+@unittest.skipUnless(CAN_BUILD_PS, "macOS with clang and sandbox-exec")
+class PsLstartTests(unittest.TestCase):
+    """CB-467: the service's `ps -o lstart= -p <pid>` stand-in. Paperclip uses that
+    answer to tell a reused pid from an old run's process; inside the sandbox the
+    real /bin/ps cannot run, and a lead stayed in "pausing" for hours."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        cls.ps = os.path.join(cls.tmp, "ps")
+        subprocess.run(["clang", "-O2", "-Wall", "-Wextra", "-Werror", "-o", cls.ps, PS_LSTART], check=True)
+        with open(PROFILE, encoding="utf-8") as f:
+            text = f.read()
+        home = os.path.expanduser("~")
+        text = (text.replace("__HOME__", home).replace("__UID__", str(os.getuid()))
+                .replace("__USER__", os.path.basename(home)))
+        cls.profile = os.path.join(cls.tmp, "service.sb")
+        with open(cls.profile, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def run_(self, *argv):
+        return subprocess.run(list(argv), capture_output=True, text=True)
+
+    def test_it_answers_exactly_what_ps_answers(self):
+        pid = str(os.getpid())
+        want = self.run_("/bin/ps", "-o", "lstart=", "-p", pid).stdout.strip()
+        got = self.run_(self.ps, "-o", "lstart=", "-p", pid)
+        self.assertEqual(got.returncode, 0)
+        self.assertTrue(want)
+        self.assertEqual(got.stdout.strip(), want)
+
+    def test_a_missing_pid_prints_nothing_and_fails_like_ps(self):
+        for pid in ("99999999", "0", "-1", "12x", ""):
+            with self.subTest(pid=pid):
+                got = self.run_(self.ps, "-o", "lstart=", "-p", pid)
+                self.assertEqual((got.returncode, got.stdout), (1, ""))
+
+    def test_any_other_invocation_is_the_real_ps(self):
+        got = self.run_(self.ps, "-p", str(os.getpid()), "-o", "pid=")
+        self.assertEqual(got.stdout.strip(), str(os.getpid()))
+
+    def test_inside_the_service_sandbox_only_the_stand_in_can_answer(self):
+        pid = str(os.getpid())
+        real = self.run_("/usr/bin/sandbox-exec", "-f", self.profile, "/bin/ps", "-o", "lstart=", "-p", pid)
+        self.assertNotEqual(real.returncode, 0, "negative control: setuid ps is refused in a sandbox")
+        self.assertEqual(real.stdout, "")
+        got = self.run_("/usr/bin/sandbox-exec", "-f", self.profile, self.ps, "-o", "lstart=", "-p", pid)
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertEqual(got.stdout.strip(), self.run_("/bin/ps", "-o", "lstart=", "-p", pid).stdout.strip())
+
+
 if __name__ == "__main__":
     unittest.main()
