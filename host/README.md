@@ -228,7 +228,7 @@ mirror what Orbweaver's rulesets protect, adapted to mobile:
 | `main-and-develop-prs-only.json` | `main` and `develop`: PR only, no deletion, no force push. Admins bypass only through a PR, as on Orbweaver, so nobody pushes straight to either |
 | `develop-required-checks.json` | `develop`: `relay`, `contracts` and `tools` (GitHub Actions) must pass. They are the checks that run on every PR to `develop`, read off the check runs of mobile's merged PRs. `android` and `snapshots` are path-filtered and so cannot be required; nothing runs on a PR to `main`, so `main` requires no check |
 | `main-admins-only.json` | `main`: updates, deletion and force push by admins only (the org's App never) |
-| `other-branches-admins-only.json` | every branch but `bugfix/pc-*`, `develop` and `main`: admins (and Dependabot) only. No `screenshots` exclusion, because no mobile workflow pushes a branch |
+| `other-branches-admins-only.json` | every branch but `bugfix/pc-*`, `develop` and `main`: admins only. No Dependabot bypass: GitHub refuses it on this repository (HTTP 422 "Actor Dependabot integration must be part of the ruleset source or owner organization", measured 2026-11-26), since Dependabot is not set up on mobile. No `screenshots` exclusion, because no mobile workflow pushes a branch |
 | `tags-admins-only.json` | every tag: creation, update, deletion and force push by admins only (Orbweaver's two tag rulesets in one) |
 
 Before applying, read the collaborator list: a non-admin who pushes branches would be locked out
