@@ -274,6 +274,7 @@ a refused write is retried next tick.
 | Kind | When | What it does |
 | --- | --- | --- |
 | `close_answered` | Task `blocked`, no children, no live run, an assignee agent, and its newest agent-written comment is that assignee's `ANSWER ...`; and either its parent is `done` or `cancelled`, or the one PR the answer names (`PR 427`; two different numbers, or any mention of mobile, is no proof) is the org's own (bot author, `bugfix/pc-` head, read with `gh`) and merged or closed (CB-487). A task whose cancel the release brake would count (description opens `Ticket: CB-n`, or no description in the row) closes only on a merged PR, never on a closed one or a settled parent, so a ticket given up on still reaches the brake. Checked ahead of the usage rule. | `PATCH {"status":"done"}`, with no comment, since a board comment wakes the assignee. QAF-194 and QAF-198 were blocked by Paperclip's workspace validation a minute before posting their merge verdicts and sat blocked for four hours; their parent passes then never settled. Comments are read only for blocked leaves, GitHub only when the parent has not settled, and an unreadable PR is no proof. The parent is then closed by `close_parent` on later ticks. |
+| `wake_parent_for_answer` | A blocked leaf whose newest agent comment is its assignee's `ANSWER` but whose work is not over (no settled parent, no merged or closed PR: "could not answer", QAF-244), and its parent is `blocked` with no live run. Once per block of the leaf (`answer_wakes`, kept while the leaf stays blocked); two such leaves under one parent wake it once (CB-492). | One board comment on the **parent** naming the leaf, which wakes the lead to read the answer and decide. The leaf is never touched, so an engineer's task is never marked done. Before this, wake refused an answered task, `close_answered` refused an open one and `wake_parent` waited for every child to settle, so QAF-234 waited from 07:08Z until a person woke it at 08:42Z. The medic counts such a leaf as swept. |
 | `close_parent` | Task `blocked`, at least one child and every child `done` or `cancelled`, no live run on it or any child, untouched 10 min. The assignee's newest comment is newer than every child's last activity, or the parent was woken 15+ min ago and is still blocked. | `PATCH /api/issues/<id> {"status":"done"}`. Paperclip counts cancelled children as open blockers and refuses the lead's own `done` (CB-424's release); the board login is allowed. |
 | `wake_parent` | Same, with no newer report and no wake yet. | One board comment on the parent; a board comment on an open issue wakes its assignee. |
 | `wake_child` | Child task (has `parentId` and an assignee agent) `todo`, `in_progress` or `in_review`, no live run, no activity for 20 min, and 20 min since the last wake. At most twice; activity of its own more than a minute after the last wake (beyond our comment's bump) starts the count again. | Board comment on the child. |
@@ -350,13 +351,27 @@ re-blocked it at 04:19, which is the block the 04:55 medic wake then acted on. T
 sweep's and the medic's closes post no comment for this reason, and `wake` refuses a
 task that is `done` or `cancelled`.
 
+An incident is the set of checks that hold plus the stuck tasks it was opened
+over, each as its id at its `blockedTransitionAt` (never `updatedAt`, which every
+comment moves), and each waiting approval. Only growth opens a new incident: a
+newly stuck task or a re-block does, a task recovering does not (CB-492). Keyed by check names
+alone, one escalation on `stuck` at 05:35Z on 2026-11-27 silenced the medic
+until a person stepped in at 08:40Z while QAF-228 and then QAF-244 stood stuck.
+An escalation refused because an earlier medic one is still pending is not
+recorded as made, so it no longer mutes the incident either: it is logged once
+per incident and retried on later launches, and the CB-487 once-in-total record
+for refused tasks is made only when its escalation is actually sent.
+
 `escalate` posts one pending `request_board_approval` to the company per
 incident, which the app shows on the lead's orb as a waiting need titled
 "Bug-fix org stopped: ...". After three launches in one incident with no
 recovery, `medic.py` escalates on its own. `file-bug` writes the bug to
-`~/.config/orbweaver-bugfix/medic-bugs/` as the record and creates one
-Paperclip task, "File a CB bug: false org stop", for the bug-fix lead, who has
-the Jira connector; the medic's text sits quoted inside a fenced block in it.
+`~/.config/orbweaver-bugfix/medic-bugs/` and logs one `ACT file-bug` line naming
+the file; nothing else (CB-492, lead's ruling). It used to hand the lead a
+Paperclip task, "File a CB bug: false org stop", which the lead's rules forbid it
+to do: QAF-228 sat blocked and held an incident open. A board approval was ruled
+out because it reads as "the org needs you", and a bug is not a stop. The stuck
+check ignores any task with that title left from before.
 The host has no Jira credential of its own. Secrets (GitHub and Anthropic
 tokens, `x-access-token:` URLs, `Authorization:` values) are redacted from the
 snapshot, the prompt, `medic.log` (0600) and the bug before any is written.

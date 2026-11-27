@@ -741,6 +741,39 @@ class InstructionTests(unittest.TestCase):
         self.assertIn("Never close a workflow PR because `gh pr merge` refused it.", flat(skill))
         self.assertNotIn("BUGFIX_GH_WORKFLOW_TOKEN", lead, "the lead never holds the workflow token")
 
+    def test_qa_tests_a_sha_in_a_second_worktree_and_never_detaches_its_own(self):
+        # CB-492: QA's own `git checkout <sha>` left its Paperclip worktree on a
+        # detached HEAD, and every later run there failed workspace validation.
+        for text in (read("skills", "cb-bugfix", "SKILL.md"), read("agents", "tamsin-oyelaran", "AGENTS.md")):
+            flat = " ".join(text.split())
+            self.assertIn("Never move your own worktree off its branch.", flat)
+            self.assertIn('git worktree add --detach "$TMPDIR/qa-<sha>" <sha>', flat)
+            self.assertIn('git worktree remove --force "$TMPDIR/qa-<sha>"', flat)
+            self.assertIn("workspace_validation_failed", flat)
+        # Control: no instruction anywhere tells an agent to check out a bare sha or FETCH_HEAD.
+        bare = re.compile(r"git checkout (-q )?(--detach )?(<sha>|FETCH_HEAD|[0-9a-f]{7,40})(?! --)")
+        for slug in AGENTS:
+            for m in bare.finditer(read("agents", slug, "AGENTS.md")):
+                self.assertIn("leaves it on a detached HEAD", read("agents", slug, "AGENTS.md")[m.start():m.start() + 400], slug)
+
+    def test_the_lead_settles_an_answered_blocked_child_the_warden_names(self):
+        # CB-492: the warden wakes the parent; without this step the wake brings
+        # the lead back to a task still blocked by that child.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("warden", os.path.join(HERE, "..", "host", "warden.py"))
+        warden = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(warden)
+        lead = " ".join(read("agents", "marisol-vandenberg", "AGENTS.md").split())
+        self.assertIn("**A child that answered and is blocked.**", lead)
+        self.assertIn("settle the blocked child with the same `PATCH /api/issues/<the child's id>`", lead)
+        self.assertIn("only on a child the warden named", lead)
+        self.assertIn('`{"status": "done", "comment": "Settled by the lead: it could not finish; see its answer."}`', lead)
+        self.assertIn("a QA, review or capture child, and the ticket's engineer issue when the ticket is settled "
+                      "(its PR merged or closed): `{\"status\": \"done\"", lead)
+        self.assertIn("the ticket's engineer issue when you release that ticket: `{\"status\": \"cancelled\"}`", lead)
+        self.assertIn("Only the engineer issue, and only on a release.", lead)
+        self.assertIn("as your instructions say", warden.WAKE_PARENT_FOR_ANSWER)
+
     def test_a_mobile_rerun_waits_for_the_per_repo_warden(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")
         self.assertIn('`{"verb": "rerun_failed", "pr": <PR number>, "repo": "mobile"}`', skill)

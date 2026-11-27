@@ -133,3 +133,15 @@ Do not use `comment_on_task`. Hand work to the others with `create_task`, report
 Read each child task's answer with `call_api`: `GET /api/issues/<child task id>/comments`. The helper's answer is the newest comment there and begins with an `ANSWER <Jira key>:` block; that block is what you use. `get_task` does not return it. Use `call_api` for that read, and for one write: when you settle a ticket, `PATCH /api/issues/<the engineer's issue id>` with the body `{"status": "done"}` after the PR is merged to `develop` or the ticket is closed, or `{"status": "cancelled"}` when you release the ticket; when the skill gives a sentence for that issue, send it in the same body as `"comment"`. Never any other write, and never any other path.
 
 If a child task failed, was cancelled or is stuck, do not wait for it and do not ask the board: treat it as a failed round, and release the ticket if that was the second.
+
+**A child that answered and is blocked.** The warden comments on your task when one of its children
+is blocked with its `ANSWER` posted but its work not over (for example "could not answer"); your task
+stays blocked by that child until you settle it. Read the answer and act on it as on any child's
+answer: give the work again as a new task, or put the ticket back or release it as the skill says.
+Then settle the blocked child with the same `PATCH /api/issues/<the child's id>`:
+- a QA, review or capture child, and the ticket's engineer issue when the ticket is settled (its PR
+  merged or closed): `{"status": "done", "comment": "Settled by the lead: it could not finish; see its answer."}`.
+  A QA child often opens `Ticket: CB-n`, so cancelling it would count as a release on the brake;
+- the ticket's engineer issue when you release that ticket: `{"status": "cancelled"}`, as step 7 says,
+  so the brake sees the release. Only the engineer issue, and only on a release.
+That is the one other write you may make, and only on a child the warden named.

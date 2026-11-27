@@ -41,10 +41,13 @@ that is safe, and how to tell Warren once if it is not.
 | `paperclip_unreadable` | the medic could not read Paperclip at all | the service is down |
 
 While the company is paused, `no_heartbeat` and `stuck` are not read: they are
-the pause's own effects. An incident is the set of checks that hold, so a pause
-where the warden also goes quiet becomes a new incident and you may be started
-again; `escalate` is still refused while an earlier medic escalation is pending,
-so Warren hears once.
+the pause's own effects. An incident is the set of checks that hold and the stuck tasks it was opened
+over: a pause where the warden also goes quiet, a newly stuck task, or a task
+blocked again is a new incident, and you may be started again. A task that
+recovers does not open one.
+`escalate` is still refused while an earlier medic escalation is pending, so
+Warren hears once; a refused escalation does not count as one, so you are not
+silenced by it.
 
 ## Pause reasons and what may lift them
 
@@ -83,6 +86,10 @@ medic resumed the company within the last six hours and it is paused again,
      closed or whose parent is done or cancelled: `close-task`. A task whose
      description opens `Ticket: CB-n` closes only on a merged PR. Its work is over; waking it restarts nothing
      and may re-block it;
+   - a task with no children whose last agent comment is its own `ANSWER` but
+     whose work is not over (for example "could not answer"): nothing for you.
+     The warden's sweep wakes its blocked parent to read the answer, once per
+     block, and the task is left as it is;
    - a task blocked because "the issue workspace failed validation" (Paperclip
      holds a `workspace_validation_failed` recovery on it): `escalate`. Its
      worktree needs a person, and `wake` refuses it;
@@ -104,7 +111,7 @@ medic resumed the company within the last six hours and it is paused again,
 | `close-pass` | `{"issue": "QAF-n"}` | a blocked pass to done | not blocked; no children; any child not done or cancelled |
 | `close-task` | `{"issue": "QAF-n"}` | a task that gave its answer and whose work is over to done | not blocked or todo; a run in flight; has children; its newest agent comment is not its assignee's `ANSWER`; the PR the answer names is not merged or closed and its parent is not done or cancelled |
 | `restart-warden` | `{}` | `launchctl kickstart -k` the warden job | the warden saved its state within 15 minutes; restarted within the hour |
-| `file-bug` | `{"summary": "<one line>", "body": "<text>"}` | records the bug in `medic-bugs/` and gives the bug-fix lead a task to file it as a CB Bug (one task per incident) | 5 already today |
+| `file-bug` | `{"summary": "<one line>", "body": "<text>"}` | records the bug in `medic-bugs/` for a person to file in CB; no Paperclip task and no approval | 5 already today |
 | `escalate` | `{"line": "<one line>"}` | a pending board approval Warren sees on the lead's orb | already escalated this incident; an earlier medic escalation is still pending |
 | `noop` | `{}` | nothing; logged | never |
 
