@@ -135,6 +135,11 @@ namespace Orbweaver
 
             var cli = LaunchGate.CliFor(f.Cli);
             var name = NewChatLauncher.DisplayName(cli);
+            // CB-477: a first-run dialog that is not the trust question is named, so the
+            // requester is not told a trust question is open.
+            var dialog = prompt.Dialog;
+            if (policy == TrustPolicy.Report && dialog is not null)
+                return new(RelayReplies.LaunchFailed, name + " is waiting for an answer to \"" + dialog + "\" on that machine. Answer it on the desk.", null);
             if (policy == TrustPolicy.Report)
                 return new(RelayReplies.LaunchFailed, name + " is asking whether to trust that folder. Answer it on the desk.", null);
 
@@ -142,6 +147,8 @@ namespace Orbweaver
                 return new(PeerLaunchCodes.TrustNeeded, null, null, new HeldTrust(pane!, before, prompt.Hooks));
 
             await CloseIfStillAskingAsync(f.Cwd, cli, pane!, prompt.Kind).ConfigureAwait(false);
+            if (dialog is not null)
+                return new(RelayReplies.LaunchFailed, name + " is waiting for an answer to \"" + dialog + "\" on that machine. Answer it once on that machine.", null);
             return new(RelayReplies.LaunchFailed, prompt.Kind == TrustPrompt.Kind.Answerable
                 ? name + " is asking whether to trust that folder. Update this machine to answer from here."
                 : name + " is asking whether to trust that folder. Answer it once on that machine.", null);
