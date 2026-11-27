@@ -768,7 +768,10 @@ class InstructionTests(unittest.TestCase):
         self.assertIn("settle the blocked child with the same `PATCH /api/issues/<the child's id>`", lead)
         self.assertIn("only on a child the warden named", lead)
         self.assertIn('`{"status": "done", "comment": "Settled by the lead: it could not finish; see its answer."}`', lead)
-        self.assertIn("Always `done`, never `cancelled`", lead)
+        self.assertIn("a QA, review or capture child, and the ticket's engineer issue when the ticket is settled "
+                      "(its PR merged or closed): `{\"status\": \"done\"", lead)
+        self.assertIn("the ticket's engineer issue when you release that ticket: `{\"status\": \"cancelled\"}`", lead)
+        self.assertIn("Only the engineer issue, and only on a release.", lead)
         self.assertIn("as your instructions say", warden.WAKE_PARENT_FOR_ANSWER)
 
     def test_a_mobile_rerun_waits_for_the_per_repo_warden(self):
