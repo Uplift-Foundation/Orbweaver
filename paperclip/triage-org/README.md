@@ -100,7 +100,12 @@ Then, none of which a package can carry:
    The runner refuses an MCP endpoint that is neither HTTPS nor loopback.
 2. **AI connection.** Connectors, Anthropic, Connect, in a browser. Then bind
    it to each agent (`runtimeConfig.aiConnection` with the connection and grant
-   ids).
+   ids). **One connection is not enough on its own:** when that subscription
+   hit its weekly limit on 2026-11-25, every triage run failed until a person
+   stepped in (CB-469). The running company now draws on a pool of all four
+   subscriptions, as `paperclip/bugfix-org/README.md` step 3a describes under
+   "The triage company has the same four accounts", and a new company is set
+   up by the four steps there.
 3. **Jira connector.** Connect, choosing the right Atlassian account and site,
    and untick everything but the three Jira toolsets at Atlassian's consent
    page. **Straight after the consent, Paperclip allows every discovered action

@@ -264,7 +264,11 @@ unstick sweep's below.
 
 Every stall of 2026-11-25 was cleared by hand with the board login. The warden now makes
 those moves itself, on each tick, for each company in `unstick_company_ids` in `warden.json`
-(default: `company_id`, so triage can be added later). It never acts on a paused company,
+(default: `company_id`). **It also reads a second company, the triage org, for one rule
+only** (CB-469): `close_pinned` on a stuck routine fire, nothing else. Its id is
+`triage_company_id` in `warden.json`, else `triage-company-id.txt` beside `pool-usage.json`
+in the Paperclip instance folder (`triage_company_file` overrides that path), and the sweep
+skips it when neither says. It never acts on a paused company,
 including on the tick that pauses it. `unstick_actions` decides from the issue listing,
 the recent runs, the assignee's newest comment on each blocked parent, `state.json` and
 `pool-usage.json`; `Warden.unstick` only carries the answer out. Every action is logged as
@@ -279,7 +283,30 @@ a refused write is retried next tick.
 | `wake_parent` | Same, with no newer report and no wake yet. | One board comment on the parent; a board comment on an open issue wakes its assignee. |
 | `wake_child` | Child task (has `parentId` and an assignee agent) `todo`, `in_progress` or `in_review`, no live run, no activity for 20 min, and 20 min since the last wake. At most twice; activity of its own more than a minute after the last wake (beyond our comment's bump) starts the count again. | Board comment on the child. |
 | `cancel_child` | The same child, still stalled 20 min after its second wake. | Recorded in `state["unstick"]["cancelled"]` first, then `PATCH {"status":"cancelled"}`, then a board comment on the parent. That list keeps it out of the release brake: a sweep cancel is the warden's repair, not the lead giving up, and is logged as `not a release`. |
-| `reset_session` | Not settled, no live run, its latest run cancelled under an hour ago by the pool router (`errorCode` `ai_connection_pool_exhausted`, error "...over their usage limit..."), and `pool-usage.json` shows an `ok` account with every limit under 90% and none reached. Once per task per hour. | `POST /api/agents/<run's agent>/runtime-state/reset-session {"taskKey"}` (board-only route), then a wake comment. While that cancel is under an hour old the task counts as waiting on usage and the other rules leave it alone; once it is older it explains nothing, and a blocked pass whose children settled is closed by the parent rule. An unreadable pool file means no headroom. |
+| `reset_session` | Not settled, no live run, its latest run cancelled under an hour ago by the pool router (`errorCode` `ai_connection_pool_exhausted`, error "...over their usage limit..."), and `pool-usage.json` shows an `ok` account with every limit under 90% and none reached. Once per task per hour. **Only for a task that was never routed through the pool** (no run of it carries `aiRouterSelection`): a reset does not free a pinned task (below). | `POST /api/agents/<run's agent>/runtime-state/reset-session {"taskKey"}` (board-only route), then a wake comment. While that cancel is under an hour old the task counts as waiting on usage and the other rules leave it alone; once it is older it explains nothing, and a blocked pass whose children settled is closed by the parent rule. An unreadable pool file means no headroom. |
+
+| `close_pinned` | Not settled, no live run, its latest run stopped on usage under an hour ago (the router's cancel above, or `failed` with `errorCode` `native_provider_usage_limit`, a run that hit the limit part-way), and one of its last five runs was routed to a pool account (`contextSnapshot.aiRouterSelection.binding.connectionId`, read from `GET /api/heartbeat-runs/<id>`, since the listing trims it). Some account has headroom, and the pinned account's reached limits do not all reset within 30 minutes by `pool-usage.json` (an unknown reset time counts as long). The task is a child (`child:<parent>:<title>`), or a root task a routine made (`originKind` `routine_execution`, `routine:<originId>`); another root task is left. In the triage company, routine fires only. At most once per key per six hours (`repinned`); a second stop under the same key is logged once as `repin_repeat` and left alone, because it means the new task's pin also landed on a full account. | A bare `PATCH {"status":"done"}`, never `cancelled`, so the release brake does not count it. For a child, one board comment on the parent names it, says it was pinned to an exhausted account and until when, and tells the lead to re-create it with the same title and description. For a routine fire, a log line only. The PATCH carries no comment, and no comment follows it on the task itself: Paperclip moves a `blocked` or `done` task with an assignee back to `todo` when a board user comments, which would undo the close. Closing the routine fire matters because every routine here is `coalesce_if_active`, and Paperclip coalesces a fire into any open issue of that routine, `blocked` included (`OPEN_ISSUE_STATUSES` in its routines service), so one pinned pass would hold the org until the account's weekly reset. |
+
+**Why a reset is not enough (CB-469, read from Paperclip 2026.1117.0's source, 2026-11-27).**
+The first time a task is routed through a pool, Paperclip writes an `ai_connection_task_pins`
+row keyed (company, pool, agent, task key) and logs `ai_connection.pool_selected`. The live
+activity log held 21 of those for 21 distinct task keys, and later runs of the same task log
+"Using task-pinned pool account". From then on the router is offered only the pinned member,
+and Paperclip rejects any other answer ("The router returned an unauthorized member"), so our
+plugin cannot move a task. When that account is over its limit, `choose.js` answers
+`exhausted` with `retryAt` at the account's reset. Paperclip cancels the run
+(`ai_connection_pool_exhausted`) and schedules a bounded retry at that time: up to days on a
+weekly limit. **Nothing in Paperclip deletes a pin**, apart from cascades when the pool, the
+agent or the company is deleted. `POST /api/agents/<id>/runtime-state/reset-session` clears
+the saved task session (`agentTaskSessions`) and not the pin. So the CB-479 reset frees only a
+task that was never routed: a session saved before the pool existed, which Paperclip passes to
+the router as one member through `requireExisting` with no pin. That was QAF-50 on 2026-11-25,
+where the reset by hand worked. A task routed since keeps its account until it is replaced by
+a new issue, whose new key gets a new pin, and the router places that pin on an account with
+room. That is why `close_pinned` closes the task rather than resetting it. The warden never
+wrote to Paperclip's database to remove a pin: that is not an API, and a CLI upgrade could
+change the table. None of this has been seen live yet. Since 2026-11-24 each company has had
+one usage stop, both on 2026-11-25, and `state.json` has never recorded a reset.
 
 Wakes and resets are kept per company in `state["unstick"]["companies"]`; the sweep-cancel
 list is shared. A company whose listing comes back a full page (1000 rows) is skipped for the
