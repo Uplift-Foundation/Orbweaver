@@ -815,7 +815,7 @@ class InstructionTests(unittest.TestCase):
         skill = read("skills", "cb-bugfix", "SKILL.md")
         self.assertIn("Every pass\nruns both.", skill)
         lead = read("agents", "marisol-vandenberg", "AGENTS.md")
-        self.assertIn("**Then settle the Bugs outside Refinement.**", lead)
+        self.assertIn("**Then settle the Bugs outside Refinement, before claiming anything.**", lead)
         self.assertIn("and the query in **Bugs outside Refinement** returned\n   nothing either, do you say so and stop", lead)
         self.assertIn("If neither query returns anything,\nsay so and stop.", read("tasks", "fix-cb-bugs", "TASK.md"))
         # Control: the old stop on an empty Refinement query alone is gone, and
@@ -824,35 +824,46 @@ class InstructionTests(unittest.TestCase):
         self.assertNotIn("If the query returns nothing, say so", read("tasks", "fix-cb-bugs", "TASK.md"))
         self.assertNotIn("issuetype in", sec)
 
+    def test_settling_runs_before_any_claim_in_the_pass(self):
+        sec = " ".join(self.outside().split())
+        self.assertIn("This step runs before the pass claims anything (step 2), so a claim made in this pass is never read here.", sec)
+        lead = read("agents", "marisol-vandenberg", "AGENTS.md")
+        # Control: in the lead's numbered steps the settle sits in step 0,
+        # ahead of step 2's claim.
+        self.assertLess(lead.index("**Then settle the Bugs outside Refinement"), lead.index("2. **Claim.**"))
+
     def test_outcomes_are_ordered_so_no_move_precedes_the_live_work_check(self):
         sec = self.outside()
         heads = re.findall(r"^\d\. \*\*([^*]+)\*\*", sec, re.M)
         self.assertEqual(heads, ["Settled today.", "The org is working it.", "Merged.",
-                                 "Wait: another team's PR.", "The org's lost claim.",
+                                 "Somebody else is on it.", "Another team's PR.", "The org's lost claim.",
                                  "Untouched for 72 hours.", "Moved recently."])
-        moves = [i for i in range(1, 8) if re.search(r"Move it to Done|Put it back in Refinement", self.outcome(i))]
-        self.assertEqual(moves, [3, 5, 6])
-        # Control: the two no-write outcomes that protect live work are first.
-        for n in (1, 2):
+        moves = [i for i in range(1, 9) if re.search(r"Move it to Done|Put it back in Refinement", self.outcome(i))]
+        self.assertEqual(moves, [3, 5, 6, 7])
+        # Control: the no-write outcomes that protect live work come first, and
+        # the activity check sits ahead of every move except merged.
+        for n in (1, 2, 4):
             self.assertIn("No Jira write", self.outcome(n))
+        self.assertTrue(all(m > 4 for m in moves if m != 3))
 
     def test_never_moved_twice_in_a_day(self):
         o = self.outcome(1)
         self.assertIn("`[bugfix-org] settled:`", o)
         self.assertIn("in the last 24 hours", o)
         self.assertIn("No ticket is moved twice in a day", o)
-        # Control: every move sentence carries the prefix this guard searches for.
+        # Control: every settle sentence carries the prefix this guard searches for.
         sec = self.outside()
         sentences = re.findall(r"`(\[bugfix-org\][^`]*)`", sec)
         moves = [x for x in sentences if "back to Refinement" in x or "merged to develop" in x]
-        self.assertEqual(len(moves), 3, moves)
+        self.assertEqual(len(moves), 4, moves)
         for x in moves:
             self.assertTrue(x.startswith("[bugfix-org] settled: "), x)
 
     def test_a_live_task_or_open_org_pr_is_never_moved(self):
         o = self.outcome(2)
         for needle in ("`query` `Ticket: <key>`", '["backlog", "todo", "in_progress", "in_review", "blocked"]',
-                       "first line is exactly `Ticket: <key>`", "open org PR", "counted on `Taken, in progress`"):
+                       "first line is exactly `Ticket: <key>`", "open org PR", "in either repository",
+                       "counted on `Taken, in progress`"):
             with self.subTest(needle):
                 self.assertIn(needle, o)
         # Control: done and cancelled tasks are not live, so a lost claim whose
@@ -865,53 +876,95 @@ class InstructionTests(unittest.TestCase):
     def test_a_merged_pr_moves_it_to_done_only_when_nothing_else_is_open(self):
         o = self.outcome(3)
         for needle in ("**title** names the key", "--state merged --base develop",
-                       "merged more than an hour ago", "no open PR's title names the key",
-                       "Move it to Done (`41`)", "PR #<n> merged to develop at <merge sha>"):
+                       "`Uplift-Foundation/Orbweaver` and `Uplift-Foundation/Orbweaver-Mobile`",
+                       "merged more than an hour ago", "no open PR's title names the key in either repository",
+                       "Move it to Done (`41`)", "PR #<n> merged to develop at <merge sha>",
+                       "the one move that recent activity does not stop"):
             with self.subTest(needle):
                 self.assertIn(needle, o)
         # Control: a ticket only mentioned in a commit or body is not "merged".
-        self.assertNotIn("--search \"<key>\" ", o)
+        self.assertNotIn('--search "<key>" ', o)
         self.assertNotIn("in:body", o)
 
-    def test_another_teams_pr_holds_it_whatever_its_age(self):
+    def test_anyone_elses_activity_in_72_hours_protects_the_ticket(self):
         o = self.outcome(4)
-        self.assertIn("No Jira write", o)
-        self.assertIn("`Waiting on another team's PR`", o)
-        self.assertIn("`idle since <date>`", o)
-        self.assertIn("An idle PR still holds the ticket", o)
-        # Control: it reuses the take-rule's title check rather than a looser one.
-        self.assertIn("same check as **Wait: another team's PR**", o)
-        self.assertNotIn("Put it back", o)
+        for needle in ("Anyone other than the org commented on it or moved it in the last 72 hours",
+                       "a comment in the last 72 hours that does not start `[bugfix-org]`",
+                       "`key = <key> AND status CHANGED AFTER -<m>m` returns nothing",
+                       "ten minutes after the org's newest `[bugfix-org]` comment",
+                       "`key = <key> AND status CHANGED AFTER -72h` returns the ticket",
+                       "No Jira write", "Outcomes 5 to 7 move a ticket only after this check"):
+            with self.subTest(needle):
+                self.assertIn(needle, o)
+        # Control: the author is not the test, because the org posts under a
+        # person's account; a rule keyed on the author would never protect.
+        self.assertIn("the author cannot tell them apart", o)
+        self.assertNotIn("author is", o)
 
-    def test_the_orgs_lost_claim_goes_back_and_is_not_a_release(self):
+    def test_another_teams_pr_holds_it_only_while_it_moves(self):
         o = self.outcome(5)
+        for needle in ("in either repository", "same check as **Wait: another team's PR**",
+                       "--json updatedAt,headRefOid", "moves on a push, a review or a comment",
+                       "It moved in the last 72 hours: a wait. No Jira write",
+                       "`Waiting on another team's PR`", "It has not: the PR no longer holds the ticket.",
+                       "Put it back in Refinement (`11`)",
+                       "has not moved for 72 hours (head <sha>)", "may build on that PR's commits",
+                       "The take-rule's wait has the same limit"):
+            with self.subTest(needle):
+                self.assertIn(needle, o)
+        # Control: the old "whatever its age" hold is gone.
+        self.assertNotIn("An idle PR still holds the ticket", o)
+        self.assertNotIn("whatever", o)
+
+    def test_the_take_rules_wait_on_another_teams_pr_has_the_same_limit(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        rule = " ".join(skill.split("- **Wait: another team's PR.**", 1)[1].split("\n- **", 1)[0].split())
+        for needle in ("**The wait lasts while that PR moves.**", "--json updatedAt,headRefOid",
+                       "When it has not moved in 72 hours it no longer holds the ticket: take it.",
+                       "branches its own `bugfix/pc-*` from `origin/develop`",
+                       "cherry-pick or build on that PR's commits", "`gh pr comment <n> --repo <repository>"):
+            with self.subTest(needle):
+                self.assertIn(needle, rule)
+        # Control: a PR named only in a body still is not a reason to wait.
+        self.assertIn("A key named only in a PR body", rule)
+
+    def test_a_lost_claim_is_done_twice_then_a_release(self):
+        o = self.outcome(6)
         for needle in ("The newest comment on the ticket is this org's `[bugfix-org] claimed`",
-                       "Put it back in Refinement (`11`)", "This is not a release",
-                       "A comment by anyone else after the claim means somebody else has it"):
+                       "it is more than an hour old", "one more than the comments on the ticket containing `[bugfix-org] settled: lost claim`",
+                       "`<n>` is 1 or 2", "`[bugfix-org] settled: lost claim <n>;",
+                       '{"status": "done", "comment": "[bugfix-org] lost claim <n>"}',
+                       "It is never set `cancelled` here.", "`<n>` is 3", "that is a release",
+                       '{"status": "cancelled"}', "so the release brake counts it"):
             with self.subTest(needle):
                 self.assertIn(needle, o)
         # Control: the put-back must not be a `stopped:` comment, which the
-        # take-rule would hold as a wait forever (**Wait: put back**).
+        # take-rule would hold as a wait forever (**Wait: put back**), and the
+        # first two losses never cancel.
         self.assertNotIn("stopped:", o)
+        first_two = o.split("`<n>` is 3", 1)[0]
+        self.assertNotIn('"cancelled"', first_two)
         self.assertIn("never `[bugfix-org] stopped:`", self.outside())
+        lead = read("agents", "marisol-vandenberg", "AGENTS.md")
+        self.assertIn("`done` with `[bugfix-org] lost claim <n>` the first two times, `cancelled` the third", lead)
+        self.assertIn("A third lost claim on the same ticket is a release (step 7).", lead)
 
     def test_untouched_means_no_status_change_and_no_update_for_72_hours(self):
-        o = self.outcome(6)
+        o = self.outcome(7)
         self.assertIn("`key = <key> AND NOT status CHANGED AFTER -72h AND updated <= -72h`", o)
         self.assertIn("Put it back in Refinement (`11`)", o)
-        # Control: a ticket that moved inside the window is left, with a reason.
-        r = self.outcome(7)
+        # Control: a ticket that only the org moved inside the window is left.
+        r = self.outcome(8)
         self.assertIn("No Jira write", r)
         self.assertIn("in the last 72 hours", r)
         self.assertNotIn("CHANGED AFTER -24h", o)
 
-    def test_a_person_who_just_moved_a_ticket_is_protected_twice(self):
-        guards = self.outside().split("**The guards, and why each exists.**", 1)[1]
-        self.assertIn("A person who moved a ticket to Development minutes\nago is protected twice", guards)
+    def test_a_person_who_just_moved_a_ticket_is_protected(self):
+        guards = " ".join(self.outside().split("**The guards, and why each exists.**", 1)[1].split())
+        self.assertIn("A person who moved a ticket to Development minutes ago, or commented on it, is protected by outcome 4 for 72 hours", guards)
         self.assertIn("refuse it unless it is `Bug`", guards)
-        # Control: the 72-hour figure is the one outcome 6 actually queries.
-        self.assertIn("72 hours must pass before outcome 6 applies", guards)
-        self.assertIn("-72h", self.outcome(6))
+        # Control: the 72-hour figure is the one outcome 4 actually queries.
+        self.assertIn("-72h", self.outcome(4))
 
     def test_settles_have_their_own_cap_and_a_report_line(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")

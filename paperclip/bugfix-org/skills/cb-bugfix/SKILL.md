@@ -34,6 +34,14 @@ this order; the first that applies is the one:
    A key named only in a PR body, a commit message or a branch is **not** a
    reason to wait: work named in passing is not somebody holding the ticket.
    If that PR is the org's own, it is settled by the lead's step 0, not here.
+   **The wait lasts while that PR moves.** Read
+   `gh pr view <n> --repo <repository> --json updatedAt,headRefOid`
+   (`updatedAt` moves on a push, a review or a comment). When it has not
+   moved in 72 hours it no longer holds the ticket: take it. The engineer
+   branches its own `bugfix/pc-*` from `origin/develop` and may cherry-pick or
+   build on that PR's commits, and the lead leaves one comment on that PR
+   (`gh pr comment <n> --repo <repository> --body "..."`) saying the org has
+   taken the ticket in its own branch and which commits it builds on.
 - **Wait: triage.** It has no comment starting with `[triage]` yet. The triage
    org runs every four hours, so this wait is short and is counted, not fixed.
 - **Wait: put back.** The newest comment starting `[bugfix-org]` is a
@@ -138,7 +146,8 @@ project = CB AND issuetype = Bug AND status in (Development, Testing) ORDER BY u
 ```
 
 Each ticket it returns gets exactly one of these outcomes, decided in this
-order; the first that applies is the one:
+order; the first that applies is the one. This step runs before the pass
+claims anything (step 2), so a claim made in this pass is never read here.
 
 1. **Settled today.** A comment starting `[bugfix-org] settled:` was posted on
    it in the last 24 hours. No Jira write; counted on `Open outside
@@ -148,50 +157,82 @@ order; the first that applies is the one:
    `statuses` `["backlog", "todo", "in_progress", "in_review", "blocked"]`,
    whose description's first line is exactly `Ticket: <key>` (the search is
    fuzzy and also returns pass tasks that only mention the key). An open org
-   PR is one the step-0 listing returned whose title names the key. No Jira
-   write; counted on `Taken, in progress`. Step 0 settles the PR.
-3. **Merged.** A PR whose **title** names the key is merged into `develop` in
-   either repository
+   PR is one the step-0 listing returned, in either repository, whose title
+   names the key. No Jira write; counted on `Taken, in progress`. Step 0
+   settles the PR.
+3. **Merged.** A PR whose **title** names the key is merged into `develop`
    (`gh pr list --repo <repository> --state merged --base develop --search "<key> in:title" --json number,title,mergedAt,mergeCommit`,
-   with the key literally in the returned title), it merged more than an hour
-   ago, and no open PR's title names the key. Move it to Done (`41`) with one
+   run for both `Uplift-Foundation/Orbweaver` and
+   `Uplift-Foundation/Orbweaver-Mobile`, with the key literally in the
+   returned title), it merged more than an hour ago, and no open PR's title
+   names the key in either repository. Move it to Done (`41`) with one
    comment: `[bugfix-org] settled: PR #<n> merged to develop at <merge sha>;
    nothing else open names this ticket`. The hour leaves a person who just
    merged time to move their own ticket, and the open-PR check keeps a ticket
-   with a second PR still in flight open.
-4. **Wait: another team's PR.** An open PR's title names the key and it is not
-   the org's, by the same check as **Wait: another team's PR** in **Every
-   ticket gets an outcome**. No Jira write; counted on `Waiting on another
-   team's PR` with the PR number, and with `idle since <date>` when the PR's
-   `updatedAt` is more than 72 hours old. An idle PR still holds the ticket:
-   put back in Refinement, it would only meet the same wait there.
-5. **The org's lost claim.** The newest comment on the ticket is this org's
-   `[bugfix-org] claimed`, and outcome 2 found no live task and no open org PR.
-   Put it back in Refinement (`11`) with one comment:
-   `[bugfix-org] settled: the org claimed this and lost it; no live task, no open PR; back to Refinement, branch <name> kept`.
-   This is not a release: there is no engineer issue to cancel, and the warden
-   counts only cancelled issues toward a pause. A comment by anyone else after
-   the claim means somebody else has it, and outcome 6 decides it instead.
-6. **Untouched for 72 hours.** It has not changed status and has not been
+   with a second PR still in flight open. This is the one move that recent
+   activity does not stop (outcome 4): a merged PR is the evidence.
+4. **Somebody else is on it.** Anyone other than the org commented on it or
+   moved it in the last 72 hours. Two checks, because the org's comments and
+   moves are posted under a person's account, so the author cannot tell them
+   apart:
+   - a comment in the last 72 hours that does not start `[bugfix-org]`;
+   - a status change in the last 72 hours that is not the org's own. Every
+     org move has a `[bugfix-org]` comment beside it, so the change is the
+     org's only when `key = <key> AND status CHANGED AFTER -<m>m` returns
+     nothing, where `<m>` is the minutes since ten minutes after the org's
+     newest `[bugfix-org]` comment. With no org comment in the 72 hours, any
+     change in them (`key = <key> AND status CHANGED AFTER -72h` returns the
+     ticket) is somebody else's.
+   No Jira write; counted on `Open outside Refinement` with the date of that
+   activity. Outcomes 5 to 7 move a ticket only after this check.
+5. **Another team's PR.** An open PR's title names the key, in either
+   repository, and it is not the org's, by the same check as **Wait: another
+   team's PR** in **Every ticket gets an outcome**. Read its last movement
+   with `gh pr view <n> --repo <repository> --json updatedAt,headRefOid`:
+   `updatedAt` moves on a push, a review or a comment.
+   - It moved in the last 72 hours: a wait. No Jira write; counted on
+     `Waiting on another team's PR` with the PR number.
+   - It has not: the PR no longer holds the ticket. Put it back in Refinement
+     (`11`) with one comment:
+     `[bugfix-org] settled: PR #<n> has not moved for 72 hours (head <sha>); back to Refinement so it is worked, and the org may build on that PR's commits`.
+     The take-rule's wait has the same limit, so the next pass takes it.
+6. **The org's lost claim.** The newest comment on the ticket is this org's
+   `[bugfix-org] claimed`, it is more than an hour old, and outcome 2 found no
+   live task and no open org PR. Count `<n>`, this loss's number: one more
+   than the comments on the ticket containing `[bugfix-org] settled: lost
+   claim`. Find the claim's engineer issue: the newest `search_tasks` result
+   for `Ticket: <key>` in any status whose first line is exactly that.
+   - `<n>` is 1 or 2: losing a claim to a pause or a stopped pass is not
+     giving up. Put it back in Refinement (`11`) with one comment:
+     `[bugfix-org] settled: lost claim <n>; the org claimed this and lost it, no live task, no open PR; back to Refinement, branch <name> kept`.
+     When the engineer issue is not yet `done` or `cancelled`, PATCH it to
+     `{"status": "done", "comment": "[bugfix-org] lost claim <n>"}`. When it
+     is already settled, leave it. It is never set `cancelled` here.
+   - `<n>` is 3: the org keeps dropping this ticket, and that is a release.
+     Release it as **Claiming and releasing** says (the `[bugfix-org]
+     released` comment naming `lost claim 3`, back to Refinement), and PATCH
+     the engineer issue to `{"status": "cancelled"}`, whatever its status
+     unless it is already `cancelled`, so the release brake counts it.
+7. **Untouched for 72 hours.** It has not changed status and has not been
    updated in 72 hours. Check that with the query
    `key = <key> AND NOT status CHANGED AFTER -72h AND updated <= -72h`: an
    empty result means it moved. Put it back in Refinement (`11`) with one
    comment:
    `[bugfix-org] settled: in <status> since <date> with no open PR and no change for 72 hours; back to Refinement so it is worked`.
-7. **Moved recently.** Everything else: somebody moved or commented on it in
-   the last 72 hours. No Jira write; counted on `Open outside Refinement` with
-   the date it last moved.
+8. **Moved recently.** Everything else: only the org itself moved or
+   commented on it in the last 72 hours. No Jira write; counted on `Open
+   outside Refinement` with the date it last moved.
 
 **The guards, and why each exists.** Read the issue type with `getJiraIssue`
 just before every move, and refuse it unless it is `Bug` (**Transitions: Bug
 only**). Never move a ticket with a live task or an open org PR (outcome 2
 comes before any move). A person who moved a ticket to Development minutes
-ago is protected twice: an open PR naming it holds it (outcome 4), and with no
-PR, 72 hours must pass before outcome 6 applies. The settle comments start
-`[bugfix-org] settled:`, never `[bugfix-org] stopped:`, because a `stopped:`
-comment is a put-back that holds the ticket as a wait (**Wait: put back**),
-and a settled ticket must be taken by the next pass. A ticket moved to
-Refinement here is not taken in the same pass.
+ago, or commented on it, is protected by outcome 4 for 72 hours, and an open
+PR of theirs that moved in that time holds it after that (outcome 5). The
+settle comments start `[bugfix-org] settled:`, never `[bugfix-org] stopped:`,
+because a `stopped:` comment is a put-back that holds the ticket as a wait
+(**Wait: put back**), and a settled ticket must be taken by the next pass. A
+ticket moved to Refinement here is not taken in the same pass.
 
 Moves here do not use the ticket limit or the close cap; they have their own
 cap (**Limits**). A ticket past the cap is left for the next pass and named on

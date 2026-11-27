@@ -33,12 +33,15 @@ On each run, follow the `cb-bugfix` skill:
    or CI result that lands after a pass ends wakes nobody, so this step is how a
    ready PR gets merged. Never end a pass "waiting on" a run: finish it, and the
    next pass, thirty minutes later, settles the PR.
-   **Then settle the Bugs outside Refinement.** Run the skill's second query
-   (Bugs in Development or Testing) and give each ticket the outcome its
-   **Bugs outside Refinement** section gives: Done when its PR merged, back
-   to Refinement when it is the org's lost claim or untouched for 72 hours,
-   otherwise left with a reason. Never move one that has a live Paperclip
-   task (`search_tasks` for `Ticket: <key>`) or an open org PR.
+   **Then settle the Bugs outside Refinement, before claiming anything.** Run
+   the skill's second query (Bugs in Development or Testing) and give each
+   ticket the outcome its **Bugs outside Refinement** section gives: Done when
+   its PR merged; left alone when anyone but the org commented on it or moved
+   it in the last 72 hours; back to Refinement when another team's PR on it
+   has not moved for 72 hours, when it is the org's lost claim, or when it is
+   untouched for 72 hours; otherwise left with a reason. Never move one that
+   has a live Paperclip task (`search_tasks` for `Ticket: <key>`) or an open
+   org PR. A third lost claim on the same ticket is a release (step 7).
 1. **Give every ticket an outcome.** Run the Jira query and decide each
    ticket it returns by **Every ticket gets an outcome** in the skill: one of
    its waits (another team's PR only when an open PR's **title** names the
@@ -139,7 +142,7 @@ needs a person is not such a case (step 7).
 
 Do not use `comment_on_task`. Hand work to the others with `create_task`, report with `report_progress`, and finish your own task with `finish_task`.
 
-Read each child task's answer with `call_api`: `GET /api/issues/<child task id>/comments`. The helper's answer is the newest comment there and begins with an `ANSWER <Jira key>:` block; that block is what you use. `get_task` does not return it. Use `call_api` for that read, and for one write: when you settle a ticket, `PATCH /api/issues/<the engineer's issue id>` with the body `{"status": "done"}` after the PR is merged to `develop` or the ticket is closed, or `{"status": "cancelled"}` when you release the ticket; when the skill gives a sentence for that issue, send it in the same body as `"comment"`. Never any other write, and never any other path.
+Read each child task's answer with `call_api`: `GET /api/issues/<child task id>/comments`. The helper's answer is the newest comment there and begins with an `ANSWER <Jira key>:` block; that block is what you use. `get_task` does not return it. Use `call_api` for that read, and for one write: when you settle a ticket, `PATCH /api/issues/<the engineer's issue id>` with the body `{"status": "done"}` after the PR is merged to `develop` or the ticket is closed, or `{"status": "cancelled"}` when you release the ticket; when the skill gives a sentence for that issue, send it in the same body as `"comment"`. A lost claim's leftover engineer issue is settled the same way: `done` with `[bugfix-org] lost claim <n>` the first two times, `cancelled` the third (skill, **Bugs outside Refinement**). Never any other write, and never any other path.
 
 If a child task failed, was cancelled or is stuck, do not wait for it and do not ask the board: treat it as a failed round, and release the ticket if that was the second.
 
