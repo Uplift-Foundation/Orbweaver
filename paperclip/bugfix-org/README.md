@@ -223,8 +223,47 @@ Then, none of which a package can carry:
      points of each other take turns. Paperclip pins the task to that account,
      so a session never switches accounts mid-task. A pinned task keeps its
      account until a window is actually reached. When every account is over,
-     the task waits for the earliest reset. A reading over 30 minutes old
+     the task waits for the earliest reset. **A pinned task never leaves its
+     account** (CB-469): Paperclip offers the router only the pin, and a
+     session reset does not remove it. When the pin's account is full and
+     another has room, the warden closes the task (`close_pinned` in
+     `host/README.md`), and the lead re-creates a child or the next routine
+     fire starts fresh. A reading over 30 minutes old
      counts as unknown: that account ranks last but stays usable.
+   - **The triage company has the same four accounts, in one pool (CB-469).**
+     On 2026-11-25 all four triage agents were still bound straight to one
+     subscription. When it hit its weekly limit, the 17:00Z triage run failed
+     in 10 s ("ACP agent reported a terminal limit failure") and no ticket was
+     triaged until a person stepped in. The triage company now has its own
+     connection for each of the four subscriptions, and one pool, "Claude
+     Sonnet pool": `usage_aware`, 90%, `orbweaver.pool-router`, four members,
+     each `claude-sonnet-5-5`. Each connection is granted to the whole company,
+     and all four agents (Jennifer Voss, Nadia Okafor, Juno Abernathy, Ines
+     Carvalho) are bound to the pool with `mode: "router"`. It has one pool, not
+     two, because every triage agent runs Sonnet. `pool-accounts.json` lists the
+     four triage connections beside the bug-fix company's, so `pool_usage.py`
+     publishes eight readings, two per account, and the same plugin routes
+     both companies. Read back from the live instance on 2026-11-27. The manual
+     triage run at 17:07Z on 2026-11-25 (35 runs, all succeeded) is the
+     measured fix; the 17:00Z single-account run is the failing control.
+   - **A new company gets the same in four steps.** (1) **A connection per
+     subscription, in that company.** Paperclip cannot share a connection
+     between companies, so each needs its own. The normal way is one browser
+     sign-in per subscription (Connectors, Anthropic, Connect). The triage
+     company's three missing ones were instead created from a node script
+     through Paperclip's own `aiConnectionService.save`, reusing the sign-ins
+     the bug-fix company already stored, with no token printed or written to a
+     file. (2) **Grant each one to the whole company**, as above. (3) **One
+     pool per model the company's agents use**, with the same `POST` as above,
+     and bind every agent to it. (4) **Add each new connection to
+     `~/.config/orbweaver-bugfix/pool-accounts.json`** with the same
+     `configDir` as that subscription's existing entry. Without it the router
+     has no reading for the account, which then ranks last but stays usable.
+     Check the result with the pool listing
+     (`GET /api/companies/<id>/ai-connection-pools`) and the agent listing:
+     every agent should show `aiConnection.mode` `router`, and
+     `pool-usage.json` should gain a fresh `ok` entry per new connection within
+     five minutes.
 4. **Jira, block first.** Add a tool policy of type `block` naming
    `addCommentToJiraIssue` and `transitionJiraIssue` and the three non-lead
    agents, at a priority ahead of the others. Only then finish the connector

@@ -157,3 +157,12 @@ Then settle the blocked child with the same `PATCH /api/issues/<the child's id>`
 - the ticket's engineer issue when you release that ticket: `{"status": "cancelled"}`, as step 7 says,
   so the brake sees the release. Only the engineer issue, and only on a release.
 That is the one other write you may make, and only on a child the warden named.
+
+**A child the warden closed as pinned to an exhausted account.** The warden comments on your task
+when it closes a child `done` because that child was pinned to a Claude account over its usage
+limit, which Paperclip cannot move a task off. Re-create it at once with `create_task`, with the
+same title and the description copied exactly (its first line `Ticket: CB-NNN` included): the new
+task is routed to an account with room, and the same title keeps the branch and workspace. It is
+not a release and not a failed round, and the ticket's limits keep running from its claim. If the
+re-created child stalls too, settle the ticket as the skill says when its limits run out; a release
+then sets that engineer issue `cancelled` as always.

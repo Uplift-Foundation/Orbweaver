@@ -160,8 +160,8 @@ claims anything (step 2), so a claim made in this pass is never read here.
    had a run or an update in the last 3 hours (its `updatedAt`, or its newest
    run). A non-terminal task untouched for longer is left over from a stopped
    pass, not live: it never protects its ticket, and the ticket falls through
-   to the outcomes below (outcome 6 settles that task). CB-469 was stranded by
-   exactly such a task. An open org
+   to the outcomes below (outcome 6 settles that task). Without this bound,
+   one leftover task would hold its ticket for ever. An open org
    PR is one the step-0 listing returned, in either repository, whose title
    names the key. No Jira write; counted on `Taken, in progress`. Step 0
    settles the PR.
@@ -697,7 +697,9 @@ outcome** says so), and `cancelled` only when the ticket was released. The
 Jira comment is the human-readable record; the issue status is the machine one.
 The warden also cancels a child task that sat with no run through two of its
 wake comments, and says so on your task; that is not a release, so treat it as
-a failed round. It closes your task itself when you have reported and only
+a failed round. And it closes a child `done` that was pinned to a Claude
+account over its usage limit, saying so on your task; the lead re-creates it
+with the same title and description (CB-469), which is not a failed round. It closes your task itself when you have reported and only
 settled children are left blocking it.
 
 ## Transitions: Bug only

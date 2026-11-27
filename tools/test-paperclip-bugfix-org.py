@@ -997,6 +997,31 @@ class InstructionTests(unittest.TestCase):
         self.assertIn("Close only a\n   ticket in Refinement or one the org itself claimed", skill)
         self.assertIn("settled by **Bugs outside Refinement**, not closed", skill)
 
+    # CB-469: a pinned task never leaves its account, so the warden closes a
+    # child `done` and the lead re-creates it. The lead's instruction and the
+    # warden's comment have to ask for the same thing.
+    def test_the_lead_recreates_a_child_the_warden_closed_as_pinned(self):
+        lead = " ".join(read("agents", "marisol-vandenberg", "AGENTS.md").split())
+        for needle in ("**A child the warden closed as pinned to an exhausted account.**",
+                       "Re-create it at once with `create_task`, with the same title and the description copied exactly",
+                       "It is not a release and not a failed round",
+                       "a release then sets that engineer issue `cancelled` as always"):
+            with self.subTest(needle):
+                self.assertIn(needle, lead)
+        skill = " ".join(read("skills", "cb-bugfix", "SKILL.md").split())
+        self.assertIn("the lead re-creates it with the same title and description (CB-469), which is not a failed round", skill)
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("warden", os.path.join(HERE, "..", "host", "warden.py"))
+        warden = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(warden)
+        body = warden.PINNED_CHILD_CLOSED
+        for needle in ("create_task", "same title", "same description", "not a release"):
+            with self.subTest(needle):
+                self.assertIn(needle, body)
+        # Control: the warden's comment never asks for a cancel, which the
+        # release brake would count.
+        self.assertNotIn("cancel", body.replace("cannot", ""))
+
     def test_nobody_is_told_to_install_or_take_the_lock(self):
         for slug in AGENTS:
             doc = read("agents", slug, "AGENTS.md")
