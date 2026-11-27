@@ -38,6 +38,8 @@
     <!-- CB-397: the CB-327 Claude Code folder-trust captures (tmux capture-pane -p, byte for byte). -->
     <Content Include="Fixtures\trust\*" Link="TrustFixtures\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Fixtures\screens\*" Link="ScreenReadFixtures\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures\mcp-approval\*" Link="McpApprovalFixtures\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures\mcp-auth-approval\*" Link="McpAuthApprovalFixtures\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
