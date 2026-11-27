@@ -5893,13 +5893,14 @@ namespace Orbweaver
         internal Func<long> Now { get; set; } = () => Environment.TickCount64;
 
         internal static string DiagAnimStart = "(none)";
+        private string _diagStart = "(none)";
         private void AnimateArrangement(
             Action? onComplete = null, bool spring = false, IReadOnlyCollection<string>? first = null,
             Fling fling = default)
         {
             _arrangeAnimComplete = onComplete;
             _arrangeAnimStart = Now();
-            DiagAnimStart = "ANIM STARTED tick64=" + Environment.TickCount64 + " Now=" + _arrangeAnimStart + "\n" + Environment.StackTrace;
+            _diagStart = "ANIM STARTED tick64=" + Environment.TickCount64 + " Now=" + _arrangeAnimStart + "\n" + Environment.StackTrace;
             _arrangeSprings = spring && _arrangeAnimTargets is { } targets ? SpringsFor(targets, first, fling) : null;
 
             // The outlines measure every gliding orb at its slot, so they spring
@@ -6052,6 +6053,7 @@ namespace Orbweaver
                 finished = t >= 1.0;
             }
 
+            DiagAnimStart = "TICK elapsed=" + elapsed + " finished=" + finished + " Now=" + Now() + " tick64=" + Environment.TickCount64 + " springs=" + (_arrangeSprings is not null) + "\n" + _diagStart;
             RefreshOverlays();
 
             if (!finished) return;
