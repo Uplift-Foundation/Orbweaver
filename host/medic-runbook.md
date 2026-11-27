@@ -78,6 +78,14 @@ medic resumed the company within the last six hours and it is paused again,
    has run; a line from you says more.)
 3. **`stuck`:**
    - a blocked pass whose children are all done or cancelled: `close-pass`;
+   - a task with no children whose last agent comment is its own `ANSWER`, and
+     whose PR (the one the answer names, opened by the org's bot) is merged or
+     closed or whose parent is done or cancelled: `close-task`. A task whose
+     description opens `Ticket: CB-n` closes only on a merged PR. Its work is over; waking it restarts nothing
+     and may re-block it;
+   - a task blocked because "the issue workspace failed validation" (Paperclip
+     holds a `workspace_validation_failed` recovery on it): `escalate`. Its
+     worktree needs a person, and `wake` refuses it;
    - a blocked task with no children and nothing pending: `wake`;
    - an approval waiting on a person: `escalate`.
 4. **`no_heartbeat` with the company active and nothing blocked:** you cannot
@@ -92,12 +100,18 @@ medic resumed the company within the last six hours and it is paused again,
 | verb | args | does | refuses when |
 | --- | --- | --- | --- |
 | `resume` | `{}` or `{"develop_green": "<40-hex sha>", "no_refusal": ["<run8>", ...]}` | company to active; release counters in the warden's state reset | not paused; any reason not lifted by its proof; resumed by the medic within 6 h; the warden is mid-tick |
-| `wake` | `{"issue": "QAF-n"}` | blocked to todo, plus a board comment that wakes the assignee | company paused; task not blocked or todo; woken by the medic within the hour |
+| `wake` | `{"issue": "QAF-n"}` | blocked to todo, plus a board comment that wakes the assignee | company paused; task not blocked or todo; a failed workspace validation awaiting repair; its last agent comment is its `ANSWER`; woken by the medic within the hour |
 | `close-pass` | `{"issue": "QAF-n"}` | a blocked pass to done | not blocked; no children; any child not done or cancelled |
+| `close-task` | `{"issue": "QAF-n"}` | a task that gave its answer and whose work is over to done | not blocked or todo; a run in flight; has children; its newest agent comment is not its assignee's `ANSWER`; the PR the answer names is not merged or closed and its parent is not done or cancelled |
 | `restart-warden` | `{}` | `launchctl kickstart -k` the warden job | the warden saved its state within 15 minutes; restarted within the hour |
 | `file-bug` | `{"summary": "<one line>", "body": "<text>"}` | records the bug in `medic-bugs/` and gives the bug-fix lead a task to file it as a CB Bug (one task per incident) | 5 already today |
 | `escalate` | `{"line": "<one line>"}` | a pending board approval Warren sees on the lead's orb | already escalated this incident; an earlier medic escalation is still pending |
 | `noop` | `{}` | nothing; logged | never |
+
+A refused action on a task is remembered against that task's current block.
+When the only thing stuck is tasks the medic was refused on, and none of them
+has been blocked again since, `medic.py` escalates once instead of starting you
+again: you would only propose what was just refused.
 
 Summary and line are cut to one line (150 and 300 characters), and a body to
 8000 characters. Everything the medic does, and every refusal, is logged to

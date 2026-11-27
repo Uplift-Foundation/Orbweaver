@@ -51,7 +51,8 @@ On any resume, the warden's or a person's, the first tick that sees the company 
 going what `stop_work` stopped: an issue it blocked that is still `blocked` is set to `todo`
 and gets one board comment, which wakes its assignee; an issue it could not block (the 422
 case) and that is still `in_progress` gets the comment only; anything that has moved on since
-is left alone. The unstick sweep never touches a blocked issue with no children, so before
+is left alone. The unstick sweep never touched a blocked issue with no children (it now
+closes one that already answered, `close_answered` below, but not one blocked by a pause), so before
 this an engineer task blocked by a pause sat forever. A failed restart is logged and retried
 on the next tick (`restart_retry` in `state.json`). `max_runs_per_day` is the run brake because Paperclip's
 `heartbeat.maxDailyRuns` is timer-only and does not bound assignment wakes.
@@ -207,6 +208,7 @@ a refused write is retried next tick.
 
 | Kind | When | What it does |
 | --- | --- | --- |
+| `close_answered` | Task `blocked`, no children, no live run, an assignee agent, and its newest agent-written comment is that assignee's `ANSWER ...`; and either its parent is `done` or `cancelled`, or the one PR the answer names (`PR 427`; two different numbers, or any mention of mobile, is no proof) is the org's own (bot author, `bugfix/pc-` head, read with `gh`) and merged or closed (CB-487). A task whose cancel the release brake would count (description opens `Ticket: CB-n`, or no description in the row) closes only on a merged PR, never on a closed one or a settled parent, so a ticket given up on still reaches the brake. Checked ahead of the usage rule. | `PATCH {"status":"done"}`, with no comment, since a board comment wakes the assignee. QAF-194 and QAF-198 were blocked by Paperclip's workspace validation a minute before posting their merge verdicts and sat blocked for four hours; their parent passes then never settled. Comments are read only for blocked leaves, GitHub only when the parent has not settled, and an unreadable PR is no proof. The parent is then closed by `close_parent` on later ticks. |
 | `close_parent` | Task `blocked`, at least one child and every child `done` or `cancelled`, no live run on it or any child, untouched 10 min. The assignee's newest comment is newer than every child's last activity, or the parent was woken 15+ min ago and is still blocked. | `PATCH /api/issues/<id> {"status":"done"}`. Paperclip counts cancelled children as open blockers and refuses the lead's own `done` (CB-424's release); the board login is allowed. |
 | `wake_parent` | Same, with no newer report and no wake yet. | One board comment on the parent; a board comment on an open issue wakes its assignee. |
 | `wake_child` | Child task (has `parentId` and an assignee agent) `todo`, `in_progress` or `in_review`, no live run, no activity for 20 min, and 20 min since the last wake. At most twice; activity of its own more than a minute after the last wake (beyond our comment's bump) starts the count again. | Board comment on the child. |
@@ -260,7 +262,28 @@ call. Each verb then re-checks its own preconditions: `resume` never lifts a
 merge-audit or workflow-guard pause, lifts a develop-red pause only when it
 reads develop green at head itself, a push-refusal pause only when it re-reads
 the run log and finds no git refusal line, and never a pause that came back
-within six hours of a medic resume.
+within six hours of a medic resume. `close-task` (CB-487) closes a task with no
+children only on the same proof as the sweep's `close_answered` (`warden.answered_and_over`):
+its newest agent comment is its assignee's `ANSWER`, and the one org PR that answer names
+is merged or closed (read with `gh` by `medic.py`, not taken from the model) or its parent
+is settled; a ticket's task only on a merge. `wake` refuses
+a task whose last agent comment is its `ANSWER` and one Paperclip blocked on a
+failed workspace validation that is still awaiting repair. Each wake of
+QAF-194 re-blocked it, and the wake that moved it to `todo` recovered the
+incident, so every cycle opened a new one. So a refused action is remembered
+against the task's `blockedTransitionAt` in `medic-state.json` across
+incidents, and when only `stuck` holds and every stuck task was refused at its
+current block, `medic.py` logs `NOT LAUNCHED` and escalates once instead of
+starting the model, once in total for the same tasks at the same blocks
+(`refused_escalated`), not once per incident. Records are dropped when a task is
+no longer blocked, and a row with no block time is never recorded.
+
+A board hand close has to be a bare `PATCH {"status":"done"}`. QAF-194's activity log
+shows the 04:07 close set `done` and the board's closing comment, 49 ms later,
+moved it back to `todo` (`source: comment`); the run that started failed validation and
+re-blocked it at 04:19, which is the block the 04:55 medic wake then acted on. The
+sweep's and the medic's closes post no comment for this reason, and `wake` refuses a
+task that is `done` or `cancelled`.
 
 `escalate` posts one pending `request_board_approval` to the company per
 incident, which the app shows on the lead's orb as a waiting need titled

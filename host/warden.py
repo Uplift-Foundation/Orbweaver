@@ -18,7 +18,9 @@ Paperclip sandbox. Each tick it:
      Orbweaver only (CB-481);
   4. pauses the company on any trigger in plan §6;
   5. unless the company is paused, runs the unstick sweep (CB-479): closes a
-     pass task left blocked on settled children, wakes and then cancels a
+     pass task left blocked on settled children, closes a blocked task that
+     already gave its ANSWER and whose PR or parent is finished (CB-487),
+     wakes and then cancels a
      stalled child task, and resets the session of a task whose pool account
      ran out once another account has room.
 
@@ -646,7 +648,92 @@ def pool_has_headroom(pool, threshold=POOL_HEADROOM):
     return False
 
 
-def unstick_actions(issues, runs, comments_at, state, now, pool_ok):
+# A blocked leaf that already answered (CB-487). QAF-194 and QAF-198, reviews
+# of PRs 427 and 428, were blocked by Paperclip's workspace validation a
+# minute before their runs posted `ANSWER ... Verdict: merge`. Nothing set them
+# done: rule 1 below wants children and rule 2 only looks at todo/in_progress/
+# in_review, so a blocked leaf fell through both, and its parent pass could not
+# close either, because a blocked child is not a settled one. The answer alone
+# is not the proof, since an agent can answer and still have work open; the
+# answer plus work that is over is: the PR it names merged or closed, or its
+# parent settled. The medic's close-task checks the same thing (medic.py).
+
+ANSWER_PREFIX = "ANSWER"
+PR_IN_ANSWER = re.compile(r"\bPR\s*#?(\d{1,6})\b")
+
+
+def last_agent_answer(comments, agent_id):
+    """The body of the task's newest agent-written comment when the assignee
+    wrote it and it starts with ANSWER, else None. Paperclip's own notices and
+    board comments carry no authorAgentId and do not count either way; another
+    agent's newer comment, or the assignee's own newer non-answer, does."""
+    rows = [c for c in comments or [] if c.get("authorAgentId") and not c.get("deletedAt")]
+    if not rows or not agent_id:
+        return None
+    newest = max(rows, key=lambda c: ts(c.get("createdAt")) or 0)
+    body = (newest.get("body") or "").lstrip()
+    if newest.get("authorAgentId") != agent_id or not body.startswith(ANSWER_PREFIX):
+        return None
+    return body
+
+
+MOBILE_IN_ANSWER = re.compile(r"mobile", re.I)
+
+
+def answer_pr(answer):
+    """The one desktop PR the answer names ("PR 427", "PR #427"), or None.
+    The answer is model-written, so it is proof of nothing by itself: two
+    different numbers are ambiguous, and an answer that mentions mobile may
+    mean Orbweaver-Mobile's PR of that number, which desktop also has (QA)."""
+    nums = {int(n) for n in PR_IN_ANSWER.findall(answer or "")}
+    if len(nums) != 1 or MOBILE_IN_ANSWER.search(answer or ""):
+        return None
+    return nums.pop()
+
+
+def pr_over(pr):
+    """"merged" or "closed" for a finished PR the org itself opened (bot
+    author, bugfix/pc- head), else None: a person's PR of the same number
+    says nothing about the org's task."""
+    if not isinstance(pr, dict):
+        return None
+    if ((pr.get("user") or {}).get("login") != BOT_LOGIN
+            or not str((pr.get("head") or {}).get("ref", "")).startswith(BRANCH_PREFIX)):
+        return None
+    if pr.get("merged_at") or pr.get("merged") is True:
+        return "merged"
+    if pr.get("state") == "closed":
+        return "closed"
+    return None
+
+
+def is_ticket(issue):
+    """A task whose cancel the release brake would count (TICKET_RE, as in
+    classify_release). That includes QA reviews that open with the ticket
+    line, QAF-194 among them. A row with no `description` key cannot be told
+    apart and is treated as one, so it closes only on a merge."""
+    issue = issue or {}
+    return "description" not in issue or bool(TICKET_RE.match(issue.get("description") or ""))
+
+
+def answered_and_over(answer, parent_status, pr_state, ticket=False):
+    """Why a task may be closed, or None: it answered, and its parent is
+    settled or the PR its answer names is merged or closed. An engineer
+    issue (`ticket`) closes only on a merged PR: a ticket given up on goes
+    to cancelled, which is what the release brake counts, and setting it done
+    would hide that release (QA)."""
+    if not answer:
+        return None
+    if ticket:
+        return "answered and its PR is merged" if pr_state == "merged" else None
+    if parent_status in SETTLED:
+        return f"answered and its parent is {parent_status}"
+    if pr_state in ("merged", "closed"):
+        return f"answered and its PR is {pr_state}"
+    return None
+
+
+def unstick_actions(issues, runs, comments_at, state, now, pool_ok, answers=None):
     """The sweep's decision for one company, as a list of action dicts
     {kind, id, identifier, ...}, at most one per issue.
 
@@ -656,8 +743,13 @@ def unstick_actions(issues, runs, comments_at, state, now, pool_ok):
     state       the warden's `unstick` state (read only here)
     now         epoch seconds
     pool_ok     pool_has_headroom() of the current pool-usage.json
+    answers     {issue id: (ANSWER body, pr_over() of the PR it names)} for
+                blocked leaves whose newest agent comment is the assignee's ANSWER
 
-    Kinds: close_parent, wake_parent, reset_session, wake_child, cancel_child."""
+    Kinds: close_answered, close_parent, wake_parent, reset_session,
+    wake_child, cancel_child."""
+    answers = answers or {}
+    by_id = {i["id"]: i for i in issues}
     live = live_issue_ids(issues, runs)
     kids = {}
     for i in issues:
@@ -679,6 +771,16 @@ def unstick_actions(issues, runs, comments_at, state, now, pool_ok):
         act = activity_at(i)
         idle = now - act if act is not None else None
         base = {"id": iid, "identifier": i.get("identifier") or iid[:8]}
+
+        # 0. A blocked leaf that answered and whose work is over (CB-487).
+        # Ahead of rule 3: an answered, finished task is not waiting on usage.
+        if status == "blocked" and iid not in kids and iid in answers:
+            answer, prs = answers[iid]
+            why = answered_and_over(answer, (by_id.get(i.get("parentId")) or {}).get("status"), prs,
+                                    is_ticket(i))
+            if why:
+                out.append(dict(base, kind="close_answered", why=why))
+                continue
 
         # 3. Tied to an exhausted account. Decided first, but only while the
         # usage cancel is under an hour old: then the task is waiting on usage,
@@ -1303,7 +1405,8 @@ class Warden:
             cst = st.setdefault("companies", {}).setdefault(str(co), {})
             try:
                 prune_unstick_state(cst, issues, self.now)
-                actions = unstick_actions(issues, runs, comments_at, cst, self.now, pool_ok)
+                answers = self.answered_leaves(issues, runs)
+                actions = unstick_actions(issues, runs, comments_at, cst, self.now, pool_ok, answers)
             except Exception as e:
                 # The sweep never raises into the tick: state.json is saved
                 # only when tick() returns, and the brakes' state is in it.
@@ -1315,13 +1418,45 @@ class Warden:
                 except Exception as e:
                     self.log(f"unstick {a['kind']} {a['identifier']} failed: {type(e).__name__}")
                     continue
-                self.log(f"UNSTUCK: {a['kind']} {a['identifier']}")
+                self.log(f"UNSTUCK: {a['kind']} {a['identifier']}"
+                         + (f" ({a['why']})" if a["kind"] == "close_answered" else ""))
+
+    def answered_leaves(self, issues, runs):
+        """unstick_actions' `answers`: each blocked leaf with no run in flight
+        whose newest agent comment is its assignee's ANSWER, with the state of
+        the PR that answer names. GitHub is asked only when the parent has not
+        settled, since a settled parent is proof enough; an unreadable PR is
+        no proof, never a failed sweep."""
+        parents = {i.get("parentId") for i in issues if i.get("parentId")}
+        live = live_issue_ids(issues, runs)
+        by_id = {i["id"]: i for i in issues}
+        out = {}
+        for i in issues:
+            if (i.get("status") != "blocked" or i["id"] in parents or i["id"] in live
+                    or not i.get("assigneeAgentId")):
+                continue
+            answer = last_agent_answer(self.pc.issue_comments(i["id"]), i.get("assigneeAgentId"))
+            if not answer:
+                continue
+            prs, n = None, answer_pr(answer)
+            settled = (by_id.get(i.get("parentId")) or {}).get("status") in SETTLED
+            if n and self.gh and (is_ticket(i) or not settled):
+                try:
+                    prs = pr_over(self.gh.get_pr(n))
+                except Exception as e:
+                    self.log(f"unstick: PR {n} unreadable for {i.get('identifier')}: {type(e).__name__}")
+            out[i["id"]] = (answer, prs)
+        return out
 
     def do_unstick(self, a, st, top):
         """Carry out one action. `st` is the company's own unstick state,
         `top` the shared one holding the sweep-cancel exclusion list."""
         k, iid = a["kind"], a["id"]
-        if k == "close_parent":
+        if k == "close_answered":
+            # No comment: a board comment on the task wakes its assignee, and
+            # waking it is what re-blocked QAF-194 three times (CB-487).
+            self.pc.set_issue_status(iid, "done")
+        elif k == "close_parent":
             self.pc.set_issue_status(iid, "done")
         elif k == "wake_parent":
             self.pc.comment(iid, WAKE_PARENT)
@@ -1572,6 +1707,10 @@ class PaperclipHttp:
                  if agent_id and c.get("authorAgentId") == agent_id and not c.get("deletedAt")]
         times = [t for t in times if t is not None]
         return max(times) if times else None
+
+    def issue_comments(self, issue_id):
+        rows = self.call("GET", f"/api/issues/{issue_id}/comments") or []
+        return rows if isinstance(rows, list) else rows.get("comments", [])
 
     def pool_usage(self, path):
         with open(path) as f:
