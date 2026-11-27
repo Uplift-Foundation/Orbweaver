@@ -600,10 +600,19 @@ credits the org's work to a person. Never print
 the token, never write it to a file, and never use any other credential. It
 reaches both repositories, Orbweaver and Orbweaver-Mobile, and never carries
 the workflows permission; the engineers' second token, `$BUGFIX_GH_WORKFLOW_TOKEN`,
-is used only as **Workflow files** says. The
-token lasts at least 45 minutes from the start of your run. If a push or `gh`
-call fails with 401 late in a long run, finish the task, say so, and ask for
-another round: the next run gets a fresh token. A push the rulesets refuse
+is used only as **Workflow files** says.
+
+`$BUGFIX_GH_TOKEN` is a copy taken when your run started, and a token lives
+one hour, so it can be dead by the time you use it. The `gh` and `git` on
+your `PATH` handle that: at every call they swap that copy (or an empty
+`GH_TOKEN`) for the token the warden minted last, and retry a 401 once with a
+newer one. `$BUGFIX_GH_WORKFLOW_TOKEN` gets no such refresh: it lasts at least
+45 minutes from the start of your run, and a workflow push that gets a 401
+is not retried. Finish the task, say so, and ask for another round. With the everyday token, **on a 401, run the same command once more** before you decide
+anything. Only a second 401 means access is really broken: then read
+`checked_at` in `$BUGFIX_SPOOL/access.json`. More than 15 minutes old means the
+warden has stopped minting; say that, with the time, rather than that the
+token is wrong, and mark the task blocked. A push the rulesets refuse
 (GH013) means you left your lane, which is `bugfix/pc-*` branches and PRs into
 `develop`, in either repository. Stop there, and say so in your answer.
 

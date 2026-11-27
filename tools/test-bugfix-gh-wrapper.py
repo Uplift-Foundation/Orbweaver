@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the bug-fix org's `gh` and `git` stand-ins (CB-478).
+"""Tests for the bug-fix org's `gh` and `git` stand-ins (CB-478, CB-489).
 
     python3 tools/test-bugfix-gh-wrapper.py
 
@@ -139,6 +139,297 @@ class GitWrapper(Wrapper):
         r = self.run_tool(BIN + ":" + BIN + ":" + self.real, {"STUB_EXIT": "3"}, ["commit", "-m", "x y"])
         self.assertEqual(r.returncode, 3)
         self.assertIn("arg=x y", r.stdout)
+
+# CB-489. GitHub, as far as these stubs know, accepts only the token in
+# $STUB_LIVE (a file); anything else gets a 401: $STUB_401 on stderr, exit 1,
+# and with STUB_BODY set the JSON body on stdout too, as `gh api` prints it. With STUB_ROTATE set,
+# the first call plays the warden minting mid-command: it moves a new token
+# into the spool file and the live file, then fails with the one it was given.
+GITHUB_STUB = r"""#!/bin/bash
+n=$(( $(cat "$STUB_CALLS" 2>/dev/null || echo 0) + 1 )); echo $n > "$STUB_CALLS"
+IFS= read -r -d "" in
+if [ -n "$STUB_ROTATE" ] && [ $n = 1 ]; then
+  printf 'rotated\n' > "$STUB_TOKENS/$STUB_ROTATE"; printf 'rotated' > "$STUB_LIVE"
+fi
+if [ "${GH_TOKEN-}" != "$(cat "$STUB_LIVE")" ]; then
+  [ -z "$STUB_BODY" ] || echo '{"message": "Bad credentials", "status": "401"}'
+  echo "$STUB_401" >&2
+  exit 1
+fi
+echo "ok call=$n stdin=${in%$'\n'}"
+exit ${STUB_EXIT:-0}
+"""
+DEAD, LIVE, WF_DEAD, WF_LIVE = "dead-everyday", "live-everyday", "dead-workflow", "live-workflow"
+
+
+class FreshTokenGh(unittest.TestCase):
+    """A run's BUGFIX_GH_TOKEN copy is dead; the warden's file is live."""
+    # gh's 401 is stderr only for most commands; `gh api` adds the body on
+    # stdout, which its own tests set with STUB_BODY.
+    tool, msg401 = "gh", "gh: Bad credentials (HTTP 401)"
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.real = os.path.join(self.tmp, "real")
+        self.spool = os.path.join(self.tmp, "spool")
+        self.tokens = os.path.join(self.tmp, "bugfix-tokens")
+        self.scratch = os.path.join(self.tmp, "scratch")
+        for d in (self.real, self.spool, self.tokens, self.scratch):
+            os.makedirs(d)
+        stub = os.path.join(self.real, self.tool)
+        with open(stub, "w") as f:
+            f.write(GITHUB_STUB)
+        os.chmod(stub, 0o755)
+        self.write("gh-token", LIVE + "\n")
+        self.live = os.path.join(self.tmp, "live")
+        self.set_live(LIVE)
+        self.calls = os.path.join(self.tmp, "calls")
+
+    def write(self, name, text):
+        with open(os.path.join(self.tokens, name), "w") as f:
+            f.write(text)
+
+    def set_live(self, token):
+        with open(self.live, "w") as f:
+            f.write(token)
+
+    def run_tool(self, extra=None, args=("api", "user"), stdin="in put\n", wrapped=True, pipe=False):
+        env = {"HOME": self.tmp, "TMPDIR": self.scratch, "PATH": f"{BIN}:{self.real}:/usr/bin:/bin",
+               "BUGFIX_GH_TOKEN": DEAD, "BUGFIX_GH_WORKFLOW_TOKEN": WF_DEAD, "BUGFIX_SPOOL": self.spool,
+               "STUB_LIVE": self.live, "STUB_CALLS": self.calls, "STUB_TOKENS": self.tokens, "STUB_401": self.msg401}
+        env.update(extra or {})
+        if not wrapped:
+            env["PATH"] = f"{self.real}:/usr/bin:/bin"
+        exe = os.path.join(BIN, self.tool) if wrapped else self.tool
+        # A regular file, as a here-document is, unless the test asks for a pipe.
+        if pipe:
+            return subprocess.run([exe, *args], env=env, input=stdin, text=True, capture_output=True, timeout=20)
+        path = os.path.join(self.tmp, "stdin")
+        with open(path, "w") as f:
+            f.write(stdin)
+        with open(path) as f:
+            return subprocess.run([exe, *args], env=env, stdin=f, text=True, capture_output=True, timeout=20)
+
+    def ncalls(self):
+        with open(self.calls) as f:
+            return int(f.read())
+
+    # -- the bug, and the fix
+
+    def test_negative_control_the_skill_prefix_without_the_wrapper_gets_401(self):
+        # What QAF-209 did: GH_TOKEN="$BUGFIX_GH_TOKEN", a copy taken at start.
+        r = self.run_tool({"GH_TOKEN": DEAD}, wrapped=False)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn(self.msg401, r.stderr)
+
+    def test_the_skill_prefix_through_the_wrapper_gets_the_live_token(self):
+        r = self.run_tool({"GH_TOKEN": DEAD})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, "ok call=1 stdin=in put\n")
+
+    def test_a_bare_call_gets_the_live_token(self):
+        r = self.run_tool()
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_the_workflow_copy_is_passed_through_untouched(self):
+        # Lead's ruling (CB-489): the workflow token has no file, so an
+        # engineer's workflow push carries its start-of-run copy.
+        self.set_live(WF_DEAD)
+        r = self.run_tool({"GH_TOKEN": WF_DEAD})
+        self.assertEqual((r.returncode, self.ncalls()), (0, 1), r.stderr)
+
+    def test_a_planted_workflow_file_is_never_read(self):
+        self.write("gh-workflow-token", WF_LIVE + "\n")
+        self.set_live(WF_LIVE)
+        for extra in ({"GH_TOKEN": WF_DEAD}, {}, {"GH_TOKEN": DEAD}, {"GH_TOKEN": ""}):
+            self.assertEqual(self.run_tool(extra).returncode, 1, extra)
+
+    def test_the_workflow_token_is_never_handed_to_an_everyday_call(self):
+        self.set_live(WF_LIVE)
+        for extra in ({}, {"GH_TOKEN": DEAD}, {"GH_TOKEN": ""}):
+            self.assertEqual(self.run_tool(extra).returncode, 1, extra)
+
+    def test_a_run_without_the_workflow_variable_never_gets_the_workflow_file(self):
+        # CB-486 keeps the workflow token from the lead: its env has no
+        # BUGFIX_GH_WORKFLOW_TOKEN, so nothing it sets can select that file.
+        self.set_live(WF_LIVE)
+        for extra in ({}, {"GH_TOKEN": ""}, {"GH_TOKEN": DEAD}, {"GH_TOKEN": WF_DEAD}):
+            r = self.run_tool(dict(extra, BUGFIX_GH_WORKFLOW_TOKEN=""))
+            self.assertEqual(r.returncode, 1, extra)
+
+    def test_the_token_folder_is_beside_the_spool_or_named(self):
+        self.assertEqual(self.run_tool({"BUGFIX_SPOOL": self.spool + "/"}).returncode, 0, "trailing slash")
+        moved = os.path.join(self.tmp, "elsewhere")
+        os.rename(self.tokens, moved)
+        self.set_live(DEAD)
+        self.assertEqual(self.run_tool().returncode, 0, "no folder: the start-of-run copy")
+        self.set_live(LIVE)
+        self.assertEqual(self.run_tool({"BUGFIX_TOKEN_DIR": moved}).returncode, 0)
+
+    def test_a_token_the_caller_chose_is_kept(self):
+        self.set_live("own")
+        self.assertEqual(self.run_tool({"GH_TOKEN": "own"}).returncode, 0)
+        self.set_live(LIVE)
+        self.assertEqual(self.run_tool({"GH_TOKEN": "own"}).returncode, 1, "not swapped, not retried")
+        self.assertEqual(self.ncalls(), 2)
+
+    def test_no_file_falls_back_to_the_start_of_run_copy(self):
+        os.remove(os.path.join(self.tokens, "gh-token"))
+        self.set_live(DEAD)
+        self.assertEqual(self.run_tool().returncode, 0)
+        self.assertEqual(self.run_tool({"BUGFIX_SPOOL": ""}).returncode, 0)
+
+    def test_an_empty_file_is_ignored(self):
+        self.write("gh-token", "")
+        self.set_live(DEAD)
+        self.assertEqual(self.run_tool().returncode, 0)
+
+    # -- the 401 retry
+
+    def test_a_401_after_a_mid_command_mint_is_retried_once_with_the_new_token(self):
+        r = self.run_tool({"GH_TOKEN": DEAD, "STUB_ROTATE": "gh-token"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.ncalls(), 2)
+        self.assertEqual(r.stdout, "ok call=2 stdin=in put\n", "the failed attempt's output is dropped, stdin replayed")
+        self.assertEqual(r.stderr, "")
+
+    def test_a_workflow_401_is_not_retried(self):
+        self.set_live("nobody-has-this")
+        r = self.run_tool({"GH_TOKEN": WF_DEAD})
+        self.assertEqual((r.returncode, self.ncalls()), (1, 1))
+        self.assertIn(self.msg401, r.stderr)
+
+    def test_negative_control_the_same_mint_without_the_wrapper_stays_401(self):
+        r = self.run_tool({"GH_TOKEN": LIVE, "STUB_ROTATE": "gh-token"}, wrapped=False)
+        self.assertEqual((r.returncode, self.ncalls()), (1, 1))
+
+    def test_a_401_with_no_newer_token_is_not_retried_and_passes_through(self):
+        self.set_live("nobody-has-this")
+        r = self.run_tool({"STUB_BODY": "1"})
+        self.assertEqual((r.returncode, self.ncalls()), (1, 1))
+        self.assertIn("Bad credentials", r.stdout)
+        self.assertIn(self.msg401, r.stderr)
+
+    def test_a_401_that_already_wrote_to_stdout_is_not_retried(self):
+        # `gh api`: the body has reached the caller and cannot be taken back.
+        r = self.run_tool({"GH_TOKEN": DEAD, "STUB_ROTATE": "gh-token", "STUB_BODY": "1"})
+        self.assertEqual((r.returncode, self.ncalls()), (1, 1))
+        self.assertIn("Bad credentials", r.stdout)
+        self.assertIn(self.msg401, r.stderr)
+
+    def test_a_401_with_the_same_token_in_the_file_runs_the_command_once(self):
+        # QA nit 7: no retry when the file has not moved on.
+        self.set_live("nobody-has-this")
+        r = self.run_tool({"GH_TOKEN": DEAD})
+        self.assertEqual((r.returncode, self.ncalls()), (1, 1))
+        self.assertIn(self.msg401, r.stderr)
+
+    def test_piped_stdin_reaches_the_command_and_is_not_retried(self):
+        r = self.run_tool({"GH_TOKEN": DEAD}, pipe=True)
+        self.assertEqual((r.returncode, r.stdout), (0, "ok call=1 stdin=in put\n"))
+        os.remove(self.calls)
+        r = self.run_tool({"GH_TOKEN": DEAD, "STUB_ROTATE": "gh-token"}, pipe=True)
+        self.assertEqual((r.returncode, self.ncalls()), (1, 1), "input already consumed cannot be replayed")
+
+    def test_a_pipe_whose_writer_stays_open_is_not_waited_on(self):
+        # QA nit 5: `producer | gh ...` with a long producer.
+        self.write_stub(self.SLOW)
+        env = self.slow_env()
+        done = os.path.join(self.tmp, "done")
+        env["STUB_DONE"] = done
+        p = subprocess.Popen([os.path.join(BIN, self.tool)], env=env, stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(p.kill)
+        # select, so a wrapper that waits on stdin fails here instead of hanging.
+        ready, _, _ = __import__("select").select([p.stdout], [], [], 1.5)
+        self.assertTrue(ready, "the wrapper waited for stdin to close")
+        self.assertEqual(p.stdout.readline(), "first\n")
+        p.stdin.close()
+        p.wait(timeout=20)
+
+    def test_the_failed_attempts_stderr_is_dropped_on_a_retry(self):
+        r = self.run_tool({"GH_TOKEN": DEAD, "STUB_ROTATE": "gh-token"})
+        self.assertEqual((r.returncode, r.stderr), (0, ""))
+
+    # -- streaming (a `gh run watch` must not look hung)
+
+    def write_stub(self, body):
+        stub = os.path.join(self.real, self.tool)
+        with open(stub, "w") as f:
+            f.write(body)
+        os.chmod(stub, 0o755)
+
+    def first_line_timing(self, argv, env):
+        """(seconds to the first line, whether the stub had exited by then)."""
+        done = os.path.join(self.tmp, "done")
+        env = dict(env, STUB_DONE=done)
+        start = __import__("time").monotonic()
+        p = subprocess.Popen(argv, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True)
+        self.addCleanup(p.kill)
+        first = p.stdout.readline()
+        took, exited = __import__("time").monotonic() - start, os.path.exists(done)
+        rest = p.stdout.read()
+        p.wait(timeout=20)
+        self.assertEqual((first, rest), ("first\n", "second\n"))
+        return took, exited
+
+    SLOW = "#!/bin/bash\necho first\nsleep 2\necho second\ntouch \"$STUB_DONE\"\n"
+
+    def slow_env(self):
+        return {"HOME": self.tmp, "TMPDIR": self.scratch, "PATH": f"{BIN}:{self.real}:/usr/bin:/bin",
+                "BUGFIX_SPOOL": self.spool, "BUGFIX_GH_TOKEN": DEAD}
+
+    def test_stdout_streams_before_the_command_ends(self):
+        self.write_stub(self.SLOW)
+        took, exited = self.first_line_timing([os.path.join(BIN, self.tool)], self.slow_env())
+        self.assertFalse(exited, "the first line arrived only after the command ended")
+        self.assertLess(took, 1.5)
+
+    def test_negative_control_a_wrapper_that_holds_output_is_caught(self):
+        # The same measurement on a wrapper that holds stdout until the end,
+        # as this one did at 7f54b9e95, must see the stub already finished.
+        self.write_stub(self.SLOW)
+        holder = os.path.join(self.tmp, "holder")
+        with open(holder, "w") as f:
+            f.write('#!/bin/bash\n"$@" > "$TMPDIR/held"; s=$?; /bin/cat "$TMPDIR/held"; exit $s\n')
+        os.chmod(holder, 0o755)
+        took, exited = self.first_line_timing([holder, os.path.join(BIN, self.tool)], self.slow_env())
+        self.assertTrue(exited)
+        self.assertGreaterEqual(took, 2)
+
+    def test_other_failures_are_not_retried(self):
+        r = self.run_tool({"STUB_EXIT": "4", "STUB_ROTATE": ""})
+        self.assertEqual((r.returncode, self.ncalls()), (4, 1))
+
+    def test_no_token_in_output_and_no_scratch_left(self):
+        self.set_live("nobody-has-this")
+        r = self.run_tool({"GH_TOKEN": DEAD})
+        for t in (DEAD, LIVE, WF_DEAD, WF_LIVE):
+            self.assertNotIn(t, r.stdout + r.stderr)
+        self.run_tool({"STUB_ROTATE": "gh-token"})
+        self.assertEqual(os.listdir(self.scratch), [])
+
+    def test_binary_stdin_and_stdout_survive(self):
+        cat = os.path.join(self.real, self.tool)
+        with open(cat, "w") as f:
+            f.write("#!/bin/bash\n/bin/cat\n")
+        data = bytes(range(256)) * 4
+        env = {"HOME": self.tmp, "TMPDIR": self.scratch, "PATH": f"{BIN}:{self.real}:/usr/bin:/bin",
+               "BUGFIX_SPOOL": self.spool, "BUGFIX_GH_TOKEN": DEAD}
+        r = subprocess.run([os.path.join(BIN, self.tool)], env=env, input=data, capture_output=True, timeout=20)
+        self.assertEqual(r.stdout, data)
+
+
+class FreshTokenGit(FreshTokenGh):
+    """git's own 401, as it reports a refused credential over HTTPS."""
+    tool, msg401 = "git", "fatal: Authentication failed for 'https://github.com/Uplift-Foundation/Orbweaver.git/'"
+
+    def test_git_without_any_org_variable_is_left_alone(self):
+        r = self.run_tool({"BUGFIX_GH_TOKEN": "", "BUGFIX_SPOOL": "", "GH_TOKEN": "x"})
+        self.assertEqual(self.ncalls(), 1)
+        self.assertEqual(r.returncode, 1)
 
 
 if __name__ == "__main__":

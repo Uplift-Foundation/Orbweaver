@@ -160,6 +160,19 @@ token lapse. A failed mint is logged
 (`token not refreshed: ...`) and the tick goes on to the unstick sweep; `last_mint` moves
 only on success, so the next tick tries again. Before CB-481 a failed mint ended the tick.
 
+**Paused or not, and to a file too (CB-489).** Both tokens are minted every ten minutes
+whether or not the company is paused, and on the tick that resumes it the mint comes first,
+before `restart_stopped` wakes anything: a pause stops runs, it never revoked access, and a
+run a resume woke used to copy a token that had expired during the pause (QAF-190, QAF-209).
+The everyday token is also written to `bugfix-tokens/gh-token` beside the
+spool, never inside it, since agents write requests there (`token_dir` in `warden.json`
+overrides it; one line, 0600, folder 0700, renamed into place, written before the secret
+rotates). The workflow token gets
+no file, since any run, the lead included, could read one. The org's `gh`
+and `git` stand-ins read the file at every call (`paperclip/bugfix-org/README.md`, setup step
+5), since a run's `BUGFIX_GH_TOKEN` is only a copy taken at its start. A file that cannot
+be written is logged as `bugfix-tokens/<name> not written: <error>` and the secret still rotates.
+
 **The workflow guard.** Every tick, for every open org PR in every repository, at each new
 head sha (`guarded` in that repository's state), the warden reads `pulls/<n>/files` and
 pauses, naming the PR, the file and the rule, on:

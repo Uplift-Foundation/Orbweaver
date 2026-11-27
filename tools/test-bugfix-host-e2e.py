@@ -519,12 +519,14 @@ class World(unittest.TestCase):
             self.assert_untouched(self.run_warden())
             self.assertEqual(len(self.pc.secrets), 1, "after ten minutes the token is renewed")
 
-    def test_a_paused_company_is_not_refreshed_and_its_stragglers_are_cancelled(self):
+    def test_a_paused_company_is_still_refreshed_and_its_stragglers_are_cancelled(self):
+        # CB-489: minting goes on through a pause, so a run a resume wakes
+        # never starts on a token that expired while the org was stopped.
         self.pc.company["status"] = "paused"
         self.pc.runs = [{"id": "late", "status": "queued", "createdAt": "2000-01-01"}]
         rc = self.run_warden(mint=True)
         self.assertEqual(rc, 3)
-        self.assertEqual(self.pc.secrets, [])
+        self.assertEqual([s["name"] for s in self.pc.secrets], ["GITHUB_TOKEN"])
         self.assertEqual(self.pc.company_patches(), [])
         self.assertTrue(any(p.endswith("/cancel") for m, p, b, o in self.pc.requests))
 

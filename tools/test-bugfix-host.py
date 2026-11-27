@@ -354,7 +354,10 @@ class AuditRuleTests(unittest.TestCase):
         self.assertTrue(warden.mint_due({}, 1000, False))
         self.assertFalse(warden.mint_due({"last_mint": 1000}, 1000 + 9 * 60, False))
         self.assertTrue(warden.mint_due({"last_mint": 1000}, 1000 + 10 * 60, False))
-        self.assertFalse(warden.mint_due({}, 1000, True), "a paused org is not refreshed")
+        # CB-489: a paused org is refreshed too, on the same interval.
+        self.assertTrue(warden.mint_due({}, 1000, True))
+        self.assertTrue(warden.mint_due({"last_mint": 1000}, 1000 + 10 * 60, True))
+        self.assertFalse(warden.mint_due({"last_mint": 1000}, 1000 + 9 * 60, True))
 
 
 # ---------------------------------------------------------------- warden tick
@@ -665,10 +668,13 @@ class TickTests(unittest.TestCase):
         tick(pc=pc, state={"last_mint": 10_000.0 - 60})
         self.assertEqual(pc.secrets, [])
 
-    def test_paused_company_is_not_refreshed(self):
+    def test_paused_company_is_still_refreshed(self):
+        # CB-489: QAF-190 started against a token 13 hours dead because the
+        # warden stopped minting for a pause that a person then lifted.
         pc = FakePC(paused=True)
-        tick(pc=pc)
-        self.assertEqual(pc.secrets, [])
+        w, _, _ = tick(pc=pc)
+        self.assertEqual(pc.secrets, [("GITHUB_TOKEN", "tok1")])
+        self.assertEqual(w.state["last_mint"], 10_000.0)
 
     def test_dispatch_for_org_pr_and_refusal_for_others(self):
         gh = FakeGH(prs={5: good_pr(), 6: good_pr(head={"ref": "bugfix/pc-x", "repo": {"full_name": "f/o"}})})
@@ -686,7 +692,7 @@ class TickTests(unittest.TestCase):
         w, paused, _ = tick(pc=pc, requests=[rel, dict(rel, ticket="CB-2")])
         self.assertTrue(paused)
         self.assertIn("released in a row", pc.pauses[0])
-        self.assertEqual(pc.secrets, [], "no token is minted on the tick that pauses")
+        self.assertEqual(pc.secrets, [("GITHUB_TOKEN", "tok1")], "the token is minted on the tick that pauses (CB-489)")
 
     def test_release_streak_persists_across_ticks_and_a_merge_breaks_it(self):
         rel = {"verb": "released", "ticket": "CB-1"}
@@ -984,7 +990,7 @@ class StopWorkTests(unittest.TestCase):
         pc = FakePC(paused=True, active=["run-cccccccc"])
         tick(pc=pc)
         self.assertEqual(pc.cancelled, ["run-cccccccc"])
-        self.assertEqual(pc.secrets, [])
+        self.assertEqual(pc.secrets, [("GITHUB_TOKEN", "tok1")], "minting goes on through a pause (CB-489)")
 
     def test_unpaused_company_keeps_its_runs(self):
         pc = FakePC(active=["run-dddddddd"], issues=["iss-22222222"])
@@ -3290,6 +3296,157 @@ class UnstickAnsweredTickTests(unittest.TestCase):
         pc.all, pc.pool = qaf_night() + [I("t", "todo", "P", assignee="qa"), I("d", "done", "P")], POOL_OK
         tick(gh=CountingGH(), pc=pc, state={}, now=NOW, cfg={"company_id": "co"})
         self.assertEqual(pc.read, ["r"])
+
+@unittest.skipIf(os.name != "posix", "the token file needs O_NOFOLLOW, dir_fd and a uid; the host is a Mac")
+class TokenNeverExpiresMidRunTests(unittest.TestCase):
+    """CB-489: QAF-190 and QAF-209 started with dead tokens, because the
+    warden did not mint while paused and, on a resume, restarted the stopped
+    work before it minted. Each mint now also lands in bugfix-tokens/, beside
+    the spool and never in it, for the
+    gh and git shims to read at every call."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.root, True))
+        self.spool = os.path.join(self.root, "bugfix-spool")
+        self.tokens = os.path.join(self.root, "bugfix-tokens")
+        os.mkdir(self.spool)
+
+    def token_file(self, name):
+        return os.path.join(self.tokens, name)
+
+    def test_a_resume_mints_before_it_restarts_the_stopped_work(self):
+        events = []
+
+        class Ordered(FakePC):
+            def put_secret(self, name, value):
+                events.append(("secret", name))
+                super().put_secret(name, value)
+
+            def set_issue_status(self, issue_id, status):
+                events.append(("restart", issue_id))
+                super().set_issue_status(issue_id, status)
+
+        state, pc = {}, Ordered(issues=["iss-aaaaaaaa"])
+        tick(pc=pc, state=state, now=0, requests=[{"verb": "push_refused"}])
+        pc.paused, pc.issues = False, []
+        pc.full = {"iss-aaaaaaaa": {"id": "iss-aaaaaaaa", "status": "blocked"}}
+        events.clear()
+        tick(pc=pc, state=state, now=warden.MINT_INTERVAL)
+        self.assertEqual(events, [("secret", "GITHUB_TOKEN"), ("restart", "iss-aaaaaaaa")])
+
+    def test_the_everyday_token_is_written_to_a_file_only_the_owner_reads(self):
+        pc, m = FakePC(), FakeMinter({warden.REPO: WF_INSTALL})
+        tick(pc=pc, minter=m, cfg={"spool": self.spool})
+        self.assertEqual([n for n, _ in pc.secrets], ["GITHUB_TOKEN", "GITHUB_TOKEN_WORKFLOWS"])
+        self.assertEqual(open(self.token_file("gh-token")).read(), "tok1\n")
+        self.assertEqual(stat.S_IMODE(os.stat(self.token_file("gh-token")).st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(os.stat(self.tokens).st_mode), 0o700)
+        self.assertEqual(sorted(os.listdir(self.spool)), ["access.json", "pauses.json"],
+                         "nothing token-shaped in the spool agents write to")
+
+    def test_the_token_folder_never_holds_the_workflow_token(self):
+        # Lead's ruling (CB-489): every run, the lead included, can read the
+        # folder, and CB-486 keeps the workflow token from the lead.
+        pc, m = FakePC(), FakeMinter({warden.REPO: WF_INSTALL})
+        state = {}
+        for now in (0, warden.MINT_INTERVAL):
+            tick(pc=pc, minter=m, state=state, now=now, cfg={"spool": self.spool})
+        workflow = [v for n, v in pc.secrets if n == "GITHUB_TOKEN_WORKFLOWS"]
+        self.assertEqual(len(workflow), 2, "the workflow secret is still minted")
+        self.assertEqual(os.listdir(self.tokens), ["gh-token"], "no .tmp, no workflow file")
+        held = open(self.token_file("gh-token")).read()
+        self.assertNotIn(held.strip(), workflow)
+
+    def test_the_file_moves_on_every_mint_paused_or_not(self):
+        state, pc, m = {}, FakePC(paused=True), FakeMinter()
+        tick(pc=pc, state=state, now=0, cfg={"spool": self.spool}, minter=m)
+        tick(pc=pc, state=state, now=warden.MINT_INTERVAL, cfg={"spool": self.spool}, minter=m)
+        self.assertEqual(open(self.token_file("gh-token")).read(), "tok2\n")
+
+    def test_the_file_is_written_before_the_secret(self):
+        seen = []
+        spool = self.spool
+
+        class Peeking(FakePC):
+            def put_secret(self, name, value):
+                seen.append(open(os.path.join(spool, "..", "bugfix-tokens", "gh-token")).read())
+                super().put_secret(name, value)
+
+        tick(pc=Peeking(), cfg={"spool": spool})
+        self.assertEqual(seen, ["tok1\n"])
+
+    def test_a_planted_symlink_is_replaced_not_followed(self):
+        os.makedirs(self.tokens)
+        victim = os.path.join(self.root, "victim")
+        open(victim, "w").write("keep")
+        os.symlink(victim, self.token_file("gh-token"))
+        os.symlink(victim, self.token_file("gh-token") + ".tmp")
+        tick(cfg={"spool": self.spool})
+        self.assertEqual(open(victim).read(), "keep")
+        self.assertFalse(os.path.islink(self.token_file("gh-token")))
+        self.assertEqual(open(self.token_file("gh-token")).read(), "tok1\n")
+
+    def test_a_planted_folder_symlink_is_refused_and_nothing_moves(self):
+        # QA, CB-489: the company folder is writable from the sandbox, so an
+        # agent can put a link where bugfix-tokens should be.
+        target = os.path.join(self.root, "elsewhere")
+        os.mkdir(target, 0o755)
+        os.symlink(target, self.tokens)
+        pc = FakePC()
+        _, _, logs = tick(pc=pc, cfg={"spool": self.spool})
+        self.assertEqual(os.listdir(target), [], "no token written through the link")
+        self.assertEqual(stat.S_IMODE(os.stat(target).st_mode), 0o755, "the target was not chmodded")
+        self.assertTrue(any(l.startswith("bugfix-tokens/gh-token not written: NotADirectoryError") for l in logs), logs)
+        self.assertEqual(pc.secrets, [("GITHUB_TOKEN", "tok1")], "the secret still rotates")
+
+    def test_negative_control_a_real_folder_in_the_same_place_is_written(self):
+        os.mkdir(self.tokens, 0o755)
+        tick(cfg={"spool": self.spool})
+        self.assertEqual(open(self.token_file("gh-token")).read(), "tok1\n")
+        self.assertEqual(stat.S_IMODE(os.stat(self.tokens).st_mode), 0o700, "tightened")
+
+    def test_a_folder_someone_else_owns_is_refused(self):
+        os.mkdir(self.tokens)
+        real_getuid = os.getuid
+        warden.os.getuid = lambda: real_getuid() + 1
+        self.addCleanup(setattr, warden.os, "getuid", real_getuid)
+        _, _, logs = tick(cfg={"spool": self.spool})
+        self.assertEqual(os.listdir(self.tokens), [])
+        self.assertTrue(any("not written: PermissionError" in l for l in logs), logs)
+
+    def test_an_unwritable_file_is_logged_and_the_secret_still_goes(self):
+        open(self.tokens, "w").write("not a folder")
+        pc = FakePC()
+        _, _, logs = tick(pc=pc, cfg={"spool": self.spool})
+        self.assertEqual(pc.secrets, [("GITHUB_TOKEN", "tok1")])
+        self.assertTrue(any(l.startswith("bugfix-tokens/gh-token not written: ") for l in logs), logs)
+        self.assertFalse(any("tok1" in l for l in logs), "the token is never logged")
+
+    def test_the_folder_is_beside_the_spool_unless_named(self):
+        self.assertEqual(warden.token_dir({"spool": self.spool + "/"}), self.tokens)
+        self.assertEqual(warden.token_dir({"spool": self.spool, "token_dir": "/x"}), "/x")
+        self.assertIsNone(warden.token_dir({}))
+        named = os.path.join(self.root, "named")
+        tick(cfg={"spool": self.spool, "token_dir": named})
+        self.assertEqual(open(os.path.join(named, "gh-token")).read(), "tok1\n")
+
+    def test_off_posix_the_secret_still_rotates_and_no_file_is_tried(self):
+        # CI's win-x64 leg: write_token's calls do not exist there, and an
+        # AttributeError once escaped publish and stopped the secret rotating.
+        self.addCleanup(setattr, warden.os, "name", warden.os.name)
+        warden.os.name = "nt"
+        pc = FakePC()
+        _, _, logs = tick(pc=pc, cfg={"spool": self.spool})
+        self.assertEqual(pc.secrets, [("GITHUB_TOKEN", "tok1")])
+        self.assertFalse(os.path.exists(self.tokens))
+        self.assertFalse(any("not written" in l for l in logs))
+
+    def test_no_spool_writes_no_file(self):
+        pc = FakePC()
+        _, _, logs = tick(pc=pc)
+        self.assertEqual(pc.secrets, [("GITHUB_TOKEN", "tok1")])
+        self.assertFalse(any("not written" in l for l in logs))
 
 
 if __name__ == "__main__":
