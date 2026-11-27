@@ -30,6 +30,12 @@ namespace Orbweaver
             "TMUX", "TMUX_PANE",
             "CLAUDECODE", "CLAUDE_PID", "CLAUDE_JOB_DIR", "CLAUDE_EFFORT",
             "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_EXECPATH",
+            // Which project the launching session bills and attributes its work
+            // to. Measured in a live teammate's environment on the mini, and in
+            // the exec-time environment of an app `--install` relaunched from
+            // one. They are the launching session's, not the user's: a session
+            // the app starts picks its own project from its own cwd.
+            "CLAUDE_PROJECT_UUID", "CLAUDE_CODE_SPEND_PROJECT", "CLAUDE_CODE_ATTRIBUTION_PROJECT",
         ];
 
         // Families of per-session variables: session id/kind/attended, the
@@ -71,6 +77,19 @@ namespace Orbweaver
         internal static string[] PaneRemovals(IEnumerable<string> inheritedNames) =>
             Removals(inheritedNames).Where(n => !IsTmuxClientVariable(n)).ToArray();
 
+        // Inside the pane, the prefix half of the rule at run time. The tmux
+        // *server's* global environment reaches a new pane whatever ours is, and
+        // this process has already scrubbed itself, so neither CurrentNames nor
+        // a fixed list can know every CLAUDE_CODE_USER_DELEGATED_SESSION_* or
+        // CLAUDE_CODE_PARENT_* the server holds. The shell enumerates what it
+        // actually inherited and unsets each name a prefix matches, before the
+        // line runs. POSIX sh and sed only; prefixes are [A-Z_], so the case
+        // patterns need no quoting.
+        internal static readonly string PanePreamble =
+            "for n in $(env | sed -n 's/^\\([A-Za-z_][A-Za-z0-9_]*\\)=.*/\\1/p'); do case \"$n\" in "
+            + string.Join("|", Prefixes.Select(p => p + "*"))
+            + ") unset \"$n\";; esac; done; ";
+
         // `env -u A -u B sh -c '<line>'`, or the line untouched when there is
         // nothing to drop. sh -c rather than a bare prefix so a line of several
         // commands (`cd … || exit 1; claude`) is covered in full, and `env`
@@ -84,8 +103,9 @@ namespace Orbweaver
 
         // The fixed set, for builders that run without a process in hand: every
         // exact name plus the variables this process itself carries.
+        // The exact names go to `env -u`, the prefix families to PanePreamble.
         internal static string WrapPaneCommand(string line) =>
-            WrapPaneCommand(line, PaneRemovals(CurrentNames()).Union(KnownPaneNames).OrderBy(n => n, StringComparer.Ordinal));
+            WrapPaneCommand(PanePreamble + line, PaneRemovals(CurrentNames()).Union(KnownPaneNames).OrderBy(n => n, StringComparer.Ordinal));
 
         // Concrete names always dropped inside a pane, whatever this process
         // carries: the tmux *server* may hold them from whoever started it.
@@ -99,6 +119,7 @@ namespace Orbweaver
             "CLAUDE_CODE_BRIDGE_SESSION_ID",
             "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_CHILD_NOTES_DIR",
             "CLAUDE_CODE_LAUNCHED_BY_SESSION_IDS",
+            "CLAUDE_PROJECT_UUID", "CLAUDE_CODE_SPEND_PROJECT", "CLAUDE_CODE_ATTRIBUTION_PROJECT",
         ];
 
         // The inverse of WrapPaneCommand, for callers that need the line itself.
@@ -107,7 +128,8 @@ namespace Orbweaver
             const string marker = " sh -c '";
             if (!wrapped.StartsWith("env -u ", StringComparison.Ordinal)) return wrapped;
             var at = wrapped.IndexOf(marker, StringComparison.Ordinal);
-            return wrapped[(at + marker.Length)..^1].Replace("'\\''", "'");
+            var line = wrapped[(at + marker.Length)..^1].Replace("'\\''", "'");
+            return line.StartsWith(PanePreamble, StringComparison.Ordinal) ? line[PanePreamble.Length..] : line;
         }
 
         // `-u NAME` pairs for an `env` prefix in front of an app relaunch:

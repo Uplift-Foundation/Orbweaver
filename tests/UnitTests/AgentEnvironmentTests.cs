@@ -26,6 +26,11 @@ namespace Orbweaver.UnitTests
         [InlineData("CLAUDE_CODE_LAUNCHED_BY_SESSION_IDS")]
         [InlineData("CLAUDE_CODE_PARENT_SESSION_ID")]
         [InlineData("CLAUDE_CODE_USER_DELEGATED_SESSION_DIRECT_API")]
+        // The launching session's billing and attribution project: per-session,
+        // decided deny (CB-413 QA), measured in a live teammate's environment.
+        [InlineData("CLAUDE_PROJECT_UUID")]
+        [InlineData("CLAUDE_CODE_SPEND_PROJECT")]
+        [InlineData("CLAUDE_CODE_ATTRIBUTION_PROJECT")]
         public void IdentityVariablesAreDropped(string name) =>
             Assert.True(AgentEnvironment.IsAgentVariable(name));
 
@@ -37,6 +42,10 @@ namespace Orbweaver.UnitTests
         [InlineData("CLAUDE_CODE_USE_BEDROCK")]
         [InlineData("CLAUDE_CODE_OAUTH_TOKEN")]
         [InlineData("TMUX_TMPDIR")]
+        // Feature and account switches the user set on purpose.
+        [InlineData("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS")]
+        [InlineData("ANTHROPIC_CONFIG_DIR")]
+        [InlineData("ANTHROPIC_PROFILE")]
         public void DeliberateConfigurationSurvives(string name) =>
             Assert.False(AgentEnvironment.IsAgentVariable(name));
 
@@ -73,7 +82,21 @@ namespace Orbweaver.UnitTests
             var wrapped = AgentEnvironment.WrapPaneCommand("claude");
             Assert.Contains("-u CLAUDE_JOB_DIR", wrapped);
             Assert.Contains("-u CLAUDE_CODE_MESSAGING_TOKEN", wrapped);
+            Assert.Contains("-u CLAUDE_PROJECT_UUID", wrapped);
             Assert.DoesNotContain("-u TMUX", wrapped);
+            // The prefix families are unset inside the pane, at run time.
+            Assert.Contains("CLAUDE_CODE_USER_DELEGATED_SESSION*", wrapped);
+            Assert.Contains("CLAUDE_CODE_PARENT_*", wrapped);
+            Assert.Equal("claude", AgentEnvironment.Unwrap(wrapped));
+        }
+
+        // Every prefix is in the preamble's case list, so the run-time half
+        // cannot fall behind the rule IsAgentVariable applies.
+        [Fact]
+        public void ThePanePreambleCoversEveryPrefix()
+        {
+            foreach (var prefix in AgentEnvironment.Prefixes)
+                Assert.Contains(prefix + "*", AgentEnvironment.PanePreamble);
         }
 
         [Fact]

@@ -10,8 +10,13 @@ namespace Orbweaver.IntegrationTests
     // the setup would have shown it.
     public class ScrubbedLaunchEnvTests : IDisposable
     {
+        // The first four are on the fixed list; the last two match only a
+        // prefix, which is what a live agent's server actually carries
+        // (five CLAUDE_CODE_USER_DELEGATED_SESSION_* names on the mini) and
+        // what only the in-pane preamble can reach.
         private static readonly string[] Poison =
-            ["CLAUDE_JOB_DIR", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDECODE"];
+            ["CLAUDE_JOB_DIR", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDECODE",
+             "CLAUDE_CODE_USER_DELEGATED_SESSION_DIRECT_API", "CLAUDE_CODE_PARENT_SESSION_ID"];
 
         private readonly string _dir = Path.Combine(Path.GetTempPath(), "cb413-" + Guid.NewGuid().ToString("N")[..8]);
         private string Socket => Path.Combine(_dir, "s.sock");
@@ -38,8 +43,11 @@ namespace Orbweaver.IntegrationTests
 
         private string[] PaneEnvNames(string tmux, string[] launchArgs)
         {
-            // The client is handed a TMUX naming a socket that does not exist:
-            // unscrubbed, tmux would try it and fail rather than use ours.
+            // The client carries a stray TMUX, as the app did in the incident.
+            // Run scrubs it, and the explicit -S picks the server regardless, so
+            // this does not exercise server routing — that is the unit-level
+            // claim that every tmux start info is scrubbed. What this test
+            // proves is the pane side: the server's own global environment.
             var (code, _) = Run(tmux, new() { ["TMUX"] = "/nonexistent/sock,1,0" }, ["-S", Socket, .. launchArgs]);
             Assert.Equal(0, code);
             var file = Path.Combine(_dir, "env.txt");
@@ -80,6 +88,8 @@ namespace Orbweaver.IntegrationTests
             StartPoisonedServer(tmux);
             var names = PaneEnvNames(tmux, ["new-session", "-d", "-s", "ctl", Dump]);
             Assert.Contains("CLAUDE_JOB_DIR", names);
+            Assert.Contains("CLAUDE_CODE_USER_DELEGATED_SESSION_DIRECT_API", names);
+            Assert.Contains("CLAUDE_CODE_PARENT_SESSION_ID", names);
         }
     }
 }
