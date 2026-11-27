@@ -331,7 +331,9 @@ Then, none of which a package can carry:
    unavailable" and skipped every flaky-test ticket for that reason
    (2026-11-24). Without `BUGFIX_SPOOL` a flaky-test fix has no
    way to get its 30-run proof, because the warden reads requests only from
-   the spool. Both are absolute paths, so the package
+   the spool. The lead needs it too for every PR that changes a workflow
+   file: its token is told BLOCKED on one, so it asks the warden to merge with
+   a `merge_workflow_pr` request (CB-486, `host/README.md`). Both are absolute paths, so the package
    cannot carry them. The package sets `AVALONIA_TELEMETRY_OPTOUT=1`,
    `DOTNET_CLI_TELEMETRY_OPTOUT=1` and `DOTNET_NOLOGO=1` itself.
 7. **Project workspace.** Import creates the project "Orbweaver develop" with a

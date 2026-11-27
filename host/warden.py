@@ -75,7 +75,8 @@ TOKEN_DIR = "bugfix-tokens"
 # bound to the engineers alone: a file is readable by every run, the lead
 # included, and CB-486 keeps it from the lead (lead's ruling, CB-489).
 TOKEN_FILES = {"GITHUB_TOKEN": "gh-token"}
-VERBS = ("dispatch_stress", "released", "push_refused", "rerun_failed")
+VERBS = ("dispatch_stress", "released", "push_refused", "rerun_failed", "merge_workflow_pr")
+SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 CLASS_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]{0,199}$")
 SUITES = ("unit", "integration", "ui")
 MAX_N = 50
@@ -174,6 +175,13 @@ def parse_request(raw):
         if not (isinstance(pr, int) and not isinstance(pr, bool) and pr > 0):
             return None, "pr must be a positive integer"
         return _with_repo({"verb": verb, "pr": pr}, req)
+    if verb == "merge_workflow_pr":
+        pr, sha = req.get("pr"), req.get("sha")
+        if not (isinstance(pr, int) and not isinstance(pr, bool) and pr > 0):
+            return None, "pr must be a positive integer"
+        if not (isinstance(sha, str) and SHA_RE.match(sha)):
+            return None, "sha must be the full 40-hex head sha"
+        return _with_repo({"verb": verb, "pr": pr, "sha": sha}, req)
     if verb == "released":
         t = req.get("ticket")
         if not (isinstance(t, str) and re.fullmatch(r"CB-\d{1,6}", t)):
@@ -396,6 +404,85 @@ def workflow_problems(files, r):
                 out.append(f"{name}: changed line {why}: {line[:120]}")
                 break
     return out
+
+
+# ---------------------------------------------------------------- workflow merge (CB-486)
+#
+# GitHub works out a PR's merge state for whoever asks. On a PR that changes a
+# workflow file, a token without `workflows: write` reads BLOCKED and one with
+# it reads CLEAN, at the same moment (measured on #429 and #305, 2026-11-27;
+# PRs with no workflow file read the same for both). The lead holds only the
+# everyday token, so `gh pr merge` refuses on its own BLOCKED, with "the base
+# branch policy prohibits the merge". The lead never gets the workflow token:
+# it asks through the spool, and the warden checks every merge condition again
+# itself, at the sha the lead named, before it merges with that token.
+
+QA_PREFIX = "[bugfix-org] QA"
+_HEX = re.compile(r"\b[0-9a-f]{7,40}\b")
+
+
+def qa_verdict_problem(reviews, sha, r):
+    """Why the latest QA comment does not clear a workflow merge at `sha`
+    (None = it does). `reviews` are {"login", "body", "at"} rows from the PR's
+    reviews and comments. Only the org's bot counts, and only its latest
+    comment starting QA_PREFIX: an older `Verdict: merge` does not survive a
+    later `Verdict: fix`."""
+    qa = [x for x in reviews if x.get("login") == BOT_LOGIN
+          and str(x.get("body") or "").lstrip().startswith(QA_PREFIX)]
+    if not qa:
+        return "no QA comment from the org"
+    body = max(qa, key=lambda x: x.get("at") or "")["body"]
+    lines = [l.strip() for l in body.strip().splitlines() if l.strip()]
+    if not (lines and lines[-1].startswith("Verdict: merge")):
+        return "the latest QA comment does not end `Verdict: merge`"
+    if not any(sha.startswith(h) for h in _HEX.findall(body)):
+        return f"the latest QA comment does not name {sha[:9]}"
+    missing = [n for n in r["qa_names"] if n not in body]
+    if missing:
+        return "the latest QA comment does not name " + " and ".join(missing)
+    if not any(l.startswith("Workflow change:") for l in lines):
+        return "the latest QA comment has no `Workflow change:` line"
+    return None
+
+
+def workflow_merge_problem(pr, sha, files, reviews, checks, r):
+    """Why the warden must NOT merge PR `pr` at `sha` with the workflow token
+    (None = go). `files` are its changed files, `reviews` as qa_verdict_problem
+    takes them, `checks` maps check name to conclusion at `sha`."""
+    if not r.get("workflow_edits"):
+        return f"{r['key']} does not allow workflow edits"
+    why = dispatch_problem(pr, r)
+    if why:
+        return why
+    head = (pr.get("head") or {}).get("sha") or ""
+    if head != sha:
+        return f"head is {head[:9]}, not the requested {sha[:9]}"
+    if not any(is_workflow_path(n) for f in files for n in (f.get("filename"), f.get("previous_filename"))):
+        return "PR changes no workflow file, so the lead merges it itself"
+    guard = workflow_problems(files, r)
+    if guard:
+        return "workflow guard: " + guard[0]
+    bad = [f"{n} {checks.get(n) or 'pending'}" for n in r["post_merge_checks"] if checks.get(n) != "success"]
+    if bad:
+        return "required checks not green: " + ", ".join(bad)
+    return qa_verdict_problem(reviews, sha, r)
+
+
+class WorkflowMerger:
+    """Squash-merges one PR with a token minted for the call alone, carrying
+    WORKFLOW_PERMISSIONS for that one repository, pinned to the head sha so a
+    push after the checks cannot ride along. The token is never stored."""
+
+    def __init__(self, minter):
+        self.minter = minter
+
+    def merge(self, repo, n, sha):
+        inst = self.minter.installation(repo)
+        if not inst or (inst.get("permissions") or {}).get("workflows") != "write":
+            raise LookupError("installation lacks workflows: write")
+        token = self.minter.mint(inst["id"], [repo.split("/", 1)[1]], WORKFLOW_PERMISSIONS)
+        return self.minter._call(token, f"/repos/{repo}/pulls/{int(n)}/merge", "PUT",
+                                 {"merge_method": "squash", "sha": sha})
 
 
 # ---------------------------------------------------------------- tokens (CB-481)
@@ -931,6 +1018,35 @@ class Warden:
             if r is None:
                 return self.log(f"refused rerun for PR {req['pr']}: unknown repo {req.get('repo')!r}")
             self.rerun_failed(req["pr"], r)
+        elif v == "merge_workflow_pr":
+            self.merge_workflow_pr(req)
+
+    def merge_workflow_pr(self, req):
+        """Merge an org PR that changes a workflow file (CB-486), after checking
+        every condition itself. Never on a paused company or one this tick is
+        about to pause. A refusal is logged and never pauses."""
+        n, sha = req["pr"], req["sha"]
+        r, gh = self.request_repo(req)
+        if r is None:
+            return self.log(f"refused workflow merge for PR {n}: unknown repo {req.get('repo')!r}")
+        tag = f"PR {n}" if r["key"] == "desktop" else f"{r['key']} PR {n}"
+        try:
+            if self.pause_reasons or self.pc.is_paused():
+                return self.log(f"refused workflow merge for {tag}: the company is paused")
+            pr = gh.get_pr(n)
+            if pr is None:
+                return self.log(f"refused workflow merge for {tag}: PR not found")
+            why = workflow_merge_problem(pr, sha, gh.pr_files(n), gh.qa_reviews(n),
+                                         gh.check_conclusions(sha), r)
+        except Exception as e:
+            return self.log(f"workflow merge for {tag} unreadable: {type(e).__name__}")
+        if why:
+            return self.log(f"refused workflow merge for {tag}: {why}")
+        try:
+            WorkflowMerger(self.minter).merge(r["repo"], n, sha)
+        except Exception as e:
+            return self.log(f"workflow merge for {tag} failed: {type(e).__name__} {getattr(e, 'code', '')}".rstrip())
+        self.log(f"merged {tag} at {sha[:9]} with the workflow token")
 
     def rerun_develop(self, sha, n):
         """Rerun the failed jobs of develop's push CI at a bot merge while the
@@ -1637,6 +1753,16 @@ class GhCli:
                 when = c.get("created_at") or c.get("submitted_at") or ""
                 if when <= before and c.get("body"):
                     out.append(c["body"])
+        return out
+
+    def qa_reviews(self, n):
+        """{"login", "body", "at"} for every review and comment on PR n, for
+        the workflow merge's QA check (CB-486)."""
+        out = []
+        for path in (f"issues/{n}/comments", f"pulls/{n}/reviews"):
+            for c in self.api(f"repos/{self.repo}/{path}?per_page=100") or []:
+                out.append({"login": (c.get("user") or {}).get("login"), "body": c.get("body") or "",
+                            "at": c.get("submitted_at") or c.get("created_at") or ""})
         return out
 
     def check_conclusions(self, sha):

@@ -698,6 +698,25 @@ the sha it names (on Orbweaver: both required checks are green), and the PR
 head is still that sha:
 `gh pr merge <number> --repo <the PR's repository> --squash`.
 
+**A PR that changes a workflow file is merged by the warden, not by you.**
+GitHub works out a PR's merge state for whoever asks: on a PR touching
+`.github/workflows/` or `.github/actions/`, a token without `workflows: write`
+is told BLOCKED, and `gh pr merge` refuses with "the base branch policy
+prohibits the merge" (CB-486, #429). The lead's token never carries that
+permission. So, when the same conditions hold, write one file,
+`$BUGFIX_SPOOL/merge-<PR number>.json`, holding exactly
+`{"verb": "merge_workflow_pr", "pr": <PR number>, "sha": "<the full 40-hex head sha QA reviewed>"}`.
+Orbweaver only: mobile PRs may not change workflows at all. Within five minutes
+the warden checks everything again itself (the bot's latest `[bugfix-org] QA`
+comment ends `Verdict: merge`, names that sha, both rids and has the
+`Workflow change:` line; the head is still that sha; both required checks are
+green; the workflow guard is clean; the PR is the org's own `bugfix/pc-*`
+branch into `develop`; the company is not paused), then squash-merges it at
+that sha. Anything else it refuses and logs. Confirm the merge with
+`gh pr view <number> --repo Uplift-Foundation/Orbweaver --json state` on your
+next pass before you move the ticket to Done. Never close a workflow PR because
+`gh pr merge` refused it.
+
 ## A red check your change did not cause
 
 When a required check is red only on a test outside your change's footprint

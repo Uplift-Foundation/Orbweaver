@@ -3448,6 +3448,169 @@ class TokenNeverExpiresMidRunTests(unittest.TestCase):
         self.assertEqual(pc.secrets, [("GITHUB_TOKEN", "tok1")])
         self.assertFalse(any("not written" in l for l in logs))
 
+# ---------------------------------------------------------------- workflow merge (CB-486)
+
+WF_SHA = "a00bc0cd3bebfff73fd6f157d7188d2ac011eedd"
+# Trimmed from the real QA review on #429 at a00bc0cd3 (2026-11-26): the lines
+# the check reads, in the order she wrote them.
+QA_429 = """[bugfix-org] QA
+
+Reviewed sha: a00bc0cd3bebfff73fd6f157d7188d2ac011eedd (re-resolved just before posting; still the PR head).
+
+Suites: CI only (no local runs). Rids read: osx-arm64 and win-x64.
+
+Workflow change: .github/workflows/ci.yml; no environment, secret, permission, trigger or runner line
+
+Verdict: merge
+"""
+WF_FILES = [{"filename": ".github/workflows/ci.yml", "status": "modified",
+             "patch": "@@ -1,2 +1,3 @@\n   - name: Integration\n+        # watchdog\n+        timeout 480 dotnet test\n"}]
+GREEN = {n: "success" for n in warden.DESKTOP["post_merge_checks"]}
+
+
+def qa_row(body=QA_429, login=BOT, at="2026-11-26T23:56:23Z"):
+    return {"login": login, "body": body, "at": at}
+
+
+class WorkflowMergeRuleTests(unittest.TestCase):
+    def ok(self, **over):
+        a = dict(pr=head_pr(WF_SHA), sha=WF_SHA, files=WF_FILES, reviews=[qa_row()],
+                 checks=dict(GREEN), r=warden.DESKTOP)
+        a.update(over)
+        return warden.workflow_merge_problem(**a)
+
+    def test_the_real_429_state_clears(self):
+        self.assertIsNone(self.ok())
+
+    def test_each_refusal_names_its_reason(self):
+        mobile = dict(warden.MOBILE)
+        cases = {
+            "mobile": (dict(r=mobile), "does not allow workflow edits"),
+            "closed": (dict(pr=head_pr(WF_SHA, state="closed")), "not open"),
+            "not the bot's": (dict(pr=head_pr(WF_SHA, user={"login": "wtvamp"})), "not opened by the bug-fix App"),
+            "fork": (dict(pr=head_pr(WF_SHA, head={"ref": "bugfix/pc-x", "repo": {"full_name": "evil/Orbweaver"}, "sha": WF_SHA})), "not in this repository"),
+            "branch": (dict(pr=head_pr(WF_SHA, head={"ref": "feature/x", "repo": {"full_name": warden.REPO}, "sha": WF_SHA})), "prefix"),
+            "base": (dict(pr=head_pr(WF_SHA, base={"ref": "main"})), "does not target develop"),
+            "moved head": (dict(pr=head_pr("b" * 40)), "not the requested"),
+            "no workflow": (dict(files=[{"filename": "App.cs", "status": "modified", "patch": "+x"}]), "changes no workflow file"),
+            "guard": (dict(files=[dict(WF_FILES[0], patch="+    runs-on: self-hosted\n")]), "workflow guard"),
+            "protected": (dict(files=[{"filename": ".github/workflows/release.yml", "status": "modified", "patch": "+# x"}]), "protected workflow"),
+            "red check": (dict(checks=dict(GREEN, **{warden.REQUIRED_CHECKS[1]: "failure"})), "not green"),
+            "pending check": (dict(checks={warden.REQUIRED_CHECKS[0]: "success"}), "pending"),
+            "no QA": (dict(reviews=[]), "no QA comment"),
+            "QA by a person": (dict(reviews=[qa_row(login="wtvamp")]), "no QA comment"),
+            "not a QA comment": (dict(reviews=[qa_row(body="Verdict: merge at a00bc0cd3")]), "no QA comment"),
+            "fix verdict": (dict(reviews=[qa_row(QA_429.replace("Verdict: merge", "Verdict: fix\n- x"))]), "does not end `Verdict: merge`"),
+            "later fix wins": (dict(reviews=[qa_row(), qa_row(QA_429.replace("Verdict: merge", "Verdict: fix"), at="2026-11-27T00:10:00Z")]), "does not end"),
+            "other sha": (dict(reviews=[qa_row(QA_429.replace(WF_SHA, "c" * 40))]), "does not name a00bc0cd3"),
+            "one rid": (dict(reviews=[qa_row(QA_429.replace(" and win-x64", ""))]), "does not name win-x64"),
+            "no workflow line": (dict(reviews=[qa_row(QA_429.replace("Workflow change:", "Workflow:"))]), "no `Workflow change:` line"),
+        }
+        for label, (over, why) in cases.items():
+            self.assertIn(why, self.ok(**over) or "", label)
+
+    def test_a_short_sha_in_the_qa_comment_counts(self):
+        body = QA_429.replace(WF_SHA, "a00bc0cd3")
+        self.assertIsNone(self.ok(reviews=[qa_row(body)]))
+
+    def test_a_later_merge_verdict_clears_an_earlier_fix(self):
+        fix = qa_row(QA_429.replace("Verdict: merge", "Verdict: fix"), at="2026-11-26T20:00:00Z")
+        self.assertIsNone(self.ok(reviews=[fix, qa_row()]))
+
+    def test_parse_request(self):
+        ok, _ = warden.parse_request(json.dumps({"verb": "merge_workflow_pr", "pr": 429, "sha": WF_SHA}))
+        self.assertEqual(ok, {"verb": "merge_workflow_pr", "pr": 429, "sha": WF_SHA})
+        for bad in ({"pr": 429}, {"pr": 0, "sha": WF_SHA}, {"pr": True, "sha": WF_SHA},
+                    {"pr": 429, "sha": "a00bc0cd3"}, {"pr": 429, "sha": WF_SHA.upper()},
+                    {"pr": 429, "sha": WF_SHA, "repo": "Bad Key"}):
+            req, why = warden.parse_request(json.dumps(dict(bad, verb="merge_workflow_pr")))
+            self.assertIsNone(req, bad)
+            self.assertTrue(why, bad)
+
+
+class MergingMinter(FakeMinter):
+    def __init__(self, installs=None, fail=None):
+        super().__init__({warden.REPO: WF_INSTALL} if installs is None else installs)
+        self.calls, self.fail = [], fail
+
+    def _call(self, token, path, method="GET", body=None):
+        if self.fail:
+            raise self.fail
+        self.calls.append((token, path, method, body))
+        return {"merged": True}
+
+
+class WfGH(FakeGH):
+    def __init__(self, reviews=None, **kw):
+        super().__init__(**kw)
+        self.reviews = reviews or {}
+
+    def qa_reviews(self, n):
+        got = self.reviews.get(n, [])
+        if got is UNREADABLE:
+            raise subprocess.CalledProcessError(1, ["gh", "api"])
+        return got
+
+
+class WorkflowMergeTickTests(unittest.TestCase):
+    REQ = {"verb": "merge_workflow_pr", "pr": 429, "sha": WF_SHA}
+
+    def gh(self, **over):
+        kw = dict(prs={429: head_pr(WF_SHA)}, files={429: WF_FILES},
+                  checks={WF_SHA: dict(GREEN)}, reviews={429: [qa_row()]})
+        kw.update(over)
+        return WfGH(**kw)
+
+    def run_tick(self, gh=None, minter=None, pc=None, req=None):
+        m = minter or MergingMinter()
+        _, paused, logs = tick(gh=gh or self.gh(), minter=m, pc=pc, requests=[req or self.REQ],
+                               state={"last_mint": 10_000.0})
+        return m, paused, logs
+
+    def test_merges_with_a_workflow_token_pinned_to_the_sha(self):
+        m, paused, logs = self.run_tick()
+        self.assertFalse(paused)
+        self.assertEqual(m.minted, [(9, ["Orbweaver"], dict(warden.WORKFLOW_PERMISSIONS))])
+        self.assertEqual(m.calls, [("tok1", f"/repos/{warden.REPO}/pulls/429/merge", "PUT",
+                                    {"merge_method": "squash", "sha": WF_SHA})])
+        self.assertTrue(any("merged PR 429 at a00bc0cd3 with the workflow token" in l for l in logs))
+
+    def test_a_refusal_mints_nothing_merges_nothing_and_never_pauses(self):
+        m, paused, logs = self.run_tick(self.gh(checks={WF_SHA: {}}))
+        self.assertEqual((m.minted, m.calls, paused), ([], [], False))
+        self.assertTrue(any("refused workflow merge for PR 429: required checks not green" in l for l in logs))
+
+    def test_a_paused_company_is_refused(self):
+        m, _, logs = self.run_tick(pc=FakePC(paused=True))
+        self.assertEqual(m.calls, [])
+        self.assertTrue(any("refused workflow merge for PR 429: the company is paused" in l for l in logs))
+
+    def test_a_missing_pr_or_unknown_repo_is_refused(self):
+        m, _, logs = self.run_tick(self.gh(prs={}))
+        self.assertTrue(any("PR not found" in l for l in logs))
+        m, _, logs = self.run_tick(req=dict(self.REQ, repo="nope"))
+        self.assertEqual(m.calls, [])
+        self.assertTrue(any("unknown repo 'nope'" in l for l in logs))
+
+    def test_an_installation_without_workflows_is_refused_before_minting(self):
+        m, _, logs = self.run_tick(minter=MergingMinter({warden.REPO: DESKTOP_INSTALL}))
+        self.assertEqual((m.minted, m.calls), ([], []))
+        self.assertTrue(any("workflow merge for PR 429 failed: LookupError" in l for l in logs))
+
+    def test_unreadable_github_is_logged_not_raised(self):
+        m, paused, logs = self.run_tick(self.gh(reviews={429: UNREADABLE}))
+        self.assertEqual((m.calls, paused), ([], False))
+        self.assertTrue(any("workflow merge for PR 429 unreadable" in l for l in logs))
+
+    def test_a_github_refusal_of_the_merge_is_logged(self):
+        err = urllib.error.HTTPError("u", 405, "Not Allowed", {}, None)
+        m, paused, logs = self.run_tick(minter=MergingMinter(fail=err))
+        self.assertFalse(paused)
+        self.assertTrue(any("workflow merge for PR 429 failed: HTTPError 405" in l for l in logs))
+
+    def test_the_lead_token_never_gains_workflows(self):
+        self.assertNotIn("workflows", warden.EVERYDAY_PERMISSIONS)
+
 
 if __name__ == "__main__":
     sys.exit(0 if unittest.main(exit=False).result.wasSuccessful() else 1)

@@ -716,6 +716,31 @@ class InstructionTests(unittest.TestCase):
         self.assertIn("set the engineer's\nPaperclip issue to `done` with that same sentence as its `comment`, never\n`cancelled`", section)
         self.assertIn("`[bugfix-org] stopped: needs a protected workflow\n  line (<the line it needs", skill)
 
+    def test_the_lead_asks_the_warden_to_merge_a_workflow_pr(self):
+        # CB-486: the lead's token is told BLOCKED on a workflow PR, so it asks
+        # through the spool. The request the skill spells out must be one the
+        # warden actually parses, and a refused `gh pr merge` must not close it.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("warden", os.path.join(HERE, "..", "host", "warden.py"))
+        warden = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(warden)
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        lead = read("agents", "marisol-vandenberg", "AGENTS.md")
+        form = '{"verb": "merge_workflow_pr", "pr": <PR number>, "sha": "<the full 40-hex head sha QA reviewed>"}'
+        self.assertIn(f"`{form}`", skill)
+        self.assertIn("`$BUGFIX_SPOOL/merge-<PR number>.json`", skill)
+        self.assertIn('{"verb": "merge_workflow_pr", "pr": <number>, "sha": "<full head sha>"}', lead)
+        filled = form.replace("<PR number>", "429").replace(
+            "<the full 40-hex head sha QA reviewed>", "a00bc0cd3bebfff73fd6f157d7188d2ac011eedd")
+        self.assertEqual(warden.parse_request(filled)[0]["verb"], "merge_workflow_pr")
+        # Control: the placeholder itself, or a short sha, is not a request.
+        self.assertIsNone(warden.parse_request(form.replace("<PR number>", "429"))[0])
+        self.assertIsNone(warden.parse_request(filled.replace("a00bc0cd3bebfff73fd6f157d7188d2ac011eedd", "a00bc0cd3"))[0])
+        flat = lambda t: " ".join(t.split())
+        self.assertIn("never close a workflow PR over a refused `gh pr merge`", flat(lead))
+        self.assertIn("Never close a workflow PR because `gh pr merge` refused it.", flat(skill))
+        self.assertNotIn("BUGFIX_GH_WORKFLOW_TOKEN", lead, "the lead never holds the workflow token")
+
     def test_a_mobile_rerun_waits_for_the_per_repo_warden(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")
         self.assertIn('`{"verb": "rerun_failed", "pr": <PR number>, "repo": "mobile"}`', skill)
