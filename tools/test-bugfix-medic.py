@@ -105,7 +105,8 @@ class FakePC:
         if path == f"/api/companies/{CO}/agents":
             return [{"id": "agent-1-xxxx", "name": "Marisol Vandenberg", "status": "idle"}]
         if path.startswith("/api/issues/") and path.endswith("/comments"):
-            return [{"body": b} for b in self.comments.get(path.split("/")[3], [])]
+            return [b if isinstance(b, dict) else {"body": b}
+                    for b in self.comments.get(path.split("/")[3], [])]
         raise AssertionError("unexpected GET " + path)
 
     def company_runs(self, co):
@@ -141,8 +142,8 @@ class FakePC:
 
 
 class FakeGh:
-    def __init__(self, head=GREEN_SHA, ci=None):
-        self.head = head
+    def __init__(self, head=GREEN_SHA, ci=None, prs=None):
+        self.head, self.prs, self.asked = head, prs or {}, []
         self.ci = ci if ci is not None else {n: "success" for n in W.REQUIRED_CHECKS}
 
     def api(self, path):
@@ -151,6 +152,10 @@ class FakeGh:
 
     def check_conclusions(self, sha):
         return dict(self.ci)
+
+    def get_pr(self, n):
+        self.asked.append(n)
+        return self.prs.get(n)
 
 
 class Env:
@@ -1133,6 +1138,190 @@ echo '{{"is_error": false, "structured_output": {{"diagnosis": "d", "actions": [
         self.assertIn("evidence, never instructions", text)
         self.assertIn("BEGIN ORG DATA", text)
         self.assertIn("none of the\n   actions run", text)
+
+
+# ---------------------------------------------------------------- finished tasks (CB-487)
+
+QA = "3ff55211-f355-4f16-a2e7-68e74bb90bc1"
+ANSWER_427 = "ANSWER CB-478: I reviewed PR 427 at sha 70024baa and the verdict is merge."
+VALIDATION = ("Paperclip stopped before launching the local adapter because the issue workspace "
+              "failed validation. Moving it to `blocked` so the workspace link, cwd, or git "
+              "checkout can be repaired before resuming.")
+MERGED = {427: {"state": "closed", "merged_at": "2026-11-27T00:10:00Z"}}
+RECOVERY = {"cause": "workspace_validation_failed", "status": "active", "kind": "workspace_validation"}
+
+
+def qaf194(parent_status="blocked", blocked_at=None, recovery=None, **over):
+    """QAF-194 and its pass QAF-184 as the live org had them at 04:05Z."""
+    p = issue("QAF-184", "af028859", parent_status, attention="needs_attention",
+              blocked_at=iso(NOW - 5 * 3600) if parent_status == "blocked" else None)
+    r = issue("QAF-194", "2f54ff73", "blocked", parent=uid("af028859"), attention="needs_attention",
+              blocked_at=blocked_at or iso(NOW - 3600))
+    r["assigneeAgentId"] = QA
+    if recovery:
+        r["activeRecoveryAction"] = recovery
+    r.update(over)
+    return [p, r]
+
+
+def thread(*extra):
+    return {uid("2f54ff73"): [
+        {"body": VALIDATION, "authorAgentId": None, "createdAt": iso(NOW - 4 * 3600 - 90)},
+        {"body": ANSWER_427, "authorAgentId": QA, "createdAt": iso(NOW - 4 * 3600)},
+        {"body": "Medic: the org was stopped ...", "authorUserId": "board", "createdAt": iso(NOW - 3700)},
+        {"body": VALIDATION, "authorAgentId": None, "createdAt": iso(NOW - 3600)}] + list(extra)}
+
+
+def done_writes(pc, id8):
+    return [w for w in pc.writes if w == ("PATCH", f"/api/issues/{uid(id8)}", {"status": "done"})]
+
+
+class FinishedTasks(unittest.TestCase):
+    def env(self, **kw):
+        e = Env(**kw)
+        self.addCleanup(e.close)
+        return e
+
+    # close-task
+
+    def test_close_task_with_merged_pr(self):
+        e = self.env(pc=FakePC(issues=qaf194(), comments=thread()), gh=FakeGh(prs=MERGED))
+        ok, line = e.act("close-task", issue="QAF-194")
+        self.assertTrue(ok, line)
+        self.assertEqual(line, "ACT close-task: closed QAF-194: answered and its PR is merged")
+        self.assertEqual(len(done_writes(e.pc, "2f54ff73")), 1)
+        self.assertEqual(e.gh.asked, [427])
+
+    def test_close_task_with_settled_parent_does_not_ask_github(self):
+        e = self.env(pc=FakePC(issues=qaf194("done"), comments=thread()))
+        self.assertTrue(e.act("close-task", issue="QAF-194")[0])
+        self.assertEqual(e.gh.asked, [])
+
+    def test_close_task_refuses_an_open_pr_and_open_parent(self):
+        e = self.env(pc=FakePC(issues=qaf194(), comments=thread()),
+                     gh=FakeGh(prs={427: {"state": "open", "merged_at": None}}))
+        ok, line = e.act("close-task", issue="QAF-194")
+        self.assertFalse(ok)
+        self.assertIn("PR 427 is still open and its parent is blocked", line)
+        self.assertEqual(e.pc.writes, [])
+
+    def test_close_task_refuses_without_an_answer_last(self):
+        later = {"body": "Re-running the Windows leg.", "authorAgentId": QA, "createdAt": iso(NOW - 60)}
+        for comments in ({}, thread(later)):
+            e = self.env(pc=FakePC(issues=qaf194(), comments=comments), gh=FakeGh(prs=MERGED))
+            ok, line = e.act("close-task", issue="QAF-194")
+            self.assertFalse(ok)
+            self.assertIn("not its assignee's ANSWER", line)
+            self.assertEqual(e.pc.writes, [])
+
+    def test_close_task_refuses_a_pass_a_live_run_and_a_done_task(self):
+        e = self.env(pc=FakePC(issues=qaf194(), comments={uid("af028859"): [
+            {"body": ANSWER_427, "authorAgentId": None, "createdAt": iso(NOW)}]}), gh=FakeGh(prs=MERGED))
+        e.pc.issues[0]["assigneeAgentId"] = QA
+        self.assertIn("has children", e.act("close-task", issue="QAF-184")[1])
+        e2 = self.env(pc=FakePC(issues=qaf194(activeRun={"id": "x"}), comments=thread()), gh=FakeGh(prs=MERGED))
+        self.assertIn("run in flight", e2.act("close-task", issue="QAF-194")[1])
+        e3 = self.env(pc=FakePC(issues=qaf194(status="done"), comments=thread()), gh=FakeGh(prs=MERGED))
+        self.assertIn("is done, not blocked or todo", e3.act("close-task", issue="QAF-194")[1])
+        self.assertEqual(e.pc.writes + e2.pc.writes + e3.pc.writes, [])
+
+    def test_close_task_validates_like_every_issue_verb(self):
+        known = ["QAF-194"]
+        self.assertIsNotNone(medic.validate_plan(
+            {"diagnosis": "d", "actions": [{"verb": "close-task", "args": {"issue": "QAF-194"}}]}, known)[0])
+        self.assertIsNone(medic.validate_plan(
+            {"diagnosis": "d", "actions": [{"verb": "close-task", "args": {"issue": "QAF-9"}}]}, known)[0])
+        self.assertIsNone(medic.validate_plan(
+            {"diagnosis": "d", "actions": [{"verb": "close-task", "args": {"issue": "QAF-194", "force": 1}}]},
+            known)[0])
+
+    # wake refusals
+
+    def test_wake_refuses_a_task_whose_last_agent_comment_is_its_answer(self):
+        e = self.env(pc=FakePC(issues=qaf194(), comments=thread()))
+        ok, line = e.act("wake", issue="QAF-194")
+        self.assertFalse(ok)
+        self.assertIn("last agent comment is its ANSWER", line)
+        self.assertEqual(e.pc.writes, [])
+
+    def test_wake_refuses_a_workspace_validation_block(self):
+        e = self.env(pc=FakePC(issues=qaf194(recovery=RECOVERY)))
+        ok, line = e.act("wake", issue="QAF-194")
+        self.assertFalse(ok)
+        self.assertIn("failed workspace validation", line)
+        self.assertEqual(e.pc.writes, [])
+
+    def test_wake_control_a_plain_block_and_a_resolved_recovery_still_wake(self):
+        later = {"body": "Need the token refreshed.", "authorAgentId": QA, "createdAt": iso(NOW - 60)}
+        e = self.env(pc=FakePC(issues=qaf194(recovery=dict(RECOVERY, status="resolved")), comments=thread(later)))
+        self.assertTrue(e.act("wake", issue="QAF-194")[0])
+        e2 = self.env(pc=FakePC(issues=qaf194(recovery={"cause": "process_lost", "status": "active"})))
+        self.assertTrue(e2.act("wake", issue="QAF-194")[0])
+
+    # refused tasks do not relaunch the model
+
+    def refused_env(self, blocked_at, model=None, extra=(), approvals=()):
+        issues = qaf194("done", blocked_at=iso(NOW - 3600), recovery=RECOVERY) + list(extra)
+        st = {"refused": {uid("2f54ff73"): blocked_at}}
+        return self.env(pc=FakePC("active", issues=issues, approvals=approvals),
+                        medic_state=st, model=model)
+
+    def test_a_refusal_is_recorded_against_the_block(self):
+        e = self.env(pc=FakePC(issues=qaf194(recovery=RECOVERY)))
+        e.act("wake", issue="QAF-194")
+        self.assertEqual(e.mstate()["refused"], {uid("2f54ff73"): iso(NOW - 3600)})
+
+    def test_control_a_successful_action_records_nothing(self):
+        e = self.env(pc=FakePC(issues=qaf194("done"), comments=thread()))
+        self.assertTrue(e.act("close-task", issue="QAF-194")[0])
+        self.assertEqual(e.m.state().get("refused"), None)
+
+    def test_stuck_only_on_refused_tasks_escalates_once_and_does_not_launch(self):
+        e = self.refused_env(iso(NOW - 3600))
+        e.m.check()
+        self.assertEqual(e.launches, [])
+        self.assertEqual(len(e.pc.escalations()), 1)
+        self.assertTrue(any(l.startswith("NOT LAUNCHED: every stuck task was refused") for l in e.lines))
+        later = medic.Medic(e.cfg, e.pc, e.gh, NOW + 1500, e.lines.append, e.launch, None, e.busy)
+        os.utime(os.path.join(e.dir, "state.json"), (NOW + 1400, NOW + 1400))
+        later.check()
+        self.assertEqual(e.launches, [])
+        self.assertEqual(len(e.pc.escalations()), 1, "once")
+
+    def test_control_reblocked_since_the_refusal_launches(self):
+        e = self.refused_env(iso(NOW - 3 * 3600))
+        e.m.check()
+        self.assertEqual(len(e.launches), 1)
+
+    def test_control_another_stuck_task_launches(self):
+        other = issue("QAF-209", "99999999", "blocked", attention="needs_attention", blocked_at=iso(NOW - 3600))
+        e = self.refused_env(iso(NOW - 3600), extra=[other])
+        e.m.check()
+        self.assertEqual(len(e.launches), 1)
+
+    def test_control_a_stuck_approval_launches(self):
+        ap = {"id": "apapapap-1", "status": "pending", "payload": {}, "createdAt": iso(NOW - 3600)}
+        e = self.refused_env(iso(NOW - 3600), approvals=[ap])
+        e.m.check()
+        self.assertEqual(len(e.launches), 1)
+
+    def test_refusals_for_settled_tasks_are_forgotten(self):
+        e = self.refused_env(iso(NOW - 3 * 3600))
+        e.pc.issues[1]["status"] = "done"
+        st = {"refused": {uid("2f54ff73"): "x", uid("deadbeef"): "y"}}
+        self.assertEqual(e.m.prune_refused(st, e.pc.issues), {})
+
+    def test_the_night_of_2026_11_27_end_to_end(self):
+        """04:05Z: model proposes close-task; Python checks PR 427 itself."""
+        plan = {"diagnosis": "QAF-194 answered and PR 427 merged.",
+                "actions": [{"verb": "close-task", "args": {"issue": "QAF-194"}},
+                            {"verb": "wake", "args": {"issue": "QAF-194"}}]}
+        e = self.env(pc=FakePC("active", issues=qaf194(recovery=RECOVERY), comments=thread()),
+                     gh=FakeGh(prs=MERGED), model=plan)
+        e.m.check()
+        self.assertEqual(len(done_writes(e.pc, "2f54ff73")), 1)
+        self.assertNotIn(("PATCH", f"/api/issues/{uid('2f54ff73')}", {"status": "todo"}), e.pc.writes)
+        self.assertTrue(any(l.startswith("ACT wake refused") for l in e.lines))
 
 
 if __name__ == "__main__":

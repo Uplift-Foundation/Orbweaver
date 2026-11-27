@@ -553,6 +553,7 @@ class FakePC:
         self.all, self.run_rows, self.said, self.pool = [], [], {}, {}
         self.paused_cos, self.fail_reads, self.fail_writes = set(), False, False
         self.statuses, self.comments, self.resets = [], [], []
+        self.threads = {}  # issue id -> comment rows (CB-487)
 
     def runs_today(self):
         return self.runs
@@ -599,6 +600,9 @@ class FakePC:
 
     def newest_comment_at(self, issue_id, agent_id):
         return self.said.get(issue_id)
+
+    def issue_comments(self, issue_id):
+        return list(self.threads.get(issue_id, []))
 
     def pool_usage(self, path):
         if self.pool is None:
@@ -3051,6 +3055,185 @@ class PoolUsagePublishTests(unittest.TestCase):
         self.assertEqual(pl["ProgramArguments"][1:], ["__REPO__/host/pool_usage.py", "run-once"])
         self.assertIn("/opt/homebrew/bin", pl["EnvironmentVariables"]["PATH"].split(":"))
         self.assertEqual(pl["StartInterval"], 300)
+
+
+# ---------------------------------------------------------------- answered leaves (CB-487)
+
+def C(agent, body, at, **over):
+    """A comment row as /api/issues/<id>/comments returns it (measured on QAF-194):
+    an agent's carries authorAgentId; Paperclip's own notice and a board
+    comment carry none."""
+    row = {"authorAgentId": agent, "body": body, "createdAt": warden.iso(at)}
+    row.update(over)
+    return row
+
+
+ANSWER_427 = ("ANSWER CB-478: I reviewed PR 427 at sha 70024baa and the verdict is merge. "
+              "Both required checks pass at that sha.")
+VALIDATION = ("Paperclip stopped before launching the local adapter because the issue workspace "
+              "failed validation. Moving it to `blocked` so the workspace link, cwd, or git "
+              "checkout can be repaired before resuming.")
+
+
+def qaf194_thread():
+    """QAF-194's order: blocked by validation at 22:58:28, ANSWER at 22:59:59,
+    then the medic's board wake and Paperclip's re-block, neither by an agent."""
+    return [C(None, VALIDATION, NOW - 4 * 3600 - 90),
+            C("qa", ANSWER_427, NOW - 4 * 3600),
+            C(None, "Medic: the org was stopped and has been restarted ...", NOW - 3600,
+              authorUserId="board"),
+            C(None, VALIDATION, NOW - 3500)]
+
+
+class AnswerHelperTests(unittest.TestCase):
+    def test_last_agent_answer_skips_paperclip_and_board_comments(self):
+        self.assertEqual(warden.last_agent_answer(qaf194_thread(), "qa"), ANSWER_427)
+
+    def test_a_newer_agent_comment_is_not_an_answer(self):
+        rows = qaf194_thread() + [C("qa", "Still checking the Windows leg.", NOW - 60)]
+        self.assertIsNone(warden.last_agent_answer(rows, "qa"))
+
+    def test_another_agents_answer_is_not_the_assignees(self):
+        self.assertIsNone(warden.last_agent_answer([C("eng", ANSWER_427, NOW)], "qa"))
+        self.assertIsNone(warden.last_agent_answer([C("qa", ANSWER_427, NOW)], None))
+
+    def test_no_answer_prefix_and_deleted_answers_do_not_count(self):
+        self.assertIsNone(warden.last_agent_answer([C("qa", "Verdict: merge", NOW)], "qa"))
+        rows = [C("qa", "working", NOW - 60), C("qa", ANSWER_427, NOW, deletedAt=warden.iso(NOW))]
+        self.assertIsNone(warden.last_agent_answer(rows, "qa"))
+        self.assertIsNone(warden.last_agent_answer([], "qa"))
+
+    def test_answer_pr(self):
+        self.assertEqual(warden.answer_pr(ANSWER_427), 427)
+        self.assertEqual(warden.answer_pr("ANSWER: PR #428 merge"), 428)
+        self.assertIsNone(warden.answer_pr("ANSWER: no change needed"))
+        self.assertIsNone(warden.answer_pr(None))
+
+    def test_pr_over(self):
+        self.assertEqual(warden.pr_over({"state": "closed", "merged_at": "2026-11-26T23:00:00Z"}), "merged")
+        self.assertEqual(warden.pr_over({"state": "closed", "merged": True}), "merged")
+        self.assertEqual(warden.pr_over({"state": "closed", "merged_at": None}), "closed")
+        self.assertIsNone(warden.pr_over({"state": "open", "merged_at": None}))
+        self.assertIsNone(warden.pr_over(None))
+
+    def test_answered_and_over(self):
+        self.assertIn("parent is done", warden.answered_and_over("ANSWER", "done", None))
+        self.assertIn("parent is cancelled", warden.answered_and_over("ANSWER", "cancelled", None))
+        self.assertIn("PR is merged", warden.answered_and_over("ANSWER", "blocked", "merged"))
+        self.assertIn("PR is closed", warden.answered_and_over("ANSWER", None, "closed"))
+        self.assertIsNone(warden.answered_and_over("ANSWER", "blocked", None), "work not over")
+        self.assertIsNone(warden.answered_and_over(None, "done", "merged"), "no answer")
+
+
+def qaf_night():
+    """Parent pass P blocked on review leaf r, both untouched for hours."""
+    return [I("P", "blocked", idle=4 * 3600), I("r", "blocked", "P", idle=3500, assignee="qa")]
+
+
+class UnstickAnsweredTests(unittest.TestCase):
+    def test_answered_leaf_with_merged_pr_is_closed(self):
+        acts = decide_answers(qaf_night(), {"r": (ANSWER_427, "merged")})
+        self.assertIn(("close_answered", "r"), acts)
+
+    def test_control_before_cb487_the_leaf_fell_through(self):
+        # The same world without the answer: no rule touches the blocked leaf,
+        # and the parent is not closed because its child is not settled.
+        self.assertEqual(decide(qaf_night()), [])
+
+    def test_open_pr_and_open_parent_is_not_closed(self):
+        self.assertEqual(decide_answers(qaf_night(), {"r": (ANSWER_427, None)}), [])
+
+    def test_settled_parent_is_proof_without_a_pr(self):
+        issues = [I("P", "done"), I("r", "blocked", "P", assignee="qa")]
+        self.assertEqual(decide_answers(issues, {"r": ("ANSWER: nothing to change", None)}),
+                         [("close_answered", "r")])
+
+    def test_a_task_with_children_or_a_live_run_is_not_a_closable_leaf(self):
+        issues = [I("P", "blocked"), I("c", "in_progress", "P", idle=60)]
+        self.assertNotIn(("close_answered", "P"), decide_answers(issues, {"P": (ANSWER_427, "merged")}))
+        live = [I("r", "blocked", "P", assignee="qa", activeRun={"id": "x"})]
+        self.assertEqual(decide_answers(live, {"r": (ANSWER_427, "merged")}), [])
+
+    def test_only_blocked_tasks(self):
+        issues = [I("r", "in_progress", "P", idle=60, assignee="qa")]
+        self.assertEqual(decide_answers(issues, {"r": (ANSWER_427, "merged")}), [])
+
+    def test_answered_beats_a_fresh_usage_cancel(self):
+        issues = [I("r", "blocked", "P", assignee="qa")]
+        acts = decide_answers(issues, {"r": (ANSWER_427, "merged")}, runs=[EXHAUSTED("r", agent="qa")])
+        self.assertEqual(acts, [("close_answered", "r")])
+
+    def test_parent_closes_once_the_leaf_is_done(self):
+        # The next ticks: the leaf done, the parent's own rule takes over.
+        issues = [I("P", "blocked", idle=11 * 60), I("r", "done", "P", idle=11 * 60, assignee="qa")]
+        self.assertEqual(decide(issues), [("wake_parent", "P")])
+        self.assertEqual(decide(issues, state={"parent_woken": {"P": NOW - 15 * 60}}),
+                         [("close_parent", "P")])
+
+
+def decide_answers(issues, answers, runs=()):
+    return [(a["kind"], a["id"]) for a in
+            warden.unstick_actions(list(issues), list(runs), {}, {}, NOW, True, answers)]
+
+
+class CountingGH(FakeGH):
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.asked = []
+
+    def get_pr(self, n):
+        self.asked.append(n)
+        return super().get_pr(n)
+
+
+class UnstickAnsweredTickTests(unittest.TestCase):
+    def run_tick(self, issues, threads, prs=None, gh=None):
+        pc = FakePC()
+        pc.all, pc.pool, pc.threads = issues, POOL_OK, threads
+        gh = gh or CountingGH(prs=prs or {})
+        _, _, logs = tick(gh=gh, pc=pc, state={}, now=NOW, cfg={"company_id": "co"})
+        return pc, gh, logs
+
+    def test_qaf194_is_closed_with_no_comment_and_logged_with_its_proof(self):
+        pc, gh, logs = self.run_tick(qaf_night(), {"r": qaf194_thread()},
+                                     prs={427: {"state": "closed", "merged_at": "2026-11-27T00:10:00Z"}})
+        self.assertIn(("r", "done"), pc.statuses)
+        self.assertNotIn("r", [c[0] for c in pc.comments], "a comment would wake it")
+        self.assertIn("UNSTUCK: close_answered QAF-r (answered and its PR is merged)", logs)
+        self.assertEqual(gh.asked, [427])
+
+    def test_open_pr_leaves_it_alone(self):
+        pc, _, logs = self.run_tick(qaf_night(), {"r": qaf194_thread()},
+                                    prs={427: {"state": "open", "merged_at": None}})
+        self.assertEqual(pc.statuses, [])
+        self.assertFalse(any("close_answered" in l for l in logs))
+
+    def test_settled_parent_does_not_ask_github(self):
+        issues = [I("P", "done"), I("r", "blocked", "P", assignee="qa")]
+        pc, gh, _ = self.run_tick(issues, {"r": qaf194_thread()})
+        self.assertEqual(pc.statuses, [("r", "done")])
+        self.assertEqual(gh.asked, [])
+
+    def test_unreadable_pr_is_no_proof_and_the_sweep_goes_on(self):
+        class Broken(CountingGH):
+            def get_pr(self, n):
+                raise OSError("gh down")
+        issues = qaf_night() + [I("x", "blocked", idle=11 * 60), I("y", "done", "x", idle=12 * 60)]
+        pc, _, logs = self.run_tick(issues, {"r": qaf194_thread()}, gh=Broken())
+        self.assertNotIn(("r", "done"), pc.statuses)
+        self.assertTrue(any("unstick: PR 427 unreadable for QAF-r: OSError" in l for l in logs))
+        self.assertIn("UNSTUCK: wake_parent QAF-x", logs, "the rest of the sweep still ran")
+
+    def test_comments_are_read_only_for_blocked_leaves(self):
+        class Watching(FakePC):
+            read = []
+            def issue_comments(self, issue_id):
+                self.read.append(issue_id)
+                return []
+        pc = Watching()
+        pc.all, pc.pool = qaf_night() + [I("t", "todo", "P", assignee="qa"), I("d", "done", "P")], POOL_OK
+        tick(gh=CountingGH(), pc=pc, state={}, now=NOW, cfg={"company_id": "co"})
+        self.assertEqual(pc.read, ["r"])
 
 
 if __name__ == "__main__":

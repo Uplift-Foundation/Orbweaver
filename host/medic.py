@@ -143,7 +143,14 @@ def swept_ids(unstick_company_state):
 
 
 def stuck_tasks(issues, approvals, unstick_company_state, now):
-    """Open tasks blocked with no one to unblock them, and approvals waiting,
+    """The `stuck` trip's lines, one per row of stuck_rows()."""
+    tasks, waiting = stuck_rows(issues, approvals, unstick_company_state, now)
+    return ([f"{i.get('identifier') or i['id'][:8]} blocked since {iso(since)}" for i, since in tasks]
+            + [f"approval {a['id'][:8]} pending since {iso(since)}" for a, since in waiting])
+
+
+def stuck_rows(issues, approvals, unstick_company_state, now):
+    """([(issue, blocked since)], [(approval, pending since)]): open tasks blocked with no one to unblock them, and approvals waiting,
     for longer than STUCK_LIMIT, that the warden's sweep has not acted on.
     A task blocked on a live child is Paperclip's `covered` and is not stuck;
     that is the same reading the app uses to light an orb (PaperclipApi.cs)."""
@@ -167,14 +174,44 @@ def stuck_tasks(issues, approvals, unstick_company_state, now):
             continue
         since = ts(i.get("blockedTransitionAt")) or ts(i.get("updatedAt"))
         if since is not None and now - since > STUCK_LIMIT:
-            out.append(f"{i.get('identifier') or i['id'][:8]} blocked since {iso(since)}")
+            out.append((i, since))
+    waiting = []
     for a in approvals or []:
         if a.get("status") != "pending" or ((a.get("payload") or {}).get("source") == MEDIC_SOURCE):
             continue
         since = ts(a.get("createdAt"))
         if since is not None and now - since > STUCK_LIMIT:
-            out.append(f"approval {a['id'][:8]} pending since {iso(since)}")
-    return out
+            waiting.append((a, since))
+    return out, waiting
+
+
+def block_stamp(issue):
+    """Which block this is: a task re-blocked since gets a new stamp."""
+    return issue.get("blockedTransitionAt") or issue.get("updatedAt")
+
+
+def all_refused(issues, approvals, unstick_company_state, now, refused):
+    """The stuck tasks when every one of them is a task an action on it was
+    refused for, at the same block, and nothing else is stuck; else []. Then
+    another model run can only propose what was just refused (CB-487: QAF-194
+    and QAF-198 launched the model three times in two hours)."""
+    tasks, waiting = stuck_rows(issues, approvals, unstick_company_state, now)
+    if waiting or not tasks:
+        return []
+    if any(refused.get(i["id"]) != block_stamp(i) for i, _ in tasks):
+        return []
+    return [i for i, _ in tasks]
+
+
+def workspace_blocked(issue):
+    """Paperclip blocked the task because its workspace failed validation and
+    holds an open recovery for a person to repair it. Measured on QAF-194:
+    activeRecoveryAction {cause: workspace_validation_failed, status: active,
+    nextAction: "Board operator: repair the source task git worktree ..."}.
+    A wake only restarts the same failed validation: it re-blocked QAF-194 at
+    03:28, 04:19 and 04:56."""
+    rec = issue.get("activeRecoveryAction") or {}
+    return rec.get("cause") == "workspace_validation_failed" and rec.get("status") == "active"
 
 
 def check_warden(last_tick, now):
@@ -394,7 +431,7 @@ def issue_rows(issues):
 # name a task in the snapshot, and free text exists only in file-bug and
 # escalate. A plan with one bad action runs none of them.
 
-VERBS = ("noop", "resume", "wake", "close-pass", "restart-warden", "file-bug", "escalate")
+VERBS = ("noop", "resume", "wake", "close-pass", "close-task", "restart-warden", "file-bug", "escalate")
 MAX_ACTIONS = 10
 DIAGNOSIS_MAX, SUMMARY_MAX, BODY_MAX, LINE_MAX = 2000, 150, 8000, 300
 
@@ -411,7 +448,7 @@ PLAN_SCHEMA = {
 ARG_KEYS = {
     "noop": ((), ()), "restart-warden": ((), ()),
     "resume": ((), ("develop_green", "no_refusal")),
-    "wake": (("issue",), ()), "close-pass": (("issue",), ()),
+    "wake": (("issue",), ()), "close-pass": (("issue",), ()), "close-task": (("issue",), ()),
     "file-bug": (("summary", "body"), ()), "escalate": (("line",), ()),
 }
 
@@ -649,6 +686,15 @@ class Medic:
         self.save("medic-state.json", st)
         if inc.get("escalated") or not launch_due(st, now):
             return 0  # told already, or launched too recently
+        refused = self.prune_refused(st, issues)
+        if {name for name, _ in tripped} == {"stuck"}:
+            same = all_refused(issues, approvals, cst, now, refused)
+            if same:
+                self.log("NOT LAUNCHED: every stuck task was refused at this block: "
+                         + ", ".join(str(i.get("identifier")) for i in same))
+                self.try_escalate("stuck on tasks the medic could not act on: "
+                                  + ", ".join(str(i.get("identifier")) for i in same), by="medic.py")
+                return 0
         if inc["launches"] >= SELF_ESCALATE_AFTER:
             self.try_escalate(f"medic launched {inc['launches']} times and the org is still stopped: "
                               + "; ".join(why for _, why in tripped), by="medic.py")
@@ -763,13 +809,31 @@ class Medic:
 
     # -- verbs: each re-checks its own preconditions against the world now
 
+    def prune_refused(self, st, issues):
+        """Refusal records for tasks still open; the rest are forgotten."""
+        open_ids = {i["id"] for i in issues if i.get("status") not in SETTLED}
+        st["refused"] = {k: v for k, v in (st.get("refused") or {}).items() if k in open_ids}
+        return st["refused"]
+
+    def note_refused(self, issue):
+        """Remember that an action on this task was refused at its current
+        block, across incidents: a wake that moves it to todo recovers the
+        incident, and Paperclip's re-block opens a new one (CB-487)."""
+        st = self.state()
+        st.setdefault("refused", {})[issue["id"]] = block_stamp(issue)
+        self.save("medic-state.json", st)
+
     def act(self, verb, args):
         """Run one validated action; True when done. A refusal or a failed
-        seam is logged and the next action still runs."""
+        seam is logged and the next action still runs. A refused action on a
+        task is recorded against that task's block."""
+        self._acted_on = None
         try:
             msg = getattr(self, "v_" + verb.replace("-", "_"))(args)
         except Refused as e:
             self.log(f"ACT {verb} refused: {one_line(e, 400)}")
+            if self._acted_on is not None:
+                self.note_refused(self._acted_on)
             return False
         except Exception as e:
             self.log(f"ACT {verb} failed: {type(e).__name__} {getattr(e, 'code', '')}".rstrip())
@@ -847,7 +911,13 @@ class Medic:
         i = self.find_issue(issues, args["issue"])
         if i is None:
             raise Refused(f"no issue {args['issue']} in the bug-fix company")
+        self._acted_on = i
         return i, issues
+
+    def answer_of(self, i):
+        rows = self.pc.call("GET", f"/api/issues/{i['id']}/comments") or []
+        rows = rows if isinstance(rows, list) else rows.get("comments", [])
+        return W.last_agent_answer(rows, i.get("assigneeAgentId"))
 
     def v_wake(self, args):
         i, _ = self._issue(args)
@@ -855,6 +925,12 @@ class Medic:
             raise Refused("the company is paused: the warden would block the task again; resume first")
         if i.get("status") not in ("blocked", "todo"):
             raise Refused(f"{i.get('identifier')} is {i.get('status')}, not blocked or todo")
+        if workspace_blocked(i):
+            raise Refused(f"{i.get('identifier')} is blocked on a failed workspace validation that "
+                          "Paperclip says needs repair; a wake would only fail it again")
+        if self.answer_of(i):
+            raise Refused(f"{i.get('identifier')}'s last agent comment is its ANSWER; "
+                          "close-task it if its work is over, or escalate")
         st = self.state()
         last = st.setdefault("wakes", {}).get(i["id"])
         if last is not None and self.now - last < WAKE_EVERY:
@@ -879,6 +955,32 @@ class Medic:
             raise Refused(f"{i.get('identifier')} still has open children: {', '.join(map(str, live))}")
         self.pc.set_issue_status(i["id"], "done")
         return f"closed {i.get('identifier')}"
+
+    def v_close_task(self, args):
+        """A task that answered and whose work is over, to done (CB-487). The
+        model proposes; this checks the answer and the proof itself."""
+        i, issues = self._issue(args)
+        if i.get("status") not in ("blocked", "todo"):
+            raise Refused(f"{i.get('identifier')} is {i.get('status')}, not blocked or todo")
+        if i.get("activeRun"):
+            raise Refused(f"{i.get('identifier')} has a run in flight")
+        kids = [c for c in issues if c.get("parentId") == i["id"]]
+        if kids:
+            raise Refused(f"{i.get('identifier')} has children; a pass is closed by close-pass")
+        answer = self.answer_of(i)
+        if not answer:
+            raise Refused(f"{i.get('identifier')}'s last agent comment is not its assignee's ANSWER")
+        parent = self.find_issue(issues, i.get("parentId")) if i.get("parentId") else None
+        pstat, prs, n = (parent or {}).get("status"), None, W.answer_pr(answer)
+        if pstat not in SETTLED and n:
+            prs = W.pr_over(self.gh.get_pr(n))
+        why = W.answered_and_over(answer, pstat, prs)
+        if not why:
+            raise Refused(f"{i.get('identifier')} answered, but "
+                          + (f"PR {n} is still open" if n else "its answer names no PR")
+                          + f" and its parent is {pstat or 'absent'}")
+        self.pc.set_issue_status(i["id"], "done")
+        return f"closed {i.get('identifier')}: {why}"
 
     def v_restart_warden(self, args):
         if not check_warden(self.last_tick(), self.now):
