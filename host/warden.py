@@ -723,6 +723,8 @@ PROVIDER_LIMIT_CODE = "native_provider_usage_limit"
 SHORT_WAIT = 30 * 60         # a pinned account free this soon is waited for
 REPIN_EVERY = 6 * 60 * 60    # one pinned close per routine or child title per six hours
 PIN_LOOKUPS = 5              # run rows read per stopped task to find its account
+READING_FRESH = 30 * 60      # an account reading older than this is not acted on (pool_usage.py publishes every 5 min)
+STOP_SETTLE = 10 * 60        # issue activity this long after a usage stop is still the stop's own
 
 
 def ts(s):
@@ -795,6 +797,23 @@ def account_free_at(pool, connection_id):
     return max(times)
 
 
+def reading_fresh(pool, connection_id, now):
+    """True when pool-usage.json has an `ok` reading for the account checked in
+    the last READING_FRESH. A pinned close acts on that reading, so a file that
+    stopped moving fails closed: no close, rather than a close or a wait on a
+    number nobody is updating (QA, CB-469)."""
+    entry = ((pool or {}).get("accounts") or {}).get(connection_id) or {}
+    checked = ts(entry.get("checkedAt"))
+    return entry.get("status") == "ok" and checked is not None and 0 <= now - checked <= READING_FRESH
+
+
+def fresh_headroom(pool, now, threshold=POOL_HEADROOM):
+    """pool_has_headroom() counting only accounts with a fresh reading."""
+    accts = ((pool or {}).get("accounts") or {})
+    fresh = {k: v for k, v in accts.items() if reading_fresh(pool, k, now)}
+    return pool_has_headroom({"accounts": fresh}, threshold)
+
+
 def repin_key(issue):
     """What a close is counted against: a child by its parent and title (the
     lead re-creates it under that title), a routine fire by its routine.
@@ -806,15 +825,19 @@ def repin_key(issue):
     return None
 
 
-def pinned_close(issue, pin, state, now, pool_ok):
+def pinned_close(issue, pin, state, now):
     """The action for a pinned task stopped on its account's limit, or None
-    to leave it. Waits while no account has room or its own account frees up
-    within SHORT_WAIT (Paperclip's own retry is due then). A child is closed
-    for the lead to re-create; a routine fire is closed so the next fire is
-    not coalesced into it; anything else is left. A second close under the
-    same key inside REPIN_EVERY means the new task's pin also landed on a full
-    account: logged once, never repeated."""
-    if not pool_ok:
+    to leave it. `pin["room"]` is fresh_headroom() (some account with a fresh
+    reading has room) and `pin["fresh"]` says the pinned account's own reading
+    is fresh; without both it does nothing.
+    Waits while its account frees up within SHORT_WAIT (Paperclip's own retry
+    is due then); a reset time already past is a reading that contradicts
+    itself and is not acted on either. A child is closed for the lead to
+    re-create; a routine fire is closed so the next fire is not coalesced into
+    it; anything else is left. A second close under the same key inside
+    REPIN_EVERY means the new task's pin also landed on a full account:
+    logged once, never repeated."""
+    if not pin.get("room") or not pin.get("fresh"):
         return None
     free = pin.get("free_at")
     if free is not None and free - now <= SHORT_WAIT:
@@ -943,7 +966,7 @@ def unstick_actions(issues, runs, comments_at, state, now, pool_ok, answers=None
     pool_ok     pool_has_headroom() of the current pool-usage.json
     answers     {issue id: (ANSWER body, pr_over() of the PR it names)} for
                 blocked leaves whose newest agent comment is the assignee's ANSWER
-    pins        {issue id: {"connection", "free_at"}} for usage-stopped tasks
+    pins        {issue id: {"connection", "free_at", "fresh", "room"}} for usage-stopped tasks
                 whose runs show a routed account (CB-469); absent means unpinned
     root_only   a company the warden only frees stuck routine fires in (the
                 triage company): every other rule is off
@@ -980,12 +1003,17 @@ def unstick_actions(issues, runs, comments_at, state, now, pool_ok, answers=None
         run = latest_run.get(iid)
         made = ts(run.get("createdAt")) if run else None
         stopped = bool(run and usage_stopped(run) and made is not None and now - made < USAGE_FRESH)
+        # A pinned task stays stuck however long the warden was down, so its
+        # rule has no window: the latest run is the stop and nothing has
+        # happened on the task since (QA, CB-469). The reset keeps its hour.
+        still_stopped = bool(run and usage_stopped(run) and made is not None
+                             and (act is None or act <= made + STOP_SETTLE))
 
         if root_only:
-            if stopped and iid in pins and not i.get("parentId"):
-                act = pinned_close(i, pins[iid], state, now, pool_ok)
-                if act:
-                    out.append(dict(base, **act))
+            if still_stopped and iid in pins and not i.get("parentId"):
+                close = pinned_close(i, pins[iid], state, now)
+                if close:
+                    out.append(dict(base, **close))
             continue
 
         # 0. A blocked leaf that answered and whose work is over (CB-487).
@@ -1016,12 +1044,14 @@ def unstick_actions(issues, runs, comments_at, state, now, pool_ok, answers=None
         # A pinned task is not freed by a reset (routed_connection above), so
         # it is closed for a new issue to take its place; only a task that was
         # never routed gets the reset, and only after a router cancel.
-        if stopped:
-            if iid in pins:
-                act = pinned_close(i, pins[iid], state, now, pool_ok)
-                if act:
-                    out.append(dict(base, **act))
+        if iid in pins and still_stopped:
+            close = pinned_close(i, pins[iid], state, now)
+            if close:
+                out.append(dict(base, **close))
                 continue
+            if stopped:
+                continue  # waiting on usage: rules 1 and 2 leave it alone
+        if stopped and iid not in pins:
             last = resets.get(iid)
             if (usage_cancelled(run) and pool_ok and run.get("agentId")
                     and (last is None or now - last >= RESET_EVERY)):
@@ -1060,7 +1090,22 @@ def unstick_actions(issues, runs, comments_at, state, now, pool_ok, answers=None
                 out.append(dict(base, kind="wake_child", wakes=n + 1))
             else:
                 out.append(dict(base, kind="cancel_child", parent_id=i["parentId"]))
-    return out
+    return tell_parents(out, by_id)
+
+
+def tell_parents(actions, by_id):
+    """Set `notify` on each child close_pinned: its parent is told only while
+    the parent is open and not itself being closed this tick. A board comment
+    on a done parent moves it back to todo (Paperclip's implicit reopen), and a
+    parent pinned to the same full account would only be woken into another
+    stop; its own close (a routine fire) or the next sweep settles it, and the
+    next pass then finds the ticket with no live task (CB-493)."""
+    closing = {a["id"] for a in actions if a["kind"] == "close_pinned"}
+    for a in actions:
+        if a["kind"] == "close_pinned" and a.get("parent_id"):
+            parent = by_id.get(a["parent_id"]) or {}
+            a["notify"] = a["parent_id"] not in closing and parent.get("status") not in SETTLED
+    return actions
 
 
 def answer_wake(leaf, parent, live, answer_wakes):
@@ -1784,7 +1829,7 @@ class Warden:
         for i in issues:
             iid = i["id"]
             rows = sorted(mine.get(iid, []), key=lambda r: r.get("createdAt") or "", reverse=True)
-            if (i.get("status") in SETTLED or iid in live or not rows or not usage_stopped(rows[0])):
+            if i.get("status") in SETTLED or iid in live or not rows or not usage_stopped(rows[0]):
                 continue
             for r in rows[:PIN_LOOKUPS]:
                 conn = routed_connection(r)
@@ -1794,7 +1839,9 @@ class Warden:
                     except Exception as e:
                         self.log(f"unstick: run {str(r['id'])[:8]} unreadable: {type(e).__name__}")
                 if conn:
-                    out[iid] = {"connection": conn, "free_at": account_free_at(pool, conn)}
+                    out[iid] = {"connection": conn, "free_at": account_free_at(pool, conn),
+                                "fresh": reading_fresh(pool, conn, self.now),
+                                "room": fresh_headroom(pool, self.now)}
                     break
         return out
 
@@ -1869,7 +1916,7 @@ class Warden:
             self.pc.set_issue_status(iid, "done")
             st.setdefault("repinned", {})[a["key"]] = self.now
             until = f" until {a['until']}" if a.get("until") else ""
-            if a.get("parent_id"):
+            if a.get("notify"):
                 self.pc.comment(a["parent_id"], PINNED_CHILD_CLOSED.format(child=a["identifier"], until=until))
             self.log(f"closed {a['identifier']}: pinned to an exhausted account{until}")
         elif k == "repin_repeat":

@@ -1858,12 +1858,14 @@ def POOL_WITH(free_in, now=NOW):
     full = {"usedPercent": 100, "limitReached": True}
     if free_in is not None:
         full["resetsAt"] = warden.iso(now + free_in)
-    return {"accounts": {CONN_FULL: {"status": "ok", "limits": [{"usedPercent": 40}, full]},
-                         CONN_FREE: {"status": "ok", "limits": [{"usedPercent": 10}]}}}
+    checked = warden.iso(now - 4 * 60)
+    return {"accounts": {CONN_FULL: {"status": "ok", "checkedAt": checked, "limits": [{"usedPercent": 40}, full]},
+                         CONN_FREE: {"status": "ok", "checkedAt": checked, "limits": [{"usedPercent": 10}]}}}
 
 
-def PIN(free_in=6 * 3600):
-    return {"connection": CONN_FULL, "free_at": None if free_in is None else NOW + free_in}
+def PIN(free_in=6 * 3600, fresh=True, room=True):
+    return {"connection": CONN_FULL, "free_at": None if free_in is None else NOW + free_in,
+            "fresh": fresh, "room": room}
 
 
 def LIMIT_FAILED(issue, at=NOW - 10 * 60, **over):
@@ -1920,8 +1922,65 @@ class PinnedUsageTests(unittest.TestCase):
 
     def test_nothing_while_no_account_has_room(self):
         child = I("c", "todo", "P", title="t")
-        self.assertEqual(decide_pins([child], [EXHAUSTED("c")], {"c": PIN()}, pool_ok=False), [])
-        self.assertEqual(decide_pins([PASS("P", "todo")], [EXHAUSTED("P")], {"P": PIN()}, pool_ok=False), [])
+        self.assertEqual(decide_pins([child], [EXHAUSTED("c")], {"c": PIN(room=False)}), [])
+        self.assertEqual(decide_pins([PASS("P", "todo")], [EXHAUSTED("P")], {"P": PIN(room=False)}), [])
+
+    def test_a_stale_reading_fails_closed(self):
+        # QA, CB-469: a file that stopped moving neither closes nor waits on
+        # an old number; it does nothing until a fresh reading arrives.
+        child = I("c", "todo", "P", title="t")
+        self.assertEqual(decide_pins([child], [EXHAUSTED("c")], {"c": PIN(fresh=False)}), [])
+        self.assertEqual(kinds(decide_pins([child], [EXHAUSTED("c")], {"c": PIN()})), ["close_pinned"])
+        pool = POOL_WITH(6 * 3600)
+        self.assertTrue(warden.reading_fresh(pool, CONN_FULL, NOW))
+        self.assertTrue(warden.fresh_headroom(pool, NOW))
+        old = NOW + warden.READING_FRESH + 5 * 60
+        self.assertFalse(warden.reading_fresh(pool, CONN_FULL, old), "checked 34 minutes before")
+        self.assertFalse(warden.fresh_headroom(pool, old), "room on a stale reading is no room")
+        self.assertFalse(warden.reading_fresh(pool, "unknown", NOW))
+        self.assertFalse(warden.reading_fresh({"accounts": {CONN_FULL: {"status": "ok"}}}, CONN_FULL, NOW),
+                         "no checkedAt")
+        self.assertFalse(warden.reading_fresh(pool, CONN_FULL, NOW - 3600), "checked in the future")
+
+    def test_a_reset_time_already_past_is_not_acted_on(self):
+        child = I("c", "todo", "P", title="t")
+        self.assertEqual(decide_pins([child], [EXHAUSTED("c")], {"c": PIN(free_in=-600)}), [])
+
+    def test_a_pinned_stop_older_than_the_hour_still_closes_if_nothing_happened_since(self):
+        # QA: the warden down for hours must not strand the task it exists to free.
+        child = I("c", "todo", "P", title="t", idle=6 * 3600)
+        self.assertEqual(kinds(decide_pins([child], [EXHAUSTED("c", at=NOW - 5 * 3600)], {"c": PIN()})),
+                         ["close_pinned"])
+        # Control: something happened on the task after the stop, so it is not
+        # this rule's any more (and the unpinned reset keeps its hour).
+        busy = I("c", "todo", "P", title="t", idle=3600)
+        self.assertNotIn("close_pinned",
+                         kinds(decide_pins([busy], [EXHAUSTED("c", at=NOW - 5 * 3600)], {"c": PIN()})))
+        self.assertEqual(decide([I("c", "todo", "P", idle=6 * 3600)], [EXHAUSTED("c", at=NOW - 5 * 3600)]),
+                         [("wake_child", "c")], "unpinned: no reset after the hour")
+
+    def test_a_pinned_task_left_alone_still_gets_the_other_rules_once_its_stop_is_old(self):
+        # A repeat (no close) on an old stop falls through to the stall rules.
+        child = I("c2", "todo", "P", title="t", idle=6 * 3600)
+        st = {"repinned": {"child:P:t": NOW - 3600}, "repin_logged": {"child:P:t": NOW - 60}}
+        self.assertEqual(kinds(decide_pins([child], [EXHAUSTED("c2", at=NOW - 5 * 3600)], {"c2": PIN()},
+                                           state=st)), ["wake_child"])
+        # Control: on a fresh stop it waits on usage instead.
+        self.assertEqual(decide_pins([I("c2", "todo", "P", title="t")], [EXHAUSTED("c2")], {"c2": PIN()},
+                                     state=st), [])
+
+    def test_the_parent_is_told_only_while_open_and_not_closing_itself(self):
+        # QA item 4: a child whose parent is pinned to the same full account.
+        parent, child = PASS("P", "blocked"), I("c", "todo", "P", title="t")
+        acts = decide_pins([parent, child], [EXHAUSTED("P"), EXHAUSTED("c")], {"P": PIN(), "c": PIN()})
+        self.assertEqual(sorted((a["id"], a.get("notify")) for a in acts), [("P", None), ("c", False)])
+        # Control: a parent that is open and not stopped is told.
+        acts = decide_pins([parent, child], [EXHAUSTED("c")], {"c": PIN()})
+        self.assertEqual([(a["id"], a["notify"]) for a in acts], [("c", True)])
+        # And a parent already done is never commented on (a comment reopens it).
+        done = PASS("P", "done")
+        self.assertEqual([(a["id"], a["notify"]) for a in decide_pins([done, child], [EXHAUSTED("c")], {"c": PIN()})],
+                         [("c", False)])
 
     def test_a_run_that_hit_the_limit_part_way_counts_for_a_pinned_task_only(self):
         child = I("c", "todo", "P", title="t")
@@ -1935,7 +1994,8 @@ class PinnedUsageTests(unittest.TestCase):
 
     def test_only_a_fresh_stop_with_no_live_run_on_an_open_task(self):
         child = I("c", "todo", "P", title="t")
-        self.assertNotIn("close_pinned", kinds(decide_pins([child], [EXHAUSTED("c", at=NOW - 3600)], {"c": PIN()})))
+        moved = I("c", "todo", "P", title="t", idle=30 * 60)  # activity after a stop an hour ago
+        self.assertNotIn("close_pinned", kinds(decide_pins([moved], [EXHAUSTED("c", at=NOW - 3600)], {"c": PIN()})))
         live = I("c", "in_progress", "P", title="t", activeRun={"id": "r"})
         self.assertEqual(decide_pins([live], [EXHAUSTED("c")], {"c": PIN()}), [])
         done = I("c", "done", "P", title="t")
@@ -1991,6 +2051,13 @@ class PinnedUsageTickTests(unittest.TestCase):
     def pc(self, issues, runs, full=()):
         pc = FakePC()
         pc.all, pc.run_rows, pc.pool = issues, runs, POOL_WITH(6 * 3600)
+        pc.asked = []
+        orig = pc.all_issues
+
+        def all_issues(co):
+            pc.asked.append(co)
+            return orig(co)
+        pc.all_issues = all_issues
         pc.run_full = {r["id"]: r for r in full}
         return pc
 
@@ -2054,6 +2121,79 @@ class PinnedUsageTickTests(unittest.TestCase):
         self.assertEqual(w.triage_company(), "cfg")
         w.cfg = {"company_id": "co", "pool_usage": os.path.join(tempfile.mkdtemp(), "pool-usage.json")}
         self.assertIsNone(w.triage_company())
+
+    def test_closing_a_routine_fire_never_touches_its_children_or_the_brake(self):
+        # QA item 1, measured on the live instance 2026-11-27: a bare PATCH of
+        # a parent to done left its blocked child blocked and unchanged (ORB-241
+        # and ORB-242; ORB-220 and ORB-196 earlier). So the warden's close is
+        # one write, on the parent, and nothing the brake counts.
+        routed = ROUTED("P")
+        kids = [I("e", "in_progress", "P", title="fix", description="Ticket: CB-1\nplan"),
+                I("q", "blocked", "P", title="qa", description="Ticket: CB-1\nreview")]
+        pc = self.pc([PASS("P", "todo")] + kids, [EXHAUSTED("P"), routed], [routed])
+        state = {}
+        tick(pc=pc, state=state, now=NOW, cfg={"company_id": "co"})
+        self.assertEqual(pc.statuses, [("P", "done")])
+        self.assertFalse([c for c in pc.comments if c[0] == "P"], "no comment on the closed fire")
+        self.assertFalse([s for s in pc.statuses if s[1] == "cancelled"])
+        self.assertEqual(state.get("consecutive_releases", 0), 0)
+
+    def test_pause_and_repeat_keys_are_per_company(self):
+        def world():
+            pc = self.pc([PASS("P", "todo", routine="rt-fix")], [])
+            rf, rt = ROUTED("P"), ROUTED("T")
+            pc.runs_by = {"co": [EXHAUSTED("P"), rf], "tri": [EXHAUSTED("T"), rt]}
+            pc.all_by = {"tri": [PASS("T", "todo", routine="rt-fix")]}
+            pc.run_full = {rf["id"]: rf, rt["id"]: rt}
+            return pc
+        cfg = {"company_id": "co", "triage_company_id": "tri"}
+        # The fix company paused: triage still acts.
+        pc = world()
+        pc.paused = True
+        tick(pc=pc, state={}, now=NOW, cfg=cfg)
+        self.assertIn(("T", "done"), pc.statuses)
+        self.assertNotIn(("P", "done"), pc.statuses)
+        # Triage paused: the fix company still acts.
+        pc = world()
+        pc.paused_cos = {"tri"}
+        tick(pc=pc, state={}, now=NOW, cfg=cfg)
+        self.assertEqual(pc.statuses, [("P", "done")])
+        # The same routine key in both companies: one company's close does not
+        # count as the other's repeat.
+        pc = world()
+        state = {}
+        tick(pc=pc, state=state, now=NOW, cfg=cfg)
+        self.assertEqual(sorted(pc.statuses), [("P", "done"), ("T", "done")])
+        cos = state["unstick"]["companies"]
+        self.assertIn("routine:rt-fix", cos["co"]["repinned"])
+        self.assertIn("routine:rt-fix", cos["tri"]["repinned"])
+
+    def test_no_triage_id_means_no_second_company(self):
+        pc = self.pc([], [])
+        tick(pc=pc, state={}, now=NOW, cfg={"company_id": "co"})
+        self.assertEqual(pc.asked, ["co"])
+        pc = self.pc([], [])
+        tick(pc=pc, state={}, now=NOW, cfg={"company_id": "co", "triage_company_id": "tri"})
+        self.assertEqual(pc.asked, ["co", "tri"])
+
+    def test_a_stale_pool_file_closes_nothing(self):
+        routed = ROUTED("c")
+        pc = self.pc([PASS("P"), I("c", "in_progress", "P", title="t")], [EXHAUSTED("c"), routed], [routed])
+        pc.pool = POOL_WITH(6 * 3600, now=NOW - 3600)  # every reading an hour old
+        tick(pc=pc, state={}, now=NOW, cfg={"company_id": "co"})
+        self.assertEqual(pc.statuses, [])
+        self.assertEqual(pc.resets, [])
+
+    def test_room_only_on_a_stale_reading_closes_nothing(self):
+        routed = ROUTED("c")
+        pc = self.pc([PASS("P"), I("c", "in_progress", "P", title="t")], [EXHAUSTED("c"), routed], [routed])
+        pc.pool["accounts"][CONN_FREE]["checkedAt"] = warden.iso(NOW - 3600)
+        tick(pc=pc, state={}, now=NOW, cfg={"company_id": "co"})
+        self.assertEqual(pc.statuses, [])
+        # Control: the same world with that reading fresh closes the child.
+        pc = self.pc([PASS("P"), I("c", "in_progress", "P", title="t")], [EXHAUSTED("c"), routed], [routed])
+        tick(pc=pc, state={}, now=NOW, cfg={"company_id": "co"})
+        self.assertEqual(pc.statuses, [("c", "done")])
 
     def test_paused_fix_company_closes_nothing(self):
         routed = ROUTED("c")
