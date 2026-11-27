@@ -1944,34 +1944,45 @@ public class SessionScanTests
     // CB-413, through the live scan rather than the snapshot: the no-terminal
     // drop. A background worker's file names no terminal anywhere, so the only
     // thing between it and JudgeReachability's NoTerminal verdict is the phase
-    // not ruling it out as a job. The daemon re-pointed this session's job to
-    // another conversation, so the listing names that one and not this one —
-    // and this session's process is plainly alive. Before the fix the phase
-    // read NotAJob and the orb was dropped as a dead click; Warren read it as
-    // the session having crashed.
+    // not ruling it out as a job. The daemon re-pointed this session's job
+    // (b1375106) to a newer conversation, so the listing's row for that job
+    // names d7b7db77 and not this session — while this session's process is
+    // plainly alive. Before the fix the phase read NotAJob and the orb was
+    // dropped as a dead click; Warren read it as the session having crashed.
     //
-    // The controls are the two answers that still mean "over": a dead process
-    // drops the orb, and the daemon saying "done" draws it Finished (greyed,
+    // The controls are every other answer, each of which must still drop or
+    // finish the orb: a dead process; a "done" row, drawn Finished (greyed,
     // swept later — AFinishedJobIsDrawnAsFinishedRatherThanVanishing) rather
-    // than live. The fix must turn neither of those into a live orb.
+    // than live; and a live pid whose job is not on the listing at all, which
+    // is what a headless `claude -p` run looks like and is the case the first
+    // cut of this fix let through.
     [AvaloniaTheory]
-    [InlineData("unlisted-live", true, false)]
-    [InlineData("unlisted-dead", false, false)]
+    [InlineData("repointed-live", true, false)]
+    [InlineData("repointed-dead", false, false)]
     [InlineData("listed-done", true, true)]
-    public void ALiveSessionTheJobListingDoesNotNameKeepsItsOrbWithNoTerminal(
+    [InlineData("never-a-job-live", false, false)]
+    public void ALiveSessionWhoseJobWasRepointedKeepsItsOrbWithNoTerminal(
         string shape, bool kept, bool finished)
     {
+        const string cb404 = "b1375106-f6f2-4a11-9c3d-5e5e5e5e5e5e";
         using var scratch = new Scratch();
-        WriteBackgroundFile(scratch, "bg-cb404", pid: shape == "unlisted-dead" ? NeverAllocatedPid : LivePid);
+        WriteBackgroundFile(scratch, cb404, pid: shape == "repointed-dead" ? NeverAllocatedPid : LivePid);
 
-        var listing = shape == "listed-done"
-            ? Listing(("bg-cb404", "done"))
-            : Listing(("bg-newer-conversation", "working"));
+        var listing = shape switch
+        {
+            "listed-done" => Listing((cb404, "done")),
+            "never-a-job-live" => Listing(("d7b7db77-0000-4000-8000-000000000000", "working")),
+            _ => new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["d7b7db77-0000-4000-8000-000000000000"] = "working",
+                [BackgroundJobs.JobKey("b1375106")] = "working",
+            },
+        };
         var manager = Manager(scratch, () => listing);
         manager.ScanAndUpdate();
 
-        Assert.Equal(kept, OrbIds(manager).Contains("bg-cb404"));
-        if (kept) Assert.Equal(finished, manager.StatusFor("bg-cb404")!.Presence == OrbPresence.Finished);
+        Assert.Equal(kept, OrbIds(manager).Contains(cb404));
+        if (kept) Assert.Equal(finished, manager.StatusFor(cb404)!.Presence == OrbPresence.Finished);
     }
 
     [AvaloniaFact]

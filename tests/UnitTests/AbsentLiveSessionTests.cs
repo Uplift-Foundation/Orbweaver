@@ -54,6 +54,24 @@ public class AbsentLiveSessionTests
     public void AbsentButAliveAndFresh_IsUnknown_NotAJob()
         => Assert.Equal(JobPhase.Unknown, Ask(Unlisted, 85260, true));
 
+    // The control the first cut of the fix lacked: a live pid whose own job is
+    // not on the listing at all — a headless `claude -p` run, an OpenClaw or
+    // Paperclip spawn, a subagent. It was never a job, so it keeps NotAJob and
+    // the scan's no-terminal drop still applies to it.
+    [Fact]
+    public void AbsentAndAliveButItsJobIsNotListed_StaysNotAJob()
+        => Assert.Equal(JobPhase.NotAJob, Ask("c0c0c0c0-0000-4000-8000-000000000000", 85260, true));
+
+    // The key the re-pointed check reads is never one a session lookup can hit:
+    // the short id alone still does not match a named row.
+    [Fact]
+    public void TheJobKeyDoesNotMakeTheShortIdMatchANamedRow()
+    {
+        Assert.True(Parsed!.ContainsKey(BackgroundJobs.JobKey("b1375106")));
+        Assert.False(Parsed!.ContainsKey("b1375106"));
+        Assert.False(BackgroundJobs.IsLive(Parsed, Unlisted));
+    }
+
     [Fact]
     public void AbsentAndProcessDead_StaysNotAJob()
         => Assert.Equal(JobPhase.NotAJob, Ask(Unlisted, 85260, false));

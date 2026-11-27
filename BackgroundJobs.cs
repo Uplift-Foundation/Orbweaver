@@ -223,41 +223,48 @@ namespace Orbweaver
         // Phase, corrected for what the listing cannot see.
         //
         // Absent from a listing means "not a job the daemon is running under
-        // that id" and no more. It does not mean the session is over: the daemon
-        // re-points a job to a newer conversation that shares its worker, so the
-        // listing names the old session id while a second, entirely live session
-        // (same pid) is not named at all. Read as NotAJob, that session lost its
-        // orb on a machine where it was plainly running — CB-413, found because
-        // the user's own work vanished from the board.
+        // that session id" and no more. When a new conversation is started into
+        // an existing job, the daemon re-points the job's row at the newer
+        // session, and the session it moved away from drops off the listing
+        // while its own process is still entirely alive. Read as NotAJob, that
+        // session lost its orb on a machine where it was plainly running —
+        // CB-413, found because CB-404's lead vanished from the board.
         //
-        // So NotAJob is only believed of a session whose process is gone, or
-        // that recorded no process to ask. A live pid reads Unknown, which every
-        // rule built on Phase treats as "change nothing".
+        // So a session the listing does not name reads Unknown ("change
+        // nothing") when both of these hold, and NotAJob otherwise:
         //
-        // The status file's age is deliberately not consulted. A lead waiting on
-        // a human, or a background session idle overnight, fires no hook and its
-        // file goes quiet while the process stays exactly as alive; an age
-        // threshold hid those orbs again after ten minutes (the first cut of this
-        // fix did). The pid is the strong signal. What still drops a stale file
-        // on a live pid is SessionManager.Superseded, which keeps only the
-        // newest per pid, so the /clear leftover is handled there.
+        // - its own job is still listed, naming another session. A background
+        //   session's id starts with its job's id (JobIdOf), and Parse files
+        //   every listed job under JobKey. This is what keeps the rule narrow:
+        //   a headless `claude -p` run, an OpenClaw or Paperclip spawn, or a
+        //   subagent has a live pid too, but no job of its own on the listing,
+        //   and the no-terminal and not-a-live-job drops exist for exactly
+        //   those. The first cut of this fix trusted the pid alone, and every
+        //   such run on a live pid escaped the no-terminal drop (CI caught it
+        //   in SessionScanTests' Desktop-twin cases).
+        // - its pid is alive. A resumed job's earlier conversations are the
+        //   reason Parse never matches a short id beside a named session; those
+        //   ended, so their pid is gone, and the ones that share the worker's pid
+        //   are left to SessionManager.Superseded, which keeps only the newest
+        //   file per pid.
         //
-        // A pid of 0 is a hook that recorded no process, which is no evidence
-        // either way, so it keeps the listing's word — the subagent and the
-        // leftover file the NotAJob rules exist for are exactly the pid-less
-        // ones. "done" stays Done: the daemon said so, and nothing here
-        // second-guesses a word it did say.
+        // The status file's age is deliberately not consulted. A lead waiting
+        // on a human fires no hook and its file goes quiet while the process
+        // stays exactly as alive. A pid of 0 is no evidence either way and
+        // keeps the listing's word. "done" stays Done: the daemon said so.
         //
         // `isRunning` is a Func so the stat behind it is only paid for a session
-        // the listing did not name.
+        // whose job was re-pointed, which is rare.
         internal static JobPhase Phase(
             Dictionary<string, string>? states, string sessionId,
             int pid, Func<int, bool> isRunning)
         {
             var phase = Phase(states, sessionId);
-            if (phase != JobPhase.NotAJob) return phase;
+            if (phase != JobPhase.NotAJob || states is null || pid <= 0) return phase;
 
-            return pid > 0 && isRunning(pid) ? JobPhase.Unknown : JobPhase.NotAJob;
+            return states.ContainsKey(JobKey(JobIdOf(sessionId))) && isRunning(pid)
+                ? JobPhase.Unknown
+                : JobPhase.NotAJob;
         }
 
         private static bool Is(string? state, string word) =>
@@ -756,7 +763,16 @@ namespace Orbweaver
 
                 var state = Text(entry, "state") ?? "";
 
-                map[Text(entry, "sessionId") is { Length: > 0 } sessionId ? sessionId : jobId] = state;
+                var sessionId = Text(entry, "sessionId");
+                map[sessionId is { Length: > 0 } ? sessionId : jobId] = state;
+
+                // CB-413: the job itself, under a key no session id or short id
+                // can ever equal, so the lookups above never see it. It answers
+                // one question only — "does the daemon still run a job with this
+                // id, whatever session it names now" — which is what tells a
+                // session the daemon re-pointed away from apart from a headless
+                // run that was never a job at all. See the pid-aware Phase.
+                if (sessionId is { Length: > 0 }) map.TryAdd(JobKey(jobId), state);
 
                 // A row whose current session is this app's own remote-control
                 // relay counts for its short id as well. The rule above — never
@@ -787,6 +803,9 @@ namespace Orbweaver
 
             return map;
         }
+
+        // The key Parse files a listed job under, beside its session's.
+        internal static string JobKey(string jobId) => "job:" + jobId;
 
         private static string? Text(JsonElement entry, string name) =>
             entry.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
