@@ -412,6 +412,20 @@ public class OrbDropSticksTests : IDisposable
         return (m, Windows(m));
     }
 
+    // CB-490: the same pin as ArrangementMotionTests', for the same reason:
+    // Dispose is what stops this class's glides ticking in later tests.
+    [AvaloniaFact]
+    public void DisposingTheClassStopsAGlideLeftInFlight()
+    {
+        var earlier = new OrbDropSticksTests();
+        var (m, _) = earlier.ArrivalGlide();
+        Assert.True(GlideTeardown.TimerRunning(m), "control: a glide in flight has its timer running");
+
+        earlier.Dispose();
+
+        Assert.False(GlideTeardown.TimerRunning(m));
+    }
+
     private void Tick(SessionManager m)
     {
         _clock += 100;
