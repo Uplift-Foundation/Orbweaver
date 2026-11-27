@@ -18,6 +18,9 @@ public class ChatPanelThreadTugTests : IDisposable
 {
     private readonly List<string> _sessionIdsToClean = new();
     private long _now;
+    private readonly List<string> _trace = new();
+    private string Diag(OrbWindow orb, string at) =>
+        $"\n[{at}] {ThreadTug.Describe(orb)} orb.State={orb.State} now={_now} tick64={Environment.TickCount64} rm={MotionPolicy.ReduceMotion}\nTRACE:\n" + string.Join("\n---\n", _trace);
 
     public ChatPanelThreadTugTests()
     {
@@ -32,6 +35,7 @@ public class ChatPanelThreadTugTests : IDisposable
         ThreadTug.Drive(() => { });
         ThreadTug.Clock = () => _now;
         MotionPolicy.ReduceMotionProbe = () => false;
+        ThreadTug.Trace = t => _trace.Add(t);
     }
 
     public void Dispose()
@@ -40,6 +44,7 @@ public class ChatPanelThreadTugTests : IDisposable
         ThreadTug.Reset();
         ThreadTug.Drive(() => { });
         ThreadTug.Clock = null;
+        ThreadTug.Trace = null;
         MotionPolicy.ReduceMotionProbe = null;
     }
 
@@ -98,14 +103,17 @@ public class ChatPanelThreadTugTests : IDisposable
         Type(input, "hello");
         // The text landed, so a failure below is about the send, not focus.
         Assert.Equal("hello", input.Text);
+        var d0 = Diag(orb, "before-enter");
         PressEnter(input);
+        var d1 = Diag(orb, "after-enter");
 
         Assert.Equal((0, 0), ThreadTug.Now(orb));
 
         // And it stays quiet while the agent is still generating.
         _now = (long)(ThreadTug.Period * 1000) * 2;
         ThreadTug.Observe(orb, orb.State);
-        Assert.Equal((0, 0), ThreadTug.Now(orb));
+        var now = ThreadTug.Now(orb);
+        Assert.True(now == (0, 0), $"got {now}" + d0 + d1 + Diag(orb, "after-observe"));
         Assert.False(ThreadTug.NeedsFrames());
     }
 

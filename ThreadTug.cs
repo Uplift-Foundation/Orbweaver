@@ -90,8 +90,17 @@ namespace Orbweaver
         internal static Func<long>? Clock { set => _clock = value ?? (() => Environment.TickCount64); }
 
         // Forgets every member, so one test's orbs are not the next one's.
+        internal static Action<string>? Trace;
+        private static void T(string what) => Trace?.Invoke(what + " clock=" + _clock() + " rm=" + MotionPolicy.ReduceMotion + "\n" + Environment.StackTrace);
+
+        internal static string Describe(object member) =>
+            Members.TryGetValue(member, out var e)
+                ? $"present Acked={e.Acked} State={e.State} LastTugMs={e.LastTugMs} Strength={e.Strength} count={Members.Count}"
+                : $"absent count={Members.Count}";
+
         internal static void Reset()
         {
+            if (Members.Count > 0) T("Reset");
             Members.Clear();
         }
 
@@ -101,6 +110,7 @@ namespace Orbweaver
         {
             if (MotionPolicy.ReduceMotion)
             {
+                T("Observe-reduce-motion-remove");
                 Members.Remove(member);
                 return;
             }
@@ -111,7 +121,7 @@ namespace Orbweaver
 
             // A new state is a new thing to tug about: acknowledging a member
             // silences the state it was in, not the member for good.
-            if (entry.Acked && entry.State != state) entry.Acked = false;
+            if (entry.Acked && entry.State != state) { T($"unack {entry.State}->{state}"); entry.Acked = false; }
 
             var since = entry.LastTugMs == long.MinValue ? double.PositiveInfinity : (now - entry.LastTugMs) / 1000.0;
             var strength = entry.Acked ? 0 : Strength(entry.State, state, since);
@@ -135,8 +145,9 @@ namespace Orbweaver
         // is nothing to acknowledge.
         internal static void Acknowledge(object member)
         {
-            if (!Members.TryGetValue(member, out var entry)) return;
+            if (!Members.TryGetValue(member, out var entry)) { T("Acknowledge-unknown"); return; }
 
+            T("Acknowledge");
             entry.Acked = true;
             entry.LastTugMs = long.MinValue;
             entry.Strength = 0;
@@ -149,7 +160,7 @@ namespace Orbweaver
         {
             var keep = new HashSet<object>(present);
 
-            foreach (var member in Members.Keys.Where(m => !keep.Contains(m)).ToList()) Members.Remove(member);
+            foreach (var member in Members.Keys.Where(m => !keep.Contains(m)).ToList()) { T("Retain-remove"); Members.Remove(member); }
         }
 
         // Where a member's thread is right now, as (offset, glow).
