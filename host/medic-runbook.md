@@ -79,8 +79,9 @@ medic resumed the company within the last six hours and it is paused again,
 3. **`stuck`:**
    - a blocked pass whose children are all done or cancelled: `close-pass`;
    - a task with no children whose last agent comment is its own `ANSWER`, and
-     whose PR (named in the answer) is merged or closed or whose parent is done
-     or cancelled: `close-task`. Its work is over; waking it restarts nothing
+     whose PR (the one the answer names, opened by the org's bot) is merged or
+     closed or whose parent is done or cancelled: `close-task`. A task whose
+     description opens `Ticket: CB-n` closes only on a merged PR. Its work is over; waking it restarts nothing
      and may re-block it;
    - a task blocked because "the issue workspace failed validation" (Paperclip
      holds a `workspace_validation_failed` recovery on it): `escalate`. Its

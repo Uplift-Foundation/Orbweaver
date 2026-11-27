@@ -20,6 +20,7 @@ import fcntl
 import importlib.util
 import json
 import os
+import subprocess
 import plistlib
 import sys
 import tempfile
@@ -1147,7 +1148,8 @@ ANSWER_427 = "ANSWER CB-478: I reviewed PR 427 at sha 70024baa and the verdict i
 VALIDATION = ("Paperclip stopped before launching the local adapter because the issue workspace "
               "failed validation. Moving it to `blocked` so the workspace link, cwd, or git "
               "checkout can be repaired before resuming.")
-MERGED = {427: {"state": "closed", "merged_at": "2026-11-27T00:10:00Z"}}
+BOT = {"user": {"login": W.BOT_LOGIN}, "head": {"ref": "bugfix/pc-make-bare-gh-calls-use-the-app-token"}}
+MERGED = {427: dict(BOT, state="closed", merged_at="2026-11-27T00:10:00Z")}
 RECOVERY = {"cause": "workspace_validation_failed", "status": "active", "kind": "workspace_validation"}
 
 
@@ -1157,7 +1159,7 @@ def qaf194(parent_status="blocked", blocked_at=None, recovery=None, **over):
               blocked_at=iso(NOW - 5 * 3600) if parent_status == "blocked" else None)
     r = issue("QAF-194", "2f54ff73", "blocked", parent=uid("af028859"), attention="needs_attention",
               blocked_at=blocked_at or iso(NOW - 3600))
-    r["assigneeAgentId"] = QA
+    r["assigneeAgentId"], r["description"] = QA, "Review PR 427"
     if recovery:
         r["activeRecoveryAction"] = recovery
     r.update(over)
@@ -1199,10 +1201,10 @@ class FinishedTasks(unittest.TestCase):
 
     def test_close_task_refuses_an_open_pr_and_open_parent(self):
         e = self.env(pc=FakePC(issues=qaf194(), comments=thread()),
-                     gh=FakeGh(prs={427: {"state": "open", "merged_at": None}}))
+                     gh=FakeGh(prs={427: dict(BOT, state="open", merged_at=None)}))
         ok, line = e.act("close-task", issue="QAF-194")
         self.assertFalse(ok)
-        self.assertIn("PR 427 is still open and its parent is blocked", line)
+        self.assertIn("PR 427 is not a merged or closed org PR and its parent is blocked", line)
         self.assertEqual(e.pc.writes, [])
 
     def test_close_task_refuses_without_an_answer_last(self):
@@ -1235,7 +1237,44 @@ class FinishedTasks(unittest.TestCase):
             {"diagnosis": "d", "actions": [{"verb": "close-task", "args": {"issue": "QAF-194", "force": 1}}]},
             known)[0])
 
+    def test_close_task_on_a_row_with_no_description_needs_a_merge(self):
+        rows = qaf194("done")
+        del rows[1]["description"]
+        e = self.env(pc=FakePC(issues=rows, comments=thread()), gh=FakeGh(prs=MERGED))
+        self.assertEqual(e.act("close-task", issue="QAF-194")[1],
+                         "ACT close-task: closed QAF-194: answered and its PR is merged")
+        self.assertEqual(e.gh.asked, [427], "asked even under a done parent")
+
+    def test_close_task_refuses_a_persons_pr_and_a_closed_ticket_pr(self):
+        e = self.env(pc=FakePC(issues=qaf194(), comments=thread()),
+                     gh=FakeGh(prs={427: dict(MERGED[427], user={"login": "wtvamp"})}))
+        self.assertFalse(e.act("close-task", issue="QAF-194")[0])
+        e2 = self.env(pc=FakePC(issues=qaf194("done", description="Ticket: CB-478\nfix"), comments=thread()),
+                      gh=FakeGh(prs={427: dict(BOT, state="closed", merged_at=None)}))
+        ok, line = e2.act("close-task", issue="QAF-194")
+        self.assertFalse(ok)
+        self.assertIn("closes only on a merge", line)
+        self.assertEqual(e.pc.writes + e2.pc.writes, [])
+
+    def test_close_task_gh_failure_is_a_failed_action_not_a_crash(self):
+        class Down(FakeGh):
+            def get_pr(self, n):
+                raise subprocess.TimeoutExpired(["gh"], 30)
+        e = self.env(pc=FakePC(issues=qaf194(), comments=thread()), gh=Down())
+        ok, line = e.act("close-task", issue="QAF-194")
+        self.assertFalse(ok)
+        self.assertEqual(line, "ACT close-task failed: TimeoutExpired")
+        self.assertEqual(e.pc.writes, [])
+
     # wake refusals
+
+    def test_a_board_hand_close_sticks_wake_refuses_done_and_cancelled(self):
+        for status in ("done", "cancelled"):
+            e = self.env(pc=FakePC(issues=qaf194(status=status)))
+            ok, line = e.act("wake", issue="QAF-194")
+            self.assertFalse(ok, status)
+            self.assertIn(f"is {status}, not blocked or todo", line)
+            self.assertEqual(e.pc.writes, [], status)
 
     def test_wake_refuses_a_task_whose_last_agent_comment_is_its_answer(self):
         e = self.env(pc=FakePC(issues=qaf194(), comments=thread()))
@@ -1305,11 +1344,35 @@ class FinishedTasks(unittest.TestCase):
         e.m.check()
         self.assertEqual(len(e.launches), 1)
 
-    def test_refusals_for_settled_tasks_are_forgotten(self):
+    def test_refusals_for_tasks_no_longer_blocked_are_forgotten(self):
         e = self.refused_env(iso(NOW - 3 * 3600))
-        e.pc.issues[1]["status"] = "done"
         st = {"refused": {uid("2f54ff73"): "x", uid("deadbeef"): "y"}}
+        self.assertEqual(e.m.prune_refused(st, e.pc.issues), {uid("2f54ff73"): "x"}, "control: blocked kept")
+        e.pc.issues[1]["status"] = "todo"
         self.assertEqual(e.m.prune_refused(st, e.pc.issues), {})
+
+    def test_a_task_with_no_block_time_is_never_recorded_or_matched(self):
+        rows = qaf194(recovery=RECOVERY, blockedTransitionAt=None, updatedAt=None)
+        e = self.env(pc=FakePC(issues=rows))
+        self.assertFalse(e.act("wake", issue="QAF-194")[0])
+        self.assertEqual(e.m.state().get("refused"), None)
+        self.assertEqual(medic.all_refused(rows, [], {}, NOW, {uid("2f54ff73"): None}), [])
+
+    def test_the_same_refused_tasks_escalate_once_in_total_across_incidents(self):
+        e = self.refused_env(iso(NOW - 3600))
+        e.m.check()
+        self.assertEqual(len(e.pc.escalations()), 1)
+        # Warren answers the approval; the incident recovers and trips again.
+        e.pc.approvals.clear()
+        st = e.mstate()
+        st.pop("incident")
+        with open(os.path.join(e.dir, "medic-state.json"), "w") as f:
+            json.dump(st, f)
+        later = medic.Medic(e.cfg, e.pc, e.gh, NOW + 1500, e.lines.append, e.launch, None, e.busy)
+        os.utime(os.path.join(e.dir, "state.json"), (NOW + 1400, NOW + 1400))
+        later.check()
+        self.assertEqual(len(e.pc.escalations()), 1, "same tasks, same blocks: no second approval")
+        self.assertEqual(e.launches, [])
 
     def test_the_night_of_2026_11_27_end_to_end(self):
         """04:05Z: model proposes close-task; Python checks PR 427 itself."""

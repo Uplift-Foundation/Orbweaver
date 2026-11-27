@@ -186,7 +186,9 @@ def stuck_rows(issues, approvals, unstick_company_state, now):
 
 
 def block_stamp(issue):
-    """Which block this is: a task re-blocked since gets a new stamp."""
+    """Which block this is: a task re-blocked since gets a new stamp. None
+    when the row has neither time; such a refusal is never recorded, so it
+    cannot match forever (QA)."""
     return issue.get("blockedTransitionAt") or issue.get("updatedAt")
 
 
@@ -198,7 +200,7 @@ def all_refused(issues, approvals, unstick_company_state, now, refused):
     tasks, waiting = stuck_rows(issues, approvals, unstick_company_state, now)
     if waiting or not tasks:
         return []
-    if any(refused.get(i["id"]) != block_stamp(i) for i, _ in tasks):
+    if any(block_stamp(i) is None or refused.get(i["id"]) != block_stamp(i) for i, _ in tasks):
         return []
     return [i for i, _ in tasks]
 
@@ -690,10 +692,15 @@ class Medic:
         if {name for name, _ in tripped} == {"stuck"}:
             same = all_refused(issues, approvals, cst, now, refused)
             if same:
-                self.log("NOT LAUNCHED: every stuck task was refused at this block: "
-                         + ", ".join(str(i.get("identifier")) for i in same))
-                self.try_escalate("stuck on tasks the medic could not act on: "
-                                  + ", ".join(str(i.get("identifier")) for i in same), by="medic.py")
+                names = ", ".join(str(i.get("identifier")) for i in same)
+                self.log("NOT LAUNCHED: every stuck task was refused at this block: " + names)
+                # Once in total for the same tasks at the same blocks, not once
+                # per incident: each wake-and-reblock opened a new one (CB-487).
+                key = sorted([i["id"], block_stamp(i)] for i in same)
+                if st.get("refused_escalated") != key:
+                    st["refused_escalated"] = key
+                    self.save("medic-state.json", st)
+                    self.try_escalate("stuck on tasks the medic could not act on: " + names, by="medic.py")
                 return 0
         if inc["launches"] >= SELF_ESCALATE_AFTER:
             self.try_escalate(f"medic launched {inc['launches']} times and the org is still stopped: "
@@ -810,8 +817,9 @@ class Medic:
     # -- verbs: each re-checks its own preconditions against the world now
 
     def prune_refused(self, st, issues):
-        """Refusal records for tasks still open; the rest are forgotten."""
-        open_ids = {i["id"] for i in issues if i.get("status") not in SETTLED}
+        """Refusal records for tasks still blocked; the rest are forgotten (a
+        task blocked again later is a new block with a new stamp anyway)."""
+        open_ids = {i["id"] for i in issues if i.get("status") == "blocked"}
         st["refused"] = {k: v for k, v in (st.get("refused") or {}).items() if k in open_ids}
         return st["refused"]
 
@@ -819,6 +827,8 @@ class Medic:
         """Remember that an action on this task was refused at its current
         block, across incidents: a wake that moves it to todo recovers the
         incident, and Paperclip's re-block opens a new one (CB-487)."""
+        if block_stamp(issue) is None:
+            return
         st = self.state()
         st.setdefault("refused", {})[issue["id"]] = block_stamp(issue)
         self.save("medic-state.json", st)
@@ -971,14 +981,16 @@ class Medic:
         if not answer:
             raise Refused(f"{i.get('identifier')}'s last agent comment is not its assignee's ANSWER")
         parent = self.find_issue(issues, i.get("parentId")) if i.get("parentId") else None
-        pstat, prs, n = (parent or {}).get("status"), None, W.answer_pr(answer)
-        if pstat not in SETTLED and n:
+        pstat, prs, n, ticket = (parent or {}).get("status"), None, W.answer_pr(answer), W.is_ticket(i)
+        if n and (ticket or pstat not in SETTLED):
             prs = W.pr_over(self.gh.get_pr(n))
-        why = W.answered_and_over(answer, pstat, prs)
+        why = W.answered_and_over(answer, pstat, prs, ticket)
         if not why:
             raise Refused(f"{i.get('identifier')} answered, but "
-                          + (f"PR {n} is still open" if n else "its answer names no PR")
-                          + f" and its parent is {pstat or 'absent'}")
+                          + (f"PR {n} is not a merged or closed org PR" if n
+                             else "its answer names no single desktop PR")
+                          + (" and it is a ticket's engineer issue, which closes only on a merge" if ticket
+                             else f" and its parent is {pstat or 'absent'}"))
         self.pc.set_issue_status(i["id"], "done")
         return f"closed {i.get('identifier')}: {why}"
 

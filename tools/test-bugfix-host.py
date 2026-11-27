@@ -3075,6 +3075,14 @@ VALIDATION = ("Paperclip stopped before launching the local adapter because the 
               "checkout can be repaired before resuming.")
 
 
+def BOTPR(state="closed", merged_at="2026-11-27T00:10:00Z", **over):
+    """PR 427 as GitHub returns it: the org's bot, a bugfix/pc- head."""
+    row = {"state": state, "merged_at": merged_at, "user": {"login": warden.BOT_LOGIN},
+           "head": {"ref": "bugfix/pc-make-bare-gh-calls-use-the-app-token"}}
+    row.update(over)
+    return row
+
+
 def qaf194_thread():
     """QAF-194's order: blocked by validation at 22:58:28, ANSWER at 22:59:59,
     then the medic's board wake and Paperclip's re-block, neither by an agent."""
@@ -3110,11 +3118,37 @@ class AnswerHelperTests(unittest.TestCase):
         self.assertIsNone(warden.answer_pr(None))
 
     def test_pr_over(self):
-        self.assertEqual(warden.pr_over({"state": "closed", "merged_at": "2026-11-26T23:00:00Z"}), "merged")
-        self.assertEqual(warden.pr_over({"state": "closed", "merged": True}), "merged")
-        self.assertEqual(warden.pr_over({"state": "closed", "merged_at": None}), "closed")
-        self.assertIsNone(warden.pr_over({"state": "open", "merged_at": None}))
+        self.assertEqual(warden.pr_over(BOTPR()), "merged")
+        self.assertEqual(warden.pr_over(BOTPR(merged_at=None, merged=True)), "merged")
+        self.assertEqual(warden.pr_over(BOTPR(merged_at=None)), "closed")
+        self.assertIsNone(warden.pr_over(BOTPR("open", None)))
         self.assertIsNone(warden.pr_over(None))
+
+    def test_a_pr_the_org_did_not_open_is_no_proof(self):
+        self.assertIsNone(warden.pr_over(BOTPR(user={"login": "wtvamp"})))
+        self.assertIsNone(warden.pr_over(BOTPR(head={"ref": "feature/persist-orb-positions"})))
+        self.assertIsNone(warden.pr_over(BOTPR(user=None, head=None)))
+
+    def test_answer_pr_needs_exactly_one_desktop_pr(self):
+        self.assertIsNone(warden.answer_pr("ANSWER: PR 427 merge; PR 428 still open"), "two PRs")
+        self.assertEqual(warden.answer_pr("ANSWER: PR 427 merge, same as PR #427 above"), 427)
+        self.assertIsNone(warden.answer_pr("ANSWER: Orbweaver-Mobile PR 12 merge"), "mobile")
+        self.assertIsNone(warden.answer_pr("ANSWER: the mobile relay PR 12 is fine"), "mobile")
+
+    def test_a_board_comment_starting_answer_does_not_count(self):
+        rows = [C(None, "ANSWER: closing this by hand", NOW, authorUserId="board")]
+        self.assertIsNone(warden.last_agent_answer(rows, "qa"))
+        rows = [C("warden", "ANSWER CB-1: quoting the qa answer", NOW)]
+        self.assertIsNone(warden.last_agent_answer(rows, "qa"))
+
+    def test_a_tickets_engineer_issue_closes_only_on_a_merge(self):
+        self.assertIsNone(warden.answered_and_over("ANSWER", "done", None, ticket=True), "parent proof")
+        self.assertIsNone(warden.answered_and_over("ANSWER", "done", "closed", ticket=True), "a release")
+        self.assertIn("merged", warden.answered_and_over("ANSWER", None, "merged", ticket=True))
+        self.assertTrue(warden.is_ticket({"description": "Ticket: CB-478\nFix it"}))
+        self.assertFalse(warden.is_ticket({"description": "Review PR 427"}))
+        self.assertFalse(warden.is_ticket({"description": None}))
+        self.assertTrue(warden.is_ticket({}), "no description key: treated as a ticket")
 
     def test_answered_and_over(self):
         self.assertIn("parent is done", warden.answered_and_over("ANSWER", "done", None))
@@ -3144,7 +3178,7 @@ class UnstickAnsweredTests(unittest.TestCase):
         self.assertEqual(decide_answers(qaf_night(), {"r": (ANSWER_427, None)}), [])
 
     def test_settled_parent_is_proof_without_a_pr(self):
-        issues = [I("P", "done"), I("r", "blocked", "P", assignee="qa")]
+        issues = [I("P", "done"), I("r", "blocked", "P", assignee="qa", description="Review PR 427")]
         self.assertEqual(decide_answers(issues, {"r": ("ANSWER: nothing to change", None)}),
                          [("close_answered", "r")])
 
@@ -3196,7 +3230,7 @@ class UnstickAnsweredTickTests(unittest.TestCase):
 
     def test_qaf194_is_closed_with_no_comment_and_logged_with_its_proof(self):
         pc, gh, logs = self.run_tick(qaf_night(), {"r": qaf194_thread()},
-                                     prs={427: {"state": "closed", "merged_at": "2026-11-27T00:10:00Z"}})
+                                     prs={427: BOTPR()})
         self.assertIn(("r", "done"), pc.statuses)
         self.assertNotIn("r", [c[0] for c in pc.comments], "a comment would wake it")
         self.assertIn("UNSTUCK: close_answered QAF-r (answered and its PR is merged)", logs)
@@ -3204,12 +3238,12 @@ class UnstickAnsweredTickTests(unittest.TestCase):
 
     def test_open_pr_leaves_it_alone(self):
         pc, _, logs = self.run_tick(qaf_night(), {"r": qaf194_thread()},
-                                    prs={427: {"state": "open", "merged_at": None}})
+                                    prs={427: BOTPR("open", None)})
         self.assertEqual(pc.statuses, [])
         self.assertFalse(any("close_answered" in l for l in logs))
 
     def test_settled_parent_does_not_ask_github(self):
-        issues = [I("P", "done"), I("r", "blocked", "P", assignee="qa")]
+        issues = [I("P", "done"), I("r", "blocked", "P", assignee="qa", description="Review PR 427")]
         pc, gh, _ = self.run_tick(issues, {"r": qaf194_thread()})
         self.assertEqual(pc.statuses, [("r", "done")])
         self.assertEqual(gh.asked, [])
@@ -3223,6 +3257,28 @@ class UnstickAnsweredTickTests(unittest.TestCase):
         self.assertNotIn(("r", "done"), pc.statuses)
         self.assertTrue(any("unstick: PR 427 unreadable for QAF-r: OSError" in l for l in logs))
         self.assertIn("UNSTUCK: wake_parent QAF-x", logs, "the rest of the sweep still ran")
+
+    def test_engineer_issue_with_a_closed_unmerged_pr_is_not_set_done(self):
+        issues = [I("P", "done"), I("e", "blocked", "P", assignee="qa", description="Ticket: CB-478\nx")]
+        pc, gh, logs = self.run_tick(issues, {"e": [C("qa", ANSWER_427, NOW - 60)]},
+                                     prs={427: BOTPR(merged_at=None)})
+        self.assertEqual(pc.statuses, [])
+        self.assertEqual(gh.asked, [427], "a ticket is read even under a settled parent")
+        pc, _, _ = self.run_tick(issues, {"e": [C("qa", ANSWER_427, NOW - 60)]}, prs={427: BOTPR()})
+        self.assertEqual(pc.statuses, [("e", "done")], "control: merged closes it")
+
+    def test_a_parent_missing_from_the_listing_is_no_proof(self):
+        issues = [I("r", "blocked", "gone", assignee="qa", description="Review PR 427")]
+        pc, _, _ = self.run_tick(issues, {"r": [C("qa", "ANSWER: nothing to change", NOW - 60)]})
+        self.assertEqual(pc.statuses, [])
+
+    def test_a_gh_timeout_closes_nothing_and_the_tick_finishes(self):
+        class Slow(CountingGH):
+            def get_pr(self, n):
+                raise subprocess.TimeoutExpired(["gh"], 30)
+        pc, _, logs = self.run_tick(qaf_night(), {"r": qaf194_thread()}, gh=Slow())
+        self.assertEqual(pc.statuses, [])
+        self.assertTrue(any("PR 427 unreadable for QAF-r: TimeoutExpired" in l for l in logs))
 
     def test_comments_are_read_only_for_blocked_leaves(self):
         class Watching(FakePC):

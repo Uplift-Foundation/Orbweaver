@@ -677,15 +677,28 @@ def last_agent_answer(comments, agent_id):
     return body
 
 
+MOBILE_IN_ANSWER = re.compile(r"mobile", re.I)
+
+
 def answer_pr(answer):
-    """The PR number the answer names first ("PR 427", "PR #427"), or None."""
-    m = PR_IN_ANSWER.search(answer or "")
-    return int(m.group(1)) if m else None
+    """The one desktop PR the answer names ("PR 427", "PR #427"), or None.
+    The answer is model-written, so it is proof of nothing by itself: two
+    different numbers are ambiguous, and an answer that mentions mobile may
+    mean Orbweaver-Mobile's PR of that number, which desktop also has (QA)."""
+    nums = {int(n) for n in PR_IN_ANSWER.findall(answer or "")}
+    if len(nums) != 1 or MOBILE_IN_ANSWER.search(answer or ""):
+        return None
+    return nums.pop()
 
 
 def pr_over(pr):
-    """"merged" or "closed" for a GitHub PR row that is finished, else None."""
+    """"merged" or "closed" for a finished PR the org itself opened (bot
+    author, bugfix/pc- head), else None: a person's PR of the same number
+    says nothing about the org's task."""
     if not isinstance(pr, dict):
+        return None
+    if ((pr.get("user") or {}).get("login") != BOT_LOGIN
+            or not str((pr.get("head") or {}).get("ref", "")).startswith(BRANCH_PREFIX)):
         return None
     if pr.get("merged_at") or pr.get("merged") is True:
         return "merged"
@@ -694,11 +707,25 @@ def pr_over(pr):
     return None
 
 
-def answered_and_over(answer, parent_status, pr_state):
+def is_ticket(issue):
+    """A task whose cancel the release brake would count (TICKET_RE, as in
+    classify_release). That includes QA reviews that open with the ticket
+    line, QAF-194 among them. A row with no `description` key cannot be told
+    apart and is treated as one, so it closes only on a merge."""
+    issue = issue or {}
+    return "description" not in issue or bool(TICKET_RE.match(issue.get("description") or ""))
+
+
+def answered_and_over(answer, parent_status, pr_state, ticket=False):
     """Why a task may be closed, or None: it answered, and its parent is
-    settled or the PR its answer names is merged or closed."""
+    settled or the PR its answer names is merged or closed. An engineer
+    issue (`ticket`) closes only on a merged PR: a ticket given up on goes
+    to cancelled, which is what the release brake counts, and setting it done
+    would hide that release (QA)."""
     if not answer:
         return None
+    if ticket:
+        return "answered and its PR is merged" if pr_state == "merged" else None
     if parent_status in SETTLED:
         return f"answered and its parent is {parent_status}"
     if pr_state in ("merged", "closed"):
@@ -749,7 +776,8 @@ def unstick_actions(issues, runs, comments_at, state, now, pool_ok, answers=None
         # Ahead of rule 3: an answered, finished task is not waiting on usage.
         if status == "blocked" and iid not in kids and iid in answers:
             answer, prs = answers[iid]
-            why = answered_and_over(answer, (by_id.get(i.get("parentId")) or {}).get("status"), prs)
+            why = answered_and_over(answer, (by_id.get(i.get("parentId")) or {}).get("status"), prs,
+                                    is_ticket(i))
             if why:
                 out.append(dict(base, kind="close_answered", why=why))
                 continue
@@ -1411,7 +1439,8 @@ class Warden:
             if not answer:
                 continue
             prs, n = None, answer_pr(answer)
-            if (by_id.get(i.get("parentId")) or {}).get("status") not in SETTLED and n and self.gh:
+            settled = (by_id.get(i.get("parentId")) or {}).get("status") in SETTLED
+            if n and self.gh and (is_ticket(i) or not settled):
                 try:
                     prs = pr_over(self.gh.get_pr(n))
                 except Exception as e:
