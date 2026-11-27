@@ -39,16 +39,12 @@ public class McpAuthApprovalCaptureTests
                 $@"(Notification|event: 'Notification').*{Regex.Escape(type)}.*waiting"));
 
     [Fact]
-    public void The_captured_pane_is_the_complete_authentication_approval_and_reads_as_a_dialog_with_its_options()
+    public void The_captured_pane_is_the_complete_authentication_approval()
     {
         var screen = Read("pane.txt");
 
-        Assert.Matches(new Regex("complete_authentication"), screen);
-        var dialog = ChatTranscript.ParseDialog(screen);
-
-        Assert.NotNull(dialog);
-        Assert.True(dialog!.Options.Count >= 2);
-        Assert.Equal("1", dialog.Options[0].Key.ToString());
+        Assert.Matches(new Regex("complete_authentication|Complete Authentication Tool"), screen);
+        Assert.Contains("Do you want to proceed?", screen);
         Assert.NotNull(PromptFingerprint.Of(screen, AskFormTranscript.CallFor(screen, null)));
     }
 
@@ -67,14 +63,45 @@ public class McpAuthApprovalCaptureTests
     }
 
     [Fact]
-    public void The_captured_status_file_reached_waiting_for_the_same_session()
+    public void The_hook_log_reached_waiting_for_the_same_session()
     {
-        using var status = JsonDocument.Parse(Read("status.json"));
+        // The capture holds the hook's run log, not the status file: capture.sh looked for
+        // *.json and the hook writes <session-id>.txt (OrbweaverHook.sh:142).
+        var sessions = Notifications().Select(d => d.RootElement.GetProperty("session_id").GetString()!).Distinct().ToList();
+        Assert.Single(sessions);
+        var log = Read("hook.log").Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var last = log.Last(l => l.Contains(" start ") && l.Contains($"session={sessions[0]}"));
+        Assert.Contains("state=waiting", last);
+        Assert.Contains("agent=claude", last);
+    }
 
-        Assert.Equal("waiting", status.RootElement.GetProperty("state").GetString());
-        Assert.Equal("cli", status.RootElement.GetProperty("entrypoint").GetString());
-        Assert.Contains("waiting", Read("hook.log"));
-        Assert.All(Notifications(), d => Assert.False(string.IsNullOrEmpty(d.RootElement.GetProperty("session_id").GetString())));
+    [Fact]
+    public void The_captured_pane_has_unnumbered_options_so_it_is_not_a_numbered_dialog_and_reads_as_a_cancellable_prompt()
+    {
+        var screen = Read("pane.txt");
+
+        // Real Claude Code draws "❯ No" / "Yes", no digits: the numbered reader cannot see it.
+        Assert.Null(ChatTranscript.ParseDialogCore(screen, out _, out _));
+        var fp = PromptFingerprint.Of(screen);
+        Assert.NotNull(fp);
+        Assert.True(fp!.Overlay);
+        var only = Assert.Single(fp.Prompt.Options);
+        Assert.Equal("Escape", only.Key);
+        Assert.Contains(fp.Prompt.Body!, l => l.Contains("Complete Authentication Tool"));
+    }
+
+    [Fact]
+    public void Control_the_same_pane_without_the_esc_to_cancel_footer_is_no_prompt()
+    {
+        var screen = Read("pane.txt").Replace("Esc to cancel · Tab to amend", "Tab to amend");
+        Assert.Null(PromptFingerprint.Of(screen));
+    }
+
+    [Fact]
+    public void Control_the_same_pane_without_the_selector_options_is_no_prompt()
+    {
+        var screen = string.Join('\n', Read("pane.txt").Split('\n').Where(l => !l.Contains("❯ No") && l.Trim() != "Yes"));
+        Assert.Null(PromptFingerprint.Of(screen));
     }
 
     // Negative controls: the readers above are not so loose that anything passes.

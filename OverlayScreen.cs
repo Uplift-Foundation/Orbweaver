@@ -79,6 +79,7 @@ namespace Orbweaver
             {
                 if (IsEdge(lines[i])) edge = i;
             }
+            if (edge < 0) edge = ConfirmEdge(lines, footer);
             if (edge < 0) return null;
 
             // A footer that wrapped onto the line above it: lines directly above the
@@ -121,6 +122,28 @@ namespace Orbweaver
                     if (t == segment) return label;
             }
             return null;
+        }
+
+        // CB-359: Claude Code draws the approval for an MCP tool with unnumbered
+        // options, "Do you want to proceed?" over `❯ No` / `Yes`, under a `─` rule and
+        // over "Esc to cancel · Tab to amend". There is no `▔` edge and no digit to
+        // press, so it matched neither reader and no prompt was minted. Its edge is
+        // the `─` rule above the question, accepted only when that exact question and
+        // an unnumbered selector run sit between it and the Esc-to-cancel footer. Esc
+        // answers it as No; Yes stays at the terminal. Returns the rule's row or -1.
+        private static int ConfirmEdge(string[] lines, int footer)
+        {
+            var q = -1;
+            for (var i = footer - 1; i >= 0 && q < 0; i--)
+                if (lines[i].Trim() == "Do you want to proceed?") q = i;
+            if (q < 0) return -1;
+
+            var rows = lines.Skip(q + 1).Take(footer - q - 1).Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
+            if (rows.Count < 2 || !rows[0].StartsWith('❯') || rows.Any(r => ChatTranscript.OptionLine.IsMatch(r))) return -1;
+
+            for (var i = q - 1; i >= 0; i--)
+                if (ChatTranscript.IsHorizontalRule(lines[i].Trim())) return i;
+            return -1;
         }
 
         private static string Collapse(string s) => TwoSpaces.Replace(s, " ");
