@@ -131,6 +131,21 @@ internal static class HostWatchdog
         try { Console.Error.WriteLine(text); Console.Error.Flush(); } catch { }
     }
 
+    // One process-table row as "pid ppid rest", one space between the two ids
+    // and the rest (which is kept as it came), or null when it does not start
+    // with two ids. `ps` pads its columns to the widest value in the table, so
+    // a row whose ppid is narrower than the widest reads "3174  3138 ...":
+    // printing that as it came made the listing's shape depend on which pids
+    // the machine had, and the hang test failed whenever the host's parent pid
+    // was narrower than the widest (CB-491).
+    internal static (int Pid, int Ppid, string Line)? Row(string raw)
+    {
+        var f = raw.Trim().Split((char[]?)null, 3, StringSplitOptions.RemoveEmptyEntries);
+        if (f.Length < 2 || !int.TryParse(f[0], out var pid) || !int.TryParse(f[1], out var ppid))
+            return null;
+        return (pid, ppid, f.Length == 3 ? $"{pid} {ppid} {f[2].TrimStart()}" : $"{pid} {ppid}");
+    }
+
     // One "pid ppid rest" line per process from the OS's own table, then the
     // subtree under this host, in-process, so the same filter serves both OSes.
     static string Descendants()
@@ -153,12 +168,8 @@ internal static class HostWatchdog
             }
             var rows = new Dictionary<int, (int Ppid, string Line)>();
             foreach (var raw in read.Result.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-            {
-                var line = raw.Trim();
-                var f = line.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
-                if (f.Length >= 2 && int.TryParse(f[0], out var pid) && int.TryParse(f[1], out var ppid))
-                    rows[pid] = (ppid, line);
-            }
+                if (Row(raw) is { } r)
+                    rows[r.Pid] = (r.Ppid, r.Line);
             var keep = new HashSet<int> { Environment.ProcessId };
             for (var grew = true; grew;)
             {
