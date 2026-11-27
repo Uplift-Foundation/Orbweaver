@@ -13,12 +13,17 @@ namespace Orbweaver.Tests;
 public class ThreadTugInteractionTests : IDisposable
 {
     private long _now;
+    private readonly bool _linksVisible = TeamLinks.IsVisible;
 
     public ThreadTugInteractionTests()
     {
+        // CB-490: a lone orb in the tug is forgotten by any TeamLinks.Refresh,
+        // and a timer left by an earlier test can call one inside this test.
+        // Hidden links return before touching the tug; ChatPanelThreadTugTests
+        // has the whole story.
+        TeamLinks.SetVisible(false);
         ThreadTug.Reset();
-        // CB-490: stop a frame timer an earlier test left running; its tick
-        // (TeamLinks.Refresh) forgets any tug member outside a team.
+        // And stop the tug's own frame timer if an earlier test left it running.
         ThreadTug.Drive(() => { });
         ThreadTug.Clock = () => _now;
         MotionPolicy.ReduceMotionProbe = () => false;
@@ -26,6 +31,7 @@ public class ThreadTugInteractionTests : IDisposable
 
     public void Dispose()
     {
+        TeamLinks.SetVisible(_linksVisible);
         ThreadTug.Reset();
         ThreadTug.Drive(() => { });
         ThreadTug.Clock = null;

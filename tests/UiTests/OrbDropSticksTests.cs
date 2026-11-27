@@ -21,6 +21,9 @@ public class OrbDropSticksTests : IDisposable
     private readonly Func<long> _motionClock = OrbWindow.MotionClock;
     private long _clock = 1_000_000;
 
+    // On _clock, like ArrangementMotionTests' managers: see GlideTeardown.
+    private readonly List<SessionManager> _managers = new();
+
     public OrbDropSticksTests()
     {
         Directory.CreateDirectory(_dir);
@@ -31,6 +34,7 @@ public class OrbDropSticksTests : IDisposable
 
     public void Dispose()
     {
+        GlideTeardown.Stop(_managers);
         OrbWindow.MotionClock = _motionClock;
         OrbDragHost.Current = null;
         MotionPolicy.ReduceMotionProbe = null;
@@ -55,6 +59,7 @@ public class OrbDropSticksTests : IDisposable
         OrbweaverSettings.CodexEnabled = true;
         OrbweaverSettings.GrokEnabled = true;
         var m = new SessionManager(_dir) { Now = () => _clock };
+        _managers.Add(m);
         m.ScanAndUpdate();
         foreach (var w in Windows(m).Values) _keys.Add(w.PositionKey);
         OrbDragHost.Current = m;
@@ -405,6 +410,20 @@ public class OrbDropSticksTests : IDisposable
         m.ScanAndUpdate();
         Assert.NotNull(Targets(m));
         return (m, Windows(m));
+    }
+
+    // CB-490: the same pin as ArrangementMotionTests', for the same reason:
+    // Dispose is what stops this class's glides ticking in later tests.
+    [AvaloniaFact]
+    public void DisposingTheClassStopsAGlideLeftInFlight()
+    {
+        var earlier = new OrbDropSticksTests();
+        var (m, _) = earlier.ArrivalGlide();
+        Assert.True(GlideTeardown.TimerRunning(m), "control: a glide in flight has its timer running");
+
+        earlier.Dispose();
+
+        Assert.False(GlideTeardown.TimerRunning(m));
     }
 
     private void Tick(SessionManager m)

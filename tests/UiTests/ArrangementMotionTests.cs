@@ -20,6 +20,11 @@ public class ArrangementMotionTests : IDisposable
     private readonly OrbweaverSettings.OrbPlacement? _mainAnchor = OrbweaverSettings.ArrangeAnchor;
     private long _clock = 1_000_000;
 
+    // Every manager a test here makes runs on _clock, which nothing advances
+    // once the test returns, so a glide left in flight would tick for ever.
+    // See GlideTeardown.
+    private readonly List<SessionManager> _managers = new();
+
     public ArrangementMotionTests()
     {
         Directory.CreateDirectory(_dir);
@@ -29,6 +34,7 @@ public class ArrangementMotionTests : IDisposable
 
     public void Dispose()
     {
+        GlideTeardown.Stop(_managers);
         MotionPolicy.ReduceMotionProbe = null;
         foreach (var key in _keys) OrbweaverSettings.UnassignOrbGroup(key);
         foreach (var id in _groups) OrbweaverSettings.DeleteOrbGroup(id);
@@ -56,6 +62,7 @@ public class ArrangementMotionTests : IDisposable
         OrbweaverSettings.CodexEnabled = true;
         OrbweaverSettings.GrokEnabled = true;
         var manager = new SessionManager(_dir) { Now = () => _clock };
+        _managers.Add(manager);
         manager.ScanAndUpdate();
         return manager;
     }
@@ -115,6 +122,29 @@ public class ArrangementMotionTests : IDisposable
 
     private static bool PassedTarget(int from, int to, int at) =>
         to > from ? at > to : to < from && at < to;
+
+    // CB-490: Dispose is what keeps this class's glides out of every later
+    // test, so it is Dispose that is run here, on a second instance of the
+    // class. Without the stop in it, the timer below is still enabled once
+    // that instance is gone, and stays enabled for the rest of the run.
+    [AvaloniaFact]
+    public void DisposingTheClassStopsAGlideLeftInFlight()
+    {
+        var earlier = new ArrangementMotionTests();
+        var manager = earlier.Scan(("a", ""), ("b", "codex"));
+        manager.ArrangeOrbsInPattern();
+        earlier.RunToEnd(manager);
+        Assert.False(GlideTeardown.TimerRunning(manager));
+
+        earlier.Write("c", "grok");
+        manager.ScanAndUpdate();
+        Assert.NotNull(Targets(manager));
+        Assert.True(GlideTeardown.TimerRunning(manager), "control: a glide in flight has its timer running");
+
+        earlier.Dispose();
+
+        Assert.False(GlideTeardown.TimerRunning(manager));
+    }
 
     [AvaloniaFact]
     public void TheGroupsOnScreenAreTheGroupsOfTheOrbsShown()
