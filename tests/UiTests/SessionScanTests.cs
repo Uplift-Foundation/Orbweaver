@@ -1819,14 +1819,14 @@ public class SessionScanTests
     // fires for this shape by design, and TryAdopt's own first check is what
     // declines.
     private static void WriteBackgroundFile(
-        Scratch scratch, string sessionId, string state = "idle", DateTime? written = null)
+        Scratch scratch, string sessionId, string state = "idle", DateTime? written = null, int? pid = null)
     {
         var path = Path.Combine(scratch.Dir, sessionId + ".txt");
 
         File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(new SessionStatus
         {
             State = state,
-            SessionPid = LivePid,
+            SessionPid = pid ?? LivePid,
         }));
 
         if (written is not null) File.SetLastWriteTimeUtc(path, written.Value);
@@ -1939,6 +1939,39 @@ public class SessionScanTests
         Assert.Equal(LocalSessionShape.Background, status!.Shape);
         Assert.Equal(OrbPresence.Present, status.Presence);
         Assert.Equal(SessionKind.Background, status.Kind);
+    }
+
+    // CB-413, through the live scan rather than the snapshot: the no-terminal
+    // drop. A background worker's file names no terminal anywhere, so the only
+    // thing between it and JudgeReachability's NoTerminal verdict is the phase
+    // not ruling it out as a job. The daemon re-pointed this session's job to
+    // another conversation, so the listing names that one and not this one —
+    // and this session's process is plainly alive. Before the fix the phase
+    // read NotAJob and the orb was dropped as a dead click; Warren read it as
+    // the session having crashed.
+    //
+    // The controls are the two answers that still mean "over": a dead process
+    // drops the orb, and the daemon saying "done" draws it Finished (greyed,
+    // swept later — AFinishedJobIsDrawnAsFinishedRatherThanVanishing) rather
+    // than live. The fix must turn neither of those into a live orb.
+    [AvaloniaTheory]
+    [InlineData("unlisted-live", true, false)]
+    [InlineData("unlisted-dead", false, false)]
+    [InlineData("listed-done", true, true)]
+    public void ALiveSessionTheJobListingDoesNotNameKeepsItsOrbWithNoTerminal(
+        string shape, bool kept, bool finished)
+    {
+        using var scratch = new Scratch();
+        WriteBackgroundFile(scratch, "bg-cb404", pid: shape == "unlisted-dead" ? NeverAllocatedPid : LivePid);
+
+        var listing = shape == "listed-done"
+            ? Listing(("bg-cb404", "done"))
+            : Listing(("bg-newer-conversation", "working"));
+        var manager = Manager(scratch, () => listing);
+        manager.ScanAndUpdate();
+
+        Assert.Equal(kept, OrbIds(manager).Contains("bg-cb404"));
+        if (kept) Assert.Equal(finished, manager.StatusFor("bg-cb404")!.Presence == OrbPresence.Finished);
     }
 
     [AvaloniaFact]
