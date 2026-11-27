@@ -525,6 +525,15 @@ class InstructionTests(unittest.TestCase):
         qa = read("agents", "tamsin-oyelaran", "AGENTS.md")
         self.assertIn("names the code that would handle\nthe condition not exercised, as `file:line`", qa)
         self.assertIn("the lead then puts the ticket back and does not close it", qa)
+        # The lead's two conditions on this outcome. It never feeds the
+        # release brake: a put-back ends the engineer's issue `done`, and the
+        # warden counts only `cancelled`. And it is not claimed again until a
+        # person comments: a pass finds the `stopped:` comment and waits.
+        self.assertIn("Paperclip issue to `done` with that same sentence as its `comment`, never\n`cancelled`", back)
+        self.assertIn("It stays a\n   wait, with no Jira write", wait)
+        self.assertIn("until a\n   person comments after it", wait)
+        first = skill.split("## Every ticket gets an outcome", 1)[1]
+        self.assertLess(first.index("- **Wait: put back.**"), first.index("- **Take it: fix or reproduce.**"))
         # Control: the close bullet alone no longer covers that case, since
         # the put-back wording is not inside it.
         self.assertNotIn("stopped:", no_defect)
@@ -534,7 +543,10 @@ class InstructionTests(unittest.TestCase):
         section = skill.split("## A proof that seems to need a person", 1)[1].split("\n## ", 1)[0]
         for needle in ("**The capture leaves nothing behind in a live account.**",
                        "scratch `CLAUDE_CONFIG_DIR`", "`--strict-mcp-config`, never `claude mcp add`",
-                       "token step always refuses", "bind port 0", "stops the server and the `tmux` session"):
+                       "token step always refuses", "bind port 0", "stops the server and the `tmux` session",
+                       "never a pool account's folder", "**Check it, do not assume it:**",
+                       '~/.claude*/*.json ~/.claude*/.*.json ~/.claude.json 2>/dev/null); echo "left behind: ${f:-none}"',
+                       "is a failed capture"):
             with self.subTest(needle):
                 self.assertIn(needle, section)
         self.assertIn("**Every `osascript` on `macbook` is refused**", skill)

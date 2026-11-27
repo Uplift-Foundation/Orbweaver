@@ -467,7 +467,14 @@ the MacBook" is a step. "The peer asks" is the observation, and a test can ask.
    an approval were answered by mistake; the server binds `127.0.0.1` on a
    port the system picks (bind port 0 and print it), not a fixed one; and the
    last command of the capture stops the server and the `tmux` session and
-   says so in its output.
+   says so in its output. The session uses the machine's own default login,
+   never a pool account's folder. **Check it, do not assume it:** give the
+   server a name no other server has (`cb<ticket number>cap`), and end the
+   last command with
+   `f=$(grep -l "cb<ticket number>cap" ~/.claude*/*.json ~/.claude*/.*.json ~/.claude.json 2>/dev/null); echo "left behind: ${f:-none}"`.
+   QA quotes that line in her answer. A file name there instead of `left
+   behind: none` is a failed capture: report it to the lead and do not edit
+   the file.
 2. **Both ends in one test.** When the observation is an exchange (two
    machines, or the app and a panel), connect the real classes in one process
    (the host's mirror server and the peer's chat session; a panel over
