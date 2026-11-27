@@ -70,11 +70,16 @@ bugfix_token_apply() {
 # when its stderr shows GitHub's 401 AND it wrote nothing to stdout: output a
 # caller has already received cannot be taken back. So `gh api`, which prints
 # the 401 body on stdout, is not retried here; the skill's "run it once more"
-# covers it. stdin is kept for the retry. The exit status is the last
-# attempt's. /bin/bash is 3.2 on macOS, hence a pipe through tee, not >( ).
+# covers it. The exit status is the last attempt's.
+#
+# stdin: a regular file (a here-document) is copied, so a retry reads it again.
+# A pipe or socket is handed straight to the command, never waited on, since
+# its writer may stay open for as long as the command runs (`producer | gh`);
+# such a call is not retried, because its input cannot be replayed. A tty or
+# /dev/null needs nothing. /bin/bash is 3.2 on macOS, hence a pipe through tee, not >( ).
 bugfix_run_with_retry() {
   local real=$1; shift
-  local kind used status fresh
+  local kind used status fresh once
   kind=$(bugfix_token_kind)
   if [ -z "$kind" ]; then
     exec "$real" "$@"
@@ -84,13 +89,15 @@ bugfix_run_with_retry() {
   # Globals, not locals: the EXIT trap runs after this function returns.
   bugfix_tmp=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/bugfix-shim.XXXXXX" 2>/dev/null) || exec "$real" "$@"
   trap '/bin/rm -rf "$bugfix_tmp" 2>/dev/null' EXIT
-  out="$bugfix_tmp/out"; err="$bugfix_tmp/err"; in=
-  if [ ! -t 0 ]; then
+  out="$bugfix_tmp/out"; err="$bugfix_tmp/err"; in=; once=
+  if [ -p /dev/stdin ] || [ -S /dev/stdin ]; then
+    once=1
+  elif [ -f /dev/stdin ]; then
     in="$bugfix_tmp/in"
     /bin/cat > "$in"
   fi
   bugfix_attempt "$real" "$@"; status=$?
-  if [ "$status" -ne 0 ] && [ ! -s "$out" ] && bugfix_saw_401; then
+  if [ "$status" -ne 0 ] && [ -z "$once" ] && [ ! -s "$out" ] && bugfix_saw_401; then
     fresh=$(bugfix_token_read "$kind")
     if [ -n "$fresh" ] && [ "$fresh" != "$used" ]; then
       export GH_TOKEN="$fresh"

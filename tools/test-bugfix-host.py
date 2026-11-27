@@ -3377,6 +3377,34 @@ class TokenNeverExpiresMidRunTests(unittest.TestCase):
         self.assertFalse(os.path.islink(self.token_file("gh-token")))
         self.assertEqual(open(self.token_file("gh-token")).read(), "tok1\n")
 
+    def test_a_planted_folder_symlink_is_refused_and_nothing_moves(self):
+        # QA, CB-489: the company folder is writable from the sandbox, so an
+        # agent can put a link where bugfix-tokens should be.
+        target = os.path.join(self.root, "elsewhere")
+        os.mkdir(target, 0o755)
+        os.symlink(target, self.tokens)
+        pc = FakePC()
+        _, _, logs = tick(pc=pc, cfg={"spool": self.spool})
+        self.assertEqual(os.listdir(target), [], "no token written through the link")
+        self.assertEqual(stat.S_IMODE(os.stat(target).st_mode), 0o755, "the target was not chmodded")
+        self.assertTrue(any(l.startswith("bugfix-tokens/gh-token not written: NotADirectoryError") for l in logs), logs)
+        self.assertEqual(pc.secrets, [("GITHUB_TOKEN", "tok1")], "the secret still rotates")
+
+    def test_negative_control_a_real_folder_in_the_same_place_is_written(self):
+        os.mkdir(self.tokens, 0o755)
+        tick(cfg={"spool": self.spool})
+        self.assertEqual(open(self.token_file("gh-token")).read(), "tok1\n")
+        self.assertEqual(stat.S_IMODE(os.stat(self.tokens).st_mode), 0o700, "tightened")
+
+    def test_a_folder_someone_else_owns_is_refused(self):
+        os.mkdir(self.tokens)
+        real_getuid = os.getuid
+        warden.os.getuid = lambda: real_getuid() + 1
+        self.addCleanup(setattr, warden.os, "getuid", real_getuid)
+        _, _, logs = tick(cfg={"spool": self.spool})
+        self.assertEqual(os.listdir(self.tokens), [])
+        self.assertTrue(any("not written: PermissionError" in l for l in logs), logs)
+
     def test_an_unwritable_file_is_logged_and_the_secret_still_goes(self):
         open(self.tokens, "w").write("not a folder")
         pc = FakePC()

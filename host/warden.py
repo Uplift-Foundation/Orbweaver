@@ -11,9 +11,10 @@ Paperclip sandbox. Each tick it:
   2. audits bot merges into each configured repository's develop, and runs
      the workflow-file guard on every open org PR at each new head (CB-481);
   3. mints one-hour installation tokens and writes them into the fix company's
-     secrets, if the last ones are older than 10 minutes and the company is not
-     paused (a paused org stops being refreshed, so its access lapses by
-     itself): GITHUB_TOKEN for every configured repository the installation
+     secrets and its token folder, if the last ones are older than 10 minutes,
+     paused or not (CB-489: a pause stops runs, it never revoked access, and
+     a run a resume woke used to start on a dead token): GITHUB_TOKEN for
+     every configured repository the installation
      covers, and GITHUB_TOKEN_WORKFLOWS, which adds `workflows: write`, for
      Orbweaver only (CB-481);
   4. pauses the company on any trigger in plan §6;
@@ -50,6 +51,7 @@ import glob
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -1884,19 +1886,40 @@ def token_dir(cfg):
 def write_token(d, filename, token):
     """<d>/<filename>, 0600 in a 0700 folder, written whole and renamed into
     place so a shim never reads half a token. The token is the only line.
-    os.replace swaps a planted symlink rather than following it."""
-    os.makedirs(d, mode=0o700, exist_ok=True)
-    os.chmod(d, 0o700)
-    path = os.path.join(d, filename)
-    tmp = path + ".tmp"
+
+    The folder sits where the sandboxed service can write, so it is trusted
+    only as a real directory this uid owns, checked with lstat and then held
+    open with O_NOFOLLOW so the check and the writes are about the same
+    directory: a symlink planted in its place would otherwise have the
+    warden write a token, and chmod 0700, wherever it pointed (QA, CB-489).
+    Anything else raises, which the caller logs, and nothing is written.
+    Inside it, O_EXCL refuses a planted .tmp and rename replaces a planted
+    link rather than following it."""
     try:
-        os.unlink(tmp)
+        st = os.lstat(d)
     except FileNotFoundError:
-        pass
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "w") as f:
-        f.write(token + "\n")
-    os.replace(tmp, path)
+        os.mkdir(d, 0o700)
+        st = os.lstat(d)
+    if not stat.S_ISDIR(st.st_mode):
+        raise NotADirectoryError("token folder is not a directory")
+    if st.st_uid != os.getuid():
+        raise PermissionError("token folder is not the warden's")
+    dfd = os.open(d, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        if (os.fstat(dfd).st_dev, os.fstat(dfd).st_ino) != (st.st_dev, st.st_ino):
+            raise NotADirectoryError("token folder changed while it was opened")
+        os.fchmod(dfd, 0o700)
+        tmp = filename + ".tmp"
+        try:
+            os.unlink(tmp, dir_fd=dfd)
+        except FileNotFoundError:
+            pass
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dfd)
+        with os.fdopen(fd, "w") as f:
+            f.write(token + "\n")
+        os.replace(tmp, filename, src_dir_fd=dfd, dst_dir_fd=dfd)
+    finally:
+        os.close(dfd)
 
 
 def run_once(config_path):

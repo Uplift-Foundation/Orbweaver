@@ -195,7 +195,7 @@ class FreshTokenGh(unittest.TestCase):
         with open(self.live, "w") as f:
             f.write(token)
 
-    def run_tool(self, extra=None, args=("api", "user"), stdin="in put\n", wrapped=True):
+    def run_tool(self, extra=None, args=("api", "user"), stdin="in put\n", wrapped=True, pipe=False):
         env = {"HOME": self.tmp, "TMPDIR": self.scratch, "PATH": f"{BIN}:{self.real}:/usr/bin:/bin",
                "BUGFIX_GH_TOKEN": DEAD, "BUGFIX_GH_WORKFLOW_TOKEN": WF_DEAD, "BUGFIX_SPOOL": self.spool,
                "STUB_LIVE": self.live, "STUB_CALLS": self.calls, "STUB_TOKENS": self.tokens, "STUB_401": self.msg401}
@@ -203,7 +203,14 @@ class FreshTokenGh(unittest.TestCase):
         if not wrapped:
             env["PATH"] = f"{self.real}:/usr/bin:/bin"
         exe = os.path.join(BIN, self.tool) if wrapped else self.tool
-        return subprocess.run([exe, *args], env=env, input=stdin, text=True, capture_output=True, timeout=20)
+        # A regular file, as a here-document is, unless the test asks for a pipe.
+        if pipe:
+            return subprocess.run([exe, *args], env=env, input=stdin, text=True, capture_output=True, timeout=20)
+        path = os.path.join(self.tmp, "stdin")
+        with open(path, "w") as f:
+            f.write(stdin)
+        with open(path) as f:
+            return subprocess.run([exe, *args], env=env, stdin=f, text=True, capture_output=True, timeout=20)
 
     def ncalls(self):
         with open(self.calls) as f:
@@ -302,6 +309,36 @@ class FreshTokenGh(unittest.TestCase):
         self.assertEqual((r.returncode, self.ncalls()), (1, 1))
         self.assertIn("Bad credentials", r.stdout)
         self.assertIn(self.msg401, r.stderr)
+
+    def test_a_401_with_the_same_token_in_the_file_runs_the_command_once(self):
+        # QA nit 7: no retry when the file has not moved on.
+        self.set_live("nobody-has-this")
+        r = self.run_tool({"GH_TOKEN": DEAD})
+        self.assertEqual((r.returncode, self.ncalls()), (1, 1))
+        self.assertIn(self.msg401, r.stderr)
+
+    def test_piped_stdin_reaches_the_command_and_is_not_retried(self):
+        r = self.run_tool({"GH_TOKEN": DEAD}, pipe=True)
+        self.assertEqual((r.returncode, r.stdout), (0, "ok call=1 stdin=in put\n"))
+        os.remove(self.calls)
+        r = self.run_tool({"GH_TOKEN": DEAD, "STUB_ROTATE": "gh-token"}, pipe=True)
+        self.assertEqual((r.returncode, self.ncalls()), (1, 1), "input already consumed cannot be replayed")
+
+    def test_a_pipe_whose_writer_stays_open_is_not_waited_on(self):
+        # QA nit 5: `producer | gh ...` with a long producer.
+        self.write_stub(self.SLOW)
+        env = self.slow_env()
+        done = os.path.join(self.tmp, "done")
+        env["STUB_DONE"] = done
+        p = subprocess.Popen([os.path.join(BIN, self.tool)], env=env, stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(p.kill)
+        # select, so a wrapper that waits on stdin fails here instead of hanging.
+        ready, _, _ = __import__("select").select([p.stdout], [], [], 1.5)
+        self.assertTrue(ready, "the wrapper waited for stdin to close")
+        self.assertEqual(p.stdout.readline(), "first\n")
+        p.stdin.close()
+        p.wait(timeout=20)
 
     def test_the_failed_attempts_stderr_is_dropped_on_a_retry(self):
         r = self.run_tool({"GH_TOKEN": DEAD, "STUB_ROTATE": "gh-token"})
