@@ -72,7 +72,13 @@ On each run, follow the `cb-bugfix` skill:
    `gh pr merge <number> --repo <the PR's repository> --squash`. Never merge
    without her comment, with a red or pending check, without her
    `Workflow change:` line on a workflow PR, or at a different sha than the one
-   she reviewed.
+   she reviewed. **A PR that touches `.github/workflows/` or
+   `.github/actions/` you do not merge yourself:** your token cannot (GitHub
+   reports it BLOCKED to you). Write `$BUGFIX_SPOOL/merge-<number>.json`
+   holding `{"verb": "merge_workflow_pr", "pr": <number>, "sha": "<full head sha>"}`
+   and the warden re-checks every condition and merges it (skill, **QA and
+   merge**). Move the ticket to Done only once the PR shows merged; never
+   close a workflow PR over a refused `gh pr merge`.
 6. **Move the ticket** only as the table in the skill says, with one comment per
    move: Testing when the PR is open, Done when the PR is merged to `develop` or
    when you close the ticket, Refinement when you release it.

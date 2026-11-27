@@ -85,6 +85,58 @@ open `bugfix/pc-*` PR from this repository, into develop). The run must be
 completed red, at most once per head sha (`state["reruns"]`). A refusal is
 logged and never pauses.
 
+## Workflow PR merges (CB-486)
+
+The lead's everyday token cannot merge a PR that changes a workflow file. GitHub
+works out a PR's merge state for whoever asks, and on such a PR a token without
+`workflows: write` is told BLOCKED, so `gh pr merge` refuses on the client with
+"the base branch policy prohibits the merge" and GitHub's merge endpoint is never
+called. Measured 2026-11-27 with both App tokens, read-only through GraphQL
+`mergeStateStatus`: #429 (`ci.yml` only) and #305 (two workflow files) read
+BLOCKED to the everyday token and CLEAN to the workflow token. #436 and #390,
+which change no workflow file, read the same to both. The ruleset's
+`require_extra_approval_for_unattributed_changes`, which the lead blamed on #429,
+cannot explain a state that changes with the token: it is a property of the PR,
+and #431 merged under the same ruleset as the same App. That rule is unchanged.
+
+So the lead asks through the spool and the warden merges:
+`{"verb": "merge_workflow_pr", "pr": N, "sha": "<40 hex>"}`. The warden checks
+everything again itself (`workflow_merge_problem`) and refuses, logging
+`refused workflow merge for PR N: <why>`, unless all of these hold:
+
+* the repository allows workflow edits (desktop; mobile never);
+* the company is not paused, and this tick has no pause reason of its own;
+* the PR is the org's own: open, opened by the App, head in this repository on a
+  `bugfix/pc-*` branch, into `develop` (`dispatch_problem`);
+* its head is exactly the requested sha;
+* GitHub's file list for it is under its 3000-file cap (`PR_FILES_CAP`), so nothing below
+  reads a list that may be cut short;
+* it changes at least one workflow file (anything else the lead merges itself);
+* the workflow guard finds nothing at that head (read fresh, not from `guarded`);
+* both required `build (...)` checks are `success` at that sha;
+* the bot's latest comment or review starting `[bugfix-org] QA` (every page read) ends
+  `Verdict: merge`, names the sha (full, or a prefix of at least 9 as the skill writes it), both rids, and has
+  a `Workflow change:` line. A later `Verdict: fix`, or a later QA comment at another sha,
+  overrides an earlier merge;
+* this sha has not already been merged, and has had fewer than
+  `MAX_WORKFLOW_MERGES_PER_SHA` (2) attempts (`workflow_merges` in state), so a replayed
+  spool file cannot merge twice or loop. A failed attempt is never counted as a merge.
+
+Then `WorkflowMerger` mints a token for Orbweaver alone with
+`WORKFLOW_PERMISSIONS`, used for that one call and never stored or written to a
+secret, and calls `PUT /pulls/N/merge` with `merge_method: squash` and the sha,
+so a push after the checks makes GitHub refuse it (409). The token goes in a request
+header from inside the warden, never on a command line, and a failure logs only the
+exception's type, status code and GitHub's JSON `message` (for example "Pull Request is not
+mergeable"). An installation without
+`workflows: write`, an unreadable read, or GitHub's refusal is logged. None of
+them pauses: asking is not a fault. The merge then goes through the ordinary
+merge audit like any bot merge.
+
+Not run live: the `PUT` itself with the workflow token. A real-sha merge attempt
+was not made while diagnosing. The token-dependent `mergeStateStatus` is the
+evidence for the cause, and the first real request is the live proof.
+
 Develop's own push CI after a bot merge is rerun by the warden unasked
 (CB-467), because red there pauses the whole org. The first rerun is
 unconditional. After that it reruns again only while every attempt failed on

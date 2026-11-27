@@ -232,6 +232,13 @@ class FakeGitHubApp:
                         code, obj = 500, {"message": "Server Error"}
                     elif m and m.group(1) in outer.installs:
                         code, obj = 200, outer.installs[m.group(1)]
+                    elif re.fullmatch(r"/repos/[\w.-]+/[\w.-]+/pulls/\d+/merge", self.path):
+                        # CB-486, as measured: on a workflow PR GitHub reports
+                        # BLOCKED to a token without workflows, CLEAN with it.
+                        if auth[7:] == "ghs_FAKEWORKFLOW":
+                            code, obj = 200, {"merged": True, "sha": "merge1"}
+                        else:
+                            code, obj = 405, {"message": "Base branch policy prohibits the merge."}
                     elif self.path == "/app/installations/9/access_tokens":
                         wf = "workflows" in ((body or {}).get("permissions") or {})
                         code, obj = 201, {"token": "ghs_FAKEWORKFLOW" if wf else "ghs_FAKETOKEN"}
@@ -243,7 +250,7 @@ class FakeGitHubApp:
                 self.end_headers()
                 self.wfile.write(data)
 
-            do_GET = do_POST = _go
+            do_GET = do_POST = do_PUT = _go
 
         self.srv = http.server.HTTPServer(("127.0.0.1", 0), H)
         self.url = f"http://127.0.0.1:{self.srv.server_address[1]}"
@@ -290,6 +297,9 @@ method, path = (rest[1], rest[2]) if rest[0] == "-X" else ("GET", rest[0])
 if method == "POST":
     sys.exit(0)
 key = path.split("?")[0]
+if slurp and "pages:" + key in fx:  # several pages, as --paginate --slurp returns them
+    print(json.dumps(fx["pages:" + key]))
+    sys.exit(0)
 if key not in fx:
     sys.stderr.write("gh: Not Found (HTTP 404)\n")
     sys.exit(1)
@@ -956,6 +966,76 @@ class World(unittest.TestCase):
         paths = [json.loads(l) for l in open(self.gh_log)]
         self.assertTrue(paths and all(any(MOBILE_REPO in x for x in a) for a in paths), "never the desktop repo")
         self.assertFalse(any(f"repos/{REPO}/" in x for a in paths for x in a))
+
+    # ---- CB-486: the lead asks, the warden merges a workflow PR ----
+
+    WF_SHA = "a00bc0cd3bebfff73fd6f157d7188d2ac011eedd"
+
+    def workflow_pr_world(self, verdict="Verdict: merge"):
+        self.app.installs = {REPO: {"id": 9, "permissions": dict(warden.WORKFLOW_PERMISSIONS)}}
+        p = f"repos/{REPO}"
+        self.fx[f"{p}/pulls/429"] = pr_obj(429, head={"ref": "bugfix/pc-hung-step", "repo": {"full_name": REPO},
+                                                      "sha": self.WF_SHA})
+        self.fx[f"{p}/pulls/429/files"] = [{"filename": ".github/workflows/ci.yml", "status": "modified",
+                                            "patch": "@@ -1 +1,2 @@\n+        # watchdog"}]
+        self.fx[f"{p}/issues/429/comments"] = []
+        self.fx[f"{p}/pulls/429/reviews"] = [{
+            "user": {"login": BOT}, "submitted_at": "2026-11-26T23:56:23Z",
+            "body": f"[bugfix-org] QA\n\nReviewed sha: {self.WF_SHA}\nRids read: osx-arm64 and win-x64.\n\n"
+                    f"Workflow change: .github/workflows/ci.yml; no environment, secret, permission, trigger or "
+                    f"runner line\n\n{verdict}\n"}]
+        self.fx[f"{p}/commits/{self.WF_SHA}/check-runs"] = {"check_runs": [
+            {"name": n, "conclusion": "success"} for n in warden.REQUIRED_CHECKS]}
+        self.spool_file("merge-429.json", {"verb": "merge_workflow_pr", "pr": 429, "sha": self.WF_SHA})
+
+    @unittest.skipUnless(HAVE_OPENSSL, "needs openssl")
+    def test_a_workflow_pr_is_merged_by_the_warden_with_its_own_token(self):
+        self.workflow_pr_world()
+        self.assert_untouched(self.run_warden())
+        puts = [(p, b) for m, p, b in self.app.calls if m == "PUT"]
+        self.assertEqual(puts, [(f"/repos/{REPO}/pulls/429/merge", {"merge_method": "squash", "sha": self.WF_SHA})])
+        mint = [b for m, p, b in self.app.calls if p.endswith("/access_tokens")]
+        self.assertEqual(mint, [{"repositories": ["Orbweaver"], "permissions": dict(warden.WORKFLOW_PERMISSIONS)}])
+        self.assertFalse(self.pc.secrets, "the workflow token is never written where the org can read it")
+        log = open(os.path.join(self.d, "warden.log")).read()
+        self.assertIn("merged PR 429 at a00bc0cd3 with the workflow token", log)
+        self.assertNotIn("ghs_", log)
+        self.assertTrue(os.path.exists(os.path.join(self.spool, "done", "merge-429.json")))
+
+    @unittest.skipUnless(HAVE_OPENSSL, "needs openssl")
+    def test_control_a_fix_verdict_mints_and_merges_nothing(self):
+        self.workflow_pr_world(verdict="Verdict: fix\n- the timeout branch")
+        self.assert_untouched(self.run_warden())
+        self.assertFalse([c for c in self.app.calls if c[0] == "PUT" or c[1].endswith("/access_tokens")])
+        self.assertIn("refused workflow merge for PR 429: the latest QA comment does not end `Verdict: merge`",
+                      open(os.path.join(self.d, "warden.log")).read())
+
+    @unittest.skipUnless(HAVE_OPENSSL, "needs openssl")
+    def test_a_fix_verdict_on_a_second_page_of_reviews_refuses(self):
+        # QA: GitHub lists reviews oldest first, 100 to a page. The newest QA
+        # comment decides, so a fix verdict on page two must be read.
+        self.workflow_pr_world()
+        merge = self.fx[f"repos/{REPO}/pulls/429/reviews"][0]
+        filler = [{"user": {"login": "wtvamp"}, "body": "note", "submitted_at": "2026-11-26T23:57:00Z"}] * 99
+        fix = dict(merge, body=merge["body"].replace("Verdict: merge", "Verdict: fix"),
+                   submitted_at="2026-11-27T00:30:00Z")
+        self.fx[f"pages:repos/{REPO}/pulls/429/reviews"] = [[merge] + filler, [fix]]
+        self.assert_untouched(self.run_warden())
+        self.assertFalse([c for c in self.app.calls if c[0] == "PUT"])
+        self.assertIn("refused workflow merge for PR 429: the latest QA comment does not end `Verdict: merge`",
+                      open(os.path.join(self.d, "warden.log")).read())
+        reads = [json.loads(l) for l in open(self.gh_log) if "/reviews" in l]
+        self.assertTrue(reads and all(a[:3] == ["api", "--paginate", "--slurp"] for a in reads))
+
+    @unittest.skipUnless(HAVE_OPENSSL, "needs openssl")
+    def test_ghcli_qa_reviews_carries_the_author(self):
+        self.workflow_pr_world()
+        self.fx[f"repos/{REPO}/issues/429/comments"] = [{"user": {"login": "wtvamp"}, "body": "hi",
+                                                         "created_at": "2026-11-26T22:00:00Z"}]
+        self.write_fx()
+        rows = warden.GhCli().qa_reviews(429)
+        self.assertEqual([(r["login"], r["at"]) for r in rows],
+                         [("wtvamp", "2026-11-26T22:00:00Z"), (BOT, "2026-11-26T23:56:23Z")])
 
     # ---- AppMinter ----
 
