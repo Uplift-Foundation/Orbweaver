@@ -1,9 +1,12 @@
-CB-359: capture target. Not yet captured.
+CB-359: a real capture of an MCP tool approval, made on a Mac mini at the PR 434
+head (60a7efc) from a terminal Claude Code session in default permission mode
+with a local stdio MCP server that was not pre-allowed.
 
-Commit, unedited, from a terminal-hosted Claude Code session stopped on an MCP
-tool approval ("Allow Claude to use <tool> (<server>)?", Deny / Allow once):
-
-- pane.txt          `tmux capture-pane -p` of that session while it waits
+- pane.txt          `tmux capture-pane -p` while the session waits, as captured
 - notification.json the Notification hook stdin JSON delivered while it waits
-                    (scrubbed: no token, OAuth code/state or JWT)
 - status.json       the session's status file while it waits
+- hook.log          the status hook log (`generating` then `waiting`)
+
+Unedited except that the home directory in `transcript_path` is replaced with
+`<HOME>`. Nothing else needed removing: no hostname, token, OAuth code/state or
+JWT was present.

@@ -9,7 +9,8 @@ namespace Orbweaver.UnitTests;
 // an approval to go amber and show a card, or "Open on desk".
 //
 // The first two tests read a REAL capture (Fixtures/mcp-approval, see README
-// there) and fail until it is committed. The negative control needs no capture.
+// there): a default-mode session stopped on "Do you want to proceed?" (Yes /
+// Yes, and don't ask again / No). The negative control needs no capture.
 public class McpToolApprovalCaptureTests
 {
     private static string Dir => Path.Combine(AppContext.BaseDirectory, "McpApprovalFixtures");
@@ -37,10 +38,10 @@ public class McpToolApprovalCaptureTests
         var dialog = ChatTranscript.ParseDialog(screen);
 
         Assert.NotNull(dialog);
-        Assert.True(dialog!.Options.Count >= 2);
-        Assert.Contains(dialog.Options, o => o.Label.Contains("Allow", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(dialog.Options, o => o.Label.Contains("Deny", StringComparison.OrdinalIgnoreCase)
-                                          || o.Label.Contains("No", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(new[] { "1", "2", "3" }, dialog!.Options.Select(o => o.Key.ToString()));
+        Assert.Equal("Yes", dialog.Options[0].Label);
+        Assert.StartsWith("Yes, and don't ask again", dialog.Options[1].Label);
+        Assert.Equal("No", dialog.Options[2].Label);
         Assert.NotNull(PromptFingerprint.Of(screen, AskFormTranscript.CallFor(screen, null)));
     }
 
