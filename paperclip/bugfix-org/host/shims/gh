@@ -1,13 +1,16 @@
 #!/bin/bash
-# A stand-in `gh` for the bug-fix org's service PATH (CB-478).
+# A stand-in `gh` for the bug-fix org's service PATH (CB-478, CB-489).
 #
-# Paperclip blanks GH_TOKEN in every run, so a bare `gh` reports "please run:
-# gh auth login". This sets GH_TOKEN from BUGFIX_GH_TOKEN, only when GH_TOKEN
-# is empty or unset, then runs the real gh with the arguments, stdin and exit
-# status unchanged. It never prints the token and never reads
-# BUGFIX_GH_WORKFLOW_TOKEN. The real gh is the first `gh` on PATH outside this
+# Paperclip blanks GH_TOKEN in every run and resolves BUGFIX_GH_TOKEN only
+# once, when the run starts, so that copy can expire mid-run (QAF-190,
+# QAF-209). This reads the token the warden last minted from
+# $BUGFIX_SPOOL/tokens/ at every call, and uses it when GH_TOKEN is empty or
+# is a start-of-run copy (everyday or workflow); bugfix-token.bash, beside
+# this file, has the rules. A 401 is retried once when the file has moved on
+# since the call began. Arguments, stdin and exit status pass through; the
+# token is never printed. The real gh is the first `gh` on PATH outside this
 # script's own folder, so it cannot call itself.
-# Builtins only: the service PATH may not hold dirname.
+# Builtins only for the lookup: the service PATH may not hold dirname.
 self_dir=$(cd "${BASH_SOURCE[0]%/*}" && pwd -P)
 real=
 IFS=: read -r -a dirs <<< "$PATH"
@@ -20,7 +23,11 @@ if [ -z "$real" ]; then
   echo "gh: real gh not found on PATH outside $self_dir" >&2
   exit 127
 fi
-if [ -z "${GH_TOKEN:-}" ] && [ -n "${BUGFIX_GH_TOKEN:-}" ]; then
-  export GH_TOKEN="$BUGFIX_GH_TOKEN"
+if [ ! -r "$self_dir/bugfix-token.bash" ]; then
+  # Installed without its helper: behave as CB-478 did rather than fail.
+  [ -n "${GH_TOKEN:-}" ] || [ -z "${BUGFIX_GH_TOKEN:-}" ] || export GH_TOKEN="$BUGFIX_GH_TOKEN"
+  exec "$real" "$@"
 fi
-exec "$real" "$@"
+. "$self_dir/bugfix-token.bash"
+bugfix_run_with_retry "$real" "$@"
+exit $?

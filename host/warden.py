@@ -61,11 +61,14 @@ BOT_LOGIN = "orbweaver-bugfix[bot]"
 BRANCH_PREFIX = "bugfix/pc-"
 RIDS = ("osx-arm64", "win-x64")
 REQUIRED_CHECKS = ("build (macos-latest, osx-arm64)", "build (windows-latest, win-x64)")
-# A run reads GH_TOKEN once, when it starts, and an installation token lives one
-# hour. Minting every ten minutes on a five-minute tick means a run starts with
-# at least 45 minutes of token left; at 45 minutes it could start with ten, and
-# an engineer's push at the end of a long run would be refused.
+# Paperclip resolves BUGFIX_GH_TOKEN once, when a run starts, and an
+# installation token lives one hour, so a run's environment copy can expire
+# under it. Each mint is therefore also written to <spool>/tokens/ (CB-489),
+# where the gh and git shims read it at every call. Minting every ten minutes
+# on a five-minute tick keeps that file at least 45 minutes from expiry.
 MINT_INTERVAL = 10 * 60
+TOKEN_DIR = "tokens"
+TOKEN_FILES = {"GITHUB_TOKEN": "gh-token", "GITHUB_TOKEN_WORKFLOWS": "gh-workflow-token"}
 VERBS = ("dispatch_stress", "released", "push_refused", "rerun_failed")
 CLASS_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]{0,199}$")
 SUITES = ("unit", "integration", "ui")
@@ -568,8 +571,12 @@ def paused_within(windows, now, span=TICKET_WINDOW):
 
 
 def mint_due(state, now, paused):
-    if paused:
-        return False
+    """Due every MINT_INTERVAL, paused or not (CB-489). A pause stops the
+    org's runs; it never revoked GitHub access, since the last token stayed
+    readable for its hour anyway. Not minting through one only meant that the
+    run a resume woke started with a dead token: QAF-190 and QAF-209 both
+    did, after 13 hours and 71 minutes without a mint. `paused` is kept so
+    callers read the same; it no longer changes the answer."""
     last = state.get("last_mint")
     return last is None or now - last >= MINT_INTERVAL
 
@@ -1269,6 +1276,16 @@ class Warden:
         if why:
             self.pause(why)
         paused = self.pc.is_paused()
+        # Mint before anything below can resume the company and restart its
+        # work (CB-489): QAF-209 was woken by a resume at 02:20:42 and copied
+        # the expired token, because this tick only minted at 02:20:44.
+        if mint_due(self.state, self.now, paused):
+            # A failed mint is logged and the tick goes on to the sweep; the
+            # next tick tries again, since last_mint only moves on success.
+            try:
+                self.mint_tokens()
+            except Exception as e:
+                self.log(f"token not refreshed: {type(e).__name__} {getattr(e, 'code', '')}".rstrip())
         if paused and not self.pause_reasons and self.brake_cooled_off():
             paused = not self.resume_brake()
         self.note_pauses(paused or bool(self.pause_reasons))
@@ -1291,13 +1308,6 @@ class Warden:
             self.log("PAUSED: " + r)
         if paused:
             self.stop_work()
-        if mint_due(self.state, self.now, paused):
-            # A failed mint is logged and the tick goes on to the sweep; the
-            # next tick tries again, since last_mint only moves on success.
-            try:
-                self.mint_tokens()
-            except Exception as e:
-                self.log(f"token not refreshed: {type(e).__name__} {getattr(e, 'code', '')}".rstrip())
         self.unstick(paused)
         return paused
 
@@ -1356,14 +1366,26 @@ class Warden:
                 self.log(f"{ACCESS_FILE} not written: {type(e).__name__}")
         if not plan["everyday"]:
             raise LookupError("the installation covers none of the configured repositories")
-        self.pc.put_secret("GITHUB_TOKEN", self.minter.mint(
+        self.publish("GITHUB_TOKEN", self.minter.mint(
             plan["installation"], plan["everyday"], EVERYDAY_PERMISSIONS))
         self.state["last_mint"] = self.now
         self.log("token refreshed (" + ", ".join(plan["everyday"]) + ")")
         if workflows:
-            self.pc.put_secret(WORKFLOW_SECRET, self.minter.mint(
+            self.publish(WORKFLOW_SECRET, self.minter.mint(
                 plan["installation"], plan["workflows"], WORKFLOW_PERMISSIONS))
             self.log("workflow token refreshed (" + ", ".join(plan["workflows"]) + ")")
+
+    def publish(self, name, token):
+        """The company secret, for a run's start, and <spool>/tokens/, for
+        the shims to read at each call (CB-489). The file is written first:
+        a run started between the two then still finds a live token there.
+        A file that cannot be written is logged; the secret still goes."""
+        if self.cfg.get("spool"):
+            try:
+                write_token(self.cfg["spool"], TOKEN_FILES[name], token)
+            except OSError as e:
+                self.log(f"{TOKEN_DIR}/{TOKEN_FILES[name]} not written: {type(e).__name__}")
+        self.pc.put_secret(name, token)
 
     def unstick(self, paused):
         """The unstick sweep (CB-479) for each company in `unstick_company_ids`
@@ -1842,6 +1864,25 @@ def write_access(spool, repos, workflows, now, withheld=None):
                    "withheld": dict(withheld or {})}, f, indent=1)
         f.write("\n")
     os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+
+
+def write_token(spool, filename, token):
+    """<spool>/tokens/<filename>, 0600 in a 0700 folder, written whole and
+    renamed into place so a shim never reads half a token. The token is the
+    only line. os.replace swaps a planted symlink rather than following it."""
+    d = os.path.join(spool, TOKEN_DIR)
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    os.chmod(d, 0o700)
+    path = os.path.join(d, filename)
+    tmp = path + ".tmp"
+    try:
+        os.unlink(tmp)
+    except FileNotFoundError:
+        pass
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(token + "\n")
     os.replace(tmp, path)
 
 

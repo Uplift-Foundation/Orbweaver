@@ -266,7 +266,8 @@ Then, none of which a package can carry:
    A deliberate GH013 like that is a warden pause trigger, so add the run's id to
    `scanned_runs` in the warden's `state.json` before its next tick. A run reads
    the token once, when it starts, which is why the warden mints every ten
-   minutes.
+   minutes, paused or not, and writes each token to the spool's `tokens/`
+   folder as well (CB-489, below).
 
    **Make a bare `gh` or `git` work too (CB-478).** A fresh session sometimes
    skips the prefix and reads "gh auth login" as broken access (QAF-50,
@@ -280,6 +281,25 @@ Then, none of which a package can carry:
    README: `cp host/shims/gh host/shims/git ~/.paperclip/tools/bin/` (that folder
    is already first on the service's `PATH`), then restart the service so runs
    inherit it. Tested by `tools/test-bugfix-gh-wrapper.py`.
+
+   **A run's token never expires under it (CB-489).** QAF-190 and QAF-209
+   (2026-11-26/27) blocked on 401 at their first `gh` call: the warden did not
+   mint while the org was paused (13 hours and 71 minutes without a mint), and
+   on a resume it restarted the stopped work a second before it minted, so the
+   woken run copied a dead token into `BUGFIX_GH_TOKEN`. A retry read the same
+   copy. Now the warden mints on every interval whether paused or not, mints
+   before a resume restarts anything, and writes each token to
+   `<spool>/tokens/gh-token` and `gh-workflow-token` (0600, folder 0700,
+   renamed into place) before it rotates the secret. The stand-ins, through
+   `host/shims/bugfix-token.bash`, read that file at every call and use it
+   whenever `GH_TOKEN` is empty or is one of the two start-of-run copies, so
+   the skill's prefix gets the current token too; a token a caller chose is
+   left alone. A 401 is retried once when the file has moved on since the call
+   began. Each attempt's output is held until the command ends, so a
+   `gh run watch` prints at the end rather than as it goes. Install all three:
+   `cp host/shims/gh host/shims/git host/shims/bugfix-token.bash ~/.paperclip/tools/bin/`,
+   then restart the service. Without `bugfix-token.bash` beside them the two
+   stand-ins behave as CB-478's did.
 6. **Build environment.** In each engineer's environment set
    `NUGET_PACKAGES` to a folder inside the org's own Paperclip directory (the
    restore cache was 2.2 GB), `BUGFIX_BUILD_LOCK` to a path in that folder
