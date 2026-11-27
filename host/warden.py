@@ -966,9 +966,11 @@ def answer_wake(leaf, parent, live, answer_wakes):
     work is not over, or None. Its parent must be blocked with no run in
     flight: a parent that is running or queued will read the answer itself.
     `answer_wakes` maps a leaf id to the block stamp it was last woken for, so
-    each block wakes the parent once and a re-block wakes it again."""
-    stamp = leaf.get("blockedTransitionAt") or leaf.get("updatedAt")
-    if (not parent or not stamp or parent.get("status") != "blocked" or parent["id"] in live
+    each block wakes the parent once and a re-block wakes it again. The stamp
+    is blockedTransitionAt only: updatedAt moves with the wake's own comment
+    traffic. A leaf without one is woken for once while it stays blocked."""
+    stamp = leaf.get("blockedTransitionAt") or ""
+    if (not parent or parent.get("status") != "blocked" or parent["id"] in live
             or answer_wakes.get(leaf["id"]) == stamp):
         return None
     return {"kind": "wake_parent_for_answer", "id": parent["id"],
@@ -998,9 +1000,9 @@ WAKE_CHILD = ("Warden: no run and no activity on this task for 20 minutes. Carry
               "say where it stands (wake {n} of 2; after that the warden cancels it).")
 WAKE_PARENT_AFTER_CANCEL = ("Warden: cancelled {child} after two unanswered wakes. It is not a "
                             "release. Decide whether to reassign it or finish the pass without it.")
-WAKE_PARENT_FOR_ANSWER = ("Warden: {leaf} has answered and is blocked, and its work is not over. "
-                          "Read its answer and decide: give it another task, release the ticket, or "
-                          "finish the pass without it.")
+WAKE_PARENT_FOR_ANSWER = ("Warden: {leaf}, a child of this task, is blocked and its last comment is its "
+                          "ANSWER, but its work is not over. Read that answer, act on it, then settle "
+                          "{leaf} as your instructions say; this task stays blocked until you do.")
 WAKE_AFTER_RESET = ("Warden: the last run on this task was cancelled because its pool account "
                     "was over its usage limit, and another account now has room. The session "
                     "was reset; please carry on.")

@@ -351,21 +351,27 @@ re-blocked it at 04:19, which is the block the 04:55 medic wake then acted on. T
 sweep's and the medic's closes post no comment for this reason, and `wake` refuses a
 task that is `done` or `cancelled`.
 
-An incident is keyed by the checks that hold and, for `stuck`, by each stuck
-task's id at its block (`blockedTransitionAt`) and each waiting approval: a
-newly stuck task or a re-block is a new incident (CB-492). Keyed by check names
+An incident is the set of checks that hold plus the stuck tasks it was opened
+over, each as its id at its `blockedTransitionAt` (never `updatedAt`, which every
+comment moves), and each waiting approval. Only growth opens a new incident: a
+newly stuck task or a re-block does, a task recovering does not (CB-492). Keyed by check names
 alone, one escalation on `stuck` at 05:35Z on 2026-11-27 silenced the medic
 until a person stepped in at 08:40Z while QAF-228 and then QAF-244 stood stuck.
 An escalation refused because an earlier medic one is still pending is not
-recorded as made, so it no longer mutes the incident either.
+recorded as made, so it no longer mutes the incident either: it is logged once
+per incident and retried on later launches, and the CB-487 once-in-total record
+for refused tasks is made only when its escalation is actually sent.
 
 `escalate` posts one pending `request_board_approval` to the company per
 incident, which the app shows on the lead's orb as a waiting need titled
 "Bug-fix org stopped: ...". After three launches in one incident with no
 recovery, `medic.py` escalates on its own. `file-bug` writes the bug to
-`~/.config/orbweaver-bugfix/medic-bugs/` as the record and creates one
-Paperclip task, "File a CB bug: false org stop", for the bug-fix lead, who has
-the Jira connector; the medic's text sits quoted inside a fenced block in it.
+`~/.config/orbweaver-bugfix/medic-bugs/` and logs one `ACT file-bug` line naming
+the file; nothing else (CB-492, lead's ruling). It used to hand the lead a
+Paperclip task, "File a CB bug: false org stop", which the lead's rules forbid it
+to do: QAF-228 sat blocked and held an incident open. A board approval was ruled
+out because it reads as "the org needs you", and a bug is not a stop. The stuck
+check ignores any task with that title left from before.
 The host has no Jira credential of its own. Secrets (GitHub and Anthropic
 tokens, `x-access-token:` URLs, `Authorization:` values) are redacted from the
 snapshot, the prompt, `medic.log` (0600) and the bug before any is written.

@@ -756,6 +756,19 @@ class InstructionTests(unittest.TestCase):
             for m in bare.finditer(read("agents", slug, "AGENTS.md")):
                 self.assertIn("leaves it on a detached HEAD", read("agents", slug, "AGENTS.md")[m.start():m.start() + 400], slug)
 
+    def test_the_lead_settles_an_answered_blocked_child_the_warden_names(self):
+        # CB-492: the warden wakes the parent; without this step the wake brings
+        # the lead back to a task still blocked by that child.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("warden", os.path.join(HERE, "..", "host", "warden.py"))
+        warden = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(warden)
+        lead = " ".join(read("agents", "marisol-vandenberg", "AGENTS.md").split())
+        self.assertIn("**A child that answered and is blocked.**", lead)
+        self.assertIn("settle the blocked child with the same `PATCH /api/issues/<the child's id>`", lead)
+        self.assertIn("only on a child the warden named", lead)
+        self.assertIn("as your instructions say", warden.WAKE_PARENT_FOR_ANSWER)
+
     def test_a_mobile_rerun_waits_for_the_per_repo_warden(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")
         self.assertIn('`{"verb": "rerun_failed", "pr": <PR number>, "repo": "mobile"}`', skill)

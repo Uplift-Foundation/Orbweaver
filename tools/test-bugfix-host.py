@@ -3759,6 +3759,23 @@ class AnsweredOpenLeafTests(unittest.TestCase):
         acts = decide_full(issues, {"r": (COULD_NOT, None)})
         self.assertEqual([(a["kind"], a["id"]) for a in acts], [("wake_parent_for_answer", "P")])
 
+    def test_the_stamp_is_blocked_transition_only(self):
+        issues = qaf244_night()
+        state = {"answer_wakes": {"r": warden.iso(NOW - 1800)}}
+        issues[1]["updatedAt"] = warden.iso(NOW - 5)  # a comment moved it, not a re-block
+        self.assertEqual(decide_full(issues, {"r": (COULD_NOT, None)}, state), [])
+        bare = qaf244_night()
+        bare[1]["blockedTransitionAt"] = None
+        acts = decide_full(bare, {"r": (COULD_NOT, None)})
+        self.assertEqual(acts[0]["stamp"], "")
+        self.assertEqual(decide_full(bare, {"r": (COULD_NOT, None)}, {"answer_wakes": {"r": ""}}), [],
+                         "a leaf with no stamp is woken for once while blocked")
+
+    def test_the_parent_gets_one_action_on_the_tick(self):
+        acts = decide_full(qaf244_night(), {"r": (COULD_NOT, None)})
+        self.assertEqual([a["kind"] for a in acts if a["id"] == "P"], ["wake_parent_for_answer"])
+        self.assertFalse([a for a in acts if a["kind"] in ("wake_parent", "close_parent", "close_answered")])
+
     def test_the_record_is_kept_while_the_leaf_stays_blocked(self):
         st = {"answer_wakes": {"r": "s1", "gone": "s2", "moved": "s3"}}
         warden.prune_unstick_state(st, [I("r", "blocked"), I("moved", "todo")], NOW)
@@ -3778,6 +3795,8 @@ class AnsweredOpenLeafTickTests(unittest.TestCase):
         pc, logs = self.run_tick(state)
         self.assertEqual([c[0] for c in pc.comments], ["P"])
         self.assertIn("QAF-r", pc.comments[0][1])
+        self.assertIn("its last comment is its ANSWER", pc.comments[0][1])
+        self.assertNotIn("machine_install", pc.comments[0][1], "the answer itself is not quoted")
         self.assertEqual(pc.statuses, [], "neither the leaf nor the parent changes status")
         self.assertIn("UNSTUCK: wake_parent_for_answer QAF-P", logs)
         self.assertEqual(state["unstick"]["companies"]["co"]["answer_wakes"], {"r": warden.iso(NOW - 1800)})
