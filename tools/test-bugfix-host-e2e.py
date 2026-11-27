@@ -297,6 +297,9 @@ method, path = (rest[1], rest[2]) if rest[0] == "-X" else ("GET", rest[0])
 if method == "POST":
     sys.exit(0)
 key = path.split("?")[0]
+if slurp and "pages:" + key in fx:  # several pages, as --paginate --slurp returns them
+    print(json.dumps(fx["pages:" + key]))
+    sys.exit(0)
 if key not in fx:
     sys.stderr.write("gh: Not Found (HTTP 404)\n")
     sys.exit(1)
@@ -1006,6 +1009,23 @@ class World(unittest.TestCase):
         self.assertFalse([c for c in self.app.calls if c[0] == "PUT" or c[1].endswith("/access_tokens")])
         self.assertIn("refused workflow merge for PR 429: the latest QA comment does not end `Verdict: merge`",
                       open(os.path.join(self.d, "warden.log")).read())
+
+    @unittest.skipUnless(HAVE_OPENSSL, "needs openssl")
+    def test_a_fix_verdict_on_a_second_page_of_reviews_refuses(self):
+        # QA: GitHub lists reviews oldest first, 100 to a page. The newest QA
+        # comment decides, so a fix verdict on page two must be read.
+        self.workflow_pr_world()
+        merge = self.fx[f"repos/{REPO}/pulls/429/reviews"][0]
+        filler = [{"user": {"login": "wtvamp"}, "body": "note", "submitted_at": "2026-11-26T23:57:00Z"}] * 99
+        fix = dict(merge, body=merge["body"].replace("Verdict: merge", "Verdict: fix"),
+                   submitted_at="2026-11-27T00:30:00Z")
+        self.fx[f"pages:repos/{REPO}/pulls/429/reviews"] = [[merge] + filler, [fix]]
+        self.assert_untouched(self.run_warden())
+        self.assertFalse([c for c in self.app.calls if c[0] == "PUT"])
+        self.assertIn("refused workflow merge for PR 429: the latest QA comment does not end `Verdict: merge`",
+                      open(os.path.join(self.d, "warden.log")).read())
+        reads = [json.loads(l) for l in open(self.gh_log) if "/reviews" in l]
+        self.assertTrue(reads and all(a[:3] == ["api", "--paginate", "--slurp"] for a in reads))
 
     @unittest.skipUnless(HAVE_OPENSSL, "needs openssl")
     def test_ghcli_qa_reviews_carries_the_author(self):

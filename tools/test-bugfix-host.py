@@ -3492,6 +3492,8 @@ class WorkflowMergeRuleTests(unittest.TestCase):
             "branch": (dict(pr=head_pr(WF_SHA, head={"ref": "feature/x", "repo": {"full_name": warden.REPO}, "sha": WF_SHA})), "prefix"),
             "base": (dict(pr=head_pr(WF_SHA, base={"ref": "main"})), "does not target develop"),
             "moved head": (dict(pr=head_pr("b" * 40)), "not the requested"),
+            "file cap": (dict(files=WF_FILES + [{"filename": f"f{i}.cs", "status": "modified", "patch": "+x"}
+                                                 for i in range(warden.PR_FILES_CAP - 1)]), "3000-file cap"),
             "no workflow": (dict(files=[{"filename": "App.cs", "status": "modified", "patch": "+x"}]), "changes no workflow file"),
             "guard": (dict(files=[dict(WF_FILES[0], patch="+    runs-on: self-hosted\n")]), "workflow guard"),
             "protected": (dict(files=[{"filename": ".github/workflows/release.yml", "status": "modified", "patch": "+# x"}]), "protected workflow"),
@@ -3512,6 +3514,11 @@ class WorkflowMergeRuleTests(unittest.TestCase):
         }
         for label, (over, why) in cases.items():
             self.assertIn(why, self.ok(**over) or "", label)
+
+    def test_one_file_under_the_cap_still_clears(self):
+        files = WF_FILES + [{"filename": f"f{i}.cs", "status": "modified", "patch": "+x"}
+                            for i in range(warden.PR_FILES_CAP - 2)]
+        self.assertIsNone(self.ok(files=files))
 
     def test_a_nine_character_sha_in_the_qa_comment_counts(self):
         body = QA_429.replace(WF_SHA, "a00bc0cd3")
@@ -3667,11 +3674,27 @@ class WorkflowMergeTickTests(unittest.TestCase):
         self.assertEqual((m.calls, paused), ([], False))
         self.assertTrue(any("workflow merge for PR 429 unreadable" in l for l in logs))
 
-    def test_a_github_refusal_of_the_merge_is_logged(self):
-        err = urllib.error.HTTPError("u", 405, "Not Allowed", {}, None)
+    def test_a_github_refusal_of_the_merge_is_logged_with_its_message(self):
+        body = io.BytesIO(json.dumps({"message": "Pull Request is not mergeable",
+                                      "documentation_url": "x"}).encode())
+        err = urllib.error.HTTPError("u", 405, "Not Allowed", {}, body)
         m, paused, logs = self.run_tick(minter=MergingMinter(fail=err))
         self.assertFalse(paused)
-        self.assertTrue(any("workflow merge for PR 429 failed: HTTPError 405" in l for l in logs))
+        self.assertTrue(any(l.endswith("workflow merge for PR 429 failed: HTTPError 405: Pull Request is not mergeable")
+                            for l in logs), logs)
+        # Control: no body, or a body that is not JSON, logs the code alone.
+        for fp in (None, io.BytesIO(b"<html>")):
+            _, _, logs = self.run_tick(minter=MergingMinter(fail=urllib.error.HTTPError("u", 502, "x", {}, fp)))
+            self.assertTrue(any(l.endswith("failed: HTTPError 502") for l in logs), logs)
+
+    def test_the_attempt_record_keeps_the_newest_200_shas(self):
+        old = {f"{i:040x}": {"attempts": 1, "merged": True} for i in range(200)}
+        state = {"last_mint": 10_000.0, "workflow_merges": dict(old)}
+        self.run_tick(state=state)
+        tries = state["workflow_merges"]
+        self.assertEqual(len(tries), 200)
+        self.assertNotIn(f"{0:040x}", tries, "the oldest is dropped")
+        self.assertEqual(tries[WF_SHA], {"attempts": 1, "merged": True})
 
     def test_the_lead_token_never_gains_workflows(self):
         self.assertNotIn("workflows", warden.EVERYDAY_PERMISSIONS)

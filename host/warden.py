@@ -422,6 +422,9 @@ _HEX = re.compile(r"\b[0-9a-f]{9,40}\b")
 # A request is tried at most this often per head sha, and never again once
 # merged, so a replayed or duplicated spool file cannot merge twice or loop.
 MAX_WORKFLOW_MERGES_PER_SHA = 2
+# GitHub's pulls/<n>/files stops at 3000 files. A list that long may be cut
+# short, so the guard and the workflow-file test would read part of the PR.
+PR_FILES_CAP = 3000
 
 
 def qa_verdict_problem(reviews, sha, r):
@@ -460,6 +463,8 @@ def workflow_merge_problem(pr, sha, files, reviews, checks, r):
     head = (pr.get("head") or {}).get("sha") or ""
     if head != sha:
         return f"head is {head[:9]}, not the requested {sha[:9]}"
+    if len(files) >= PR_FILES_CAP:
+        return f"{len(files)} changed files reaches GitHub's {PR_FILES_CAP}-file cap, so the list may be cut short"
     if not any(is_workflow_path(n) for f in files for n in (f.get("filename"), f.get("previous_filename"))):
         return "PR changes no workflow file, so the lead merges it itself"
     guard = workflow_problems(files, r)
@@ -469,6 +474,17 @@ def workflow_merge_problem(pr, sha, files, reviews, checks, r):
     if bad:
         return "required checks not green: " + ", ".join(bad)
     return qa_verdict_problem(reviews, sha, r)
+
+
+def github_message(e):
+    """`: <message>` from an HTTPError's JSON body, or "". GitHub's `message`
+    (e.g. "Pull Request is not mergeable") names the refusal and never the
+    token; anything else in the body is ignored."""
+    try:
+        msg = json.loads(e.read() or b"{}").get("message") if hasattr(e, "read") else None
+    except Exception:
+        return ""
+    return f": {msg[:200]}" if isinstance(msg, str) and msg else ""
 
 
 class WorkflowMerger:
@@ -1058,8 +1074,10 @@ class Warden:
         try:
             WorkflowMerger(self.minter).merge(r["repo"], n, sha)
         except Exception as e:
-            # The status code only: an HTTPError's text can carry the request.
-            return self.log(f"workflow merge for {tag} failed: {type(e).__name__} {getattr(e, 'code', '')}".rstrip())
+            # Type, status code and GitHub's JSON `message` only: an exception's
+            # own text can carry the request, and with it the token.
+            return self.log(f"workflow merge for {tag} failed: {type(e).__name__} "
+                            f"{getattr(e, 'code', '')}{github_message(e)}".rstrip())
         rec["merged"] = True
         self.log(f"merged {tag} at {sha[:9]} with the workflow token")
 
@@ -1774,10 +1792,14 @@ class GhCli:
         """{"login", "body", "at"} for every review and comment on PR n, for
         the workflow merge's QA check (CB-486)."""
         out = []
-        for path in (f"issues/{n}/comments", f"pulls/{n}/reviews"):
-            for c in self.api(f"repos/{self.repo}/{path}?per_page=100") or []:
-                out.append({"login": (c.get("user") or {}).get("login"), "body": c.get("body") or "",
-                            "at": c.get("submitted_at") or c.get("created_at") or ""})
+        for path in (f"issues/{int(n)}/comments", f"pulls/{int(n)}/reviews"):
+            # Every page: the newest QA comment decides, and GitHub lists oldest
+            # first, so stopping at 100 would read a stale verdict (QA, CB-486).
+            raw = _run(["gh", "api", "--paginate", "--slurp", f"repos/{self.repo}/{path}?per_page=100"])
+            for page in (json.loads(raw) if raw.strip() else []):
+                for c in page or []:
+                    out.append({"login": (c.get("user") or {}).get("login"), "body": c.get("body") or "",
+                                "at": c.get("submitted_at") or c.get("created_at") or ""})
         return out
 
     def check_conclusions(self, sha):

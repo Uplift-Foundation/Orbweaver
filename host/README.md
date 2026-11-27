@@ -109,10 +109,12 @@ everything again itself (`workflow_merge_problem`) and refuses, logging
 * the PR is the org's own: open, opened by the App, head in this repository on a
   `bugfix/pc-*` branch, into `develop` (`dispatch_problem`);
 * its head is exactly the requested sha;
+* GitHub's file list for it is under its 3000-file cap (`PR_FILES_CAP`), so nothing below
+  reads a list that may be cut short;
 * it changes at least one workflow file (anything else the lead merges itself);
 * the workflow guard finds nothing at that head (read fresh, not from `guarded`);
 * both required `build (...)` checks are `success` at that sha;
-* the bot's latest comment or review starting `[bugfix-org] QA` ends
+* the bot's latest comment or review starting `[bugfix-org] QA` (every page read) ends
   `Verdict: merge`, names the sha (full, or a prefix of at least 9 as the skill writes it), both rids, and has
   a `Workflow change:` line. A later `Verdict: fix`, or a later QA comment at another sha,
   overrides an earlier merge;
@@ -125,7 +127,8 @@ Then `WorkflowMerger` mints a token for Orbweaver alone with
 secret, and calls `PUT /pulls/N/merge` with `merge_method: squash` and the sha,
 so a push after the checks makes GitHub refuse it (409). The token goes in a request
 header from inside the warden, never on a command line, and a failure logs only the
-exception's type and status code. An installation without
+exception's type, status code and GitHub's JSON `message` (for example "Pull Request is not
+mergeable"). An installation without
 `workflows: write`, an unreadable read, or GitHub's refusal is logged. None of
 them pauses: asking is not a fault. The merge then goes through the ordinary
 merge audit like any bot merge.
