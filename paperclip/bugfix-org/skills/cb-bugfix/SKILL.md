@@ -481,10 +481,19 @@ card that exists only inside another app's window, a person's own screen.
   a tests-only PR (the same gate, the same QA line), so the stages stay pinned.
   Then the ticket is closed as cannot-reproduce. The close comment says what
   was run, on which machine, at which sha; names the condition not exercised;
-  says so plainly if the captures suggest the report came from somewhere the
-  org cannot produce (for example a session hosted in another app, with no
-  pane to read); and lists what a reporter should attach to reopen it (the
-  pane capture, the hook payloads, the status file).
+  and lists what a reporter should attach to reopen it (the pane capture, the
+  hook payloads, the status file).
+- **The report came from a host the org cannot produce** (for example a
+  session hosted in another app, with no pane to read). It is closed the same
+  way, and the close comment **quotes the ticket's own words that show the
+  host**, exactly as written, so the reporter can dispute the reading. A
+  guess about the host with no words from the ticket under it is not a reason
+  to close.
+
+**Neither close is a release.** The engineer's Paperclip issue ends `done`,
+never `cancelled` (**Claiming and releasing**). The host counts only
+`cancelled` issues toward a pause, and a merged tests-only PR counts as the
+merge it is.
 
 **Why this is enough.** A release leaves the same gap and an open ticket the
 next pass repeats. This leaves the gap named where a person will read it, the

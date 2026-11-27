@@ -470,6 +470,33 @@ class InstructionTests(unittest.TestCase):
         qa = read("agents", "tamsin-oyelaran", "AGENTS.md")
         self.assertIn("fails before the change and passes after", qa)
 
+    def test_a_close_without_the_exact_condition_is_not_a_release(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        section = skill.split("## A proof that seems to need a person", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("**Neither close is a release.** The engineer's Paperclip issue ends `done`,\n"
+                      "never `cancelled`", section)
+        lead = read("agents", "marisol-vandenberg", "AGENTS.md")
+        self.assertIn("close made that way ends the engineer's issue `done`, never `cancelled`", lead)
+        # The wrong-host close has to be disputable from the ticket itself.
+        self.assertIn("**quotes the ticket's own words that show the\n  host**", section)
+        self.assertIn("A\n  guess about the host with no words from the ticket under it is not a reason\n  to close.",
+                      section)
+        self.assertIn("your comment quotes the ticket's own words that show the host", lead)
+        # Control, on the warden itself: the release brake reads only issues
+        # Paperclip lists as cancelled, so an issue that ends `done` never
+        # reaches it, while the same ticket's issue cancelled does count; and a
+        # merge resets the run of releases.
+        import sys
+        sys.path.insert(0, os.path.join(HERE, "..", "host"))
+        import warden
+        state = {"cancelled_seen": []}
+        self.assertEqual(warden.new_releases([], state), [])            # ended `done`: not listed
+        self.assertEqual(warden.new_releases(["i1"], state), ["i1"])    # ended `cancelled`
+        row = {"id": "i1", "description": "Ticket: CB-359\nplan"}
+        self.assertEqual(warden.classify_release(row, None), ("release", "CB-359"))
+        self.assertEqual(warden.next_release_state({"consecutive_releases": 1}, "merged"), 0)
+        self.assertEqual(warden.next_release_state({"consecutive_releases": 1}, "released"), 2)
+
     def test_a_capture_round_is_not_a_fix_round(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")
         limits = skill.split("## Limits", 1)[1].split("\n## ", 1)[0]

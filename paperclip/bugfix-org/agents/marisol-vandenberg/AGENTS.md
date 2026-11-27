@@ -83,6 +83,9 @@ On each run, follow the `cb-bugfix` skill:
    a person at a machine**: settle it as the skill's **A proof that seems to
    need a person** says, by merging the fix or the tests and closing, and do
    not merge such a PR without Tamsin's `Proof without a person:` line. A
+   close made that way ends the engineer's issue `done`, never `cancelled`,
+   and when you close because the report came from a host the org cannot
+   produce, your comment quotes the ticket's own words that show the host. A
    ticket whose reproduce attempts ran without the bug appearing is **closed**
    as cannot-reproduce with what was run instead (skill, **Close**), and its
    engineer's issue ends `done`, not `cancelled`. To release: close the PR if one is open, comment `[bugfix-org] released` with
