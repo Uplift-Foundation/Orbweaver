@@ -34,7 +34,7 @@ namespace Orbweaver.Tests;
 // quarter of the limit.
 internal static class HostWatchdog
 {
-    internal const string StallEnv = "ORBWEAVER_TEST_STALL_SECONDS";
+    internal const string StallEnv = BrandEnv.Prefix + BrandEnv.TestStallSeconds;
     internal const int DefaultStallSeconds = 180;
 
     static readonly object Gate = new();

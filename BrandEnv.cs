@@ -117,6 +117,13 @@ namespace Orbweaver
         internal const string InternalInstall = "INTERNAL";
         internal const string InstallPingUrl = "INSTALL_PING_URL";
 
+        // CB-382: the integration test host's watchdog (HostWatchdog), test-only.
+        // TEST_STALL_SECONDS is how long the host may show no progress before it
+        // is killed; WATCHDOG_SELFTEST_HANG makes the watchdog's own child host
+        // hang on purpose. Neither had an older spelling.
+        internal const string TestStallSeconds = "TEST_STALL_SECONDS";
+        internal const string WatchdogSelftestHang = "WATCHDOG_SELFTEST_HANG";
+
         internal static readonly IReadOnlyList<string> All =
         [
             SettingsDir, LogDir, StatusRoot, BundleRoot, ProfileRoot,
@@ -128,6 +135,7 @@ namespace Orbweaver
             UpdateFeedUrl, UpdateCurrentVersion, NetworkTests, KeychainTests, RelayUrl, RelayTestHooks, ActivityLog,
             HookLookupTimeoutDs, PaperclipLive,
             InstallPing, InternalInstall, InstallPingUrl,
+            TestStallSeconds, WatchdogSelftestHang,
         ];
 
         // Pure: the environment is a parameter, so the precedence is a test

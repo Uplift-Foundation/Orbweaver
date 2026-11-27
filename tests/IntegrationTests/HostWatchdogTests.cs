@@ -9,7 +9,7 @@ namespace Orbweaver.Tests;
 // would have: its exit, its stderr and the names in it.
 public class HostWatchdogTests
 {
-    const string HangEnv = "ORBWEAVER_WATCHDOG_SELFTEST_HANG";
+    const string HangEnv = BrandEnv.Prefix + BrandEnv.WatchdogSelftestHang;
 
     // The hanging test the nested host runs. In a normal run the variable is
     // unset and it returns at once.
