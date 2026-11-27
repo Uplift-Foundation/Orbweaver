@@ -182,7 +182,6 @@ class FreshTokenGh(unittest.TestCase):
             f.write(GITHUB_STUB)
         os.chmod(stub, 0o755)
         self.write("gh-token", LIVE + "\n")
-        self.write("gh-workflow-token", WF_LIVE + "\n")
         self.live = os.path.join(self.tmp, "live")
         self.set_live(LIVE)
         self.calls = os.path.join(self.tmp, "calls")
@@ -233,10 +232,18 @@ class FreshTokenGh(unittest.TestCase):
         r = self.run_tool()
         self.assertEqual(r.returncode, 0, r.stderr)
 
-    def test_the_workflow_copy_is_swapped_for_the_live_workflow_token(self):
-        self.set_live(WF_LIVE)
+    def test_the_workflow_copy_is_passed_through_untouched(self):
+        # Lead's ruling (CB-489): the workflow token has no file, so an
+        # engineer's workflow push carries its start-of-run copy.
+        self.set_live(WF_DEAD)
         r = self.run_tool({"GH_TOKEN": WF_DEAD})
-        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual((r.returncode, self.ncalls()), (0, 1), r.stderr)
+
+    def test_a_planted_workflow_file_is_never_read(self):
+        self.write("gh-workflow-token", WF_LIVE + "\n")
+        self.set_live(WF_LIVE)
+        for extra in ({"GH_TOKEN": WF_DEAD}, {}, {"GH_TOKEN": DEAD}, {"GH_TOKEN": ""}):
+            self.assertEqual(self.run_tool(extra).returncode, 1, extra)
 
     def test_the_workflow_token_is_never_handed_to_an_everyday_call(self):
         self.set_live(WF_LIVE)
@@ -287,10 +294,11 @@ class FreshTokenGh(unittest.TestCase):
         self.assertEqual(r.stdout, "ok call=2 stdin=in put\n", "the failed attempt's output is dropped, stdin replayed")
         self.assertEqual(r.stderr, "")
 
-    def test_the_workflow_retry_reads_the_workflow_file(self):
-        self.set_live(WF_LIVE)
-        r = self.run_tool({"GH_TOKEN": WF_DEAD, "STUB_ROTATE": "gh-workflow-token"})
-        self.assertEqual((r.returncode, self.ncalls()), (0, 2), r.stderr)
+    def test_a_workflow_401_is_not_retried(self):
+        self.set_live("nobody-has-this")
+        r = self.run_tool({"GH_TOKEN": WF_DEAD})
+        self.assertEqual((r.returncode, self.ncalls()), (1, 1))
+        self.assertIn(self.msg401, r.stderr)
 
     def test_negative_control_the_same_mint_without_the_wrapper_stays_401(self):
         r = self.run_tool({"GH_TOKEN": LIVE, "STUB_ROTATE": "gh-token"}, wrapped=False)

@@ -3334,19 +3334,28 @@ class TokenNeverExpiresMidRunTests(unittest.TestCase):
         tick(pc=pc, state=state, now=warden.MINT_INTERVAL)
         self.assertEqual(events, [("secret", "GITHUB_TOKEN"), ("restart", "iss-aaaaaaaa")])
 
-    def test_both_tokens_are_written_to_files_only_the_owner_reads(self):
+    def test_the_everyday_token_is_written_to_a_file_only_the_owner_reads(self):
         pc, m = FakePC(), FakeMinter({warden.REPO: WF_INSTALL})
         tick(pc=pc, minter=m, cfg={"spool": self.spool})
         self.assertEqual([n for n, _ in pc.secrets], ["GITHUB_TOKEN", "GITHUB_TOKEN_WORKFLOWS"])
         self.assertEqual(open(self.token_file("gh-token")).read(), "tok1\n")
-        self.assertEqual(open(self.token_file("gh-workflow-token")).read(), "tok2\n")
-        for f in ("gh-token", "gh-workflow-token"):
-            self.assertEqual(stat.S_IMODE(os.stat(self.token_file(f)).st_mode), 0o600, f)
+        self.assertEqual(stat.S_IMODE(os.stat(self.token_file("gh-token")).st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(os.stat(self.tokens).st_mode), 0o700)
-        self.assertEqual(sorted(os.listdir(self.tokens)),
-                         ["gh-token", "gh-workflow-token"], "no .tmp left behind")
         self.assertEqual(sorted(os.listdir(self.spool)), ["access.json", "pauses.json"],
                          "nothing token-shaped in the spool agents write to")
+
+    def test_the_token_folder_never_holds_the_workflow_token(self):
+        # Lead's ruling (CB-489): every run, the lead included, can read the
+        # folder, and CB-486 keeps the workflow token from the lead.
+        pc, m = FakePC(), FakeMinter({warden.REPO: WF_INSTALL})
+        state = {}
+        for now in (0, warden.MINT_INTERVAL):
+            tick(pc=pc, minter=m, state=state, now=now, cfg={"spool": self.spool})
+        workflow = [v for n, v in pc.secrets if n == "GITHUB_TOKEN_WORKFLOWS"]
+        self.assertEqual(len(workflow), 2, "the workflow secret is still minted")
+        self.assertEqual(os.listdir(self.tokens), ["gh-token"], "no .tmp, no workflow file")
+        held = open(self.token_file("gh-token")).read()
+        self.assertNotIn(held.strip(), workflow)
 
     def test_the_file_moves_on_every_mint_paused_or_not(self):
         state, pc, m = {}, FakePC(paused=True), FakeMinter()

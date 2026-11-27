@@ -1,30 +1,27 @@
 # Sourced by the `gh` and `git` stand-ins beside it (CB-489); not run alone.
 #
-# Paperclip resolves BUGFIX_GH_TOKEN and BUGFIX_GH_WORKFLOW_TOKEN once, when a
-# run starts, and an installation token lives an hour. So a run's environment
-# copy can be dead before the run ends, or even at its start: QAF-190 and
-# QAF-209 both began with an expired one. The warden writes every token it
-# mints to its token folder as well, and these functions read that file at
-# each call. The folder is $BUGFIX_TOKEN_DIR, else bugfix-tokens beside
-# $BUGFIX_SPOOL (where the warden puts it; never inside the spool, which
-# agents write to). The workflow file is read only for a GH_TOKEN equal to a
-# non-empty $BUGFIX_GH_WORKFLOW_TOKEN, so a run that was never given that
-# token never gets it from here, so `gh` and `git` always carry the newest token.
+# Paperclip resolves BUGFIX_GH_TOKEN once, when a run starts, and an
+# installation token lives an hour. So a run's environment copy can be dead
+# before the run ends, or even at its start: QAF-190 and QAF-209 both began
+# with an expired one. The warden writes the everyday token it mints to its
+# token folder as well, and these functions read that file at each call. The
+# folder is $BUGFIX_TOKEN_DIR, else bugfix-tokens beside $BUGFIX_SPOOL (where
+# the warden puts it; never inside the spool, which agents write to).
 #
-# A GH_TOKEN that is empty, or that is one of the two start-of-run copies
-# (which is what the skill's `export GH_TOKEN="$BUGFIX_GH_TOKEN"` prefix
-# gives), is swapped for the matching file's current value. Any other GH_TOKEN
-# was set on purpose and is kept. Nothing here ever prints a token.
+# A GH_TOKEN that is empty, or that is the start-of-run copy (which is what
+# the skill's `export GH_TOKEN="$BUGFIX_GH_TOKEN"` prefix gives), is swapped
+# for the file's current value. Any other GH_TOKEN, the engineers' workflow
+# token included, is kept and the command run as it is: the workflow token
+# has no file (lead's ruling, CB-489), so the shims can never hand it out.
+# Nothing here ever prints a token.
 # PATH-independent: builtins, plus /bin/cat and /usr/bin/mktemp by absolute
 # path, which every macOS has whatever the service PATH holds.
 
 # The file name for the token in GH_TOKEN, or nothing when GH_TOKEN is not
-# one of the org's start-of-run copies.
+# the everyday start-of-run copy (or empty).
 bugfix_token_kind() {
   if [ -z "${GH_TOKEN:-}" ] || [ "$GH_TOKEN" = "${BUGFIX_GH_TOKEN:-}" ]; then
     echo gh-token
-  elif [ -n "${BUGFIX_GH_WORKFLOW_TOKEN:-}" ] && [ "$GH_TOKEN" = "$BUGFIX_GH_WORKFLOW_TOKEN" ]; then
-    echo gh-workflow-token
   fi
 }
 

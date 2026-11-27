@@ -71,7 +71,10 @@ REQUIRED_CHECKS = ("build (macos-latest, osx-arm64)", "build (windows-latest, wi
 # on a five-minute tick keeps that file at least 45 minutes from expiry.
 MINT_INTERVAL = 10 * 60
 TOKEN_DIR = "bugfix-tokens"
-TOKEN_FILES = {"GITHUB_TOKEN": "gh-token", "GITHUB_TOKEN_WORKFLOWS": "gh-workflow-token"}
+# Only the everyday token goes to a file. The workflow token stays a secret
+# bound to the engineers alone: a file is readable by every run, the lead
+# included, and CB-486 keeps it from the lead (lead's ruling, CB-489).
+TOKEN_FILES = {"GITHUB_TOKEN": "gh-token"}
 VERBS = ("dispatch_stress", "released", "push_refused", "rerun_failed")
 CLASS_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]{0,199}$")
 SUITES = ("unit", "integration", "ui")
@@ -1379,12 +1382,13 @@ class Warden:
             self.log("workflow token refreshed (" + ", ".join(plan["workflows"]) + ")")
 
     def publish(self, name, token):
-        """The company secret, for a run's start, and the token folder, for
-        the shims to read at each call (CB-489). The file is written first:
-        a run started between the two then still finds a live token there.
-        A file that cannot be written is logged; the secret still goes."""
+        """The company secret, for a run's start, and for the everyday token
+        the token folder too, for the shims to read at each call (CB-489).
+        The file is written first: a run started between the two then still
+        finds a live token there. A file that cannot be written is logged;
+        the secret still goes. The workflow token never gets a file."""
         d = token_dir(self.cfg)
-        if d:
+        if d and name in TOKEN_FILES:
             try:
                 write_token(d, TOKEN_FILES[name], token)
             except OSError as e:

@@ -288,24 +288,24 @@ Then, none of which a package can carry:
    on a resume it restarted the stopped work a second before it minted, so the
    woken run copied a dead token into `BUGFIX_GH_TOKEN`. A retry read the same
    copy. Now the warden mints on every interval whether paused or not, mints
-   before a resume restarts anything, and writes each token to
-   `bugfix-tokens/gh-token` and `gh-workflow-token` beside the spool (never in
+   before a resume restarts anything, and writes the everyday token to
+   `bugfix-tokens/gh-token` beside the spool (never in
    it: agents write there; 0600, folder 0700, renamed into place) before it
    rotates the secret. The shims look in `$BUGFIX_TOKEN_DIR`, else that sibling
    of `$BUGFIX_SPOOL`, so no agent environment changes. The stand-ins, through
    `host/shims/bugfix-token.bash`, read that file at every call and use it
-   whenever `GH_TOKEN` is empty or is one of the two start-of-run copies, so
+   whenever `GH_TOKEN` is empty or is the everyday start-of-run copy, so
    the skill's prefix gets the current token too; a token a caller chose is
    left alone. stdout streams as it comes (a `gh run watch` must
    not look hung). A 401 is retried once, with the newer token, only when the
    file has moved on since the call began and the attempt wrote nothing to
    stdout, since output already delivered cannot be taken back; so a `gh api`
-   401, whose body goes to stdout, is left to the skill's "run it once more". The workflow file
-   is read only for a `GH_TOKEN` equal to a non-empty
-   `$BUGFIX_GH_WORKFLOW_TOKEN`, so a run never given that token (the lead,
-   CB-486) never gets it from a stand-in. Nothing stronger stops it: every run
-   is the same user under the same sandbox profile, so a lead that chose to
-   read the file could. Without `bugfix-token.bash` beside them the two
+   401, whose body goes to stdout, is left to the skill's "run it once more". The workflow
+   token gets no file: every run is the same user under the same sandbox
+   profile, so a file would hand it to the lead, which CB-486 keeps it from.
+   An engineer's workflow push uses its start-of-run copy, which has at least
+   45 minutes left at start because a resume now mints first; a 401 on one
+   asks for another round. Without `bugfix-token.bash` beside them the two
    stand-ins behave as CB-478's did.
 
    Deploy, on the mini, from the merged `develop` (CB-478's install was never
