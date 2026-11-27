@@ -2357,7 +2357,7 @@ namespace Orbweaver
         internal void ApplyPersona(
             string sessionId,
             SessionStatus status,
-            Dictionary<(string Cwd, SessionSource Source, string Agent), IReadOnlyList<LocalPersona.Candidate>> candidatesByCwd)
+            Dictionary<(string Cwd, SessionSource Source, string Agent, string ConfigDir), IReadOnlyList<LocalPersona.Candidate>> candidatesByCwd)
         {
             // A gateway session's identity comes from the gateway, and a
             // remote-control relay is not a conversation at all. Neither has a
@@ -2398,11 +2398,15 @@ namespace Orbweaver
             // walk level it was found at, which the fold needs to resolve a
             // picture profile-gen wrote relative to the project directory.
             // The signature below stats the paths alone, exactly as before.
-            var key = (status.Cwd, status.Source, status.Agent);
+            // CB-294: a WSL session's Linux cwd and account config dir are mapped
+            // to what this host can open before anything walks them.
+            var (cwd, wslConfigDir) = LocalPersona.MapWslPaths(status.Cwd, status.TranscriptPath);
+            var key = (cwd, status.Source, status.Agent, wslConfigDir ?? "");
             if (!candidatesByCwd.TryGetValue(key, out var candidates))
             {
+                var configDirs = _userConfigDirs();
                 candidates = LocalPersona.Candidates(
-                    status.Cwd, _userConfigDirs(), status.Source, status.Agent);
+                    cwd, wslConfigDir is null ? configDirs : configDirs.Prepend(wslConfigDir), status.Source, status.Agent);
                 candidatesByCwd[key] = candidates;
             }
 
@@ -2465,7 +2469,7 @@ namespace Orbweaver
             // guarded non-blank above, and it is what lets a picture written
             // relative to the workspace root — rather than to the directory
             // of the markdown that named it — still resolve.
-            var persona = LocalPersona.ResolveFrom(candidates, status.Cwd);
+            var persona = LocalPersona.ResolveFrom(candidates, cwd);
 
             // Stored over the set the *next* tick will compare, not the one
             // just compared. On the very first pass there is no previous read
@@ -2765,7 +2769,7 @@ namespace Orbweaver
             // nothing measurable. Several sessions in one repo is the common
             // case and is what this actually saves.
             var candidatesByCwd =
-                new Dictionary<(string Cwd, SessionSource Source, string Agent), IReadOnlyList<LocalPersona.Candidate>>();
+                new Dictionary<(string Cwd, SessionSource Source, string Agent, string ConfigDir), IReadOnlyList<LocalPersona.Candidate>>();
 
             // Which Remote Control bridge each Claude Desktop chat is on, before
             // anything below reads it: the cloud block asks whether a cloud row

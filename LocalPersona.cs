@@ -170,6 +170,51 @@ namespace Orbweaver
             string? cwd, IEnumerable<string> userConfigDirs, SessionSource source, string agentName = "") =>
             Candidates(cwd, userConfigDirs, source, agentName).Select(candidate => candidate.Path).ToArray();
 
+        // CB-294: a WSL session's hook records Linux paths (cwd `/home/u/proj`,
+        // transcript `/home/u/.claude/projects/...`), and the Windows app walks
+        // what it is given with Windows file calls, so both the project walk and
+        // the account's user-level CLAUDE.md were missed. This maps the cwd and
+        // the account's config dir (the transcript path before `/projects/`) to
+        // the `\\wsl.localhost\<distro>\...` form with the mapping team files
+        // already use (AgentTeamFiles.Locate), and returns that config dir for the caller to put first
+        // among the user-level ones. A path it cannot find in any distro, a
+        // Windows path, and every path off Windows come back as they went in.
+        internal static (string Cwd, string? ConfigDir) MapWslPaths(
+            string cwd, string? transcriptPath,
+            bool onWindows, IReadOnlyList<string> distros, Func<string, bool> exists)
+        {
+            if (!onWindows) return (cwd, null);
+
+            var mappedCwd = AgentTeamFiles.Locate(cwd, onWindows, distros, exists) ?? cwd;
+
+            var projects = transcriptPath is { Length: > 0 } && transcriptPath[0] == '/'
+                ? transcriptPath.IndexOf("/projects/", StringComparison.Ordinal)
+                : -1;
+            if (projects <= 0) return (mappedCwd, null);
+
+            return (mappedCwd, AgentTeamFiles.Locate(transcriptPath![..projects], onWindows, distros, exists));
+        }
+
+        // The mapping as the app runs it: the Lxss registry's distro list
+        // (re-read at most once a minute) and real directories.
+        [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
+        internal static (string Cwd, string? ConfigDir) MapWslPaths(string cwd, string? transcriptPath)
+        {
+            if (!OperatingSystem.IsWindows()) return (cwd, null);
+
+            var now = Environment.TickCount64;
+            if (_wslDistros is null || now - _wslDistrosAt > 60_000)
+            {
+                _wslDistros = WslIntegration.ListDistros();
+                _wslDistrosAt = now;
+            }
+
+            return MapWslPaths(cwd, transcriptPath, true, _wslDistros, Directory.Exists);
+        }
+
+        private static IReadOnlyList<string>? _wslDistros;
+        private static long _wslDistrosAt;
+
         // The walk as the app runs it: the ceiling, if any, comes from the
         // environment (see WalkCeilingVariable).
         internal static IReadOnlyList<Candidate> Candidates(
