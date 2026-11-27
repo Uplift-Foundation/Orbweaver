@@ -160,8 +160,8 @@ claims anything (step 2), so a claim made in this pass is never read here.
    had a run or an update in the last 3 hours (its `updatedAt`, or its newest
    run). A non-terminal task untouched for longer is left over from a stopped
    pass, not live: it never protects its ticket, and the ticket falls through
-   to the outcomes below (outcome 6 settles that task). CB-469 was stranded by
-   exactly such a task. An open org
+   to the outcomes below (outcome 6 settles that task). Without this bound,
+   one leftover task would hold its ticket for ever. An open org
    PR is one the step-0 listing returned, in either repository, whose title
    names the key. No Jira write; counted on `Taken, in progress`. Step 0
    settles the PR.

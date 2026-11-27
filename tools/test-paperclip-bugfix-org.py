@@ -996,7 +996,7 @@ class InstructionTests(unittest.TestCase):
         # merged case is a settle, named as such.
         self.assertIn("Close only a\n   ticket in Refinement or one the org itself claimed", skill)
         self.assertIn("settled by **Bugs outside Refinement**, not closed", skill)
-||||||| parent of 5d59c96fd (Free a task stuck on an exhausted Claude account, and record the triage pool (CB-469))
+
     # CB-469: a pinned task never leaves its account, so the warden closes a
     # child `done` and the lead re-creates it. The lead's instruction and the
     # warden's comment have to ask for the same thing.
