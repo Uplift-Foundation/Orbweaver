@@ -72,6 +72,15 @@ public class AbsentLiveSessionTests
         Assert.False(BackgroundJobs.IsLive(Parsed, Unlisted));
     }
 
+    // End on the re-pointed session must not go to the daemon: the job it
+    // would stop now runs the other conversation. The listed one still does.
+    [Fact]
+    public void EndOnARepointedSessionSignalsItsOwnProcessNotTheJob()
+    {
+        Assert.False(BackgroundJobs.WorthAskingTheDaemon(SessionSource.ClaudeCode, Parsed, Unlisted));
+        Assert.True(BackgroundJobs.WorthAskingTheDaemon(SessionSource.ClaudeCode, Parsed, Listed));
+    }
+
     [Fact]
     public void AbsentAndProcessDead_StaysNotAJob()
         => Assert.Equal(JobPhase.NotAJob, Ask(Unlisted, 85260, false));

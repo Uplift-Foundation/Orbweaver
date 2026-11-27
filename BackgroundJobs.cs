@@ -631,6 +631,14 @@ namespace Orbweaver
         // the session and Stop reads a fresh one of its own before acting.
         // NotAJob, an answer actually read, is the one case worth skipping: a
         // terminal session, which costs the click a pointless subprocess.
+        //
+        // CB-413: this deliberately reads the two-argument Phase, not the
+        // pid-aware one the scan uses. A session whose job the daemon re-pointed
+        // at a newer conversation is kept on screen as Unknown, but its job is
+        // no longer its own: `claude stop <job>` would stop the *newer*
+        // conversation, which is the wrong session. So End skips the daemon for
+        // it and signals the session's own process, which is the one the user
+        // clicked. Pinned by AbsentLiveSessionTests.
         internal static bool WorthAskingTheDaemon(
             SessionSource source, Dictionary<string, string>? states, string sessionId) =>
             source == SessionSource.ClaudeCode && Phase(states, sessionId) != JobPhase.NotAJob;

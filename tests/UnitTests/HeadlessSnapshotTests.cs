@@ -331,9 +331,11 @@ public class HeadlessSnapshotTests
         }
     }
 
-    // CB-413, at scan level: one process, one job row, two live status files.
-    // The listing names only d7b7db77; the newer conversation sharing its worker
-    // is not named at all. Superseded keeps the newest file per pid, so the
+    // CB-413, the same-pid variant, which is NOT the incident: there the two
+    // sessions ran on two pids (39844 and 85260), and that shape is pinned at
+    // scan level by SessionScanTests.TwoLiveProcessesSharingOneJobRowBothKeepTheirOrbs.
+    // This one asks what happens when both files name one pid, the listing
+    // naming only d7b7db77. Superseded keeps the newest file per pid, so the
     // unnamed one survives it, and the pid-aware Phase keeps it from reading
     // NotAJob. The negative control is the older unnamed file, which Superseded
     // still drops: a /clear leftover on a live pid looks identical, and keeping

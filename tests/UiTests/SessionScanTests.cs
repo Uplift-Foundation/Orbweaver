@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using Avalonia;
 using Avalonia.Controls;
@@ -1983,6 +1984,46 @@ public class SessionScanTests
 
         Assert.Equal(kept, OrbIds(manager).Contains(cb404));
         if (kept) Assert.Equal(finished, manager.StatusFor(cb404)!.Presence == OrbPresence.Finished);
+    }
+
+    // CB-413 as it actually happened: two processes, not one. CB-404's lead
+    // (b1375106-…) ran on pid 39844; the mis-launched conversation (d7b7db77-…)
+    // registered itself into the same job on pid 85260, and the daemon's row for
+    // job b1375106 now names d7b7db77. Both wrote status files and both were
+    // alive. Here the two live pids are this test process and a child it owns.
+    // The named session is kept as a listed job; the unnamed one is kept by the
+    // fix. Its twin on a dead pid is the control, and is dropped.
+    [AvaloniaTheory]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public void TwoLiveProcessesSharingOneJobRowBothKeepTheirOrbs(bool unnamedAlive, bool unnamedKept)
+    {
+        const string lead = "b1375106-f6f2-4a11-9c3d-5e5e5e5e5e5e";
+        const string newer = "d7b7db77-0000-4000-8000-000000000000";
+        using var scratch = new Scratch();
+        using var other = Process.Start(OperatingSystem.IsWindows()
+            ? new ProcessStartInfo("ping", "-n 60 127.0.0.1") { UseShellExecute = false, RedirectStandardOutput = true }
+            : new ProcessStartInfo("sleep", "60") { UseShellExecute = false })!;
+        try
+        {
+            WriteBackgroundFile(scratch, lead, pid: unnamedAlive ? other.Id : NeverAllocatedPid);
+            WriteBackgroundFile(scratch, newer, state: "generating");
+
+            var listing = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [newer] = "working",
+                [BackgroundJobs.JobKey("b1375106")] = "working",
+            };
+            var manager = Manager(scratch, () => listing);
+            manager.ScanAndUpdate();
+
+            Assert.Contains(newer, OrbIds(manager));
+            Assert.Equal(unnamedKept, OrbIds(manager).Contains(lead));
+        }
+        finally
+        {
+            try { other.Kill(); } catch { }
+        }
     }
 
     [AvaloniaFact]
