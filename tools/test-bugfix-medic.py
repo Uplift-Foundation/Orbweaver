@@ -1440,10 +1440,14 @@ class MutedMedic(unittest.TestCase):
         pc = FakePC(issues=self.stuck(("QAF-194", "c194c194"), ("QAF-198", "c198c198")))
         e = self.env(pc=pc, model=ESCALATE)
         e.m.check()
+        n_tripped = len([l for l in e.lines if l.startswith("TRIPPED")])
         pc.issues = pc.issues[:1]
         self.later(e).check()
         self.assertEqual(len(e.launches), 1)
         self.assertEqual(len(e.pc.escalations()), 1)
+        self.assertEqual(len([l for l in e.lines if l.startswith("TRIPPED")]), n_tripped, "no new incident")
+        self.assertEqual(e.mstate()["incident"]["blocks"], medic.stuck_blocks(pc.issues, [], {}, NOW),
+                         "the stored set shrinks")
 
     def test_a_refused_escalation_is_not_recorded_and_the_medic_launches_again(self):
         e = self.env(pc=FakePC(issues=self.stuck(("QAF-194", "c194c194")), approvals=[PENDING_MEDIC]),
@@ -1455,6 +1459,23 @@ class MutedMedic(unittest.TestCase):
         self.later(e).check()
         self.assertEqual(len(e.launches), 2, "a refused escalation does not mute the next launch")
         self.assertNotIn("warden_silent", e.mstate()["incident"]["key"], "the same incident, relaunched")
+
+    def test_a_task_that_recovers_and_is_stuck_again_is_growth(self):
+        pc = FakePC(issues=self.stuck(("QAF-194", "c194c194"), ("QAF-198", "c198c198")))
+        e = self.env(pc=pc, model=ESCALATE)
+        e.m.check()
+        both = list(pc.issues)
+        pc.issues = both[:1]
+        self.later(e).check()
+        pc.issues = both  # QAF-198 back at the same block, after it had left the set
+        since = e.mstate()["incident"]["since"]
+        m = self.later(e)
+        m.now += medic.LAUNCH_EVERY
+        for n in ("state.json", "warden.log"):
+            os.utime(os.path.join(e.dir, n), (m.now - 60, m.now - 60))
+        m.check()
+        self.assertNotEqual(e.mstate()["incident"]["since"], since)
+        self.assertEqual(len(e.launches), 2)
 
     def test_a_pending_escalation_is_logged_once_per_incident_and_retried_quietly(self):
         rows = self.stuck(("QAF-194", "c194c194"))

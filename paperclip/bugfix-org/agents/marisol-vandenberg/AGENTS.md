@@ -138,7 +138,8 @@ If a child task failed, was cancelled or is stuck, do not wait for it and do not
 is blocked with its `ANSWER` posted but its work not over (for example "could not answer"); your task
 stays blocked by that child until you settle it. Read the answer and act on it as on any child's
 answer: give the work again as a new task, or put the ticket back or release it as the skill says.
-Then settle the blocked child with the same `PATCH /api/issues/<the child's id>`:
-`{"status": "done"}` for a QA, review or capture task, or for an engineer's issue whose ticket you
-are closing; `{"status": "cancelled"}` for an engineer's issue when you release its ticket. That is
-the one other write you may make, and only on a child the warden named.
+Then settle the blocked child with the same `PATCH /api/issues/<the child's id>`, body
+`{"status": "done", "comment": "Settled by the lead: it could not finish; see its answer."}`.
+Always `done`, never `cancelled`: a QA child often opens `Ticket: CB-n`, and cancelling it counts as a
+release on the brake. A release goes through the ticket's engineer issue, as step 7 says. That is the
+one other write you may make, and only on a child the warden named.

@@ -767,6 +767,8 @@ class InstructionTests(unittest.TestCase):
         self.assertIn("**A child that answered and is blocked.**", lead)
         self.assertIn("settle the blocked child with the same `PATCH /api/issues/<the child's id>`", lead)
         self.assertIn("only on a child the warden named", lead)
+        self.assertIn('`{"status": "done", "comment": "Settled by the lead: it could not finish; see its answer."}`', lead)
+        self.assertIn("Always `done`, never `cancelled`", lead)
         self.assertIn("as your instructions say", warden.WAKE_PARENT_FOR_ANSWER)
 
     def test_a_mobile_rerun_waits_for_the_per_repo_warden(self):

@@ -696,6 +696,10 @@ class Medic:
                                     "blocks": blocks}
             for name, why in tripped:
                 self.log(f"TRIPPED: {name}: {why}")
+        else:
+            # Same incident; the set may have shrunk, so a task that recovers
+            # and is stuck again later counts as growth (QA, CB-492).
+            inc["blocks"] = blocks
         self.save("medic-state.json", st)
         if inc.get("escalated") or not launch_due(st, now):
             return 0  # told already, or launched too recently
