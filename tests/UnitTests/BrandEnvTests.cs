@@ -37,10 +37,11 @@ namespace Orbweaver.Tests
         // CB-323 adds ACTIVITY_LOG, the hour gate's desktop activity log.
         // CB-394 adds HOOK_LOOKUP_TIMEOUT_DS, the status hook's lookup deadline.
         // CB-443 adds PAPERCLIP_LIVE, the opt-in gate on the chat panel's live proof.
+        // CB-382 adds TEST_STALL_SECONDS and WATCHDOG_SELFTEST_HANG, the test host watchdog's two.
         [Fact]
         public void TheListHoldsThirtyTwoDistinctVariables()
         {
-            Assert.Equal(35, BrandEnv.All.Count);
+            Assert.Equal(37, BrandEnv.All.Count);
             Assert.Equal(BrandEnv.All.Count, BrandEnv.All.Distinct().Count());
         }
 
