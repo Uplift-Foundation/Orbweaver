@@ -2073,6 +2073,33 @@ public partial class MirrorRoundTripTests : IDisposable
         Assert.Equal(new[] { "2" }, harness.Pressed);
     }
 
+    // CB-373: a peer asked for the prompt of a session showing a single-select AskUserQuestion
+    // and was answered no-prompt. The pane and the transcript row are the real capture from the
+    // Mac mini, byte for byte; the session's host-side status is `waiting`, as the hook wrote it.
+    // The exchange runs the real server and the real client over the protocol: what the peer
+    // gets back is the question with its three options, and the roster it holds says waiting.
+    [Fact]
+    public async Task APeerIsOfferedASingleSelectDialogFromTheRealCapture()
+    {
+        var harness = new Harness(_dir) { Screen = Cb373Captures.Screen("askform-single-100x40") };
+        var log = new List<string>();
+        harness.Server.AnswerLog = (_, detail) => log.Add(detail);
+        harness.AddSession("ask", Cb373Captures.PathOf("askform-single-pending.jsonl"), s => s.State = "waiting");
+        await harness.HandshakeAsync("ask");
+
+        Assert.True(harness.Client.SpeaksPrompts("ask"));
+        Assert.Equal("waiting", harness.Client.StateFor("ask").Entry!.Status);
+
+        var (prompt, error) = await harness.Client.FetchPromptAsync("ask");
+
+        Assert.Null(error);
+        Assert.Contains("Which database should the project use?", prompt!.Title);
+        Assert.False(prompt.MultiSelect);
+        foreach (var label in new[] { "Postgres", "SQLite", "MySQL" })
+            Assert.Contains(prompt.Options, o => o.Label.Contains(label));
+        Assert.Contains(log, l => l.Contains("-> ok") && l.EndsWith("call=yes"));
+    }
+
     // CB-407: the prompt log line says whether a transcript call was found, and when not which
     // condition failed, as a fixed word and never any content, on the ok line and the err line.
     [Theory]
