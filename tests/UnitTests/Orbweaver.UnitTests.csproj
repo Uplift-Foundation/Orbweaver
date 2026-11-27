@@ -69,6 +69,7 @@
     <Compile Include="..\TranscriptTests\Cb330Captures.cs" />
     <Compile Include="..\TranscriptTests\Cb356Captures.cs" />
     <Compile Include="..\TranscriptTests\Cb407Captures.cs" />
+    <Compile Include="..\TranscriptTests\Cb373Captures.cs" />
     <Compile Include="..\TranscriptTests\Cb412Captures.cs" />
     <Compile Include="..\TranscriptTests\Cb412Checks.cs" />
     <Compile Include="..\TranscriptTests\Cb403Captures.cs" />
