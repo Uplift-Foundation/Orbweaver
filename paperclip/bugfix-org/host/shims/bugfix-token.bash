@@ -63,12 +63,15 @@ bugfix_token_apply() {
   fi
 }
 
-# Run "$real" "$@" with the current token. When GitHub answers 401 and the
-# token file now holds a different token than the one just used, run it once
-# more with that one. stdout and stderr are held until the command ends, so
-# the failed attempt's output (`gh api` prints the 401 body on stdout) never
-# reaches the caller ahead of the retry's. stdin is kept for the retry. The
-# exit status is the last attempt's.
+# Run "$real" "$@" with the current token. stdout streams as it comes, so a
+# `gh run watch` that runs for many minutes shows its progress rather than
+# looking hung. stderr is held per attempt, which is what the retry reads.
+# A failed attempt is retried once, with the token file's newer value, only
+# when its stderr shows GitHub's 401 AND it wrote nothing to stdout: output a
+# caller has already received cannot be taken back. So `gh api`, which prints
+# the 401 body on stdout, is not retried here; the skill's "run it once more"
+# covers it. stdin is kept for the retry. The exit status is the last
+# attempt's. /bin/bash is 3.2 on macOS, hence a pipe through tee, not >( ).
 bugfix_run_with_retry() {
   local real=$1; shift
   local kind used status fresh
@@ -87,37 +90,35 @@ bugfix_run_with_retry() {
     /bin/cat > "$in"
   fi
   bugfix_attempt "$real" "$@"; status=$?
-  if [ "$status" -ne 0 ] && bugfix_saw_401; then
+  if [ "$status" -ne 0 ] && [ ! -s "$out" ] && bugfix_saw_401; then
     fresh=$(bugfix_token_read "$kind")
     if [ -n "$fresh" ] && [ "$fresh" != "$used" ]; then
       export GH_TOKEN="$fresh"
       bugfix_attempt "$real" "$@"; status=$?
     fi
   fi
-  bugfix_emit "$out" 1; bugfix_emit "$err" 2
+  [ -s "$err" ] && /bin/cat "$err" >&2
   return "$status"
 }
 
+# One attempt: stdout through tee to the caller and to $out (only to know
+# whether anything was written), stderr to $err.
 bugfix_attempt() {
-  local real=$1; shift
+  local real=$1 s; shift
   if [ -n "$in" ]; then
-    "$real" "$@" < "$in" > "$out" 2> "$err"
+    "$real" "$@" < "$in" 2> "$err" | /usr/bin/tee "$out"; s=${PIPESTATUS[0]}
   else
-    "$real" "$@" > "$out" 2> "$err"
+    "$real" "$@" 2> "$err" | /usr/bin/tee "$out"; s=${PIPESTATUS[0]}
   fi
+  return "$s"
 }
 
 # GitHub's 401, as gh and git (through gh auth git-credential) report it.
 bugfix_saw_401() {
   local text
-  text=$(< "$err")$(< "$out")
+  text=$(< "$err")
   case "$text" in
     *"HTTP 401"*|*"Bad credentials"*|*"401 Unauthorized"*|*"returned error: 401"*|*"Invalid username or token"*|*"Authentication failed for"*) return 0 ;;
   esac
   return 1
-}
-
-bugfix_emit() {
-  [ -s "$1" ] || return 0
-  if [ "$2" = 1 ]; then /bin/cat "$1"; else /bin/cat "$1" >&2; fi
 }

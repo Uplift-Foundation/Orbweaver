@@ -141,8 +141,8 @@ class GitWrapper(Wrapper):
         self.assertIn("arg=x y", r.stdout)
 
 # CB-489. GitHub, as far as these stubs know, accepts only the token in
-# $STUB_LIVE (a file); anything else gets gh's real 401 shape: the body on
-# stdout, "Bad credentials (HTTP 401)" on stderr, exit 1. With STUB_ROTATE set,
+# $STUB_LIVE (a file); anything else gets a 401: $STUB_401 on stderr, exit 1,
+# and with STUB_BODY set the JSON body on stdout too, as `gh api` prints it. With STUB_ROTATE set,
 # the first call plays the warden minting mid-command: it moves a new token
 # into the spool file and the live file, then fails with the one it was given.
 GITHUB_STUB = r"""#!/bin/bash
@@ -152,7 +152,7 @@ if [ -n "$STUB_ROTATE" ] && [ $n = 1 ]; then
   printf 'rotated\n' > "$STUB_TOKENS/$STUB_ROTATE"; printf 'rotated' > "$STUB_LIVE"
 fi
 if [ "${GH_TOKEN-}" != "$(cat "$STUB_LIVE")" ]; then
-  echo '{"message": "Bad credentials", "status": "401"}'
+  [ -z "$STUB_BODY" ] || echo '{"message": "Bad credentials", "status": "401"}'
   echo "$STUB_401" >&2
   exit 1
 fi
@@ -164,6 +164,8 @@ DEAD, LIVE, WF_DEAD, WF_LIVE = "dead-everyday", "live-everyday", "dead-workflow"
 
 class FreshTokenGh(unittest.TestCase):
     """A run's BUGFIX_GH_TOKEN copy is dead; the warden's file is live."""
+    # gh's 401 is stderr only for most commands; `gh api` adds the body on
+    # stdout, which its own tests set with STUB_BODY.
     tool, msg401 = "gh", "gh: Bad credentials (HTTP 401)"
 
     def setUp(self):
@@ -289,10 +291,68 @@ class FreshTokenGh(unittest.TestCase):
 
     def test_a_401_with_no_newer_token_is_not_retried_and_passes_through(self):
         self.set_live("nobody-has-this")
-        r = self.run_tool()
+        r = self.run_tool({"STUB_BODY": "1"})
         self.assertEqual((r.returncode, self.ncalls()), (1, 1))
         self.assertIn("Bad credentials", r.stdout)
         self.assertIn(self.msg401, r.stderr)
+
+    def test_a_401_that_already_wrote_to_stdout_is_not_retried(self):
+        # `gh api`: the body has reached the caller and cannot be taken back.
+        r = self.run_tool({"GH_TOKEN": DEAD, "STUB_ROTATE": "gh-token", "STUB_BODY": "1"})
+        self.assertEqual((r.returncode, self.ncalls()), (1, 1))
+        self.assertIn("Bad credentials", r.stdout)
+        self.assertIn(self.msg401, r.stderr)
+
+    def test_the_failed_attempts_stderr_is_dropped_on_a_retry(self):
+        r = self.run_tool({"GH_TOKEN": DEAD, "STUB_ROTATE": "gh-token"})
+        self.assertEqual((r.returncode, r.stderr), (0, ""))
+
+    # -- streaming (a `gh run watch` must not look hung)
+
+    def write_stub(self, body):
+        stub = os.path.join(self.real, self.tool)
+        with open(stub, "w") as f:
+            f.write(body)
+        os.chmod(stub, 0o755)
+
+    def first_line_timing(self, argv, env):
+        """(seconds to the first line, whether the stub had exited by then)."""
+        done = os.path.join(self.tmp, "done")
+        env = dict(env, STUB_DONE=done)
+        start = __import__("time").monotonic()
+        p = subprocess.Popen(argv, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True)
+        self.addCleanup(p.kill)
+        first = p.stdout.readline()
+        took, exited = __import__("time").monotonic() - start, os.path.exists(done)
+        rest = p.stdout.read()
+        p.wait(timeout=20)
+        self.assertEqual((first, rest), ("first\n", "second\n"))
+        return took, exited
+
+    SLOW = "#!/bin/bash\necho first\nsleep 2\necho second\ntouch \"$STUB_DONE\"\n"
+
+    def slow_env(self):
+        return {"HOME": self.tmp, "TMPDIR": self.scratch, "PATH": f"{BIN}:{self.real}:/usr/bin:/bin",
+                "BUGFIX_SPOOL": self.spool, "BUGFIX_GH_TOKEN": DEAD}
+
+    def test_stdout_streams_before_the_command_ends(self):
+        self.write_stub(self.SLOW)
+        took, exited = self.first_line_timing([os.path.join(BIN, self.tool)], self.slow_env())
+        self.assertFalse(exited, "the first line arrived only after the command ended")
+        self.assertLess(took, 1.5)
+
+    def test_negative_control_a_wrapper_that_holds_output_is_caught(self):
+        # The same measurement on a wrapper that holds stdout until the end,
+        # as this one did at 7f54b9e95, must see the stub already finished.
+        self.write_stub(self.SLOW)
+        holder = os.path.join(self.tmp, "holder")
+        with open(holder, "w") as f:
+            f.write('#!/bin/bash\n"$@" > "$TMPDIR/held"; s=$?; /bin/cat "$TMPDIR/held"; exit $s\n')
+        os.chmod(holder, 0o755)
+        took, exited = self.first_line_timing([holder, os.path.join(BIN, self.tool)], self.slow_env())
+        self.assertTrue(exited)
+        self.assertGreaterEqual(took, 2)
 
     def test_other_failures_are_not_retried(self):
         r = self.run_tool({"STUB_EXIT": "4", "STUB_ROTATE": ""})

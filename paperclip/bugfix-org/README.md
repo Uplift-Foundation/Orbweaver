@@ -296,9 +296,11 @@ Then, none of which a package can carry:
    `host/shims/bugfix-token.bash`, read that file at every call and use it
    whenever `GH_TOKEN` is empty or is one of the two start-of-run copies, so
    the skill's prefix gets the current token too; a token a caller chose is
-   left alone. A 401 is retried once when the file has moved on since the call
-   began. Each attempt's output is held until the command ends, so a
-   `gh run watch` prints at the end rather than as it goes. The workflow file
+   left alone. stdout streams as it comes (a `gh run watch` must
+   not look hung). A 401 is retried once, with the newer token, only when the
+   file has moved on since the call began and the attempt wrote nothing to
+   stdout, since output already delivered cannot be taken back; so a `gh api`
+   401, whose body goes to stdout, is left to the skill's "run it once more". The workflow file
    is read only for a `GH_TOKEN` equal to a non-empty
    `$BUGFIX_GH_WORKFLOW_TOKEN`, so a run never given that token (the lead,
    CB-486) never gets it from a stand-in. Nothing stronger stops it: every run
