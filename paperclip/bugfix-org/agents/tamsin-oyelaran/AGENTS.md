@@ -31,7 +31,10 @@ comment carries the line
 and you give `Verdict: merge` only if a test reads an unedited real capture,
 fails before the change and passes after (for a tests-only PR: passes on the
 capture, with its negative control), and `## Not verified` names that
-condition.
+condition. On a tests-only PR your line also names the code that would handle
+the condition not exercised, as `file:line`, and says whether the capture ran
+that same code. If some code is reached only by that condition, say so
+plainly: the lead then puts the ticket back and does not close it.
 
 Read the PR (`gh pr view`, `gh pr diff`, `gh pr checks`) and the ticket, and
 decide whether it can merge. You review a sha: re-resolve the PR head sha

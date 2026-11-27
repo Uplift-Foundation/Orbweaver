@@ -497,6 +497,48 @@ class InstructionTests(unittest.TestCase):
         self.assertEqual(warden.next_release_state({"consecutive_releases": 1}, "merged"), 0)
         self.assertEqual(warden.next_release_state({"consecutive_releases": 1}, "released"), 2)
 
+    # QA's finding on CB-488: "every stage behaved" says nothing about code
+    # only the unexercised condition reaches, which on CB-359 is the code the
+    # ticket is about. So a close has to name that code and show the capture
+    # ran it, and where it did not, the ticket is put back, never closed.
+    def test_code_only_the_missing_condition_reaches_is_put_back_not_closed(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        section = skill.split("## A proof that seems to need a person", 1)[1].split("\n## ", 1)[0]
+        no_defect = section.split("- **There is no defect to fix.**", 1)[1].split("\n- **", 1)[0]
+        self.assertIn("**and the condition not\n  exercised would take the same code**", no_defect)
+        self.assertIn("as `file:line`", no_defect)
+        only = section.split("- **Some code is reached only by the condition not exercised**", 1)[1].split("\n\n", 1)[0]
+        for needle in ("the ticket is **not\n  closed**", "(**Putting a ticket back**)",
+                       "`[bugfix-org] stopped: needs an input the org cannot make (",
+                       "`Needs an input the org cannot make` line", "not a\n  release and not a close"):
+            with self.subTest(needle):
+                self.assertIn(needle, only)
+        # It is a real put-back: found again as a wait, counted on its own
+        # line, and named among the rules that put a ticket back.
+        wait = skill.split("- **Wait: put back.**", 1)[1].split("\n- **", 1)[0]
+        self.assertIn("`Needs\n   an input the org cannot make`", wait)
+        back = skill.split("## Putting a ticket back", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("**A proof that seems to\nneed a person**", back)
+        lead = read("agents", "marisol-vandenberg", "AGENTS.md")
+        self.assertIn("if some code is reached only by that condition, do not close", lead)
+        self.assertIn("Needs an input the org cannot make), every ticket", lead)
+        qa = read("agents", "tamsin-oyelaran", "AGENTS.md")
+        self.assertIn("names the code that would handle\nthe condition not exercised, as `file:line`", qa)
+        self.assertIn("the lead then puts the ticket back and does not close it", qa)
+        # Control: the close bullet alone no longer covers that case, since
+        # the put-back wording is not inside it.
+        self.assertNotIn("stopped:", no_defect)
+
+    def test_a_capture_leaves_nothing_in_a_live_account(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        section = skill.split("## A proof that seems to need a person", 1)[1].split("\n## ", 1)[0]
+        for needle in ("**The capture leaves nothing behind in a live account.**",
+                       "scratch `CLAUDE_CONFIG_DIR`", "`--strict-mcp-config`, never `claude mcp add`",
+                       "token step always refuses", "bind port 0", "stops the server and the `tmux` session"):
+            with self.subTest(needle):
+                self.assertIn(needle, section)
+        self.assertIn("**Every `osascript` on `macbook` is refused**", skill)
+
     def test_a_capture_round_is_not_a_fix_round(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")
         limits = skill.split("## Limits", 1)[1].split("\n## ", 1)[0]
@@ -671,7 +713,8 @@ class InstructionTests(unittest.TestCase):
         skill = read("skills", "cb-bugfix", "SKILL.md")
         lines = ("Fixed: <n>", "Closed: <n>", "Waiting on triage: <n>", "Taken, in progress: <n>",
                  "Waiting on another team's PR: <n>", "Left untouched: <n>",
-                 "Mobile access not live yet: <n>", "Needs a protected workflow line: <n>")
+                 "Mobile access not live yet: <n>", "Needs a protected workflow line: <n>",
+                 "Needs an input the org cannot make: <n>")
         block = re.search(r"```\n(Fixed: <n>.*?)```", skill, re.S)
         self.assertIsNotNone(block)
         got = [l.split(" (")[0] for l in block.group(1).strip().splitlines()]

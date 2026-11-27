@@ -35,7 +35,8 @@ this order; the first that applies is the one:
 - **Wait: put back.** The newest comment starting `[bugfix-org]` is a
    `[bugfix-org] stopped:` put-back (**Putting a ticket back**). It stays a
    wait, with no Jira write, counted on the line its sentence names
-   (`Mobile access not live yet` or `Needs a protected workflow line`), until a
+   (`Mobile access not live yet`, `Needs a protected workflow line` or `Needs
+   an input the org cannot make`), until a
    person comments after it or, for mobile access, the check in **Two
    repositories, one code base** passes; then it is decided afresh.
 - **Wait: mobile access.** The fix is in the mobile repository and the check in
@@ -107,6 +108,7 @@ Waiting on another team's PR: <n> (<keys and PR numbers>)
 Left untouched: <n> (<keys, and why>)
 Mobile access not live yet: <n> (<keys>)
 Needs a protected workflow line: <n> (<keys, and the line each needs>)
+Needs an input the org cannot make: <n> (<keys, and the input each needs>)
 ```
 
 Every ticket the query returned is in exactly one line. **Left untouched** is
@@ -281,7 +283,8 @@ back**), and set the engineer's
 Paperclip issue to `done` with that same sentence as its `comment`, never
 `cancelled` (`cancelled` is a release, and the warden counts releases toward a
 pause). The branch is kept. The rules that put a ticket back are in **Two
-repositories, one code base** and **Workflow files**.
+repositories, one code base**, **Workflow files** and **A proof that seems to
+need a person**.
 
 ## Real machines
 
@@ -417,8 +420,11 @@ and every request and result is logged for the lead.
 
 **A `machine_run` on `macbook` that would type or click is refused.** A person
 works at the MacBook, so the runner refuses a command there that names a tool
-for sending keyboard or mouse input (`osascript`, `cliclick`, System Events and
-the like). `mini` is headless and has no such refusal. On `windows` a command
+for sending keyboard or mouse input (`cliclick`, `shortcuts run`, System Events
+and the like). **Every `osascript` on `macbook` is refused**, read-only ones
+too, and so is any command that merely contains one of those words (a `grep`
+for "keystroke", say): read what you need another way (`pgrep`, `defaults
+read`, a log file). `mini` is headless and has no such refusal. On `windows` a command
 runs over ssh with no desktop; a program that needs one is started through a
 scheduled task, never by sending keys.
 
@@ -452,6 +458,16 @@ the MacBook" is a step. "The peer asks" is the observation, and a test can ask.
    hand the callback to the session with `tmux send-keys`. That uses no real
    account, no third party and no person. Bring the dialog up and **leave it
    pending**: an approval is captured, never answered.
+   **The capture leaves nothing behind in a live account.** The session runs
+   on a real Claude account, so: give it a scratch `CLAUDE_CONFIG_DIR` when it
+   can run with one, and when it cannot (a scratch folder holds no login), the
+   server reaches the session only through an `--mcp-config` file in the
+   scratch folder with `--strict-mcp-config`, never `claude mcp add`; the
+   server's token step always refuses, so no credential can be stored even if
+   an approval were answered by mistake; the server binds `127.0.0.1` on a
+   port the system picks (bind port 0 and print it), not a fixed one; and the
+   last command of the capture stops the server and the `tmux` session and
+   says so in its output.
 2. **Both ends in one test.** When the observation is an exchange (two
    machines, or the app and a panel), connect the real classes in one process
    (the host's mirror server and the peer's chat session; a panel over
@@ -477,7 +493,12 @@ card that exists only inside another app's window, a person's own screen.
   `Proof without a person: <step 1 or 2, and what it showed>; not exercised: <the condition>`,
   and the lead does not merge without that line at the reviewed sha.
 - **There is no defect to fix.** Every stage the reported symptom passes
-  through was run on real output and behaved. The tests and captures merge as
+  through was run on real output and behaved, **and the condition not
+  exercised would take the same code**. That second half is shown, not
+  assumed: QA's line and the close comment name the code that would handle
+  the condition, as `file:line`, and say why it is the path the capture
+  already ran (the same hook matcher, the same parser arm, the same request).
+  The tests and captures merge as
   a tests-only PR (the same gate, the same QA line), so the stages stay pinned.
   Then the ticket is closed as cannot-reproduce. The close comment says what
   was run, on which machine, at which sha; names the condition not exercised;
@@ -489,6 +510,18 @@ card that exists only inside another app's window, a person's own screen.
   host**, exactly as written, so the reporter can dispute the reading. A
   guess about the host with no words from the ticket under it is not a reason
   to close.
+
+- **Some code is reached only by the condition not exercised** (a hook
+  matcher, a parser arm or a request type that nothing the org ran went
+  through). Then nobody has seen that code work, and the ticket is **not
+  closed**: "no defect found" would be a claim about code that never ran. The
+  tests and captures still merge as a tests-only PR. Then the ticket is put
+  back (**Putting a ticket back**) with the sentence
+  `[bugfix-org] stopped: needs an input the org cannot make (<the input, and
+  the file:line only it reaches>); tests merged at <merge sha>; branch kept at
+  <sha>`, and counted
+  on the report's `Needs an input the org cannot make` line. That is not a
+  release and not a close.
 
 **Neither close is a release.** The engineer's Paperclip issue ends `done`,
 never `cancelled` (**Claiming and releasing**). The host counts only

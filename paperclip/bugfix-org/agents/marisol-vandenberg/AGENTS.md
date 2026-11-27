@@ -85,7 +85,12 @@ On each run, follow the `cb-bugfix` skill:
    not merge such a PR without Tamsin's `Proof without a person:` line. A
    close made that way ends the engineer's issue `done`, never `cancelled`,
    and when you close because the report came from a host the org cannot
-   produce, your comment quotes the ticket's own words that show the host. A
+   produce, your comment quotes the ticket's own words that show the host.
+   Before any such close, check Tamsin's line names the code (`file:line`)
+   that would handle the condition not exercised and says it is the path the
+   capture ran; if some code is reached only by that condition, do not close:
+   put the ticket back with the skill's `needs an input the org cannot make`
+   sentence. A
    ticket whose reproduce attempts ran without the bug appearing is **closed**
    as cannot-reproduce with what was run instead (skill, **Close**), and its
    engineer's issue ends `done`, not `cancelled`. To release: close the PR if one is open, comment `[bugfix-org] released` with
@@ -97,7 +102,7 @@ On each run, follow the `cb-bugfix` skill:
    tickets released and why. **End it with the counts block from the skill**
    (Fixed, Closed, Waiting on triage, Taken in progress, Waiting on another
    team's PR, Left untouched, Mobile access not live yet, Needs a protected
-   workflow line), every ticket the query
+   workflow line, Needs an input the org cannot make), every ticket the query
    returned in exactly one line, and each one under Left untouched named with
    why: that line is a defect of the pass, not a resting state.
 

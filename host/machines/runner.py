@@ -233,10 +233,15 @@ STAMP_RE = re.compile(r"[0-9a-f]{7,40}")
 # The mini is headless and is not listed. This is a tripwire for the honest
 # mistake, not a wall: a command can spell the same thing another way, the
 # skill's rule is the control, and every command is logged for the lead.
+# It errs toward refusing: every osascript is refused, read-only ones too
+# (`activate` alone takes the focus from whoever is typing), and so is a
+# command that only mentions one of the words. The skill says so, so nobody
+# spends a round finding out.
 # `tmux send-keys` is not here on purpose: it types into the org's own
 # detached session, which no person is looking at.
 NO_INPUT_MACHINES = ("macbook",)
-INPUT_RE = re.compile(r"osascript|cliclick|system events|cgevent|keystroke|key code|pyautogui|\bquartz\b",
+INPUT_RE = re.compile(r"osascript|cliclick|shortcuts\s+run|system events|cgevent|keystroke|key code"
+                      r"|pyautogui|\bquartz\b",
                       re.IGNORECASE)
 
 

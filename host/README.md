@@ -350,7 +350,7 @@ again afterwards and must still be `sha`, and an unreadable list or one at GitHu
 is a refusal too); a second PR while one holds the machines; a `machine_run` without
 a hold, on an unlisted machine, or after the PR's head moved since the install; a `machine_run`
 on `macbook` whose command names a tool that sends keyboard or mouse input (`osascript`,
-`cliclick`, System Events, CGEvent, `pyautogui`, Quartz: CB-488, a person works at that machine;
+`cliclick`, `shortcuts run`, System Events, CGEvent, `pyautogui`, Quartz: CB-488, a person works at that machine;
 a word match that catches the honest mistake, not a wall, and the mini is not covered because
 it is headless); any unknown
 verb, field or machine, and an `id` outside `[a-z0-9-]{1,40}`. Every answer has `id`, `verb`,

@@ -720,6 +720,9 @@ class RunTests(unittest.TestCase):
         for command in ("osascript -e 'tell application \"System Events\" to keystroke \"a\"'",
                         "/opt/homebrew/bin/cliclick c:10,10",
                         "OSASCRIPT -e 'return 1'",
+                        "osascript -e 'id of app \"Orbweaver\"'",
+                        "shortcuts run 'Open Panel'",
+                        "shortcuts  run x",
                         "python3 -c 'import Quartz; Quartz.CGEventPost(0, e)'",
                         "python3 -c 'import pyautogui; pyautogui.click()'"):
             with self.subTest(command):
@@ -739,7 +742,8 @@ class RunTests(unittest.TestCase):
     def test_a_macbook_command_that_sends_no_input_runs(self):
         for command in ("tmux -L cb1 send-keys -t q Enter",
                         "tail -50 ~/Library/Application\\ Support/Orbweaver/mirror-log.txt",
-                        "echo keys && pgrep -fl Orbweaver"):
+                        "echo keys && pgrep -fl Orbweaver",
+                        "shortcuts list"):
             with self.subTest(command):
                 r = make_runner()
                 self.assertTrue(one(r, install(machines=("macbook",)))["ok"])
