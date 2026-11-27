@@ -1387,5 +1387,84 @@ class FinishedTasks(unittest.TestCase):
         self.assertTrue(any(l.startswith("ACT wake refused") for l in e.lines))
 
 
+# ---------------------------------------------------------------- CB-492: the medic muted itself
+
+PENDING_MEDIC = {"id": "p" * 8, "status": "pending", "createdAt": iso(NOW - 7200),
+                 "payload": {"source": medic.MEDIC_SOURCE}}
+ESCALATE = {"diagnosis": "stuck", "actions": [{"verb": "escalate", "args": {"line": "still stuck"}}]}
+
+
+class MutedMedic(unittest.TestCase):
+    """2026-11-27: at 05:35Z the model's escalate was refused because the 04:55
+    one was still pending, the refusal was recorded as an escalation, and the
+    incident key "stuck" stayed the same while the stuck tasks changed, so the
+    medic launched nothing until a person stepped in at 08:40Z."""
+
+    def env(self, **kw):
+        e = Env(**kw)
+        self.addCleanup(e.close)
+        return e
+
+    def later(self, e, pc=None):
+        """The next launch window, with the warden still ticking (its files
+        touched a minute before), so only the stuck tasks decide the key."""
+        t = NOW + medic.LAUNCH_EVERY
+        for n in ("state.json", "warden.log"):
+            os.utime(os.path.join(e.dir, n), (t - 60, t - 60))
+        return medic.Medic(e.cfg, pc or e.pc, e.gh, t, e.lines.append, e.launch,
+                           lambda: None, lambda: False, sleep=lambda s: None)
+
+    def stuck(self, *pairs):
+        return [issue(ident, id8, "blocked", attention="needs_attention", blocked_at=iso(NOW - 3600 - n))
+                for n, (ident, id8) in enumerate(pairs)]
+
+    def test_incident_key_names_the_stuck_tasks_at_their_blocks(self):
+        t = [("stuck", "x")]
+        a = medic.incident_key(t, [("i1", "s1")])
+        self.assertEqual(a, medic.incident_key(t, [("i1", "s1")]))
+        self.assertNotEqual(a, medic.incident_key(t, [("i1", "s1"), ("i2", "s2")]), "a newly stuck task")
+        self.assertNotEqual(a, medic.incident_key(t, [("i1", "s9")]), "the same task blocked again")
+        self.assertEqual(medic.incident_key(t, [("i2", "b"), ("i1", "a")]),
+                         medic.incident_key(t, [("i1", "a"), ("i2", "b")]), "order does not matter")
+        # Control: without a stuck trip the blocks are not part of the key.
+        self.assertEqual(medic.incident_key([("paused", "x")], [("i1", "s1")]), "paused")
+
+    def test_a_refused_escalation_is_not_recorded_and_the_medic_launches_again(self):
+        e = self.env(pc=FakePC(issues=self.stuck(("QAF-194", "c194c194")), approvals=[PENDING_MEDIC]),
+                     model=ESCALATE)
+        e.m.check()
+        self.assertEqual(len(e.launches), 1)
+        self.assertEqual(e.pc.escalations(), [], "the earlier one is still pending")
+        self.assertIsNone(e.mstate()["incident"]["escalated"])
+        self.later(e).check()
+        self.assertEqual(len(e.launches), 2, "a refused escalation does not mute the next launch")
+        self.assertNotIn("warden_silent", e.mstate()["incident"]["key"], "the same incident, relaunched")
+
+    def test_control_a_made_escalation_still_mutes_the_same_incident(self):
+        e = self.env(pc=FakePC(issues=self.stuck(("QAF-194", "c194c194"))), model=ESCALATE)
+        e.m.check()
+        self.assertEqual(len(e.pc.escalations()), 1)
+        self.assertIsNotNone(e.mstate()["incident"]["escalated"])
+        self.later(e).check()
+        self.assertEqual(len(e.launches), 1)
+
+    def test_a_newly_stuck_task_after_an_escalation_is_a_new_incident(self):
+        pc = FakePC(issues=self.stuck(("QAF-194", "c194c194")))
+        e = self.env(pc=pc, model=ESCALATE)
+        e.m.check()
+        first = e.mstate()["incident"]["key"]
+        pc.issues += self.stuck(("QAF-244", "c244c244"))
+        self.later(e, pc).check()
+        self.assertNotEqual(e.mstate()["incident"]["key"], first)
+        self.assertEqual(len(e.launches), 2)
+        self.assertTrue(any(l.startswith("TRIPPED: stuck") and "QAF-244" in l for l in e.lines))
+
+    def test_a_leaf_the_warden_woke_the_parent_for_is_not_stuck(self):
+        rows = self.stuck(("QAF-244", "c244c244"))
+        cst = {"answer_wakes": {uid("c244c244"): rows[0]["blockedTransitionAt"]}}
+        self.assertEqual(medic.stuck_rows(rows, [], cst, NOW)[0], [])
+        self.assertEqual(len(medic.stuck_rows(rows, [], {}, NOW)[0]), 1, "control: unswept, it is stuck")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

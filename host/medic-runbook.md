@@ -41,10 +41,12 @@ that is safe, and how to tell Warren once if it is not.
 | `paperclip_unreadable` | the medic could not read Paperclip at all | the service is down |
 
 While the company is paused, `no_heartbeat` and `stuck` are not read: they are
-the pause's own effects. An incident is the set of checks that hold, so a pause
-where the warden also goes quiet becomes a new incident and you may be started
-again; `escalate` is still refused while an earlier medic escalation is pending,
-so Warren hears once.
+the pause's own effects. An incident is the set of checks that hold and, for `stuck`, which tasks are
+stuck at which block: a pause where the warden also goes quiet, a newly stuck
+task, or a task blocked again is a new incident, and you may be started again.
+`escalate` is still refused while an earlier medic escalation is pending, so
+Warren hears once; a refused escalation does not count as one, so you are not
+silenced by it.
 
 ## Pause reasons and what may lift them
 
@@ -83,6 +85,10 @@ medic resumed the company within the last six hours and it is paused again,
      closed or whose parent is done or cancelled: `close-task`. A task whose
      description opens `Ticket: CB-n` closes only on a merged PR. Its work is over; waking it restarts nothing
      and may re-block it;
+   - a task with no children whose last agent comment is its own `ANSWER` but
+     whose work is not over (for example "could not answer"): nothing for you.
+     The warden's sweep wakes its blocked parent to read the answer, once per
+     block, and the task is left as it is;
    - a task blocked because "the issue workspace failed validation" (Paperclip
      holds a `workspace_validation_failed` recovery on it): `escalate`. Its
      worktree needs a person, and `wake` refuses it;

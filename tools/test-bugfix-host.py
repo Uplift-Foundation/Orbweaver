@@ -3181,7 +3181,9 @@ class UnstickAnsweredTests(unittest.TestCase):
         self.assertEqual(decide(qaf_night()), [])
 
     def test_open_pr_and_open_parent_is_not_closed(self):
-        self.assertEqual(decide_answers(qaf_night(), {"r": (ANSWER_427, None)}), [])
+        # Not closed; since CB-492 its blocked parent is woken to read the answer instead.
+        self.assertEqual(decide_answers(qaf_night(), {"r": (ANSWER_427, None)}),
+                         [("wake_parent_for_answer", "P")])
 
     def test_settled_parent_is_proof_without_a_pr(self):
         issues = [I("P", "done"), I("r", "blocked", "P", assignee="qa", description="Review PR 427")]
@@ -3698,6 +3700,89 @@ class WorkflowMergeTickTests(unittest.TestCase):
 
     def test_the_lead_token_never_gains_workflows(self):
         self.assertNotIn("workflows", warden.EVERYDAY_PERMISSIONS)
+
+
+# ---------------------------------------------------------------- CB-492: an answered leaf whose work is not over
+
+# QAF-244's answer, 2026-11-27T07:08Z, trimmed: it could not do the capture and
+# blocked itself. Its parent QAF-234 waited until a person woke it at 08:42Z.
+COULD_NOT = ("ANSWER CB-359: could not answer - this run has no `machine_install`, `machine_run` "
+             "or `machine_release` tools, and `gh` isn't signed in, so no capture was made on `mini`.")
+
+
+def qaf244_night(parent="blocked"):
+    return [I("P", parent, idle=3600), I("r", "blocked", "P", idle=1800, assignee="qa",
+                                         blockedTransitionAt=warden.iso(NOW - 1800))]
+
+
+def decide_full(issues, answers, state=None, runs=()):
+    return warden.unstick_actions(list(issues), list(runs), {}, state or {}, NOW, True, answers)
+
+
+class AnsweredOpenLeafTests(unittest.TestCase):
+    def test_could_not_answer_wakes_the_blocked_parent_once_and_never_touches_the_leaf(self):
+        acts = decide_full(qaf244_night(), {"r": (COULD_NOT, None)})
+        self.assertEqual([(a["kind"], a["id"]) for a in acts], [("wake_parent_for_answer", "P")])
+        self.assertEqual((acts[0]["leaf"], acts[0]["leaf_identifier"], acts[0]["stamp"]),
+                         ("r", "QAF-r", warden.iso(NOW - 1800)))
+        self.assertFalse([a for a in acts if a["id"] == "r"], "the leaf gets no action at all")
+
+    def test_control_without_an_answer_nothing_wakes_the_parent(self):
+        self.assertEqual(decide_full(qaf244_night(), {}), [])
+
+    def test_once_per_block_and_again_after_a_re_block(self):
+        state = {"answer_wakes": {"r": warden.iso(NOW - 1800)}}
+        self.assertEqual(decide_full(qaf244_night(), {"r": (COULD_NOT, None)}, state), [])
+        state = {"answer_wakes": {"r": warden.iso(NOW - 9000)}}  # an earlier block of the same leaf
+        self.assertEqual([a["kind"] for a in decide_full(qaf244_night(), {"r": (COULD_NOT, None)}, state)],
+                         ["wake_parent_for_answer"])
+
+    def test_a_parent_that_is_not_blocked_or_is_running_is_left_to_read_it(self):
+        for status in ("todo", "in_progress", "done"):
+            self.assertEqual(decide_full(qaf244_night(status), {"r": (COULD_NOT, None)}), [], status)
+        issues = qaf244_night()
+        issues[0]["activeRun"] = {"id": "run1"}
+        self.assertEqual(decide_full(issues, {"r": (COULD_NOT, None)}), [])
+
+    def test_two_answered_leaves_wake_their_parent_once(self):
+        issues = qaf244_night() + [I("s", "blocked", "P", idle=1800, assignee="qa")]
+        acts = decide_full(issues, {"r": (COULD_NOT, None), "s": (COULD_NOT, None)})
+        self.assertEqual([(a["kind"], a["id"]) for a in acts], [("wake_parent_for_answer", "P")])
+
+    def test_control_an_answer_whose_work_is_over_is_still_closed_not_woken(self):
+        acts = decide_full(qaf244_night(), {"r": (ANSWER_427, "merged")})
+        self.assertEqual([(a["kind"], a["id"]) for a in acts], [("close_answered", "r")])
+
+    def test_a_tickets_engineer_issue_is_never_closed_on_could_not_answer(self):
+        issues = qaf244_night()
+        issues[1]["description"] = "Ticket: CB-359\nCapture it"
+        acts = decide_full(issues, {"r": (COULD_NOT, None)})
+        self.assertEqual([(a["kind"], a["id"]) for a in acts], [("wake_parent_for_answer", "P")])
+
+    def test_the_record_is_kept_while_the_leaf_stays_blocked(self):
+        st = {"answer_wakes": {"r": "s1", "gone": "s2", "moved": "s3"}}
+        warden.prune_unstick_state(st, [I("r", "blocked"), I("moved", "todo")], NOW)
+        self.assertEqual(st["answer_wakes"], {"r": "s1"})
+
+
+class AnsweredOpenLeafTickTests(unittest.TestCase):
+    def run_tick(self, state):
+        pc = FakePC()
+        pc.all, pc.pool = qaf244_night(), POOL_OK
+        pc.threads = {"r": [C("qa", COULD_NOT, NOW - 1800)]}
+        _, _, logs = tick(gh=CountingGH(), pc=pc, state=state, now=NOW, cfg={"company_id": "co"})
+        return pc, logs
+
+    def test_the_parent_gets_one_comment_and_no_status_moves(self):
+        state = {}
+        pc, logs = self.run_tick(state)
+        self.assertEqual([c[0] for c in pc.comments], ["P"])
+        self.assertIn("QAF-r", pc.comments[0][1])
+        self.assertEqual(pc.statuses, [], "neither the leaf nor the parent changes status")
+        self.assertIn("UNSTUCK: wake_parent_for_answer QAF-P", logs)
+        self.assertEqual(state["unstick"]["companies"]["co"]["answer_wakes"], {"r": warden.iso(NOW - 1800)})
+        pc, _ = self.run_tick(state)
+        self.assertEqual(pc.comments, [], "the same block wakes the parent once")
 
 
 if __name__ == "__main__":

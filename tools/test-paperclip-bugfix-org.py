@@ -741,6 +741,21 @@ class InstructionTests(unittest.TestCase):
         self.assertIn("Never close a workflow PR because `gh pr merge` refused it.", flat(skill))
         self.assertNotIn("BUGFIX_GH_WORKFLOW_TOKEN", lead, "the lead never holds the workflow token")
 
+    def test_qa_tests_a_sha_in_a_second_worktree_and_never_detaches_its_own(self):
+        # CB-492: QA's own `git checkout <sha>` left its Paperclip worktree on a
+        # detached HEAD, and every later run there failed workspace validation.
+        for text in (read("skills", "cb-bugfix", "SKILL.md"), read("agents", "tamsin-oyelaran", "AGENTS.md")):
+            flat = " ".join(text.split())
+            self.assertIn("Never move your own worktree off its branch.", flat)
+            self.assertIn('git worktree add --detach "$TMPDIR/qa-<sha>" <sha>', flat)
+            self.assertIn('git worktree remove --force "$TMPDIR/qa-<sha>"', flat)
+            self.assertIn("workspace_validation_failed", flat)
+        # Control: no instruction anywhere tells an agent to check out a bare sha or FETCH_HEAD.
+        bare = re.compile(r"git checkout (-q )?(--detach )?(<sha>|FETCH_HEAD|[0-9a-f]{7,40})(?! --)")
+        for slug in AGENTS:
+            for m in bare.finditer(read("agents", slug, "AGENTS.md")):
+                self.assertIn("leaves it on a detached HEAD", read("agents", slug, "AGENTS.md")[m.start():m.start() + 400], slug)
+
     def test_a_mobile_rerun_waits_for_the_per_repo_warden(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")
         self.assertIn('`{"verb": "rerun_failed", "pr": <PR number>, "repo": "mobile"}`', skill)

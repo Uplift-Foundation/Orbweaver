@@ -866,7 +866,7 @@ def unstick_actions(issues, runs, comments_at, state, now, pool_ok, answers=None
                 blocked leaves whose newest agent comment is the assignee's ANSWER
 
     Kinds: close_answered, close_parent, wake_parent, reset_session,
-    wake_child, cancel_child."""
+    wake_child, cancel_child, wake_parent_for_answer."""
     answers = answers or {}
     by_id = {i["id"]: i for i in issues}
     live = live_issue_ids(issues, runs)
@@ -882,6 +882,8 @@ def unstick_actions(issues, runs, comments_at, state, now, pool_ok, answers=None
     woken = state.get("parent_woken", {})
     wakes = state.get("child_wakes", {})
     resets = state.get("resets", {})
+    answer_wakes = state.get("answer_wakes", {})
+    parents_told = set()
     out = []
     for i in issues:
         iid, status = i["id"], i.get("status")
@@ -900,6 +902,16 @@ def unstick_actions(issues, runs, comments_at, state, now, pool_ok, answers=None
             if why:
                 out.append(dict(base, kind="close_answered", why=why))
                 continue
+            # CB-492: answered, blocked, and its work is not over ("could not
+            # answer", QAF-244). Nothing else moves it: wake refuses an answered
+            # task, close_answered refuses an open one, and rule 1 waits for
+            # every child to settle, which this one never will. So its parent
+            # is woken to read the answer, once per block of the leaf. The leaf
+            # itself is never touched: an engineer's task is never marked done.
+            wake = answer_wake(i, by_id.get(i.get("parentId")), live, answer_wakes)
+            if wake and wake["id"] not in parents_told:
+                parents_told.add(wake["id"])
+                out.append(wake)
 
         # 3. Tied to an exhausted account. Decided first, but only while the
         # usage cancel is under an hour old: then the task is waiting on usage,
@@ -949,6 +961,21 @@ def unstick_actions(issues, runs, comments_at, state, now, pool_ok, answers=None
     return out
 
 
+def answer_wake(leaf, parent, live, answer_wakes):
+    """The wake_parent_for_answer action for an answered blocked leaf whose
+    work is not over, or None. Its parent must be blocked with no run in
+    flight: a parent that is running or queued will read the answer itself.
+    `answer_wakes` maps a leaf id to the block stamp it was last woken for, so
+    each block wakes the parent once and a re-block wakes it again."""
+    stamp = leaf.get("blockedTransitionAt") or leaf.get("updatedAt")
+    if (not parent or not stamp or parent.get("status") != "blocked" or parent["id"] in live
+            or answer_wakes.get(leaf["id"]) == stamp):
+        return None
+    return {"kind": "wake_parent_for_answer", "id": parent["id"],
+            "identifier": parent.get("identifier") or parent["id"][:8],
+            "leaf": leaf["id"], "leaf_identifier": leaf.get("identifier") or leaf["id"][:8], "stamp": stamp}
+
+
 def prune_unstick_state(state, issues, now):
     """Forget what no longer applies: a parent that is no longer blocked, a
     child that has settled, a reset older than the hour it guards. A task that
@@ -959,6 +986,8 @@ def prune_unstick_state(state, issues, now):
     state["child_wakes"] = {k: v for k, v in state.get("child_wakes", {}).items()
                             if by_id.get(k) not in SETTLED and k in by_id}
     state["resets"] = {k: v for k, v in state.get("resets", {}).items() if now - v < RESET_EVERY}
+    state["answer_wakes"] = {k: v for k, v in state.get("answer_wakes", {}).items()
+                             if by_id.get(k) == "blocked"}
     return state
 
 
@@ -969,6 +998,9 @@ WAKE_CHILD = ("Warden: no run and no activity on this task for 20 minutes. Carry
               "say where it stands (wake {n} of 2; after that the warden cancels it).")
 WAKE_PARENT_AFTER_CANCEL = ("Warden: cancelled {child} after two unanswered wakes. It is not a "
                             "release. Decide whether to reassign it or finish the pass without it.")
+WAKE_PARENT_FOR_ANSWER = ("Warden: {leaf} has answered and is blocked, and its work is not over. "
+                          "Read its answer and decide: give it another task, release the ticket, or "
+                          "finish the pass without it.")
 WAKE_AFTER_RESET = ("Warden: the last run on this task was cancelled because its pool account "
                     "was over its usage limit, and another account now has room. The session "
                     "was reset; please carry on.")
@@ -1642,6 +1674,10 @@ class Warden:
         elif k == "wake_parent":
             self.pc.comment(iid, WAKE_PARENT)
             st.setdefault("parent_woken", {})[iid] = self.now
+        elif k == "wake_parent_for_answer":
+            # A board comment wakes the parent's assignee; the leaf is untouched.
+            self.pc.comment(iid, WAKE_PARENT_FOR_ANSWER.format(leaf=a["leaf_identifier"]))
+            st.setdefault("answer_wakes", {})[a["leaf"]] = a["stamp"]
         elif k == "wake_child":
             self.pc.comment(iid, WAKE_CHILD.format(n=a["wakes"]))
             st.setdefault("child_wakes", {})[iid] = [a["wakes"], self.now]

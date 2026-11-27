@@ -723,6 +723,35 @@ class World(unittest.TestCase):
         self.assertEqual(len(self.pc.comments["c"]), 1, "and the task is woken")
         self.assertTrue(all(o == self.pc.base for m, p, b, o in self.pc.writes()))
 
+    def qaf244_world(self, answer):
+        """CB-492: pass QAF-234 blocked; its leaf QAF-244 answered and blocked itself."""
+        self.pc.issues["blocked"] = [
+            {"id": "P", "identifier": "QAF-234", "status": "blocked", "parentId": None,
+             "assigneeAgentId": "lead", "activeRun": None, "lastActivityAt": self.OLD, "updatedAt": self.OLD},
+            {"id": "L", "identifier": "QAF-244", "status": "blocked", "parentId": "P",
+             "assigneeAgentId": "qa", "activeRun": None, "lastActivityAt": self.OLD, "updatedAt": self.OLD,
+             "blockedTransitionAt": "2026-11-27T07:08:02.979Z", "description": "Ticket: CB-359\n"}]
+        self.pc.comments["L"] = [{"id": "a1", "authorAgentId": "qa", "createdAt": "2026-11-27T07:08:03.165Z",
+                                  "body": answer}]
+
+    def test_unstick_wakes_the_parent_of_a_could_not_answer_leaf_once(self):
+        self.qaf244_world("ANSWER CB-359: could not answer - this run has no machine tools.")
+        self.assert_untouched(self.run_warden())
+        self.assertEqual(len(self.pc.comments.get("P", [])), 1, "the parent is woken")
+        self.assertIn("QAF-244", json.dumps(self.pc.comments["P"]))
+        self.assertFalse([r for r in self.pc.requests if r[0] == "PATCH" and r[1].startswith("/api/issues/")],
+                         "no task changes status, the engineer's leaf least of all")
+        self.assertIn("UNSTUCK: wake_parent_for_answer QAF-234", open(os.path.join(self.d, "warden.log")).read())
+        with open(os.path.join(self.d, "state.json")) as f:
+            self.state = json.load(f)
+        self.run_warden()
+        self.assertEqual(len(self.pc.comments["P"]), 1, "once per block")
+
+    def test_unstick_control_a_non_answer_leaves_the_parent_alone(self):
+        self.qaf244_world("Still working on the capture.")
+        self.assert_untouched(self.run_warden())
+        self.assertNotIn("P", self.pc.comments)
+
     def test_unstick_client_methods(self):
         self.pc.comments["i1"] = [{"authorAgentId": "a", "createdAt": "2026-01-01T00:00:10Z"},
                                   {"authorAgentId": "a", "createdAt": "2026-01-01T00:00:20Z",

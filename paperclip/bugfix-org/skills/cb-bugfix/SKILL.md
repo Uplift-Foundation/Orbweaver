@@ -684,6 +684,16 @@ was tested costs more than one that admits a gap.
 
 ## QA and merge
 
+**Never move your own worktree off its branch.** To build or test the PR at
+its sha, use a second worktree and remove it when you are done:
+`git fetch origin <branch> && git worktree add --detach "$TMPDIR/qa-<sha>" <sha>`, then
+`git worktree remove --force "$TMPDIR/qa-<sha>"`. A `git checkout <sha>`,
+`git checkout --detach ...` or `git checkout FETCH_HEAD` in your own worktree
+leaves it on a detached HEAD, and Paperclip refuses to start your next run there
+(`workspace_validation_failed`): that blocked QAF-194 and QAF-198 three times
+each on 2026-11-27 (CB-492). Checking out a single file from another ref
+(`git checkout <ref> -- <path>`) does not detach; restore it before you finish.
+
 QA reviews one sha, re-resolved just before reporting, and posts a **review
 comment** (not an approval, GitHub refuses that on the account's own PR) whose
 body starts `[bugfix-org] QA`, names what its repository's row in **Two

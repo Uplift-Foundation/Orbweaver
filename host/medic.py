@@ -139,6 +139,8 @@ def swept_ids(unstick_company_state):
     """Issue ids the warden's unstick sweep has already acted on (CB-479)."""
     st = unstick_company_state or {}
     out = set(st.get("parent_woken", {})) | set(st.get("child_wakes", {})) | set(st.get("resets", {}))
+    # A leaf whose parent the sweep woke to read its answer (CB-492).
+    out |= set(st.get("answer_wakes", {}))
     return out
 
 
@@ -248,10 +250,26 @@ def trips(company, windows, routine, runs, issues, approvals, unstick_cst, last_
     return out
 
 
-def incident_key(tripped):
-    """Which checks hold, not their details (those carry times): the same set
-    of checks across cycles is the same incident."""
-    return ",".join(sorted({name for name, _ in tripped}))
+def incident_key(tripped, stuck=()):
+    """Which checks hold, not their details (those carry times), and for
+    `stuck`, which tasks at which blocks (CB-492). `stuck` is the
+    [(issue id, block stamp)] behind that check. The same checks over the same
+    blocks across cycles are one incident; a newly stuck task, or one blocked
+    again, is a new one. Keyed by check names alone, one escalation on "stuck"
+    muted the medic for every stuck task after it: 05:35Z to 08:40Z on
+    2026-11-27, while QAF-228 and then QAF-244 stood stuck."""
+    key = ",".join(sorted({name for name, _ in tripped}))
+    if stuck and any(name == "stuck" for name, _ in tripped):
+        key += "|" + ",".join(f"{iid}@{stamp}" for iid, stamp in sorted(stuck))
+    return key
+
+
+def stuck_blocks(issues, approvals, unstick_company_state, now):
+    """incident_key's `stuck`: (issue id, block stamp) per stuck task, and
+    (approval id, created) per waiting approval."""
+    tasks, waiting = stuck_rows(issues, approvals, unstick_company_state, now)
+    return ([(i["id"], block_stamp(i) or "") for i, _ in tasks]
+            + [(a["id"], a.get("createdAt") or "") for a, _ in waiting])
 
 
 def launch_due(state, now):
@@ -668,10 +686,12 @@ class Medic:
             tripped = [("paperclip_unreadable", f"Paperclip API unreadable: {type(e).__name__} {getattr(e, 'code', '')}".rstrip())]
             company = routine = None
             runs, issues, approvals, agents = [], [], [], []
+            blocks = []
         else:
             cst = ((wst.get("unstick") or {}).get("companies") or {}).get(self.company, {})
             tripped = trips(company, wst.get("pauses", []), routine, runs, issues, approvals,
                             cst, self.last_tick(), now)
+            blocks = stuck_blocks(issues, approvals, cst, now)
         st = self.state()
         if not tripped:
             if st.get("incident"):
@@ -679,7 +699,7 @@ class Medic:
                 st.pop("incident", None)
                 self.save("medic-state.json", st)
             return 0
-        key = incident_key(tripped)
+        key = incident_key(tripped, blocks)
         inc = st.get("incident")
         if not inc or inc.get("key") != key:
             inc = st["incident"] = {"key": key, "since": now, "launches": 0, "escalated": None}
@@ -1053,8 +1073,9 @@ class Medic:
             raise Refused("this incident has already been escalated")
         pending = self.pc.call("GET", f"/api/companies/{self.company}/approvals?status=pending") or []
         if any((a.get("payload") or {}).get("source") == MEDIC_SOURCE and a.get("status") == "pending" for a in pending):
-            inc["escalated"] = self.now
-            self.save("medic-state.json", st)
+            # Not recorded as made (CB-492): this incident has told no one, and
+            # marking it escalated stopped every later launch while the stuck
+            # tasks changed under it. Warren still has the earlier one.
             raise Refused("an earlier medic escalation is still pending")
         # A pending board approval is what the app already shows as "needs you":
         # PaperclipApi.Compose puts it on the lead's orb (no agent named) with

@@ -40,6 +40,16 @@ Read the PR (`gh pr view`, `gh pr diff`, `gh pr checks`) and the ticket, and
 decide whether it can merge. You review a sha: re-resolve the PR head sha
 immediately before you report and name the one you checked.
 
+**Never move your own worktree off its branch.** To build or test the PR at
+its sha, use a second worktree and remove it when you are done:
+`git fetch origin <branch> && git worktree add --detach "$TMPDIR/qa-<sha>" <sha>`, then
+`git worktree remove --force "$TMPDIR/qa-<sha>"`. A `git checkout <sha>`,
+`git checkout --detach ...` or `git checkout FETCH_HEAD` in your own worktree
+leaves it on a detached HEAD, and Paperclip refuses to start your next run there
+(`workspace_validation_failed`): that blocked QAF-194 and QAF-198 three times
+each on 2026-11-27 (CB-492). Checking out a single file from another ref
+(`git checkout <ref> -- <path>`) does not detach; restore it before you finish.
+
 You check:
 
 - the fix addresses what the ticket says, and a test fails without it and passes
