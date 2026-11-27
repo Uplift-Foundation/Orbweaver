@@ -22,6 +22,14 @@ public class ChatPanelThreadTugTests : IDisposable
     public ChatPanelThreadTugTests()
     {
         ThreadTug.Reset();
+        // CB-490: stop the tug's frame timer if an earlier test left it running.
+        // Its tick is TeamLinks.Refresh, which keeps only team members in the
+        // tug, so on the shared PerAssembly dispatcher a tick landing in this
+        // test's first Flush forgot this orb: the send's acknowledge then had
+        // nothing to silence, and the next Observe started a fresh tug, (0, 1)
+        // at the second assert. With no members NeedsFrames is false, and Drive
+        // stops the timer rather than starting it.
+        ThreadTug.Drive(() => { });
         ThreadTug.Clock = () => _now;
         MotionPolicy.ReduceMotionProbe = () => false;
     }
@@ -30,6 +38,7 @@ public class ChatPanelThreadTugTests : IDisposable
     {
         foreach (var id in _sessionIdsToClean) ChatPanel.HideFor(id);
         ThreadTug.Reset();
+        ThreadTug.Drive(() => { });
         ThreadTug.Clock = null;
         MotionPolicy.ReduceMotionProbe = null;
     }
@@ -74,6 +83,9 @@ public class ChatPanelThreadTugTests : IDisposable
 
         ChatPanel.OpenFor(orb, NewFake());
         Flush();
+        // Still ringing after the panel opened and the dispatcher ran: if
+        // anything forgot this orb, a failure says so here, not after the send.
+        Assert.True(ThreadTug.Now(orb).Glow > 0, "setup: the tug should still be ringing once the panel is open");
 
         return (orb, ChatPanelTestAccess.Instance!.FindControl<TextBox>("Input")!);
     }
@@ -84,6 +96,8 @@ public class ChatPanelThreadTugTests : IDisposable
         var (orb, input) = OpenWithATugRinging();
 
         Type(input, "hello");
+        // The text landed, so a failure below is about the send, not focus.
+        Assert.Equal("hello", input.Text);
         PressEnter(input);
 
         Assert.Equal((0, 0), ThreadTug.Now(orb));
