@@ -227,6 +227,37 @@ def run_problem(req, hold, pr):
 STAMP_RE = re.compile(r"[0-9a-f]{7,40}")
 
 
+# Words that put keystrokes or clicks in front of whoever is using a machine.
+# The MacBook is somebody's desk: their real input interleaves with a
+# synthesized one, and a click meant for a test lands in their work (CB-488).
+# The mini is headless and is not listed. This is a tripwire for the honest
+# mistake, not a wall: a command can spell the same thing another way, the
+# skill's rule is the control, and every command is logged for the lead.
+# It errs toward refusing: every osascript is refused, read-only ones too
+# (`activate` alone takes the focus from whoever is typing), and so is a
+# command that only mentions one of the words. The skill says so, so nobody
+# spends a round finding out.
+# `tmux send-keys` is not here on purpose: it types into the org's own
+# detached session, which no person is looking at.
+NO_INPUT_MACHINES = ("macbook",)
+INPUT_RE = re.compile(r"osascript|cliclick|shortcuts\s+run|system events|cgevent|keystroke|key code"
+                      r"|pyautogui|\bquartz\b",
+                      re.IGNORECASE)
+
+
+def input_problem(req):
+    """Why a machine_run may NOT go ahead because of what its command would
+    type or click, and where."""
+    if req["machine"] not in NO_INPUT_MACHINES:
+        return None
+    m = INPUT_RE.search(req["command"])
+    if m is None:
+        return None
+    return (f"the command names `{m.group(0)}`, which sends keyboard or mouse input, and "
+            f"{req['machine']} is a person's desk; get this proof on mini or in a test "
+            "(skill, A proof that seems to need a person)")
+
+
 def installed_stamp_ok(stamp, head, commit_of):
     """True when the build now on a machine is the PR at `head`.
 
@@ -494,7 +525,8 @@ class Runner:
         run_fields = dict(machine=name, exit_code=None, timed_out=False,
                           stdout_truncated=False, stderr_truncated=False)
         pr = self.gh.pr(req["pr"])
-        why = pr_problem(pr, self.cfg["allowed_authors"]) or run_problem(req, self.hold, pr)
+        why = (pr_problem(pr, self.cfg["allowed_authors"]) or run_problem(req, self.hold, pr)
+               or input_problem(req))
         if why is None and name not in self.machines:
             why = f"{name} is not available on this runner"
         if why is not None:

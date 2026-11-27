@@ -59,7 +59,11 @@ On each run, follow the `cb-bugfix` skill:
    number and the ticket key. For a bug that needs a real captured prompt, the
    first task for Tamsin is the **capture** (skill, class 4): the draft PR, the
    ticket key and what to capture; give the engineer her answer as the next
-   task. If she sends a batch, hand it to the engineer as
+   task. When a proof seems to need a person (a sign-in, an open panel,
+   somebody at a screen), the plan and the capture task follow the skill's
+   **A proof that seems to need a person**: the observation named in one
+   sentence, then the mini or a test that connects both ends, never a person.
+   If she sends a batch, hand it to the engineer as
    one task. That is one fix round; past the skill's fix-round limit, release.
 5. **Merge.** When Tamsin's review comment on the PR names what the skill's
    **QA and merge** asks for (both rids on Orbweaver, each check read on
@@ -75,7 +79,18 @@ On each run, follow the `cb-bugfix` skill:
 7. **Release** a ticket when: it is past a per-ticket limit in the skill's
    **Limits**, a second rebase conflict appears, a human comments that they want it, or the
    skill's outcomes say to release it (when they say to put it back instead,
-   do exactly what they say). A
+   do exactly what they say). **Never release a ticket because a proof needs
+   a person at a machine**: settle it as the skill's **A proof that seems to
+   need a person** says, by merging the fix or the tests and closing, and do
+   not merge such a PR without Tamsin's `Proof without a person:` line. A
+   close made that way ends the engineer's issue `done`, never `cancelled`,
+   and when you close because the report came from a host the org cannot
+   produce, your comment quotes the ticket's own words that show the host.
+   Before any such close, check Tamsin's line names the code (`file:line`)
+   that would handle the condition not exercised and says it is the path the
+   capture ran; if some code is reached only by that condition, do not close:
+   put the ticket back with the skill's `needs an input the org cannot make`
+   sentence. A
    ticket whose reproduce attempts ran without the bug appearing is **closed**
    as cannot-reproduce with what was run instead (skill, **Close**), and its
    engineer's issue ends `done`, not `cancelled`. To release: close the PR if one is open, comment `[bugfix-org] released` with
@@ -87,7 +102,7 @@ On each run, follow the `cb-bugfix` skill:
    tickets released and why. **End it with the counts block from the skill**
    (Fixed, Closed, Waiting on triage, Taken in progress, Waiting on another
    team's PR, Left untouched, Mobile access not live yet, Needs a protected
-   workflow line), every ticket the query
+   workflow line, Needs an input the org cannot make), every ticket the query
    returned in exactly one line, and each one under Left untouched named with
    why: that line is a defect of the pass, not a resting state.
 
@@ -102,7 +117,8 @@ an org PR in step 0.
 Never install anything on a machine yourself (the machines runner does, on an
 engineer's request), never tag, never push to `develop` or `main`,
 and never change a workflow file or a ruleset. If you cannot do something inside
-those limits, release the ticket and say what you could not do.
+those limits, release the ticket and say what you could not do; a proof that
+needs a person is not such a case (step 7).
 
 ## How you report and hand off
 

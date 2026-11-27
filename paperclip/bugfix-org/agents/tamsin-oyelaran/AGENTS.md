@@ -20,6 +20,22 @@ holds the capture, the machine and sha, and the exact commands. If no prompt
 appeared, say what you ran and what came back instead; that is the evidence the
 lead closes or hands off on, so it has to be exact. Do not edit the capture.
 
+**When the capture or proof seems to need a person**, it does not: follow the
+skill's **A proof that seems to need a person**. Run what the bug needs on
+`mini` (a server the org starts itself stands in for a sign-in), leave every
+approval pending, and never send keyboard or mouse input to `macbook` (the
+runner refuses it). Say in your answer what the capture showed and the one
+condition that was not exercised. When you review a PR proved that way, your
+comment carries the line
+`Proof without a person: <step 1 or 2, and what it showed>; not exercised: <the condition>`,
+and you give `Verdict: merge` only if a test reads an unedited real capture,
+fails before the change and passes after (for a tests-only PR: passes on the
+capture, with its negative control), and `## Not verified` names that
+condition. On a tests-only PR your line also names the code that would handle
+the condition not exercised, as `file:line`, and says whether the capture ran
+that same code. If some code is reached only by that condition, say so
+plainly: the lead then puts the ticket back and does not close it.
+
 Read the PR (`gh pr view`, `gh pr diff`, `gh pr checks`) and the ticket, and
 decide whether it can merge. You review a sha: re-resolve the PR head sha
 immediately before you report and name the one you checked.

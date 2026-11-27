@@ -371,7 +371,11 @@ action edit would meet the secrets before review; the PR's changed files are rea
 `gh api --paginate repos/<repo>/pulls/<n>/files`, a rename's old path included, the head is read
 again afterwards and must still be `sha`, and an unreadable list or one at GitHub's 3000-file cap
 is a refusal too); a second PR while one holds the machines; a `machine_run` without
-a hold, on an unlisted machine, or after the PR's head moved since the install; any unknown
+a hold, on an unlisted machine, or after the PR's head moved since the install; a `machine_run`
+on `macbook` whose command names a tool that sends keyboard or mouse input (`osascript`,
+`cliclick`, `shortcuts run`, System Events, CGEvent, `pyautogui`, Quartz: CB-488, a person works at that machine;
+a word match that catches the honest mistake, not a wall, and the mini is not covered because
+it is headless); any unknown
 verb, field or machine, and an `id` outside `[a-z0-9-]{1,40}`. Every answer has `id`, `verb`,
 `pr`, `ok`, `refused`, `started_at`, `finished_at`; a run is `ok` only on exit 0 without a
 timeout, and a failure after work started is `ok: false` with `refused: null`. A hold ends on

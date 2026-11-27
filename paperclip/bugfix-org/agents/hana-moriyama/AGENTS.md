@@ -50,7 +50,12 @@ Your working directory is a git worktree of `origin/develop` on a branch named
    a draft first, with the test that will read the capture and what must be
    captured, and report it. QA makes the capture; commit it unedited as the
    fixture, show the test failing on it before your fix and passing after, then
-   take the PR out of draft.
+   take the PR out of draft. **When the proof seems to need a person** (a
+   sign-in, an open panel, somebody at a screen), write the observation in
+   one sentence in the PR and get it as the skill's **A proof that seems to
+   need a person** says: on `mini` with a server the org starts itself, or
+   with both ends connected in one test fed the unedited capture. Never
+   report "needs a person" as the reason you stopped.
 10. **A fix in a workflow file** (Orbweaver only): follow the skill's
    **Workflow files** exactly. Push that branch with
    `$BUGFIX_GH_WORKFLOW_TOKEN`; a fix that needs an environment, secret,
