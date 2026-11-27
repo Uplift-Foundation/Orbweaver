@@ -712,6 +712,53 @@ class RunTests(unittest.TestCase):
         self.assertIn("exit=3", line)
         self.assertIn(json.dumps('dir "C:\\x"'), line)
 
+    # CB-488: the MacBook is a person's desk, so a command that would type or
+    # click there is refused before it reaches the machine. Each refusal has
+    # its control: the same command on the headless mini runs, and a command on
+    # the MacBook that sends no input runs.
+    def test_synthesized_input_on_the_macbook_is_refused(self):
+        for command in ("osascript -e 'tell application \"System Events\" to keystroke \"a\"'",
+                        "/opt/homebrew/bin/cliclick c:10,10",
+                        "OSASCRIPT -e 'return 1'",
+                        "python3 -c 'import Quartz; Quartz.CGEventPost(0, e)'",
+                        "python3 -c 'import pyautogui; pyautogui.click()'"):
+            with self.subTest(command):
+                r = make_runner()
+                self.assertTrue(one(r, install(machines=("macbook", "mini")))["ok"])
+                res = one(r, run(machine="macbook", command=command))
+                shape(self, res, *self.RUN_FIELDS)
+                self.assertEqual(res["ok"], False)
+                self.assertIn("keyboard or mouse input", res["refused"])
+                self.assertIn("macbook is a person's desk", res["refused"])
+                self.assertNotIn("run", [c[0] for c in r.machines["macbook"].calls])
+                # Control: the mini is headless, so the same command runs there.
+                res = one(r, run(i="r2", machine="mini", command=command))
+                self.assertEqual((res["ok"], res["refused"]), (True, None))
+                self.assertIn(("run", command, 30), r.machines["mini"].calls)
+
+    def test_a_macbook_command_that_sends_no_input_runs(self):
+        for command in ("tmux -L cb1 send-keys -t q Enter",
+                        "tail -50 ~/Library/Application\\ Support/Orbweaver/mirror-log.txt",
+                        "echo keys && pgrep -fl Orbweaver"):
+            with self.subTest(command):
+                r = make_runner()
+                self.assertTrue(one(r, install(machines=("macbook",)))["ok"])
+                res = one(r, run(machine="macbook", command=command))
+                self.assertEqual((res["ok"], res["refused"]), (True, None))
+                self.assertIn(("run", command, 30), r.machines["macbook"].calls)
+
+    def test_input_problem_names_the_word_and_only_guards_the_listed_machines(self):
+        self.assertEqual(runner.NO_INPUT_MACHINES, ("macbook",))
+        why = runner.input_problem(run(machine="macbook", command="x; cliclick kp:return"))
+        self.assertIn("`cliclick`", why)
+        self.assertIn("A proof that seems to need a person", why)
+        for machine in ("mini", "windows"):
+            self.assertIsNone(runner.input_problem(run(machine=machine, command="cliclick kp:return")))
+        # A hold or a PR problem is still reported first: nothing new is said
+        # to a PR that holds no machines.
+        r = make_runner()
+        self.assertIn("does not hold", one(r, run(machine="macbook", command="osascript -e 1"))["refused"])
+
     def test_refused_run_is_logged_too(self):
         r = make_runner()
         one(r, run())

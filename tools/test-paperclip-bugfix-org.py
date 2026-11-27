@@ -404,8 +404,8 @@ class InstructionTests(unittest.TestCase):
         skill = read("skills", "cb-bugfix", "SKILL.md")
         for needle in ("4. **Bugs that need a real captured prompt**",
                        "`gh pr create ... --draft`", "capture task",
-                       "**If the capture cannot be made within the ticket's fix rounds**",
-                       "or release it when the capture needs something the runner cannot\n   give"):
+                       "**If the capture cannot be made as first planned**",
+                       'and "it needs a person" is never one'):
             with self.subTest(needle):
                 self.assertIn(needle, skill)
         qa = read("agents", "tamsin-oyelaran", "AGENTS.md")
@@ -416,6 +416,89 @@ class InstructionTests(unittest.TestCase):
         # Control: the lead no longer releases a ticket for needing a capture.
         self.assertNotIn("need the mobile repository or a real captured prompt",
                          read("agents", "marisol-vandenberg", "AGENTS.md"))
+
+    # CB-488: CB-373 and CB-359 were released five times between them because
+    # the last proof "needed a person". Each rule that replaces that release
+    # is pinned in the text the agent reads, and the old release wording is
+    # checked gone from every file, so it cannot come back beside the new rule.
+    def test_a_proof_that_needs_a_person_is_never_a_release(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        section = skill.split("## A proof that seems to need a person", 1)[1].split("\n## ", 1)[0]
+        for needle in ("**No ticket is released because its last proof needs a person at a machine.**",
+                       "**Name the observation.**",
+                       "1. **The real CLI and the installed app on `mini`.**",
+                       "**A service the bug needs is one the org starts itself.**",
+                       "**leave it\n   pending**",
+                       "2. **Both ends in one test.**",
+                       "**unedited capture from\n   step 1**",
+                       "negative control"):
+            with self.subTest(needle):
+                self.assertIn(needle, section)
+        # Control: the two clauses that told the org to release are gone.
+        for gone in ("such as a person signing in",
+                     "release it when the capture needs something",
+                     "release the ticket if the proof was the point of it"):
+            with self.subTest(gone):
+                self.assertNotIn(gone, skill)
+        lead = read("agents", "marisol-vandenberg", "AGENTS.md")
+        self.assertIn("**Never release a ticket because a proof needs\n   a person at a machine**", lead)
+        self.assertIn("a proof that\nneeds a person is not such a case", lead)
+        for slug in ("hana-moriyama", "rafaela-quintero"):
+            self.assertIn('Never\n   report "needs a person" as the reason you stopped',
+                          read("agents", slug, "AGENTS.md"))
+
+    def test_what_is_enough_without_the_exact_condition_is_stated(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        section = skill.split("## A proof that seems to need a person", 1)[1].split("\n## ", 1)[0]
+        for needle in ("- **There is a fix.**", "fails before the fix and passes after",
+                       "`## Not verified` names\n  the condition not exercised",
+                       "- **There is no defect to fix.**", "tests-only PR",
+                       "closed as cannot-reproduce",
+                       "lists what a reporter should attach to reopen it",
+                       'It is\nnot "merge unverified"'):
+            with self.subTest(needle):
+                self.assertIn(needle, section)
+        line = "`Proof without a person: <step 1 or 2, and what it showed>; not exercised: <the condition>`"
+        self.assertIn(line, section)
+        self.assertIn("the lead does not merge without that line at the reviewed sha", section)
+        self.assertIn(line, read("agents", "tamsin-oyelaran", "AGENTS.md"))
+        self.assertIn("carries the `Proof without a person:` line", skill.split("## QA and merge", 1)[1])
+        self.assertIn("do\n   not merge such a PR without Tamsin's `Proof without a person:` line",
+                      read("agents", "marisol-vandenberg", "AGENTS.md"))
+        # The bar is not lowered to a merge with no failing test under it: QA
+        # is told the same condition the skill states.
+        qa = read("agents", "tamsin-oyelaran", "AGENTS.md")
+        self.assertIn("fails before the change and passes after", qa)
+
+    def test_a_capture_round_is_not_a_fix_round(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        limits = skill.split("## Limits", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("**A round that pushed no fix is not a fix round.**", limits)
+        self.assertIn("The ninety minutes still bound the\nticket.", limits)
+        self.assertIn("never that it needs a person", limits)
+
+    def test_nobody_types_or_clicks_on_the_macbook(self):
+        skill = read("skills", "cb-bugfix", "SKILL.md")
+        self.assertIn("**A `machine_run` on `macbook` that would type or click is refused.**", skill)
+        self.assertIn("**Never, to get a proof:** keyboard or mouse input on `macbook`", skill)
+        never = skill.split("## Never", 1)[1]
+        self.assertIn("Send keyboard or mouse input to `macbook`", never)
+        self.assertIn("never send keyboard or mouse input to `macbook`",
+                      read("agents", "tamsin-oyelaran", "AGENTS.md"))
+        # Control: the rule the skill states is the one the runner enforces,
+        # for the same machine, and the mini is left free.
+        import sys
+        sys.path.insert(0, os.path.join(HERE, ".."))
+        from host.machines import runner
+        self.assertEqual(runner.NO_INPUT_MACHINES, ("macbook",))
+        req = {"machine": "macbook", "command": "osascript -e 1"}
+        self.assertIsNotNone(runner.input_problem(req))
+        self.assertIsNone(runner.input_problem(dict(req, machine="mini")))
+        # The skill never offers a second copy of the app as a proof: the
+        # single-instance claim has one fixed name, so that copy exits.
+        self.assertIn("a second copy started by hand exits at once", skill)
+        with open(os.path.join(HERE, "..", "Brand.cs"), encoding="utf-8") as f:
+            self.assertIn('SingleInstanceMutexName = "Orbweaver_SingleInstance_Mutex"', f.read())
 
     def test_security_bugs_are_taken_and_never_described_as_an_exploit(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")

@@ -159,12 +159,13 @@ when you read the code.
    - the engineer commits that capture as the fixture, unedited, shows the test
      failing on it before the fix and passing after, and the PR leaves draft.
    Proof: the fixture as captured, the test failing then passing, plus CI green
-   on both rids. **If the capture cannot be made within the ticket's fix rounds**, the ticket
-   still gets an outcome: close it as cannot-reproduce (**Close** in **Every
-   ticket gets an outcome**) when the attempts ran and the prompt did not
-   appear, or release it when the capture needs something the runner cannot
-   give, such as a person signing in. Either way the comment says what was
-   run, on which machine, and what came back.
+   on both rids. **If the capture cannot be made as first planned**, the ticket
+   still gets an outcome, and "it needs a person" is never one. When the
+   prompt seems to need a person (a sign-in, an open panel, somebody at a
+   screen), get it the way **A proof that seems to need a person** says. When
+   the attempts ran and the prompt did not appear, close the ticket as
+   cannot-reproduce (**Close** in **Every ticket gets an outcome**). Either
+   way the comment says what was run, on which machine, and what came back.
 
 **Security bugs are taken like any other bug**, with one added rule: the PR
 body, the commit messages and every Jira comment describe the class of flaw and
@@ -407,10 +408,89 @@ What else a result carries depends on the verb:
   `ok: true` and says so in `stdout.txt`.
 
 **If a request is refused or fails and you cannot finish your proof**, send
-`machine_release` anyway, say in the PR body what you could not confirm, and
-release the ticket if the proof was the point of it. Never work around a refusal
+`machine_release` anyway and say in the PR body what you could not confirm.
+When the proof was the point of the ticket, do not release it for that: get the
+proof the next way **A proof that seems to need a person** gives, and settle
+the ticket as that section says. Never work around a refusal
 (another path, another machine, an edited request): the refusals are the rules,
 and every request and result is logged for the lead.
+
+**A `machine_run` on `macbook` that would type or click is refused.** A person
+works at the MacBook, so the runner refuses a command there that names a tool
+for sending keyboard or mouse input (`osascript`, `cliclick`, System Events and
+the like). `mini` is headless and has no such refusal. On `windows` a command
+runs over ssh with no desktop; a program that needs one is started through a
+scheduled task, never by sending keys.
+
+## A proof that seems to need a person
+
+**No ticket is released because its last proof needs a person at a machine.**
+Nobody sits at the machines, so a ticket released for that reason comes back
+unchanged on the next pass. On 2026-11-27 CB-373 was released twice and CB-359
+three times this way. Each time the next claim found a way that needed nobody:
+both ends of the peer exchange in one test, and a sign-in against a server the
+org runs itself. Take that way first.
+
+**Name the observation.** In the draft PR the engineer writes one sentence:
+what has to be seen, and where, for the bug to count as shown or fixed. For
+CB-373 that was "a peer that asks `PROMPT` for a session waiting on
+AskUserQuestion gets the question back, not `no-prompt`". The proof is that
+observation, not the steps a person would take to cause it. "Open the panel on
+the MacBook" is a step. "The peer asks" is the observation, and a test can ask.
+
+**Get the observation by the first of these that can give it:**
+
+1. **The real CLI and the installed app on `mini`.** Anything a `machine_run`
+   can start there is allowed: a detached `tmux` session, hooks that log their
+   payloads, the mirror log, the status files, and tools under `tools/` run
+   with their own `ORBWEAVER_STATUS_ROOT` and `ORBWEAVER_SETTINGS_DIR` so they
+   never touch the installed app's files. (The app itself runs once per user;
+   a second copy started by hand exits at once, so do not plan a proof around
+   one.) **A service the bug needs is one the org starts itself.** A sign-in is
+   a server answering a browser: run a throwaway server on `127.0.0.1` whose
+   approve step answers by itself, fetch the sign-in link with `curl`, and
+   hand the callback to the session with `tmux send-keys`. That uses no real
+   account, no third party and no person. Bring the dialog up and **leave it
+   pending**: an approval is captured, never answered.
+2. **Both ends in one test.** When the observation is an exchange (two
+   machines, or the app and a panel), connect the real classes in one process
+   (the host's mirror server and the peer's chat session; a panel over
+   `FakeChatSession`) and give the host side the **unedited capture from
+   step 1**. The test asserts the observation and has a negative control
+   beside it (the same exchange with the dialog absent gives no prompt).
+
+**Never, to get a proof:** keyboard or mouse input on `macbook`; a sign-in to
+a real account; an answered approval; an edited capture (scrubbing a home
+path, a host name, a user name or a secret is the only edit, and the PR says
+which); a fixture written from memory.
+
+**When the exact condition still cannot be made**, the ticket is settled on
+what was run, by the first of these that fits. The exact condition is the one
+input the org has no way to produce: a real third party's sign-in, an approval
+card that exists only inside another app's window, a person's own screen.
+
+- **There is a fix.** It merges when all of these hold: a test reads an
+  unedited real capture, fails before the fix and passes after; a negative
+  control sits beside it; the merge gate is green; and `## Not verified` names
+  the condition not exercised in one sentence a reporter could act on. QA's
+  comment carries the line
+  `Proof without a person: <step 1 or 2, and what it showed>; not exercised: <the condition>`,
+  and the lead does not merge without that line at the reviewed sha.
+- **There is no defect to fix.** Every stage the reported symptom passes
+  through was run on real output and behaved. The tests and captures merge as
+  a tests-only PR (the same gate, the same QA line), so the stages stay pinned.
+  Then the ticket is closed as cannot-reproduce. The close comment says what
+  was run, on which machine, at which sha; names the condition not exercised;
+  says so plainly if the captures suggest the report came from somewhere the
+  org cannot produce (for example a session hosted in another app, with no
+  pane to read); and lists what a reporter should attach to reopen it (the
+  pane capture, the hook payloads, the status file).
+
+**Why this is enough.** A release leaves the same gap and an open ticket the
+next pass repeats. This leaves the gap named where a person will read it, the
+stages around it held by tests on real output, and one clear way back in. It is
+not "merge unverified": nothing merges without a test that failed before the
+change and a real capture under it.
 
 ## Claiming and releasing
 
@@ -552,7 +632,9 @@ body starts `[bugfix-org] QA`, names what its repository's row in **Two
 repositories, one code base** says (both rids, `osx-arm64` and `win-x64`, on
 Orbweaver; each check read, on mobile), says which suites ran and what was
 confirmed against what is assumed, carries the `Workflow change:` line on a
-workflow PR, and ends `Verdict: merge` or `Verdict: fix` with one list. The
+workflow PR, carries the `Proof without a person:` line when the PR was proved
+as **A proof that seems to need a person** says, and ends `Verdict: merge` or
+`Verdict: fix` with one list. The
 lead merges only when that comment exists, the repository's merge gate holds at
 the sha it names (on Orbweaver: both required checks are green), and the PR
 head is still that sha:
@@ -597,6 +679,13 @@ here.
 Past a per-ticket limit the ticket is released, or closed when the attempt
 itself is the evidence (**Every ticket gets an outcome**).
 
+**A round that pushed no fix is not a fix round.** A round whose work was a
+capture, or a step of **A proof that seems to need a person**, and which
+changed no product code, does not use one. The ninety minutes still bound the
+ticket. When they run out on a ticket that section covers, the lead settles it
+as that section says with what was run; it is released only if no capture and
+no test exist yet, and the release says that, never that it needs a person.
+
 **Time the company was paused does not count toward the ninety minutes.** The
 warden publishes every pause in `$BUGFIX_SPOOL/pauses.json`, a list of the last
 20 windows, each `{"paused_at": "<UTC time>", "resumed_at": "<UTC time>" or null}`
@@ -629,7 +718,9 @@ ninety minutes start at its new `[bugfix-org] claimed` comment.
 Install on any machine yourself, or run `ssh` or anything else that reaches
 one: only the machines runner does that, when you write it a request (**Real
 machines**). So never take `/tmp/ow-install.lock` (the sandbox denies it
-anyway). Push to `develop`, `main` or another team's branch. Create a tag or
+anyway). Send keyboard or mouse input to `macbook`, sign in to a real
+account, or answer an approval to get a proof. Release a ticket because a
+proof needs a person (**A proof that seems to need a person**). Push to `develop`, `main` or another team's branch. Create a tag or
 a release. Edit `.github/workflows/` other than as **Workflow files** says, or
 on mobile at all. Write a working exploit into a PR, a
 commit or a comment. Paste a secret, a token, a home path or a

@@ -59,7 +59,11 @@ On each run, follow the `cb-bugfix` skill:
    number and the ticket key. For a bug that needs a real captured prompt, the
    first task for Tamsin is the **capture** (skill, class 4): the draft PR, the
    ticket key and what to capture; give the engineer her answer as the next
-   task. If she sends a batch, hand it to the engineer as
+   task. When a proof seems to need a person (a sign-in, an open panel,
+   somebody at a screen), the plan and the capture task follow the skill's
+   **A proof that seems to need a person**: the observation named in one
+   sentence, then the mini or a test that connects both ends, never a person.
+   If she sends a batch, hand it to the engineer as
    one task. That is one fix round; past the skill's fix-round limit, release.
 5. **Merge.** When Tamsin's review comment on the PR names what the skill's
    **QA and merge** asks for (both rids on Orbweaver, each check read on
@@ -75,7 +79,10 @@ On each run, follow the `cb-bugfix` skill:
 7. **Release** a ticket when: it is past a per-ticket limit in the skill's
    **Limits**, a second rebase conflict appears, a human comments that they want it, or the
    skill's outcomes say to release it (when they say to put it back instead,
-   do exactly what they say). A
+   do exactly what they say). **Never release a ticket because a proof needs
+   a person at a machine**: settle it as the skill's **A proof that seems to
+   need a person** says, by merging the fix or the tests and closing, and do
+   not merge such a PR without Tamsin's `Proof without a person:` line. A
    ticket whose reproduce attempts ran without the bug appearing is **closed**
    as cannot-reproduce with what was run instead (skill, **Close**), and its
    engineer's issue ends `done`, not `cancelled`. To release: close the PR if one is open, comment `[bugfix-org] released` with
@@ -102,7 +109,8 @@ an org PR in step 0.
 Never install anything on a machine yourself (the machines runner does, on an
 engineer's request), never tag, never push to `develop` or `main`,
 and never change a workflow file or a ruleset. If you cannot do something inside
-those limits, release the ticket and say what you could not do.
+those limits, release the ticket and say what you could not do; a proof that
+needs a person is not such a case (step 7).
 
 ## How you report and hand off
 
