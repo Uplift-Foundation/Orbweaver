@@ -15,6 +15,10 @@ Jira project `CB` on `uplifttech.atlassian.net`. The `cloudId` is
 project = CB AND issuetype = Bug AND status = Refinement ORDER BY priority DESC, created ASC
 ```
 
+That query picks what to take. A second query, in **Bugs outside
+Refinement**, finds the Bugs nobody is working and settles them. Every pass
+runs both.
+
 ## Every ticket gets an outcome
 
 **No ticket the query returns is skipped in silence.** A pass that read 18
@@ -58,7 +62,8 @@ this order; the first that applies is the one:
    Close by moving it to Done (transition `41`) and posting one comment that
    starts `[bugfix-org] closed:` with the reason and the evidence. Close only a
    ticket in Refinement or one the org itself claimed, never one a person has
-   in Development or Testing. A close is
+   in Development or Testing (a person's ticket whose own PR has merged is
+   settled by **Bugs outside Refinement**, not closed). A close is
    **not a release and needs no claim**. When the close ends a ticket the org
    had claimed, set the engineer's Paperclip issue to `done`, not `cancelled`:
    the ticket was settled.
@@ -109,14 +114,89 @@ Left untouched: <n> (<keys, and why>)
 Mobile access not live yet: <n> (<keys>)
 Needs a protected workflow line: <n> (<keys, and the line each needs>)
 Needs an input the org cannot make: <n> (<keys, and the input each needs>)
+Open outside Refinement: <n> (<each key: moved to Done or Refinement, or left, and why>)
 ```
 
-Every ticket the query returned is in exactly one line. **Left untouched** is
+Every ticket either query returned is in exactly one line. **Left untouched** is
 for a ticket that got no outcome: the ticket limit was full, the
 close cap was reached, or something failed. Each one there is a
 defect of the pass and says why; a pass whose `Left untouched` grows pass after
 pass for the same reason is reporting a problem with these rules, not a quiet
 board.
+
+## Bugs outside Refinement
+
+**A Bug nobody is working does not stay in Development or Testing.** On
+2026-11-27 every pass from 10:00Z to 22:00Z reported an empty board while four
+Bugs sat unworked in Development. One of them had been merged and never moved,
+and one had been claimed by this org and lost when a pass was stopped (CB-493).
+The Refinement query cannot see any of them. So every pass, after step 0 and
+before taking anything, also runs:
+
+```
+project = CB AND issuetype = Bug AND status in (Development, Testing) ORDER BY updated ASC
+```
+
+Each ticket it returns gets exactly one of these outcomes, decided in this
+order; the first that applies is the one:
+
+1. **Settled today.** A comment starting `[bugfix-org] settled:` was posted on
+   it in the last 24 hours. No Jira write; counted on `Open outside
+   Refinement` as `settled already today`. No ticket is moved twice in a day.
+2. **The org is working it.** It has a live Paperclip task, or an open org PR.
+   A live task is one `search_tasks` finds with `query` `Ticket: <key>` and
+   `statuses` `["backlog", "todo", "in_progress", "in_review", "blocked"]`,
+   whose description's first line is exactly `Ticket: <key>` (the search is
+   fuzzy and also returns pass tasks that only mention the key). An open org
+   PR is one the step-0 listing returned whose title names the key. No Jira
+   write; counted on `Taken, in progress`. Step 0 settles the PR.
+3. **Merged.** A PR whose **title** names the key is merged into `develop` in
+   either repository
+   (`gh pr list --repo <repository> --state merged --base develop --search "<key> in:title" --json number,title,mergedAt,mergeCommit`,
+   with the key literally in the returned title), it merged more than an hour
+   ago, and no open PR's title names the key. Move it to Done (`41`) with one
+   comment: `[bugfix-org] settled: PR #<n> merged to develop at <merge sha>;
+   nothing else open names this ticket`. The hour leaves a person who just
+   merged time to move their own ticket, and the open-PR check keeps a ticket
+   with a second PR still in flight open.
+4. **Wait: another team's PR.** An open PR's title names the key and it is not
+   the org's, by the same check as **Wait: another team's PR** in **Every
+   ticket gets an outcome**. No Jira write; counted on `Waiting on another
+   team's PR` with the PR number, and with `idle since <date>` when the PR's
+   `updatedAt` is more than 72 hours old. An idle PR still holds the ticket:
+   put back in Refinement, it would only meet the same wait there.
+5. **The org's lost claim.** The newest comment on the ticket is this org's
+   `[bugfix-org] claimed`, and outcome 2 found no live task and no open org PR.
+   Put it back in Refinement (`11`) with one comment:
+   `[bugfix-org] settled: the org claimed this and lost it; no live task, no open PR; back to Refinement, branch <name> kept`.
+   This is not a release: there is no engineer issue to cancel, and the warden
+   counts only cancelled issues toward a pause. A comment by anyone else after
+   the claim means somebody else has it, and outcome 6 decides it instead.
+6. **Untouched for 72 hours.** It has not changed status and has not been
+   updated in 72 hours. Check that with the query
+   `key = <key> AND NOT status CHANGED AFTER -72h AND updated <= -72h`: an
+   empty result means it moved. Put it back in Refinement (`11`) with one
+   comment:
+   `[bugfix-org] settled: in <status> since <date> with no open PR and no change for 72 hours; back to Refinement so it is worked`.
+7. **Moved recently.** Everything else: somebody moved or commented on it in
+   the last 72 hours. No Jira write; counted on `Open outside Refinement` with
+   the date it last moved.
+
+**The guards, and why each exists.** Read the issue type with `getJiraIssue`
+just before every move, and refuse it unless it is `Bug` (**Transitions: Bug
+only**). Never move a ticket with a live task or an open org PR (outcome 2
+comes before any move). A person who moved a ticket to Development minutes
+ago is protected twice: an open PR naming it holds it (outcome 4), and with no
+PR, 72 hours must pass before outcome 6 applies. The settle comments start
+`[bugfix-org] settled:`, never `[bugfix-org] stopped:`, because a `stopped:`
+comment is a put-back that holds the ticket as a wait (**Wait: put back**),
+and a settled ticket must be taken by the next pass. A ticket moved to
+Refinement here is not taken in the same pass.
+
+Moves here do not use the ticket limit or the close cap; they have their own
+cap (**Limits**). A ticket past the cap is left for the next pass and named on
+`Open outside Refinement` as such. **The pass never reports an empty board
+while this query returns a ticket**: it names each one and its outcome.
 
 ## What this org fixes
 
@@ -582,6 +662,7 @@ connector cannot check this; the rule is the control.
 | merged to `develop` | Testing to Done | the merge sha, what was verified and what was not |
 | gave up | back to Refinement | `[bugfix-org] released`, what it learned, why it stopped |
 | closed | Refinement, or a ticket the org claimed, to Done (`41`); no claim needed | `[bugfix-org] closed:`, the reason and the evidence (**Every ticket gets an outcome**, **Close**) |
+| settled | Development or Testing to Done (`41`) or Refinement (`11`); no claim needed | `[bugfix-org] settled:`, the sentence its outcome gives (**Bugs outside Refinement**) |
 
 ## GitHub access
 
@@ -758,7 +839,8 @@ a red check.
 here.
 
 - **Per run:** at most **two tickets taken** (to fix or reproduce), at most
-  **five closes** (which do not use the two), and at most **two tickets with
+  **five closes** (which do not use the two), at most **five settles** in
+  **Bugs outside Refinement** (which use neither), and at most **two tickets with
   org PRs open** at once (a ticket with a PR in each repository counts once).
 - **Per ticket:** **two fix rounds**, **ninety minutes** from the claim (less
   paused time, below), and **one rebase** onto `develop`.

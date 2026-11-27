@@ -33,6 +33,12 @@ On each run, follow the `cb-bugfix` skill:
    or CI result that lands after a pass ends wakes nobody, so this step is how a
    ready PR gets merged. Never end a pass "waiting on" a run: finish it, and the
    next pass, thirty minutes later, settles the PR.
+   **Then settle the Bugs outside Refinement.** Run the skill's second query
+   (Bugs in Development or Testing) and give each ticket the outcome its
+   **Bugs outside Refinement** section gives: Done when its PR merged, back
+   to Refinement when it is the org's lost claim or untouched for 72 hours,
+   otherwise left with a reason. Never move one that has a live Paperclip
+   task (`search_tasks` for `Ticket: <key>`) or an open org PR.
 1. **Give every ticket an outcome.** Run the Jira query and decide each
    ticket it returns by **Every ticket gets an outcome** in the skill: one of
    its waits (another team's PR only when an open PR's **title** names the
@@ -41,7 +47,8 @@ On each run, follow the `cb-bugfix` skill:
    fix or reproduce, including bugs that need a real captured prompt, up to
    the run limits in the skill's **Limits**, and start the second ticket only
    once the first has a PR open. Only when the query
-   returns nothing at all do you say so and stop.
+   returns nothing at all, and the query in **Bugs outside Refinement** returned
+   nothing either, do you say so and stop.
 2. **Claim.** For each ticket: `transitionJiraIssue` to Development, then
    `addCommentToJiraIssue` with `[bugfix-org] claimed` and the branch name, then
    read the ticket back with `getJiraIssue`. If anyone else's comment or
@@ -81,7 +88,8 @@ On each run, follow the `cb-bugfix` skill:
    close a workflow PR over a refused `gh pr merge`.
 6. **Move the ticket** only as the table in the skill says, with one comment per
    move: Testing when the PR is open, Done when the PR is merged to `develop` or
-   when you close the ticket, Refinement when you release it.
+   when you close the ticket, Refinement when you release it, and Done or
+   Refinement when you settle a ticket outside Refinement.
 7. **Release** a ticket when: it is past a per-ticket limit in the skill's
    **Limits**, a second rebase conflict appears, a human comments that they want it, or the
    skill's outcomes say to release it (when they say to put it back instead,
@@ -108,8 +116,8 @@ On each run, follow the `cb-bugfix` skill:
    tickets released and why. **End it with the counts block from the skill**
    (Fixed, Closed, Waiting on triage, Taken in progress, Waiting on another
    team's PR, Left untouched, Mobile access not live yet, Needs a protected
-   workflow line, Needs an input the org cannot make), every ticket the query
-   returned in exactly one line, and each one under Left untouched named with
+   workflow line, Needs an input the org cannot make, Open outside
+   Refinement), every ticket either query returned in exactly one line, and each one under Left untouched named with
    why: that line is a defect of the pass, not a resting state.
 
 **You may only transition tickets whose issue type is `Bug`.** Read the type with
@@ -117,8 +125,9 @@ On each run, follow the `cb-bugfix` skill:
 connector cannot enforce this (it allows or blocks an action per agent, not per
 ticket type), so this rule is the control. You never edit a field, assign,
 link, log work or create a ticket. You touch a ticket you did not claim in this
-run only to close it with the evidence comment the skill asks for, or to settle
-an org PR in step 0.
+run only to close it with the evidence comment the skill asks for, to settle
+an org PR in step 0, or to settle it as the skill's **Bugs outside Refinement**
+says.
 
 Never install anything on a machine yourself (the machines runner does, on an
 engineer's request), never tag, never push to `develop` or `main`,
