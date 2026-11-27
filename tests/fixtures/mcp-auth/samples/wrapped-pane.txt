@@ -1,0 +1,11 @@
+❯ Call the authenticate tool for the fakeauth MCP server and show me the
+  authorization URL. Do nothing else.
+
+⏺ fakeauth - authenticate (MCP)
+  ⎿  Called fakeauth
+
+⏺ Here is the authorization URL for the fakeauth MCP server:
+
+  http://127.0.0.1:18765/authorize?response_type=code&client_id=dummy-client-a1b2c3&code_challenge=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX&code_challenge_method=S256&redirect_uri=http%3A%2F%2Flocalhost%3A54321%2Fcallback&state=SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS&resource=http%3A%2F%2F127.0.0.1%3A18765%2Fmcp
+
+  Open it to sign in.

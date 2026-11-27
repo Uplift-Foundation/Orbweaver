@@ -71,6 +71,7 @@ class H(BaseHTTPRequestHandler):
             meta = json.loads(raw or b"{}")
             cid = "dummy-client-" + secrets.token_hex(3)
             CLIENTS[cid] = meta
+            sys.stderr.write(f"fake_oauth_mcp: registered client_id={cid}\n")
             return self._send(201, {**meta, "client_id": cid, "token_endpoint_auth_method": "none"})
         if u.path == "/token":
             form = {k: v[0] for k, v in parse_qs(raw.decode()).items()}
