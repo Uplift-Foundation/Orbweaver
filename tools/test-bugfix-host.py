@@ -3297,6 +3297,7 @@ class UnstickAnsweredTickTests(unittest.TestCase):
         tick(gh=CountingGH(), pc=pc, state={}, now=NOW, cfg={"company_id": "co"})
         self.assertEqual(pc.read, ["r"])
 
+@unittest.skipIf(os.name != "posix", "the token file needs O_NOFOLLOW, dir_fd and a uid; the host is a Mac")
 class TokenNeverExpiresMidRunTests(unittest.TestCase):
     """CB-489: QAF-190 and QAF-209 started with dead tokens, because the
     warden did not mint while paused and, on a resume, restarted the stopped
@@ -3429,6 +3430,17 @@ class TokenNeverExpiresMidRunTests(unittest.TestCase):
         named = os.path.join(self.root, "named")
         tick(cfg={"spool": self.spool, "token_dir": named})
         self.assertEqual(open(os.path.join(named, "gh-token")).read(), "tok1\n")
+
+    def test_off_posix_the_secret_still_rotates_and_no_file_is_tried(self):
+        # CI's win-x64 leg: write_token's calls do not exist there, and an
+        # AttributeError once escaped publish and stopped the secret rotating.
+        self.addCleanup(setattr, warden.os, "name", warden.os.name)
+        warden.os.name = "nt"
+        pc = FakePC()
+        _, _, logs = tick(pc=pc, cfg={"spool": self.spool})
+        self.assertEqual(pc.secrets, [("GITHUB_TOKEN", "tok1")])
+        self.assertFalse(os.path.exists(self.tokens))
+        self.assertFalse(any("not written" in l for l in logs))
 
     def test_no_spool_writes_no_file(self):
         pc = FakePC()

@@ -1386,9 +1386,11 @@ class Warden:
         the token folder too, for the shims to read at each call (CB-489).
         The file is written first: a run started between the two then still
         finds a live token there. A file that cannot be written is logged;
-        the secret still goes. The workflow token never gets a file."""
+        the secret still goes. The workflow token never gets a file, and
+        neither does anything off POSIX: write_token needs O_NOFOLLOW, dir_fd
+        and a uid, and the warden only runs on the Mac mini."""
         d = token_dir(self.cfg)
-        if d and name in TOKEN_FILES:
+        if d and name in TOKEN_FILES and os.name == "posix":
             try:
                 write_token(d, TOKEN_FILES[name], token)
             except OSError as e:
