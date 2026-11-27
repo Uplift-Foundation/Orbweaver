@@ -91,7 +91,7 @@ namespace Orbweaver
 
         // Forgets every member, so one test's orbs are not the next one's.
         internal static Action<string>? Trace;
-        private static void T(string what) => Trace?.Invoke(what + " clock=" + _clock() + " rm=" + MotionPolicy.ReduceMotion + "\n" + Environment.StackTrace);
+        private static void T(string what) => Trace?.Invoke(what + " clock=" + _clock() + " rm=" + MotionPolicy.ReduceMotion + "\n" + Environment.StackTrace + "\n" + SessionManager.DiagAnimStart);
 
         internal static string Describe(object member) =>
             Members.TryGetValue(member, out var e)

@@ -5892,12 +5892,14 @@ namespace Orbweaver
         // waiting. Every glide is stepped with time since the animation began.
         internal Func<long> Now { get; set; } = () => Environment.TickCount64;
 
+        internal static string DiagAnimStart = "(none)";
         private void AnimateArrangement(
             Action? onComplete = null, bool spring = false, IReadOnlyCollection<string>? first = null,
             Fling fling = default)
         {
             _arrangeAnimComplete = onComplete;
             _arrangeAnimStart = Now();
+            DiagAnimStart = "ANIM STARTED tick64=" + Environment.TickCount64 + " Now=" + _arrangeAnimStart + "\n" + Environment.StackTrace;
             _arrangeSprings = spring && _arrangeAnimTargets is { } targets ? SpringsFor(targets, first, fling) : null;
 
             // The outlines measure every gliding orb at its slot, so they spring
