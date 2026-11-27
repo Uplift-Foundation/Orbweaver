@@ -17,6 +17,9 @@ public class ThreadTugInteractionTests : IDisposable
     public ThreadTugInteractionTests()
     {
         ThreadTug.Reset();
+        // CB-490: stop a frame timer an earlier test left running; its tick
+        // (TeamLinks.Refresh) forgets any tug member outside a team.
+        ThreadTug.Drive(() => { });
         ThreadTug.Clock = () => _now;
         MotionPolicy.ReduceMotionProbe = () => false;
     }
@@ -24,6 +27,7 @@ public class ThreadTugInteractionTests : IDisposable
     public void Dispose()
     {
         ThreadTug.Reset();
+        ThreadTug.Drive(() => { });
         ThreadTug.Clock = null;
         MotionPolicy.ReduceMotionProbe = null;
     }
