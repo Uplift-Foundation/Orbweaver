@@ -63,11 +63,12 @@ RIDS = ("osx-arm64", "win-x64")
 REQUIRED_CHECKS = ("build (macos-latest, osx-arm64)", "build (windows-latest, win-x64)")
 # Paperclip resolves BUGFIX_GH_TOKEN once, when a run starts, and an
 # installation token lives one hour, so a run's environment copy can expire
-# under it. Each mint is therefore also written to <spool>/tokens/ (CB-489),
-# where the gh and git shims read it at every call. Minting every ten minutes
+# under it. Each mint is therefore also written to the token folder (CB-489),
+# where the gh and git shims read it at every call. The folder is a sibling of
+# the spool, never inside it: agents write requests into the spool. Minting every ten minutes
 # on a five-minute tick keeps that file at least 45 minutes from expiry.
 MINT_INTERVAL = 10 * 60
-TOKEN_DIR = "tokens"
+TOKEN_DIR = "bugfix-tokens"
 TOKEN_FILES = {"GITHUB_TOKEN": "gh-token", "GITHUB_TOKEN_WORKFLOWS": "gh-workflow-token"}
 VERBS = ("dispatch_stress", "released", "push_refused", "rerun_failed")
 CLASS_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]{0,199}$")
@@ -1376,13 +1377,14 @@ class Warden:
             self.log("workflow token refreshed (" + ", ".join(plan["workflows"]) + ")")
 
     def publish(self, name, token):
-        """The company secret, for a run's start, and <spool>/tokens/, for
+        """The company secret, for a run's start, and the token folder, for
         the shims to read at each call (CB-489). The file is written first:
         a run started between the two then still finds a live token there.
         A file that cannot be written is logged; the secret still goes."""
-        if self.cfg.get("spool"):
+        d = token_dir(self.cfg)
+        if d:
             try:
-                write_token(self.cfg["spool"], TOKEN_FILES[name], token)
+                write_token(d, TOKEN_FILES[name], token)
             except OSError as e:
                 self.log(f"{TOKEN_DIR}/{TOKEN_FILES[name]} not written: {type(e).__name__}")
         self.pc.put_secret(name, token)
@@ -1867,11 +1869,22 @@ def write_access(spool, repos, workflows, now, withheld=None):
     os.replace(tmp, path)
 
 
-def write_token(spool, filename, token):
-    """<spool>/tokens/<filename>, 0600 in a 0700 folder, written whole and
-    renamed into place so a shim never reads half a token. The token is the
-    only line. os.replace swaps a planted symlink rather than following it."""
-    d = os.path.join(spool, TOKEN_DIR)
+def token_dir(cfg):
+    """`token_dir` from warden.json, else <the spool's parent>/bugfix-tokens:
+    beside the spool, not in it, and inside the sandbox's readable tree, which
+    is where the shims look when BUGFIX_TOKEN_DIR is unset. None without a
+    spool."""
+    if cfg.get("token_dir"):
+        return cfg["token_dir"]
+    if cfg.get("spool"):
+        return os.path.join(os.path.dirname(os.path.normpath(cfg["spool"])), TOKEN_DIR)
+    return None
+
+
+def write_token(d, filename, token):
+    """<d>/<filename>, 0600 in a 0700 folder, written whole and renamed into
+    place so a shim never reads half a token. The token is the only line.
+    os.replace swaps a planted symlink rather than following it."""
     os.makedirs(d, mode=0o700, exist_ok=True)
     os.chmod(d, 0o700)
     path = os.path.join(d, filename)

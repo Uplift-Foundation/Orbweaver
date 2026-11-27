@@ -3300,15 +3300,19 @@ class UnstickAnsweredTickTests(unittest.TestCase):
 class TokenNeverExpiresMidRunTests(unittest.TestCase):
     """CB-489: QAF-190 and QAF-209 started with dead tokens, because the
     warden did not mint while paused and, on a resume, restarted the stopped
-    work before it minted. Each mint now also lands in <spool>/tokens/ for the
+    work before it minted. Each mint now also lands in bugfix-tokens/, beside
+    the spool and never in it, for the
     gh and git shims to read at every call."""
 
     def setUp(self):
-        self.spool = tempfile.mkdtemp()
-        self.addCleanup(lambda: __import__("shutil").rmtree(self.spool, True))
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.root, True))
+        self.spool = os.path.join(self.root, "bugfix-spool")
+        self.tokens = os.path.join(self.root, "bugfix-tokens")
+        os.mkdir(self.spool)
 
     def token_file(self, name):
-        return os.path.join(self.spool, "tokens", name)
+        return os.path.join(self.tokens, name)
 
     def test_a_resume_mints_before_it_restarts_the_stopped_work(self):
         events = []
@@ -3338,10 +3342,11 @@ class TokenNeverExpiresMidRunTests(unittest.TestCase):
         self.assertEqual(open(self.token_file("gh-workflow-token")).read(), "tok2\n")
         for f in ("gh-token", "gh-workflow-token"):
             self.assertEqual(stat.S_IMODE(os.stat(self.token_file(f)).st_mode), 0o600, f)
-        self.assertEqual(stat.S_IMODE(os.stat(os.path.join(self.spool, "tokens")).st_mode), 0o700)
-        self.assertEqual(sorted(os.listdir(os.path.join(self.spool, "tokens"))),
+        self.assertEqual(stat.S_IMODE(os.stat(self.tokens).st_mode), 0o700)
+        self.assertEqual(sorted(os.listdir(self.tokens)),
                          ["gh-token", "gh-workflow-token"], "no .tmp left behind")
-        self.assertEqual(warden.read_spool(self.spool, lambda m: None), [], "tokens are not requests")
+        self.assertEqual(sorted(os.listdir(self.spool)), ["access.json", "pauses.json"],
+                         "nothing token-shaped in the spool agents write to")
 
     def test_the_file_moves_on_every_mint_paused_or_not(self):
         state, pc, m = {}, FakePC(paused=True), FakeMinter()
@@ -3355,15 +3360,15 @@ class TokenNeverExpiresMidRunTests(unittest.TestCase):
 
         class Peeking(FakePC):
             def put_secret(self, name, value):
-                seen.append(open(os.path.join(spool, "tokens", "gh-token")).read())
+                seen.append(open(os.path.join(spool, "..", "bugfix-tokens", "gh-token")).read())
                 super().put_secret(name, value)
 
         tick(pc=Peeking(), cfg={"spool": spool})
         self.assertEqual(seen, ["tok1\n"])
 
     def test_a_planted_symlink_is_replaced_not_followed(self):
-        os.makedirs(os.path.join(self.spool, "tokens"))
-        victim = os.path.join(self.spool, "victim")
+        os.makedirs(self.tokens)
+        victim = os.path.join(self.root, "victim")
         open(victim, "w").write("keep")
         os.symlink(victim, self.token_file("gh-token"))
         os.symlink(victim, self.token_file("gh-token") + ".tmp")
@@ -3373,12 +3378,20 @@ class TokenNeverExpiresMidRunTests(unittest.TestCase):
         self.assertEqual(open(self.token_file("gh-token")).read(), "tok1\n")
 
     def test_an_unwritable_file_is_logged_and_the_secret_still_goes(self):
-        open(os.path.join(self.spool, "tokens"), "w").write("not a folder")
+        open(self.tokens, "w").write("not a folder")
         pc = FakePC()
         _, _, logs = tick(pc=pc, cfg={"spool": self.spool})
         self.assertEqual(pc.secrets, [("GITHUB_TOKEN", "tok1")])
-        self.assertTrue(any(l.startswith("tokens/gh-token not written: ") for l in logs), logs)
+        self.assertTrue(any(l.startswith("bugfix-tokens/gh-token not written: ") for l in logs), logs)
         self.assertFalse(any("tok1" in l for l in logs), "the token is never logged")
+
+    def test_the_folder_is_beside_the_spool_unless_named(self):
+        self.assertEqual(warden.token_dir({"spool": self.spool + "/"}), self.tokens)
+        self.assertEqual(warden.token_dir({"spool": self.spool, "token_dir": "/x"}), "/x")
+        self.assertIsNone(warden.token_dir({}))
+        named = os.path.join(self.root, "named")
+        tick(cfg={"spool": self.spool, "token_dir": named})
+        self.assertEqual(open(os.path.join(named, "gh-token")).read(), "tok1\n")
 
     def test_no_spool_writes_no_file(self):
         pc = FakePC()

@@ -266,8 +266,8 @@ Then, none of which a package can carry:
    A deliberate GH013 like that is a warden pause trigger, so add the run's id to
    `scanned_runs` in the warden's `state.json` before its next tick. A run reads
    the token once, when it starts, which is why the warden mints every ten
-   minutes, paused or not, and writes each token to the spool's `tokens/`
-   folder as well (CB-489, below).
+   minutes, paused or not, and writes each token to a `bugfix-tokens/`
+   folder beside the spool as well (CB-489, below).
 
    **Make a bare `gh` or `git` work too (CB-478).** A fresh session sometimes
    skips the prefix and reads "gh auth login" as broken access (QAF-50,
@@ -289,17 +289,36 @@ Then, none of which a package can carry:
    woken run copied a dead token into `BUGFIX_GH_TOKEN`. A retry read the same
    copy. Now the warden mints on every interval whether paused or not, mints
    before a resume restarts anything, and writes each token to
-   `<spool>/tokens/gh-token` and `gh-workflow-token` (0600, folder 0700,
-   renamed into place) before it rotates the secret. The stand-ins, through
+   `bugfix-tokens/gh-token` and `gh-workflow-token` beside the spool (never in
+   it: agents write there; 0600, folder 0700, renamed into place) before it
+   rotates the secret. The shims look in `$BUGFIX_TOKEN_DIR`, else that sibling
+   of `$BUGFIX_SPOOL`, so no agent environment changes. The stand-ins, through
    `host/shims/bugfix-token.bash`, read that file at every call and use it
    whenever `GH_TOKEN` is empty or is one of the two start-of-run copies, so
    the skill's prefix gets the current token too; a token a caller chose is
    left alone. A 401 is retried once when the file has moved on since the call
    began. Each attempt's output is held until the command ends, so a
-   `gh run watch` prints at the end rather than as it goes. Install all three:
-   `cp host/shims/gh host/shims/git host/shims/bugfix-token.bash ~/.paperclip/tools/bin/`,
-   then restart the service. Without `bugfix-token.bash` beside them the two
+   `gh run watch` prints at the end rather than as it goes. The workflow file
+   is read only for a `GH_TOKEN` equal to a non-empty
+   `$BUGFIX_GH_WORKFLOW_TOKEN`, so a run never given that token (the lead,
+   CB-486) never gets it from a stand-in. Nothing stronger stops it: every run
+   is the same user under the same sandbox profile, so a lead that chose to
+   read the file could. Without `bugfix-token.bash` beside them the two
    stand-ins behave as CB-478's did.
+
+   Deploy, on the mini, from the merged `develop` (CB-478's install was never
+   run, so check it):
+
+   ```bash
+   # 1. the warden: update its detached develop checkout (it mints and writes the files)
+   # 2. the stand-ins, all three
+   install -m 0755 host/shims/gh host/shims/git ~/.paperclip/tools/bin/
+   install -m 0644 host/shims/bugfix-token.bash ~/.paperclip/tools/bin/
+   # 3. restart the service so new runs inherit the PATH (bootout, then bootstrap)
+   # check: each prints "same"; the folder is 0700 and both files 0600 after the next tick
+   for f in gh git bugfix-token.bash; do cmp -s host/shims/$f ~/.paperclip/tools/bin/$f && echo "$f same" || echo "$f DIFFERS"; done
+   stat -f '%Sp %N' ~/.paperclip/instances/default/companies/*/bugfix-tokens ~/.paperclip/instances/default/companies/*/bugfix-tokens/*
+   ```
 6. **Build environment.** In each engineer's environment set
    `NUGET_PACKAGES` to a folder inside the org's own Paperclip directory (the
    restore cache was 2.2 GB), `BUGFIX_BUILD_LOCK` to a path in that folder

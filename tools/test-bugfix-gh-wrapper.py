@@ -149,7 +149,7 @@ GITHUB_STUB = r"""#!/bin/bash
 n=$(( $(cat "$STUB_CALLS" 2>/dev/null || echo 0) + 1 )); echo $n > "$STUB_CALLS"
 IFS= read -r -d "" in
 if [ -n "$STUB_ROTATE" ] && [ $n = 1 ]; then
-  printf 'rotated\n' > "$BUGFIX_SPOOL/tokens/$STUB_ROTATE"; printf 'rotated' > "$STUB_LIVE"
+  printf 'rotated\n' > "$STUB_TOKENS/$STUB_ROTATE"; printf 'rotated' > "$STUB_LIVE"
 fi
 if [ "${GH_TOKEN-}" != "$(cat "$STUB_LIVE")" ]; then
   echo '{"message": "Bad credentials", "status": "401"}'
@@ -171,8 +171,9 @@ class FreshTokenGh(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp)
         self.real = os.path.join(self.tmp, "real")
         self.spool = os.path.join(self.tmp, "spool")
+        self.tokens = os.path.join(self.tmp, "bugfix-tokens")
         self.scratch = os.path.join(self.tmp, "scratch")
-        for d in (self.real, os.path.join(self.spool, "tokens"), self.scratch):
+        for d in (self.real, self.spool, self.tokens, self.scratch):
             os.makedirs(d)
         stub = os.path.join(self.real, self.tool)
         with open(stub, "w") as f:
@@ -185,7 +186,7 @@ class FreshTokenGh(unittest.TestCase):
         self.calls = os.path.join(self.tmp, "calls")
 
     def write(self, name, text):
-        with open(os.path.join(self.spool, "tokens", name), "w") as f:
+        with open(os.path.join(self.tokens, name), "w") as f:
             f.write(text)
 
     def set_live(self, token):
@@ -195,7 +196,7 @@ class FreshTokenGh(unittest.TestCase):
     def run_tool(self, extra=None, args=("api", "user"), stdin="in put\n", wrapped=True):
         env = {"HOME": self.tmp, "TMPDIR": self.scratch, "PATH": f"{BIN}:{self.real}:/usr/bin:/bin",
                "BUGFIX_GH_TOKEN": DEAD, "BUGFIX_GH_WORKFLOW_TOKEN": WF_DEAD, "BUGFIX_SPOOL": self.spool,
-               "STUB_LIVE": self.live, "STUB_CALLS": self.calls, "STUB_401": self.msg401}
+               "STUB_LIVE": self.live, "STUB_CALLS": self.calls, "STUB_TOKENS": self.tokens, "STUB_401": self.msg401}
         env.update(extra or {})
         if not wrapped:
             env["PATH"] = f"{self.real}:/usr/bin:/bin"
@@ -233,6 +234,23 @@ class FreshTokenGh(unittest.TestCase):
         for extra in ({}, {"GH_TOKEN": DEAD}, {"GH_TOKEN": ""}):
             self.assertEqual(self.run_tool(extra).returncode, 1, extra)
 
+    def test_a_run_without_the_workflow_variable_never_gets_the_workflow_file(self):
+        # CB-486 keeps the workflow token from the lead: its env has no
+        # BUGFIX_GH_WORKFLOW_TOKEN, so nothing it sets can select that file.
+        self.set_live(WF_LIVE)
+        for extra in ({}, {"GH_TOKEN": ""}, {"GH_TOKEN": DEAD}, {"GH_TOKEN": WF_DEAD}):
+            r = self.run_tool(dict(extra, BUGFIX_GH_WORKFLOW_TOKEN=""))
+            self.assertEqual(r.returncode, 1, extra)
+
+    def test_the_token_folder_is_beside_the_spool_or_named(self):
+        self.assertEqual(self.run_tool({"BUGFIX_SPOOL": self.spool + "/"}).returncode, 0, "trailing slash")
+        moved = os.path.join(self.tmp, "elsewhere")
+        os.rename(self.tokens, moved)
+        self.set_live(DEAD)
+        self.assertEqual(self.run_tool().returncode, 0, "no folder: the start-of-run copy")
+        self.set_live(LIVE)
+        self.assertEqual(self.run_tool({"BUGFIX_TOKEN_DIR": moved}).returncode, 0)
+
     def test_a_token_the_caller_chose_is_kept(self):
         self.set_live("own")
         self.assertEqual(self.run_tool({"GH_TOKEN": "own"}).returncode, 0)
@@ -241,7 +259,7 @@ class FreshTokenGh(unittest.TestCase):
         self.assertEqual(self.ncalls(), 2)
 
     def test_no_file_falls_back_to_the_start_of_run_copy(self):
-        os.remove(os.path.join(self.spool, "tokens", "gh-token"))
+        os.remove(os.path.join(self.tokens, "gh-token"))
         self.set_live(DEAD)
         self.assertEqual(self.run_tool().returncode, 0)
         self.assertEqual(self.run_tool({"BUGFIX_SPOOL": ""}).returncode, 0)

@@ -4,8 +4,12 @@
 # run starts, and an installation token lives an hour. So a run's environment
 # copy can be dead before the run ends, or even at its start: QAF-190 and
 # QAF-209 both began with an expired one. The warden writes every token it
-# mints to $BUGFIX_SPOOL/tokens/ as well, and these functions read that file
-# at each call, so `gh` and `git` always carry the newest token.
+# mints to its token folder as well, and these functions read that file at
+# each call. The folder is $BUGFIX_TOKEN_DIR, else bugfix-tokens beside
+# $BUGFIX_SPOOL (where the warden puts it; never inside the spool, which
+# agents write to). The workflow file is read only for a GH_TOKEN equal to a
+# non-empty $BUGFIX_GH_WORKFLOW_TOKEN, so a run that was never given that
+# token never gets it from here, so `gh` and `git` always carry the newest token.
 #
 # A GH_TOKEN that is empty, or that is one of the two start-of-run copies
 # (which is what the skill's `export GH_TOKEN="$BUGFIX_GH_TOKEN"` prefix
@@ -24,11 +28,23 @@ bugfix_token_kind() {
   fi
 }
 
-# The current token from $BUGFIX_SPOOL/tokens/<kind>, or nothing.
+# The token folder, or nothing.
+bugfix_token_dir() {
+  local s
+  if [ -n "${BUGFIX_TOKEN_DIR:-}" ]; then
+    printf '%s' "$BUGFIX_TOKEN_DIR"
+  elif [ -n "${BUGFIX_SPOOL:-}" ]; then
+    s=${BUGFIX_SPOOL%/}
+    printf '%s' "${s%/*}/bugfix-tokens"
+  fi
+}
+
+# The current token from <token folder>/<kind>, or nothing.
 bugfix_token_read() {
-  local f t=
-  [ -n "${BUGFIX_SPOOL:-}" ] || return 0
-  f="$BUGFIX_SPOOL/tokens/$1"
+  local d f t=
+  d=$(bugfix_token_dir)
+  [ -n "$d" ] || return 0
+  f="$d/$1"
   [ -f "$f" ] && [ -r "$f" ] || return 0
   IFS= read -r t < "$f" || true
   printf '%s' "$t"
