@@ -1,0 +1,40 @@
+
+ ▐▛███▛█   Claude Code v2.1.332
+▝▜██████▀  Opus 5.5 with xhigh effort · Claude Team
+ ▝▝   ▝▝   /private/tmp/cb373.aCcoz5 · /rc
+
+
+❯ Call the AskUserQuestion tool once, right now, with exactly one question: "Which database should
+  the project use?", header "Database", multiSelect false, and three options each with a label and
+  a one-sentence description: Postgres, SQLite, MySQL. Do nothing else and do not answer it
+  yourself.
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Database
+
+Which database should the project use?
+
+❯ 1. Postgres
+     A full-featured open-source relational database with strong standards compliance and advanced
+     features.
+  2. SQLite
+     A lightweight, file-based embedded database that needs no separate server.
+  3. MySQL
+     A widely used open-source relational database known for its speed and broad hosting support.
+  4. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
