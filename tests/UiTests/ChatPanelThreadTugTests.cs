@@ -18,17 +18,23 @@ public class ChatPanelThreadTugTests : IDisposable
 {
     private readonly List<string> _sessionIdsToClean = new();
     private long _now;
+    private readonly bool _linksVisible = TeamLinks.IsVisible;
 
     public ChatPanelThreadTugTests()
     {
+        // CB-490: these tests put a lone orb in the tug, which the app never
+        // does: TeamLinks.Refresh keeps only team members there and forgets
+        // everyone else. Refresh is static and anything can call it, most
+        // often a frame timer some earlier test left running on the shared
+        // dispatcher (a SessionManager's arrangement glide was the one that
+        // reached CI), so it lands inside this test's flushes. With links
+        // hidden Refresh returns before it touches the tug, whoever calls it.
+        TeamLinks.SetVisible(false);
         ThreadTug.Reset();
-        // CB-490: stop the tug's frame timer if an earlier test left it running.
-        // Its tick is TeamLinks.Refresh, which keeps only team members in the
-        // tug, so on the shared PerAssembly dispatcher a tick landing in this
-        // test's first Flush forgot this orb: the send's acknowledge then had
-        // nothing to silence, and the next Observe started a fresh tug, (0, 1)
-        // at the second assert. With no members NeedsFrames is false, and Drive
-        // stops the timer rather than starting it.
+        // And stop the tug's own frame timer if an earlier test left it
+        // running: with no members NeedsFrames is false, and Drive stops the
+        // timer rather than starting it. Hidden links make its tick harmless
+        // here; this is what stops it ticking at all.
         ThreadTug.Drive(() => { });
         ThreadTug.Clock = () => _now;
         MotionPolicy.ReduceMotionProbe = () => false;
@@ -37,6 +43,9 @@ public class ChatPanelThreadTugTests : IDisposable
     public void Dispose()
     {
         foreach (var id in _sessionIdsToClean) ChatPanel.HideFor(id);
+        // Before the reset: showing links again refreshes them, and the reset
+        // and the Drive below are what leave nothing behind from that.
+        TeamLinks.SetVisible(_linksVisible);
         ThreadTug.Reset();
         ThreadTug.Drive(() => { });
         ThreadTug.Clock = null;
@@ -107,6 +116,28 @@ public class ChatPanelThreadTugTests : IDisposable
         ThreadTug.Observe(orb, orb.State);
         Assert.Equal((0, 0), ThreadTug.Now(orb));
         Assert.False(ThreadTug.NeedsFrames());
+    }
+
+    // CB-490: what failed on the Windows runner, forced. An overlay refresh
+    // arriving mid-test, from anyone, must not forget the orb: before the
+    // constructor hid the links this dropped it, the send then acknowledged
+    // nobody, and the next Observe started a fresh tug.
+    [AvaloniaFact]
+    public void AnOverlayRefreshArrivingMidTestDoesNotForgetTheOrb()
+    {
+        var (orb, input) = OpenWithATugRinging();
+
+        TeamLinks.Refresh();
+        Assert.True(ThreadTug.Now(orb).Glow > 0, "the tug should survive a refresh from elsewhere");
+
+        Type(input, "hello");
+        TeamLinks.Refresh();
+        PressEnter(input);
+        TeamLinks.Refresh();
+
+        _now = (long)(ThreadTug.Period * 1000) * 2;
+        ThreadTug.Observe(orb, orb.State);
+        Assert.Equal((0, 0), ThreadTug.Now(orb));
     }
 
     // Controls: without these a pass could mean the tug was silenced some other

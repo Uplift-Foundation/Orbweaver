@@ -21,6 +21,9 @@ public class OrbDropSticksTests : IDisposable
     private readonly Func<long> _motionClock = OrbWindow.MotionClock;
     private long _clock = 1_000_000;
 
+    // On _clock, like ArrangementMotionTests' managers: see GlideTeardown.
+    private readonly List<SessionManager> _managers = new();
+
     public OrbDropSticksTests()
     {
         Directory.CreateDirectory(_dir);
@@ -31,6 +34,7 @@ public class OrbDropSticksTests : IDisposable
 
     public void Dispose()
     {
+        GlideTeardown.Stop(_managers);
         OrbWindow.MotionClock = _motionClock;
         OrbDragHost.Current = null;
         MotionPolicy.ReduceMotionProbe = null;
@@ -55,6 +59,7 @@ public class OrbDropSticksTests : IDisposable
         OrbweaverSettings.CodexEnabled = true;
         OrbweaverSettings.GrokEnabled = true;
         var m = new SessionManager(_dir) { Now = () => _clock };
+        _managers.Add(m);
         m.ScanAndUpdate();
         foreach (var w in Windows(m).Values) _keys.Add(w.PositionKey);
         OrbDragHost.Current = m;

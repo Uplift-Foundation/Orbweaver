@@ -76,6 +76,10 @@ namespace Orbweaver
 
         private static bool _visible = true;
 
+        // Whether links are being drawn at all. Read by tests that switch them
+        // off for their own duration and have to put back what they found.
+        internal static bool IsVisible => _visible;
+
         // Replaces the whole set. Callers rebuild the pair list on every scan
         // rather than diffing it: it's a handful of pairs, and the alternative
         // is tracking membership changes in three places.
