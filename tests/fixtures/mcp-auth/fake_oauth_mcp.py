@@ -3,20 +3,23 @@
 prompt Claude Code shows for `complete_authentication`. Loopback only, no real
 credential: every code and token is a dummy value minted here.
 
-  python3 fake_oauth_mcp.py [port]          (default 8765, binds 127.0.0.1)
+  python3 fake_oauth_mcp.py [port]          (default 0: the system picks a port)
+
+Binds 127.0.0.1 and prints `PORT=<n>` as its first stdout line.
 
 /mcp answers 401 with OAuth metadata until a Bearer token it issued is
 presented. /authorize approves at once and 302-redirects to redirect_uri with
-`code` and `state`, so no person has to sign in. /token issues a dummy token.
-Once authenticated, /mcp serves one tool, `ping`.
+`code` and `state`, so no person has to sign in. /token ALWAYS refuses, so no
+credential can ever be stored and /mcp stays at 401 even if an approval were
+answered by mistake. The server is named `cb359cap` so a leftover is greppable.
 """
 import json, secrets, sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, urlencode
 
-PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
-BASE = f"http://127.0.0.1:{PORT}"
-CODES, TOKENS, CLIENTS = {}, set(), {}
+PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 0
+BASE = ""  # set once the port is bound
+CODES, TOKENS, CLIENTS = {}, set(), {}  # TOKENS is never filled
 
 
 class H(BaseHTTPRequestHandler):
@@ -74,12 +77,7 @@ class H(BaseHTTPRequestHandler):
             sys.stderr.write(f"fake_oauth_mcp: registered client_id={cid}\n")
             return self._send(201, {**meta, "client_id": cid, "token_endpoint_auth_method": "none"})
         if u.path == "/token":
-            form = {k: v[0] for k, v in parse_qs(raw.decode()).items()}
-            if form.get("code") not in CODES:
-                return self._send(400, {"error": "invalid_grant"})
-            tok = "dummy-token-" + secrets.token_hex(4)
-            TOKENS.add(tok)
-            return self._send(200, {"access_token": tok, "token_type": "Bearer", "expires_in": 3600})
+            return self._send(400, {"error": "invalid_grant"})  # always refuse
         if u.path == "/mcp":
             auth = self.headers.get("Authorization", "")
             if not auth.startswith("Bearer ") or auth[7:] not in TOKENS:
@@ -97,7 +95,7 @@ class H(BaseHTTPRequestHandler):
         m, i = msg.get("method"), msg["id"]
         if m == "initialize":
             res = {"protocolVersion": msg["params"].get("protocolVersion", "2025-03-26"),
-                   "capabilities": {"tools": {}}, "serverInfo": {"name": "fakeauth", "version": "1"}}
+                   "capabilities": {"tools": {}}, "serverInfo": {"name": "cb359cap", "version": "1"}}
         elif m == "tools/list":
             res = {"tools": [{"name": "ping", "description": "Reply pong",
                               "inputSchema": {"type": "object", "properties": {}}}]}
@@ -109,4 +107,7 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
+    srv = ThreadingHTTPServer(("127.0.0.1", PORT), H)
+    BASE = f"http://127.0.0.1:{srv.server_address[1]}"
+    print(f"PORT={srv.server_address[1]}", flush=True)
+    srv.serve_forever()
