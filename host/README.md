@@ -113,13 +113,19 @@ everything again itself (`workflow_merge_problem`) and refuses, logging
 * the workflow guard finds nothing at that head (read fresh, not from `guarded`);
 * both required `build (...)` checks are `success` at that sha;
 * the bot's latest comment or review starting `[bugfix-org] QA` ends
-  `Verdict: merge`, names the sha (full or a prefix of 7+), both rids, and has a
-  `Workflow change:` line. A later `Verdict: fix` overrides an earlier merge.
+  `Verdict: merge`, names the sha (full, or a prefix of at least 9 as the skill writes it), both rids, and has
+  a `Workflow change:` line. A later `Verdict: fix`, or a later QA comment at another sha,
+  overrides an earlier merge;
+* this sha has not already been merged, and has had fewer than
+  `MAX_WORKFLOW_MERGES_PER_SHA` (2) attempts (`workflow_merges` in state), so a replayed
+  spool file cannot merge twice or loop. A failed attempt is never counted as a merge.
 
 Then `WorkflowMerger` mints a token for Orbweaver alone with
 `WORKFLOW_PERMISSIONS`, used for that one call and never stored or written to a
 secret, and calls `PUT /pulls/N/merge` with `merge_method: squash` and the sha,
-so a push after the checks makes GitHub refuse it (409). An installation without
+so a push after the checks makes GitHub refuse it (409). The token goes in a request
+header from inside the warden, never on a command line, and a failure logs only the
+exception's type and status code. An installation without
 `workflows: write`, an unreadable read, or GitHub's refusal is logged. None of
 them pauses: asking is not a fault. The merge then goes through the ordinary
 merge audit like any bot merge.

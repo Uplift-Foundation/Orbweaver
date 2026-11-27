@@ -418,7 +418,10 @@ def workflow_problems(files, r):
 # itself, at the sha the lead named, before it merges with that token.
 
 QA_PREFIX = "[bugfix-org] QA"
-_HEX = re.compile(r"\b[0-9a-f]{7,40}\b")
+_HEX = re.compile(r"\b[0-9a-f]{9,40}\b")
+# A request is tried at most this often per head sha, and never again once
+# merged, so a replayed or duplicated spool file cannot merge twice or loop.
+MAX_WORKFLOW_MERGES_PER_SHA = 2
 
 
 def qa_verdict_problem(reviews, sha, r):
@@ -1040,12 +1043,24 @@ class Warden:
                                          gh.check_conclusions(sha), r)
         except Exception as e:
             return self.log(f"workflow merge for {tag} unreadable: {type(e).__name__}")
+        tries = self.repo_state(r).setdefault("workflow_merges", {})
+        rec = tries.get(sha) or {"attempts": 0, "merged": False}
+        if not why and rec["merged"]:
+            why = f"already merged at {sha[:9]}"
+        elif not why and rec["attempts"] >= MAX_WORKFLOW_MERGES_PER_SHA:
+            why = f"already tried {rec['attempts']} times at {sha[:9]}"
         if why:
             return self.log(f"refused workflow merge for {tag}: {why}")
+        rec["attempts"] += 1
+        tries[sha] = rec
+        while len(tries) > 200:
+            tries.pop(next(iter(tries)))
         try:
             WorkflowMerger(self.minter).merge(r["repo"], n, sha)
         except Exception as e:
+            # The status code only: an HTTPError's text can carry the request.
             return self.log(f"workflow merge for {tag} failed: {type(e).__name__} {getattr(e, 'code', '')}".rstrip())
+        rec["merged"] = True
         self.log(f"merged {tag} at {sha[:9]} with the workflow token")
 
     def rerun_develop(self, sha, n):

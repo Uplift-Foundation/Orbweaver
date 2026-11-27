@@ -3503,13 +3503,17 @@ class WorkflowMergeRuleTests(unittest.TestCase):
             "fix verdict": (dict(reviews=[qa_row(QA_429.replace("Verdict: merge", "Verdict: fix\n- x"))]), "does not end `Verdict: merge`"),
             "later fix wins": (dict(reviews=[qa_row(), qa_row(QA_429.replace("Verdict: merge", "Verdict: fix"), at="2026-11-27T00:10:00Z")]), "does not end"),
             "other sha": (dict(reviews=[qa_row(QA_429.replace(WF_SHA, "c" * 40))]), "does not name a00bc0cd3"),
+            "later QA at another sha": (dict(reviews=[qa_row(), qa_row(QA_429.replace(WF_SHA, "c" * 40), at="2026-11-27T01:00:00Z")]), "does not name a00bc0cd3"),
+            "7-char sha": (dict(reviews=[qa_row(QA_429.replace(WF_SHA, "a00bc0c"))]), "does not name a00bc0cd3"),
+            "skipped check": (dict(checks=dict(GREEN, **{warden.REQUIRED_CHECKS[0]: "skipped"})), "not green"),
+            "neutral check": (dict(checks=dict(GREEN, **{warden.REQUIRED_CHECKS[1]: "neutral"})), "not green"),
             "one rid": (dict(reviews=[qa_row(QA_429.replace(" and win-x64", ""))]), "does not name win-x64"),
             "no workflow line": (dict(reviews=[qa_row(QA_429.replace("Workflow change:", "Workflow:"))]), "no `Workflow change:` line"),
         }
         for label, (over, why) in cases.items():
             self.assertIn(why, self.ok(**over) or "", label)
 
-    def test_a_short_sha_in_the_qa_comment_counts(self):
+    def test_a_nine_character_sha_in_the_qa_comment_counts(self):
         body = QA_429.replace(WF_SHA, "a00bc0cd3")
         self.assertIsNone(self.ok(reviews=[qa_row(body)]))
 
@@ -3561,11 +3565,72 @@ class WorkflowMergeTickTests(unittest.TestCase):
         kw.update(over)
         return WfGH(**kw)
 
-    def run_tick(self, gh=None, minter=None, pc=None, req=None):
+    def run_tick(self, gh=None, minter=None, pc=None, req=None, state=None):
         m = minter or MergingMinter()
         _, paused, logs = tick(gh=gh or self.gh(), minter=m, pc=pc, requests=[req or self.REQ],
-                               state={"last_mint": 10_000.0})
+                               state=state if state is not None else {"last_mint": 10_000.0})
         return m, paused, logs
+
+    def test_a_replayed_request_never_merges_twice(self):
+        state = {"last_mint": 10_000.0}
+        m = MergingMinter()
+        gh = self.gh()
+        self.run_tick(gh, minter=m, state=state)
+        _, _, logs = self.run_tick(gh, minter=m, state=state)
+        self.assertEqual(len(m.calls), 1)
+        self.assertTrue(any("already merged at a00bc0cd3" in l for l in logs))
+        self.assertEqual(state["workflow_merges"][WF_SHA], {"attempts": 1, "merged": True})
+
+    def test_failed_attempts_stop_at_the_cap_and_never_count_as_merged(self):
+        state = {"last_mint": 10_000.0}
+        err = urllib.error.HTTPError("u", 502, "Bad Gateway", {}, None)
+        for _ in range(warden.MAX_WORKFLOW_MERGES_PER_SHA):
+            self.run_tick(minter=MergingMinter(fail=err), state=state)
+        m, _, logs = self.run_tick(minter=MergingMinter(), state=state)
+        self.assertEqual(m.calls, [])
+        self.assertTrue(any("already tried 2 times" in l for l in logs))
+        self.assertFalse(state["workflow_merges"][WF_SHA]["merged"])
+        self.assertNotIn("consecutive_releases", state, "a failed merge is not a merge to the release brake")
+        # Control: a new head sha gets fresh attempts.
+        sha2 = "b" * 40
+        gh = self.gh(prs={429: head_pr(sha2)}, checks={sha2: dict(GREEN)},
+                     reviews={429: [qa_row(QA_429.replace(WF_SHA, sha2))]})
+        m, _, _ = self.run_tick(gh, req=dict(self.REQ, sha=sha2), state=state)
+        self.assertEqual(len(m.calls), 1)
+
+    def test_a_merge_error_never_logs_the_token(self):
+        class Leaky(Exception):
+            code = 422
+            def __str__(self):
+                return "Authorization: Bearer tok1"
+        _, _, logs = self.run_tick(minter=MergingMinter(fail=Leaky()))
+        self.assertTrue(any("failed: Leaky 422" in l for l in logs))
+        self.assertFalse([l for l in logs if "tok1" in l])
+
+    def test_a_pause_reason_earlier_in_the_tick_refuses(self):
+        logs = []
+        w = warden.Warden({}, self.gh(), MergingMinter(), FakePC(), {}, 10_000.0, logs.append)
+        w.pause("PR 8: workflow guard: x")
+        w.handle(self.REQ)
+        self.assertTrue(any("the company is paused" in l for l in logs))
+        self.assertEqual(w.minter.calls, [])
+
+    def test_the_next_tick_audits_the_warden_merge_clean(self):
+        state = {"last_mint": 10_000.0}
+        gh = self.gh()
+        self.run_tick(gh, state=state)
+        merged = dict(head_pr(WF_SHA), number=429, state="closed", merged_at="2026-11-27T02:00:00Z",
+                      merge_commit_sha="m429")
+        gh.merged = [merged]
+        gh.comments = {429: [QA_429]}
+        gh.checks["m429"] = dict(GREEN)
+        _, paused, logs = tick(gh=gh, minter=MergingMinter(), state=state)
+        self.assertFalse(paused, logs)
+        self.assertIn("m429", state["audited"])
+        # Control: the same merge with no QA comment pauses.
+        gh.comments, state2 = {429: []}, {"last_mint": 10_000.0}
+        _, paused, _ = tick(gh=gh, minter=MergingMinter(), state=state2)
+        self.assertTrue(paused)
 
     def test_merges_with_a_workflow_token_pinned_to_the_sha(self):
         m, paused, logs = self.run_tick()
