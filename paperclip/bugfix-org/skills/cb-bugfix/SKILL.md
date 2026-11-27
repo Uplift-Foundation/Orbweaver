@@ -156,7 +156,12 @@ claims anything (step 2), so a claim made in this pass is never read here.
    A live task is one `search_tasks` finds with `query` `Ticket: <key>` and
    `statuses` `["backlog", "todo", "in_progress", "in_review", "blocked"]`,
    whose description's first line is exactly `Ticket: <key>` (the search is
-   fuzzy and also returns pass tasks that only mention the key). An open org
+   fuzzy and also returns pass tasks that only mention the key), **and** that
+   had a run or an update in the last 3 hours (its `updatedAt`, or its newest
+   run). A non-terminal task untouched for longer is left over from a stopped
+   pass, not live: it never protects its ticket, and the ticket falls through
+   to the outcomes below (outcome 6 settles that task). CB-469 was stranded by
+   exactly such a task. An open org
    PR is one the step-0 listing returned, in either repository, whose title
    names the key. No Jira write; counted on `Taken, in progress`. Step 0
    settles the PR.
@@ -164,8 +169,13 @@ claims anything (step 2), so a claim made in this pass is never read here.
    (`gh pr list --repo <repository> --state merged --base develop --search "<key> in:title" --json number,title,mergedAt,mergeCommit`,
    run for both `Uplift-Foundation/Orbweaver` and
    `Uplift-Foundation/Orbweaver-Mobile`, with the key literally in the
-   returned title), it merged more than an hour ago, and no open PR's title
-   names the key in either repository. Move it to Done (`41`) with one
+   returned title), it merged more than an hour ago, no open PR's title
+   names the key in either repository, and nothing is newer than that merge
+   but the org's own: no comment after `mergedAt` that does not start
+   `[bugfix-org]`, and no status change after it
+   (`key = <key> AND status CHANGED AFTER -<m>m` returns nothing, `<m>` the
+   minutes since `mergedAt`). A person who moved the ticket back because the
+   fix did not hold has done one of those, so the old PR never closes it again. Move it to Done (`41`) with one
    comment: `[bugfix-org] settled: PR #<n> merged to develop at <merge sha>;
    nothing else open names this ticket`. The hour leaves a person who just
    merged time to move their own ticket, and the open-PR check keeps a ticket

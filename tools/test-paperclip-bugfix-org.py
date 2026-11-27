@@ -866,8 +866,15 @@ class InstructionTests(unittest.TestCase):
                        "counted on `Taken, in progress`"):
             with self.subTest(needle):
                 self.assertIn(needle, o)
-        # Control: done and cancelled tasks are not live, so a lost claim whose
-        # engineer issue ended is still settled.
+        for needle in ("**and** that had a run or an update in the last 3 hours",
+                       "A non-terminal task untouched for longer is left over from a stopped pass, not live",
+                       "the ticket falls through to the outcomes below (outcome 6 settles that task)"):
+            with self.subTest(needle):
+                self.assertIn(needle, o)
+        # Control: a recently updated task still protects (the bound is on
+        # staleness, not on status), and done and cancelled tasks are not live,
+        # so a lost claim whose engineer issue ended is still settled.
+        self.assertIn("No Jira write; counted on `Taken, in progress`", o)
         self.assertNotIn('"done"', o)
         self.assertNotIn('"cancelled"', o)
         self.assertIn("Never move a ticket with a live task or an open org PR", self.outside())
@@ -882,6 +889,18 @@ class InstructionTests(unittest.TestCase):
                        "the one move that recent activity does not stop"):
             with self.subTest(needle):
                 self.assertIn(needle, o)
+
+    def test_a_ticket_reopened_after_its_merge_is_never_closed_on_the_old_pr(self):
+        o = self.outcome(3)
+        for needle in ("nothing is newer than that merge but the org's own",
+                       "no comment after `mergedAt` that does not start `[bugfix-org]`",
+                       "`key = <key> AND status CHANGED AFTER -<m>m` returns nothing, `<m>` the minutes since `mergedAt`",
+                       "the old PR never closes it again"):
+            with self.subTest(needle):
+                self.assertIn(needle, o)
+        # Control: the move itself is still there, so the guard narrows the
+        # merged outcome rather than removing it.
+        self.assertIn("Move it to Done (`41`)", o)
         # Control: a ticket only mentioned in a commit or body is not "merged".
         self.assertNotIn('--search "<key>" ', o)
         self.assertNotIn("in:body", o)
