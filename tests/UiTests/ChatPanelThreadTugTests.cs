@@ -84,13 +84,13 @@ public class ChatPanelThreadTugTests : IDisposable
         var orb = GeneratingOrb();
         ThreadTug.Observe(orb, orb.State);
         _now = 100;
-        Assert.True(ThreadTug.Now(orb).Glow > 0, "setup: the tug should be ringing");
+        Assert.True(ThreadTug.Now(orb).Glow > 0, "setup: the tug should be ringing" + Diag(orb, "setup"));
 
         ChatPanel.OpenFor(orb, NewFake());
         Flush();
         // Still ringing after the panel opened and the dispatcher ran: if
         // anything forgot this orb, a failure says so here, not after the send.
-        Assert.True(ThreadTug.Now(orb).Glow > 0, "setup: the tug should still be ringing once the panel is open");
+        Assert.True(ThreadTug.Now(orb).Glow > 0, "setup: the tug should still be ringing once the panel is open" + Diag(orb, "opened"));
 
         return (orb, ChatPanelTestAccess.Instance!.FindControl<TextBox>("Input")!);
     }
@@ -107,7 +107,7 @@ public class ChatPanelThreadTugTests : IDisposable
         PressEnter(input);
         var d1 = Diag(orb, "after-enter");
 
-        Assert.Equal((0, 0), ThreadTug.Now(orb));
+        Assert.True(ThreadTug.Now(orb) == (0, 0), "first" + d0 + d1);
 
         // And it stays quiet while the agent is still generating.
         _now = (long)(ThreadTug.Period * 1000) * 2;
@@ -124,7 +124,7 @@ public class ChatPanelThreadTugTests : IDisposable
     {
         var (orb, _) = OpenWithATugRinging();
 
-        Assert.True(ThreadTug.Now(orb).Glow > 0);
+        Assert.True(ThreadTug.Now(orb).Glow > 0, Diag(orb, "control"));
     }
 
     [AvaloniaFact]
@@ -134,6 +134,6 @@ public class ChatPanelThreadTugTests : IDisposable
 
         PressEnter(input);
 
-        Assert.True(ThreadTug.Now(orb).Glow > 0);
+        Assert.True(ThreadTug.Now(orb).Glow > 0, Diag(orb, "control"));
     }
 }
