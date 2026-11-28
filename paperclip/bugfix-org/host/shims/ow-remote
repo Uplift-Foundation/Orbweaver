@@ -154,6 +154,8 @@ def report(res, folder):
     if res.get("sha") and res.get("checked_out_sha") and res["sha"] != res["checked_out_sha"]:
         say(f"WARNING: asked for {res['sha'][:12]} but the runner checked out "
             f"{res['checked_out_sha'][:12]}; this result is not about your commit")
+    if res.get("error"):
+        say(f"runner error: {res['error']}")
     if res.get("run") == "coverage":
         say(f"merged {res.get('merged_reports')} report(s)"
             + ("" if res.get("merged_reports") == 4 else
