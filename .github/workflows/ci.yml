@@ -185,6 +185,15 @@ jobs:
         if: ${{ !cancelled() && matrix.checks }}
         run: python tools/test-bugfix-machines-mac.py
 
+      # CB-494: the remote test runner (allow-list, pushed-sha gate, queue,
+      # unreachable target, cap) against a fake mirror and fake targets. The
+      # target's own shell scripts run for real in a scratch HOME on the
+      # macOS leg and skip on Windows, where there is no bash-git-perl trio
+      # to trust and the runner never runs.
+      - name: Unit tests (bug-fix org remote test runner)
+        if: ${{ !cancelled() && matrix.checks }}
+        run: python tools/test-bugfix-remote.py
+
       # CB-455: the same host side against loopback stand-ins for Paperclip and the
       # GitHub App API and stub gh/dotnet scripts, every pause trigger beside its
       # control. POSIX only; the cases skip themselves on the Windows leg.

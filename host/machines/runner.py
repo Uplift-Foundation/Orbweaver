@@ -815,7 +815,7 @@ def make_machines(cfg):
 
 # ---------------------------------------------------------------- spool, main
 
-def read_spool(spool, results, log):
+def read_spool(spool, results, log, parse=None):
     """(request, why) pairs from spool/<id>.json in arrival order; every file
     is moved to done/ or bad/ so it is read once. Agents write <id>.json.tmp
     and rename, so only names ending .json are read.
@@ -824,6 +824,9 @@ def read_spool(spool, results, log):
     one with no usable id (there is no folder to answer in), one whose name is
     not its own id, and one whose id already has a result folder (lead's
     ruling: the first answer stands, untouched, and the repeat does nothing).
+
+    `parse` is the request schema; host/machines/remote.py reads its own
+    spool through this with its own (CB-494).
     """
     out = []
     for sub in ("done", "bad"):
@@ -840,7 +843,7 @@ def read_spool(spool, results, log):
         if len(raw) > MAX_REQUEST_BYTES:
             req, why = None, "request is larger than 64 KiB"
         else:
-            req, why = parse_request(raw.decode("utf-8", "replace"))
+            req, why = (parse or parse_request)(raw.decode("utf-8", "replace"))
         if req is not None and base != req["id"] + ".json":
             req, why = None, f"file name is not <id>.json for id {req['id']!r}"
         if req is not None and os.path.exists(os.path.join(results, req["id"])):
