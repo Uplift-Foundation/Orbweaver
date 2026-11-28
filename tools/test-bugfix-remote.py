@@ -82,6 +82,7 @@ class FakeTarget:
         self.calls, self.state, self.code, self.head = [], "running", 0, None
         self.output, self.files, self.dropped = "ok\n", {}, []
         self.start_error = self.collect_error = None
+        self.busy = None  # the id of a job the target itself still has running
         self.load = [1.5, 1.0, 0.5]
 
     def probe(self):
@@ -92,12 +93,14 @@ class FakeTarget:
     def init(self):
         self.calls.append(("init",))
 
-    def start(self, rid, sha, argv, clean_all=False):
-        self.calls.append(("start", rid, sha, tuple(argv), clean_all))
+    def start(self, rid, sha, argv, cap_s, files=(), clean_all=False):
+        self.calls.append(("start", rid, sha, tuple(argv), clean_all, cap_s, tuple(files)))
         if self.start_error:
             raise base.MachineError(self.start_error)
+        if self.busy:
+            return {"sha": None, "hostname": None, "started": False, "busy": self.busy}
         got = self.head or sha
-        return {"sha": got, "hostname": self.hostname, "started": got == sha}
+        return {"sha": got, "hostname": self.hostname, "started": got == sha, "busy": None}
 
     def poll(self, rid):
         self.calls.append(("poll", rid))
@@ -108,8 +111,8 @@ class FakeTarget:
     def kill(self, rid):
         self.calls.append(("kill", rid))
 
-    def collect(self, rid, limit):
-        self.calls.append(("collect", rid))
+    def collect(self, rid, limit, allowed=(), png=False):
+        self.calls.append(("collect", rid, tuple(allowed), png))
         if self.collect_error:
             raise base.MachineError(self.collect_error)
         return self.output, dict(self.files), list(self.dropped)
@@ -329,13 +332,32 @@ class RuleTests(unittest.TestCase):
             self.assertFalse(ok("coverage", 0, False, merged), merged)
         self.assertFalse(ok("coverage", 1, False, 4))
 
-    def test_safe_members_drops_paths_that_climb_and_stops_at_the_limit(self):
-        names = [("output.txt", 10), ("files/a.trx", 10), ("files/../../etc/passwd", 1), ("/etc/passwd", 1),
-                 ("files/sub/a.png", 1), ("run.sh", 1), ("files/.hidden", 1), ("files/chat panel.png", 10),
-                 ("files/big.png", 100)]
-        kept, dropped = remote.safe_members(names, 50)
-        self.assertEqual(kept, ["output.txt", "files/a.trx", "files/chat panel.png"])
-        self.assertEqual(len(dropped), 6)
+    def test_safe_members_keeps_only_the_runners_own_names(self):
+        names = [("output.txt", 10), ("files/unit-tests.trx", 10), ("files/other.trx", 1),
+                 ("files/../../etc/passwd", 1), ("/etc/passwd", 1), ("files/sub/unit-tests.trx", 1),
+                 ("run.sh", 1), ("files/screenshots/chat-panel.png", 5), ("files/.hidden", 1)]
+        kept, dropped = remote.safe_members(names, 50, ["unit-tests.trx"])
+        self.assertEqual(kept, ["output.txt", "files/unit-tests.trx"])
+        self.assertEqual(len(dropped), 7)
+        # Control: the same archive with nothing allowed keeps only the output.
+        self.assertEqual(remote.safe_members(names, 50)[0], ["output.txt"])
+
+    def test_safe_members_takes_flat_png_names_only_for_a_screenshot_run(self):
+        names = [("files/screenshots/chat-panel.png", 5), ("files/screenshots/../../x.png", 1),
+                 ("files/screenshots/a/b.png", 1), ("files/screenshots/.x.png", 1),
+                 ("files/screenshots/x.sh", 1), ("files/screenshots/a b.png", 1), ("files/x.png", 1)]
+        self.assertEqual(remote.safe_members(names, 50, [], png=True)[0], ["files/screenshots/chat-panel.png"])
+        self.assertEqual(remote.safe_members(names, 50, [], png=False)[0], [])
+
+    def test_safe_members_stops_at_the_byte_limit(self):
+        names = [("output.txt", 30), ("files/a.trx", 30), ("files/b.trx", 10)]
+        kept, dropped = remote.safe_members(names, 50, ["a.trx", "b.trx"])
+        self.assertEqual((kept, dropped), (["output.txt", "files/b.trx"], ["files/a.trx"]))
+
+    def test_busy_problem(self):
+        self.assertIsNone(remote.busy_problem({"busy": None}))
+        self.assertIsNone(remote.busy_problem({}))
+        self.assertEqual(remote.busy_problem({"busy": "old1"}), "the target is still running job old1")
 
     def test_parse_load(self):
         self.assertEqual(remote.parse_load("air.internal\n{ 1.96 2.00 1.98 }\n"), [1.96, 2.0, 1.98])
@@ -587,6 +609,62 @@ class FlowTests(unittest.TestCase):
         self.assertIn("pushing the commit", h3.res("t1")["error"])
         self.assertEqual(h3.air.did("start"), [])
 
+    def test_a_job_the_target_still_has_running_holds_the_next_one_back(self):
+        h = Harness()
+        h.air.busy = "old1"  # left behind by a dropped connection; not in this runner's state
+        h.ask(req("a"), req("b"))
+        st = h.remote.step()
+        self.assertEqual(h.results, {})                       # not an answer
+        self.assertIsNone(h.state["running"])
+        self.assertEqual([q["id"] for q in st["queued"]], ["a", "b"])  # back at the head, order kept
+        self.assertEqual(st["target_busy_with"], "old1")
+        h.remote.step()
+        self.assertEqual(len(h.air.did("start")), 1)          # not asked again every look
+        h.clock.t += 15
+        h.remote.step()
+        self.assertEqual(len(h.air.did("start")), 2)
+        h.air.busy = None
+        h.clock.t += 15
+        st = h.remote.step()
+        self.assertEqual((st["running"]["id"], st["target_busy_with"]), ("a", None))
+        self.assertEqual("\n".join(h.logs).count("waiting id=a"), 1)
+
+    def test_a_connection_that_drops_during_the_start_is_answered_and_the_next_request_waits(self):
+        h = Harness()
+        h.air.start_error = "ssh failed (exit 255)"
+        h.ask(req("a"), req("b"))
+        h.remote.step()
+        r = h.res("a")
+        self.assertEqual((r["ok"], r["refused"], r["exit_code"]), (False, None, None))
+        self.assertIn("could not start on air: ssh failed (exit 255)", r["error"])
+        self.assertIn("if the job did start there", r["error"])
+        # The job did start there: the target says so when b is tried.
+        h.air.start_error, h.air.busy = None, "a"
+        h.remote.step()
+        self.assertEqual((h.state["running"], h.state["target_busy"]), (None, "a"))
+        self.assertNotIn("b", h.results)
+        h.air.busy = None
+        h.clock.t += 15
+        h.remote.step()
+        self.assertEqual(h.state["running"]["req"]["id"], "b")
+
+    def test_each_run_asks_for_its_own_fixed_file_names(self):
+        for run, want, png in (("unit", ("unit-tests.trx",), False), ("integration", ("integration-tests.trx",), False),
+                               ("ui", ("ui-tests.xunit.xml",), False),
+                               ("screenshots", ("ui-screenshots.xunit.xml",), True),
+                               ("build", (), False), ("coverage", (), False), ("glyph", (), False)):
+            h = Harness()
+            h.ask(req(run=run))
+            h.remote.step()
+            self.assertEqual(h.air.did("start")[0][6], want, run)
+            self.assertEqual(h.air.did("start")[0][5], remote.command_for(run)[1], run)  # the cap, for the target's own clock
+            h.air.state = "done"
+            h.remote.step()
+            self.assertEqual(h.air.did("collect")[0][2:], (want, png), run)
+            # The name is the one the argv gave the report.
+            for name in want:
+                self.assertIn(name, " ".join(remote.command_for(run)[0]), run)
+
     def test_coverage_cleans_everything_and_must_say_merged_4(self):
         h = Harness()
         h.ask(req(run="coverage"))
@@ -727,6 +805,72 @@ class MirrorTests(unittest.TestCase):
             self.mirror(Sh({"rev-parse": (1, "")})).base_sha()
 
 
+@unittest.skipIf(os.name == "nt" or shutil.which("git") is None, "needs git")
+class MirrorRealGitTests(unittest.TestCase):
+    """Mirror against a real repository on disk standing where GitHub is."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.d, True)
+        self.env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull,
+                        GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+                        GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
+        self.origin, self.work = os.path.join(self.d, "origin.git"), os.path.join(self.d, "work")
+        self.git("init", "-q", "--bare", self.origin)
+        self.git("init", "-q", self.work)
+        self.develop = self.commit("base")
+        self.git("-C", self.work, "push", "-q", self.origin, "HEAD:refs/heads/develop")
+
+        def sh(argv, timeout=None, input=None):
+            return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env=self.env)
+        self.mirror = remote.Mirror(cfg(state_dir=os.path.join(self.d, "state"), repo_url=self.origin), sh)
+
+    def git(self, *args):
+        r = subprocess.run(["git", *args], capture_output=True, text=True, env=self.env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout.strip()
+
+    def commit(self, text):
+        with open(os.path.join(self.work, "f.txt"), "w") as f:
+            f.write(text)
+        self.git("-C", self.work, "add", "f.txt")
+        self.git("-C", self.work, "commit", "-q", "-m", text)
+        return self.git("-C", self.work, "rev-parse", "HEAD")
+
+    def test_a_sha_pushed_seconds_ago_passes_because_every_check_fetches_first(self):
+        self.assertTrue(self.mirror.on_branch(self.develop))
+        new = self.commit("fix")
+        self.assertFalse(self.mirror.on_branch(new))      # committed, not pushed
+        self.git("-C", self.work, "push", "-q", self.origin, "HEAD:refs/heads/bugfix/pc-fix")
+        self.assertTrue(self.mirror.on_branch(new))       # the same object, no restart, straight after the push
+        self.assertEqual(self.mirror.base_sha(), self.develop)
+
+    def test_any_branch_counts_and_an_ancestor_of_a_tip_counts(self):
+        first = self.commit("one")
+        second = self.commit("two")
+        self.git("-C", self.work, "push", "-q", self.origin, "HEAD:refs/heads/feature/anything")
+        self.assertTrue(self.mirror.on_branch(first))
+        self.assertTrue(self.mirror.on_branch(second))
+
+    def test_a_pull_request_ref_or_a_tag_is_not_a_branch(self):
+        fork = self.commit("from a fork")
+        self.git("-C", self.work, "push", "-q", self.origin, "HEAD:refs/pull/7/head")
+        self.git("-C", self.work, "push", "-q", self.origin, "HEAD:refs/tags/v9")
+        self.assertFalse(self.mirror.on_branch(fork))
+        self.assertTrue(self.mirror.on_branch(self.develop))  # control: the fetch itself worked
+
+    def test_a_branch_deleted_upstream_stops_counting(self):
+        gone = self.commit("abandoned")
+        self.git("-C", self.work, "push", "-q", self.origin, "HEAD:refs/heads/bugfix/pc-gone")
+        self.assertTrue(self.mirror.on_branch(gone))
+        self.git("-C", self.work, "push", "-q", self.origin, ":refs/heads/bugfix/pc-gone")
+        self.assertFalse(self.mirror.on_branch(gone))
+
+    def test_github_unreachable_is_none(self):
+        self.mirror.url = os.path.join(self.d, "nowhere.git")
+        self.assertIsNone(self.mirror.on_branch(self.develop))
+
+
 class TargetTests(unittest.TestCase):
     def test_every_call_is_ssh_to_the_host_with_the_script_on_stdin(self):
         sh = Sh({"vm.loadavg": (0, "air.internal\n{ 1.0 2.0 3.0 }\n")})
@@ -750,25 +894,41 @@ class TargetTests(unittest.TestCase):
     def test_start_quotes_the_command_and_cleans_ignored_files_only_for_coverage(self):
         sh = Sh({"SHA=": (0, f"sha={SHA}\nhostname=air.internal\nstarted=1\n")})
         t = remote.Target("air", "air", cfg(), sh)
-        got = t.start("t1", SHA, ["dotnet", "test", "--logger", "trx;LogFileName=a.trx"])
-        self.assertEqual(got, {"sha": SHA, "hostname": "air.internal", "started": True})
+        got = t.start("t1", SHA, ["dotnet", "test", "--logger", "trx;LogFileName=a.trx"], 600, ["a.trx"])
+        self.assertEqual(got, {"sha": SHA, "hostname": "air.internal", "started": True, "busy": None})
         script = sh.calls[-1][1]
         self.assertIn("dotnet test --logger 'trx;LogFileName=a.trx' >", script)
         self.assertIn("git checkout -q -f --detach \"$SHA\"", script)
         self.assertIn("git clean -q -f -d  ||", script)
         self.assertIn("-name TestResults", script)
-        t.start("t2", SHA, ["./tools/coverage.sh"], clean_all=True)
+        self.assertIn("for N in a.trx; do", script)
+        self.assertIn("echo $((NOW + 600)) >", script)
+        t.start("t2", SHA, ["./tools/coverage.sh"], 2700, clean_all=True)
         self.assertIn("git clean -q -f -d -x ||", sh.calls[-1][1])
+        self.assertIn("for N in ''; do", sh.calls[-1][1])
+
+    def test_no_build_server_outlives_a_job(self):
+        for script in (remote.START, remote.POLL):
+            for frag in ("MSBUILDDISABLENODEREUSE=1", "DOTNET_CLI_USE_MSBUILD_SERVER=0", "UseSharedCompilation=false"):
+                self.assertIn(frag, script)
+        self.assertIn("dotnet build-server shutdown", remote.START)
+        # After the command, before the exit file that says the job is over.
+        self.assertLess(remote.START.index("dotnet build-server shutdown"), remote.START.index('mv "$J/exit.tmp"'))
+
+    def test_start_reports_a_target_that_is_busy(self):
+        sh = Sh({"SHA=": (0, "busy=old1\n")})
+        got = remote.Target("air", "air", cfg(), sh).start("t1", SHA, ["dotnet", "build"], 600)
+        self.assertEqual((got["busy"], got["started"], got["sha"]), ("old1", False, None))
 
     def test_start_reports_a_worktree_at_another_commit_as_not_started(self):
         sh = Sh({"SHA=": (0, f"sha={SHA2}\nhostname=air.internal\n")})
-        got = remote.Target("air", "air", cfg(), sh).start("t1", SHA, ["dotnet", "build"])
-        self.assertEqual(got, {"sha": SHA2, "hostname": "air.internal", "started": False})
+        got = remote.Target("air", "air", cfg(), sh).start("t1", SHA, ["dotnet", "build"], 600)
+        self.assertEqual(got, {"sha": SHA2, "hostname": "air.internal", "started": False, "busy": None})
 
     def test_start_failures_are_machine_errors(self):
         for code, frag in ((90, "job folder"), (91, "worktree"), (92, "check out"), (255, "ssh failed")):
             with self.assertRaises(base.MachineError) as cm:
-                remote.Target("air", "air", cfg(), Sh({"SHA=": (code, "")})).start("t1", SHA, ["dotnet"])
+                remote.Target("air", "air", cfg(), Sh({"SHA=": (code, "")})).start("t1", SHA, ["dotnet"], 600)
             self.assertIn(frag, str(cm.exception))
 
     def test_poll_answers(self):
@@ -784,8 +944,8 @@ class TargetTests(unittest.TestCase):
     def test_collect_reads_the_archive_through_the_safe_list(self):
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w") as tf:
-            for name, data in (("output.txt", b"Passed!\n"), ("files/a.trx", b"<t/>"),
-                               ("files/../../evil", b"x"), ("/abs", b"y")):
+            for name, data in (("output.txt", b"Passed!\n"), ("files/a.trx", b"<t/>"), ("files/b.trx", b"<u/>"),
+                               ("files/screenshots/s.png", b"png"), ("files/../../evil", b"x"), ("/abs", b"y")):
                 info = tarfile.TarInfo(name)
                 info.size = len(data)
                 tf.addfile(info, io.BytesIO(data))
@@ -796,16 +956,19 @@ class TargetTests(unittest.TestCase):
         t = remote.Target("air", "air", cfg(), Sh(),
                           sh_bytes=lambda argv, timeout=None, input=None:
                           subprocess.CompletedProcess(argv, 0, raw, b""))
-        out, files, dropped = t.collect("t1", 10_000)
-        self.assertEqual((out, files), ("Passed!\n", {"a.trx": b"<t/>"}))
-        self.assertEqual(sorted(dropped), ["/abs", "files/../../evil", "files/link"])
+        out, files, dropped = t.collect("t1", 10_000, ["a.trx"], True)
+        self.assertEqual((out, files), ("Passed!\n", {"a.trx": b"<t/>", "screenshots/s.png": b"png"}))
+        self.assertEqual(sorted(dropped), ["/abs", "files/../../evil", "files/b.trx", "files/link"])
+        # The same archive for a run that hands back no files: only the output.
+        self.assertEqual(t.collect("t1", 10_000)[1], {})
         with self.assertRaises(base.MachineError):
             remote.unpack(b"not a tar", 10)
 
     def test_every_script_is_valid_bash(self):
         if shutil.which("bash") is None:
             self.skipTest("no bash")
-        kw = dict(root="orbweaver-remote", rid="t1", sha=SHA, clean_x="-x", command="dotnet build", max_output=5)
+        kw = dict(root="orbweaver-remote", rid="t1", sha=SHA, clean_x="-x", command="dotnet build", max_output=5,
+                  cap=600, files="a.trx")
         for name in ("START", "POLL", "KILL", "COLLECT", "CLEANUP", "INIT"):
             r = subprocess.run(["bash", "-n"], input=getattr(remote, name).format(**kw),
                                capture_output=True, text=True)
@@ -842,6 +1005,15 @@ class TargetShellTests(unittest.TestCase):
         def sh_bytes(argv, timeout=None, input=None):
             return subprocess.run(["bash", "-s"], input=input, capture_output=True, timeout=timeout, env=env)
 
+        # A stand-in dotnet where the scripts look first ($HOME/.dotnet), so
+        # run.sh's `dotnet build-server shutdown` never reaches a real SDK:
+        # on a machine other builds share, that would stop their servers.
+        os.makedirs(os.path.join(self.home, ".dotnet"))
+        self.dotnet_log = os.path.join(self.home, "dotnet-calls")
+        stub = os.path.join(self.home, ".dotnet", "dotnet")
+        with open(stub, "w") as f:
+            f.write(f'#!/bin/sh\necho "$@" >> "{self.dotnet_log}"\n')
+        os.chmod(stub, 0o755)
         self.t = remote.Target("air", "air", cfg(), sh, sh_bytes)
         self.t.init()
         # A source repository with two commits, pushed into the target's bare one.
@@ -874,22 +1046,24 @@ class TargetShellTests(unittest.TestCase):
 
     def test_a_job_runs_and_its_output_and_files_come_back(self):
         got = self.t.start("a", self.shas[0], ["bash", "-c",
-                           "cat f.txt; mkdir -p TestResults/screenshots; echo x > TestResults/r.trx; "
-                           "echo p > TestResults/screenshots/s.png; exit 3"])
+                           "cat f.txt; mkdir -p TestResults/screenshots tests/U/bin/TestResults; "
+                           "echo x > tests/U/bin/TestResults/r.trx; echo y > TestResults/other.trx; "
+                           "echo p > TestResults/screenshots/s.png; exit 3"], 600, ["r.trx"])
         self.assertEqual((got["sha"], got["started"]), (self.shas[0], True))
         self.assertTrue(got["hostname"])
         self.assertEqual(self.wait("a", "done"), 3)
-        out, files, dropped = self.t.collect("a", 10_000)
+        out, files, dropped = self.t.collect("a", 10_000, ["r.trx"], True)
         self.assertEqual(out, "one")
-        self.assertEqual(sorted(files), ["r.trx", "s.png"])
+        self.assertEqual(files, {"r.trx": b"x\n", "screenshots/s.png": b"p\n"})  # other.trx was never copied
         self.assertEqual(dropped, [])
+        self.assertEqual(read(self.dotnet_log), "build-server shutdown\n")  # the stand-in, once, at the end
         self.t.cleanup("a")
         self.assertEqual(self.t.poll("a")[0], "lost")
         self.assertNotIn("remote-runs/a", self.git("--git-dir", os.path.join(self.home, remote.ROOT_DIR, "repo.git"),
                                                    "for-each-ref"))
 
     def test_a_dirty_worktree_at_another_commit_is_forced_to_the_one_asked_for(self):
-        self.t.start("a", self.shas[0], ["true"])
+        self.t.start("a", self.shas[0], ["true"], 600)
         self.wait("a", "done")
         # Left dirty: a tracked file edited, an untracked file, a stale report.
         with open(os.path.join(self.work, "f.txt"), "w") as f:
@@ -898,17 +1072,17 @@ class TargetShellTests(unittest.TestCase):
         for p in ("stray.txt", os.path.join("tests", "X", "TestResults", "old.trx")):
             with open(os.path.join(self.work, p), "w") as f:
                 f.write("stale")
-        got = self.t.start("b", self.shas[1], ["bash", "-c", "cat f.txt; ls"])
+        got = self.t.start("b", self.shas[1], ["bash", "-c", "cat f.txt; ls"], 600, ["old.trx"])
         self.assertEqual(got["sha"], self.shas[1])
         self.assertEqual(got["sha"], self.git("-C", self.work, "rev-parse", "HEAD").strip())
         self.wait("b", "done")
-        out, files, _ = self.t.collect("b", 10_000)
+        out, files, _ = self.t.collect("b", 10_000, ["old.trx"])
         self.assertTrue(out.startswith("two"))
         self.assertNotIn("stray.txt", out)
         self.assertEqual(files, {})  # the stale report was removed, not handed back as this run's
 
     def test_ignored_files_survive_a_normal_run_and_not_a_coverage_run(self):
-        self.t.start("a", self.shas[0], ["true"])
+        self.t.start("a", self.shas[0], ["true"], 600)
         self.wait("a", "done")
         with open(os.path.join(self.work, ".git", "info", "exclude") if os.path.isdir(os.path.join(self.work, ".git"))
                   else os.path.join(self.home, remote.ROOT_DIR, "repo.git", "info", "exclude"), "a") as f:
@@ -916,23 +1090,52 @@ class TargetShellTests(unittest.TestCase):
         os.makedirs(os.path.join(self.work, "bin"))
         with open(os.path.join(self.work, "bin", "app.dll"), "w") as f:
             f.write("x")
-        self.t.start("b", self.shas[1], ["true"])
+        self.t.start("b", self.shas[1], ["true"], 600)
         self.wait("b", "done")
         self.assertTrue(os.path.exists(os.path.join(self.work, "bin", "app.dll")))  # incremental build kept
-        self.t.start("a", self.shas[0], ["true"], clean_all=True)
+        self.t.start("a", self.shas[0], ["true"], 600, clean_all=True)
         self.wait("a", "done")
         self.assertFalse(os.path.exists(os.path.join(self.work, "bin")))
 
     def test_an_unknown_commit_is_a_machine_error(self):
         with self.assertRaises(base.MachineError):
-            self.t.start("a", "d" * 40, ["true"])
+            self.t.start("a", "d" * 40, ["true"], 600)
+
+    def test_a_job_left_running_holds_the_worktree_until_it_ends_or_passes_its_cap(self):
+        marker = os.path.join(self.home, "pid")
+        got = self.t.start("a", self.shas[0], ["bash", "-c", f"sleep 300 & echo $! > {marker}; wait"], 600)
+        self.assertTrue(got["started"])
+        # A second start, as after a dropped connection: the mini knows
+        # nothing, the target does.
+        got = self.t.start("b", self.shas[1], ["true"], 600)
+        self.assertEqual((got["busy"], got["started"]), ("a", False))
+        self.assertEqual(self.git("-C", self.work, "rev-parse", "HEAD").strip(), self.shas[0])  # worktree untouched
+        self.assertEqual(self.t.poll("a")[0], "running")
+        self.assertTrue(_alive(int(read(marker))))
+        # Past its own cap, the left-behind job is killed and the new one starts.
+        with open(os.path.join(self.home, remote.ROOT_DIR, "jobs", "a", "deadline"), "w") as f:
+            f.write("1\n")
+        got = self.t.start("b", self.shas[1], ["true"], 600)
+        self.assertEqual((got["busy"], got["started"], got["sha"]), (None, True, self.shas[1]))
+        end = time.time() + 10
+        while time.time() < end and _alive(int(read(marker))):
+            time.sleep(0.1)
+        self.assertFalse(_alive(int(read(marker))))
+        self.assertEqual(self.wait("b", "done"), 0)
+
+    def test_a_finished_job_does_not_hold_the_next_one_back(self):
+        self.t.start("a", self.shas[0], ["true"], 600)
+        self.wait("a", "done")
+        got = self.t.start("b", self.shas[1], ["true"], 600)  # a was never collected or cleaned up
+        self.assertEqual((got["busy"], got["started"]), (None, True))
+        self.assertEqual(self.t.poll("a")[0], "lost")         # its folder went with the new start
 
     def test_kill_takes_the_whole_process_tree_and_nothing_else(self):
         marker = os.path.join(self.home, "pids")
         bystander = subprocess.Popen(["sleep", "60"])
         self.addCleanup(lambda: (bystander.kill(), bystander.wait()))
         self.t.start("a", self.shas[0], ["bash", "-c",
-                     f"sleep 300 & echo $! >> {marker}; (sleep 300 & echo $! >> {marker}; wait) & wait"])
+                     f"sleep 300 & echo $! >> {marker}; (sleep 300 & echo $! >> {marker}; wait) & wait"], 600)
         self.wait("a", "running")
         end = time.time() + 10
         while time.time() < end and (not os.path.exists(marker) or len(read(marker).split()) < 2):
@@ -974,13 +1177,19 @@ class FileTests(unittest.TestCase):
 
     def test_write_result_is_whole_or_absent_and_never_overwrites(self):
         big = "x" * 1000 + "END\n"
-        self.assertTrue(remote.write_result(self.d, "t1", {"id": "t1"}, big, {"a.trx": b"<t/>"}, 100))
+        self.assertTrue(remote.write_result(self.d, "t1", {"id": "t1"}, big, {
+            "a.trx": b"<t/>", "screenshots/s.png": b"png", "../climb": b"x", "screenshots/../c": b"x",
+            "deep/er/x": b"x"}, 100))
         folder = os.path.join(self.d, "t1")
         self.assertEqual(sorted(os.listdir(folder)), ["files", "output-tail.txt", "output.txt", "result.json"])
         self.assertEqual(read(os.path.join(folder, "output.txt")), big)
         tail = read(os.path.join(folder, "output-tail.txt"))
         self.assertEqual((len(tail), tail[-4:]), (100, "END\n"))
         self.assertEqual(read(os.path.join(folder, "files", "a.trx"), "rb"), b"<t/>")
+        self.assertEqual(read(os.path.join(folder, "files", "screenshots", "s.png"), "rb"), b"png")
+        self.assertEqual(sorted(os.listdir(os.path.join(folder, "files"))), ["a.trx", "screenshots"])
+        self.assertEqual(os.listdir(os.path.join(folder, "files", "screenshots")), ["s.png"])
+        self.assertEqual(sorted(os.listdir(self.d)), ["t1"])  # nothing climbed out
         self.assertFalse(remote.write_result(self.d, "t1", {"id": "other"}, "", {}, 100))
         self.assertEqual(json.loads(read(os.path.join(folder, "result.json"))), {"id": "t1"})
         self.assertEqual([n for n in os.listdir(self.d) if n.startswith(".")], [])

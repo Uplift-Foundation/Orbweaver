@@ -81,6 +81,9 @@ DEFAULTS = {
     # How long one run-once lives, and how often it looks. launchd starts the
     # next one each minute, so a 17-second test is answered in about 20
     # seconds rather than at the next minute.
+    # How soon a start is tried again after the target said it was still
+    # running a job this runner did not know about.
+    "busy_retry_s": 15,
     "tick_s": 55,
     "poll_s": 2,
     "tail_bytes": 200 * 1024,
@@ -113,6 +116,19 @@ RUNS = {
     "transcript": (["dotnet", "run", "--project", "tests/TranscriptTests", "-c", "Release"], None, SHORT, SHORT),
     "coverage": (["./tools/coverage.sh", "--base", "origin/develop"], None, COVERAGE, COVERAGE),
 }
+
+
+# The result files a run hands back, under names this file chose (they are
+# the names its own argv gave the reports). A screenshot run also hands back
+# its PNGs, whose names the tests chose: those are kept only when they are a
+# dull flat name, and are written under files/screenshots/.
+RESULT_FILES = {
+    "unit": ["unit-tests.trx"],
+    "integration": ["integration-tests.trx"],
+    "ui": ["ui-tests.xunit.xml"],
+    "screenshots": ["ui-screenshots.xunit.xml"],
+}
+PNG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,150}\.png")
 
 
 # ---------------------------------------------------------------- pure rules
@@ -293,22 +309,35 @@ def job_ok(run, exit_code, was_timed_out, merged):
     return merged == 4 if run == "coverage" else True
 
 
-SAFE_MEMBER_RE = re.compile(r"(output\.txt|files/[A-Za-z0-9][A-Za-z0-9._ -]{0,199})")
-
-
-def safe_members(names_sizes, limit):
-    """Which members of the target's result archive are kept: plain files
-    with a flat, dull name, in order, until `limit` bytes. The names come
-    from files the tested code wrote, so a path that climbs out of the
-    result folder is dropped, not followed. Returns (kept names, dropped)."""
+def safe_members(names_sizes, limit, allowed=(), png=False):
+    """Which members of the target's result archive are kept, in order, until
+    `limit` bytes: output.txt, files/<name> for a name in `allowed` (the
+    runner's own fixed names for this run), and with `png` a flat, dull
+    files/screenshots/<name>.png. Nothing else: the archive comes from a
+    machine that just ran the code under test, so a member that climbs out of
+    the folder, or that this run was never going to produce, is dropped and
+    named, not followed. Returns (kept, dropped)."""
     kept, dropped, total = [], [], 0
     for name, size in names_sizes:
-        if not SAFE_MEMBER_RE.fullmatch(name) or total + size > limit:
+        ok = name == "output.txt" or (name.startswith("files/") and name[6:] in allowed) or (
+            png and name.startswith("files/screenshots/") and PNG_RE.fullmatch(name[18:]) is not None)
+        if not ok or total + size > limit:
             dropped.append(name)
             continue
         total += size
         kept.append(name)
     return kept, dropped
+
+
+def busy_problem(prep):
+    """Why a prepared start did not start because the target itself is busy
+    (None = it is not). `prep["busy"]` is the id of a job the target found
+    still running in its job folder: one left behind when a connection
+    dropped, which this runner's own state knows nothing about. It must not
+    share the one worktree with a new job."""
+    if prep.get("busy"):
+        return f"the target is still running job {prep['busy']}"
+    return None
 
 
 # ---------------------------------------------------------------- the runner
@@ -380,7 +409,8 @@ class Remote:
         job = self.state["running"]
         if job is not None:
             self.watch(job)
-        if may_start(self.state["running"], self.state["queue"]):
+        if may_start(self.state["running"], self.state["queue"]) and \
+                self.clock() >= self.state.get("retry_after", 0):
             self.start_next()
         return self.status()
 
@@ -418,12 +448,33 @@ class Remote:
             base_sha = self.mirror.base_sha()
             self.targets[name].init()
             self.mirror.push(self.targets[name].push_url, req["sha"], req["id"])
-            prep = self.targets[name].start(req["id"], req["sha"], argv, clean_all=req["run"] == "coverage")
+            prep = self.targets[name].start(req["id"], req["sha"], argv, cap, RESULT_FILES.get(req["run"], []),
+                                            clean_all=req["run"] == "coverage")
         except MachineError as e:
+            # A connection that dropped part way may have left the job
+            # running on the target. Nothing can be said about it from here,
+            # so this request is answered as failed, and the next start asks
+            # the target itself and waits for whatever is there.
             self.log(f"start failed id={req['id']} target={name}: {e}")
-            self.write(req["id"], self.result(req, False, error=f"could not start on {name}: {e}", **base), "", {})
+            self.write(req["id"], self.result(
+                req, False, error=f"could not start on {name}: {e}; if the job did start there, its "
+                                  "result is lost and the next request waits for it to end", **base), "", {})
             self.save(self.state)
             return
+        why = busy_problem(prep)
+        if why is not None:
+            # Not an answer: the request goes back to the head of the queue
+            # and is tried again shortly. The target ends a left-behind job
+            # itself once that job's own cap has passed, so this cannot wait
+            # for ever.
+            if self.state.get("target_busy") != prep["busy"]:
+                self.log(f"waiting id={req['id']} target={name}: {why}")
+            self.state["target_busy"] = prep["busy"]
+            self.state["queue"].insert(0, item)
+            self.state["retry_after"] = now + self.cfg["busy_retry_s"]
+            self.save(self.state)
+            return
+        self.state["target_busy"] = None
         base.update(target_hostname=prep.get("hostname"), checked_out_sha=prep.get("sha"))
         why = checkout_problem(req["sha"], prep.get("sha"), prep.get("hostname"), self.local_hostname)
         if why is None and not prep.get("started"):
@@ -464,7 +515,8 @@ class Remote:
         output, files, dropped = "", {}, []
         if t is not None:
             try:
-                output, files, dropped = t.collect(req["id"], self.cfg["max_result_bytes"])
+                output, files, dropped = t.collect(req["id"], self.cfg["max_result_bytes"],
+                                                   RESULT_FILES.get(req["run"], []), req["run"] == "screenshots")
             except MachineError as e:
                 error = (error + "; " if error else "") + f"could not fetch the result files: {e}"
             t.cleanup(req["id"])
@@ -497,6 +549,7 @@ class Remote:
             "targets": {n: {"reachable": p["reachable"], "load": p.get("load"), "hostname": p.get("hostname")}
                         for n, p in self.probes.items()},
             "unreachable_since": iso(self.state["unreachable_since"]) if self.state["unreachable_since"] else None,
+            "target_busy_with": self.state.get("target_busy"),
             "running": None if job is None else {
                 "id": job["req"]["id"], "run": job["req"]["run"], "filter": job["req"].get("filter"),
                 "sha": job["req"]["sha"], "target": job["target"], "started_at": job["started_at"],
@@ -567,13 +620,17 @@ class Mirror:
 
 # What every script on the target starts with. $HOME/.dotnet is the SDK
 # dotnet-install.sh puts there with no sudo (host/README.md, target setup).
-# Node reuse is off so a finished or killed job leaves no MSBuild worker
-# holding the worktree's files.
+# No build server outlives a job: MSBuild node reuse, the MSBuild server and
+# the shared compiler are all off (MSBuild reads UseSharedCompilation from the
+# environment as a property, so coverage.sh's own builds get it too), and
+# run.sh ends with `dotnet build-server shutdown`. They would make a warm run
+# faster, and they would pile up on a 16 GB machine nobody is watching.
 PREAMBLE = """set -u
 ROOT="$HOME/{root}"
 J="$ROOT/jobs/{rid}"
 export PATH="$HOME/.dotnet:$PATH" DOTNET_ROOT="$HOME/.dotnet"
-export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 MSBUILDDISABLENODEREUSE=1
+export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+export MSBUILDDISABLENODEREUSE=1 DOTNET_CLI_USE_MSBUILD_SERVER=0 UseSharedCompilation=false
 """
 
 # One worktree, reused, so a build is incremental (17 s cold against 3 s warm
@@ -584,7 +641,24 @@ export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 MSBUILDDISABLENODEREUSE=1
 # because a stale binary is what makes a coverage figure fiction.
 START = PREAMBLE + """SHA={sha}
 cd "$ROOT" || exit 90
-rm -rf "$J" && mkdir -p "$J/files" || exit 90
+# Ask this machine, not the mini, whether a job is still running here: one
+# left behind by a dropped connection is in nobody's state file. A live one
+# inside its own cap is left alone and reported; one past its cap is killed.
+NOW="$(date +%s)"
+for P in jobs/*/pid; do
+  [ -f "$P" ] || continue
+  D="$(dirname "$P")"
+  [ -f "$D/exit" ] && continue
+  OLD="$(cat "$P")"
+  kill -0 "$OLD" 2>/dev/null || continue
+  if [ "$NOW" -ge "$(cat "$D/deadline" 2>/dev/null || echo 0)" ]; then
+    kill -TERM -- "-$OLD" 2>/dev/null; sleep 2; kill -KILL -- "-$OLD" 2>/dev/null
+  else
+    echo "busy=$(basename "$D")"; exit 0
+  fi
+done
+rm -rf jobs && mkdir -p "$J/files/screenshots" || exit 90
+echo $((NOW + {cap})) > "$J/deadline"
 if ! git -C work rev-parse --git-dir >/dev/null 2>&1; then
   rm -rf work; git --git-dir=repo.git worktree prune
   git --git-dir=repo.git worktree add -f --detach work "$SHA" >/dev/null 2>&1 || exit 91
@@ -602,15 +676,21 @@ echo $$ > "$J/pid"
 cd "$ROOT/work"
 {command} > "$J/output.txt" 2>&1
 code=$?
-find . \\( -name '*.trx' -o -name '*.xunit.xml' \\) -path '*TestResults*' -exec cp {{}} "$J/files/" \\; 2>/dev/null
-[ -d TestResults/screenshots ] && cp TestResults/screenshots/*.png "$J/files/" 2>/dev/null
+for N in {files}; do
+  F="$(find . -name "$N" -path '*TestResults*' -print -quit 2>/dev/null)"
+  [ -n "$F" ] && cp "$F" "$J/files/$N"
+done
+[ -d TestResults/screenshots ] && cp TestResults/screenshots/*.png "$J/files/screenshots/" 2>/dev/null
+dotnet build-server shutdown >/dev/null 2>&1
 echo $code > "$J/exit.tmp" && mv "$J/exit.tmp" "$J/exit"
 ORBWEAVER_REMOTE_EOF
 export ROOT J
 # Its own process group, so a kill at the cap takes the build, the test host
 # and everything they started, and nothing else.
 nohup perl -e 'setpgrp(0,0); exec @ARGV' bash "$J/run.sh" >/dev/null 2>&1 </dev/null &
-echo "started=1"
+# Not started until its pid is on disk, where the check above will find it.
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do [ -f "$J/pid" ] && break; sleep 0.25; done
+[ -f "$J/pid" ] && echo "started=1"
 """
 
 POLL = PREAMBLE + """sysctl -n vm.loadavg
@@ -628,6 +708,7 @@ exit 0
 
 COLLECT = PREAMBLE + """cd "$J" || exit 90
 if [ -f output.txt ]; then tail -c {max_output} output.txt > output.capped && mv output.capped output.txt; fi
+rmdir files/screenshots 2>/dev/null
 # Without this macOS tar adds a ._name member for every file carrying an
 # extended attribute, which is all of them.
 COPYFILE_DISABLE=1 tar -cf - output.txt files 2>/dev/null
@@ -685,8 +766,9 @@ class Target:
         if r.returncode != 0:
             raise MachineError(f"could not prepare {ROOT_DIR} on {self.name}: exit {r.returncode}")
 
-    def start(self, rid, sha, argv, clean_all=False):
+    def start(self, rid, sha, argv, cap_s, files=(), clean_all=False):
         script = START.format(root=ROOT_DIR, rid=rid, sha=sha, clean_x="-x" if clean_all else "",
+                              cap=int(cap_s), files=" ".join(shlex.quote(f) for f in files) or "''",
                               command=" ".join(shlex.quote(a) for a in argv))
         try:
             r = self.ssh(script, timeout=300)
@@ -697,7 +779,8 @@ class Target:
                                 92: "could not check out the commit"}.get(r.returncode, "ssh failed")
                                + f" (exit {r.returncode})")
         out = dict(line.split("=", 1) for line in r.stdout.splitlines() if "=" in line)
-        return {"sha": out.get("sha"), "hostname": out.get("hostname"), "started": out.get("started") == "1"}
+        return {"sha": out.get("sha"), "hostname": out.get("hostname"), "started": out.get("started") == "1",
+                "busy": out.get("busy")}
 
     def poll(self, rid):
         """(state, exit code, load): state is running, done, lost, or
@@ -722,14 +805,14 @@ class Target:
         except (subprocess.TimeoutExpired, OSError):
             pass
 
-    def collect(self, rid, limit):
+    def collect(self, rid, limit, allowed=(), png=False):
         """(output text, {file name: bytes}, dropped names)."""
         try:
             r = self.ssh(COLLECT.format(root=ROOT_DIR, rid=rid, max_output=self.cfg["max_output_bytes"]),
                          timeout=300, text=False)
         except (subprocess.TimeoutExpired, OSError) as e:
             raise MachineError(f"ssh to {self.name} failed: {e}")
-        return unpack(r.stdout, limit)
+        return unpack(r.stdout, limit, allowed, png)
 
     def cleanup(self, rid):
         try:
@@ -738,7 +821,7 @@ class Target:
             pass
 
 
-def unpack(raw, limit):
+def unpack(raw, limit, allowed=(), png=False):
     """The target's tar stream as (output, files, dropped), through
     safe_members: nothing is extracted to disk by tarfile itself."""
     try:
@@ -747,8 +830,9 @@ def unpack(raw, limit):
     except (tarfile.TarError, EOFError) as e:
         raise MachineError(f"the result archive could not be read: {e}")
     plain = [(m.name, m.size) for m in members if m.isfile()]
-    kept, dropped = safe_members(plain, limit)
-    dropped += [m.name for m in members if not m.isfile() and m.name not in ("files", "files/")]
+    kept, dropped = safe_members(plain, limit, allowed, png)
+    dropped += [m.name for m in members if not m.isfile()
+                and m.name.rstrip("/") not in ("files", "files/screenshots")]
     output, files = "", {}
     for m in members:
         if m.isfile() and m.name in kept:
@@ -790,7 +874,13 @@ def write_result(results_dir, rid, result, output, files, tail_bytes):
     with open(os.path.join(tmp, "output-tail.txt"), "wb") as f:
         f.write(raw[-tail_bytes:].decode("utf-8", "ignore").encode("utf-8"))
     for name, data in files.items():
-        with open(os.path.join(tmp, "files", os.path.basename(name)), "wb") as f:
+        # Names are the runner's own, or screenshots/<a flat PNG name>
+        # (safe_members); anything else here is a bug, and is not written.
+        sub, _, leaf = name.rpartition("/")
+        if sub not in ("", "screenshots") or leaf in ("", ".", "..") or os.sep in leaf:
+            continue
+        os.makedirs(os.path.join(tmp, "files", sub), exist_ok=True)
+        with open(os.path.join(tmp, "files", sub, leaf), "wb") as f:
             f.write(data)
     with open(os.path.join(tmp, "result.json"), "w") as f:
         json.dump(result, f, indent=2)

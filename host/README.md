@@ -591,16 +591,19 @@ it, and CI remains the suite gate.
 
 **The answer** is a folder `<company>/remote-results/<id>/`, renamed into place when the job
 has ended or the request was refused: `result.json`, `output.txt` (capped at 5 MB),
-`output-tail.txt` (the last 200 KB) and `files/` (the trx or xunit report, a screenshot run's
-PNGs, and for coverage `coverage-summary.txt`, which opens with the `merged N report(s)`
-line). `result.json` has `id`, `verb`, `sha`, `run`, `filter`, `ok`, `refused`, `queued_at`,
+`output-tail.txt` (the last 200 KB) and `files/`. The files have names the runner chose,
+never a path the target chose: `unit-tests.trx`, `integration-tests.trx`, `ui-tests.xunit.xml`,
+`ui-screenshots.xunit.xml`, and for coverage `coverage-summary.txt`, which opens with the
+`merged N report(s)` line. A screenshot run also returns its PNGs under `files/screenshots/`,
+kept only when the name is flat and plain. Anything else the target offers is dropped and
+listed in `files_dropped`; the whole answer is capped at 50 MB. `result.json` has `id`, `verb`, `sha`, `run`, `filter`, `ok`, `refused`, `queued_at`,
 `started_at`, `finished_at`, `target`, `target_hostname`, `checked_out_sha`, `exit_code`,
 `timed_out`, `files` and `error`; a coverage run adds `merged_reports` and `base_sha` (the
 develop commit `--base` compared against). `checked_out_sha` is `git rev-parse HEAD` in the
 target's worktree after the checkout, not the request echoed back. `refused` is set only when
 nothing ran on any target. A coverage run that exits 0 without `merged 4` is `ok: false`.
 `remote-results/status.json` says whether each target answers, its load average, what is
-running and what is queued. Answers older than seven days are removed.
+running, what is queued, and `target_busy_with` (below). Answers older than seven days are removed.
 
 **How the code gets there.** The runner keeps a bare mirror of the canonical repository in its
 state folder and fetches its branches (`refs/heads` only, so a fork's pull-request commit is
@@ -619,6 +622,19 @@ and is then refused with "no target reachable; not run on the mini". There is no
 execution path in the file, and the mini is refused as a target by name, by ssh host, by what
 `ssh -G` resolves the host to, and by the hostname the target reports before a job starts. A
 job at its cap has its whole process group killed.
+
+**A job the runner lost track of.** If the connection drops while a job starts or runs, the job
+carries on. So every start first asks the target itself, in the same ssh call, whether a job
+is still running there. If one is, nothing is touched: the request goes back to the head of
+the queue, is tried again every 15 seconds, and `status.json` names the job in
+`target_busy_with`. Each job records its own deadline on the target, and a left-behind job
+past it is killed by the next start, so this wait is bounded by that job's cap. A start whose
+connection dropped is answered `ok: false` with "could not start on air: ...".
+
+**No build server outlives a job.** MSBuild node reuse, the MSBuild server and the shared
+compiler are off in every job's environment, and each job ends with
+`dotnet build-server shutdown`. Warm runs are slower for it; a 16 GB machine nobody watches
+does not collect idle servers.
 
 **Config:** `~/.config/orbweaver-bugfix/remote.json`. Only `company_dir` is required.
 
