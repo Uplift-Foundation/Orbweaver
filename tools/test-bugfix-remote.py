@@ -96,8 +96,8 @@ class FakeTarget:
     def init(self):
         self.calls.append(("init",))
 
-    def start(self, rid, sha, argv, cap_s, files=(), clean_all=False):
-        self.calls.append(("start", rid, sha, tuple(argv), clean_all, cap_s, tuple(files)))
+    def start(self, rid, sha, argv, cap_s, files=(), clean_all=False, png=False):
+        self.calls.append(("start", rid, sha, tuple(argv), clean_all, cap_s, tuple(files), png))
         if self.start_error:
             raise base.MachineError(self.start_error)
         if self.is_this_machine:
@@ -724,6 +724,7 @@ class FlowTests(unittest.TestCase):
             h.ask(req(run=run))
             h.remote.step()
             self.assertEqual(h.air.did("start")[0][6], want, run)
+            self.assertEqual(h.air.did("start")[0][7], png, run)   # PNGs are copied on the target only for screenshots
             self.assertEqual(h.air.did("start")[0][5], remote.command_for(run)[1], run)  # the cap, for the target's own clock
             h.air.state = "done"
             h.remote.step()
@@ -772,6 +773,8 @@ class FlowTests(unittest.TestCase):
         h.air.output = "building...\nmerged 4 report(s)\n\nlines 9033/10067 (89.7%)\n"
         h.remote.step()
         r, _, files = h.results["t1"]
+        self.assertFalse(h.air.did("start")[0][7])  # no PNG copy
+        self.assertNotIn("files_dropped", r)
         self.assertEqual((r["ok"], r["merged_reports"], r["base_sha"], r["error"]), (True, 4, BASE, None))
         self.assertTrue(files["coverage-summary.txt"].startswith(b"merged 4 report(s)\n"))
         self.assertIn("coverage-summary.txt", r["files"])
@@ -1107,7 +1110,8 @@ class TargetTests(unittest.TestCase):
     @unittest.skipIf(os.name == "nt" or shutil.which("bash") is None, "needs a real bash")
     def test_every_script_is_valid_bash(self):
         kw = dict(root="orbweaver-remote", rid="t1", sha=SHA, clean_x="-x", command="dotnet build", max_output=5,
-                  cap=600, files="a.trx", forbidden="avatar avatar.internal", max_stream=99)
+                  cap=600, files="a.trx", forbidden="avatar avatar.internal", max_stream=99,
+                  copy_png=remote.COPY_PNG)
         for name in ("START", "POLL", "KILL", "COLLECT", "CLEANUP", "INIT"):
             r = subprocess.run(["bash", "-n"], input=getattr(remote, name).format(**kw),
                                capture_output=True, text=True)
@@ -1188,7 +1192,7 @@ class TargetShellTests(unittest.TestCase):
         got = self.t.start("a", self.shas[0], ["bash", "-c",
                            "cat f.txt; mkdir -p TestResults/screenshots tests/U/bin/TestResults; "
                            "echo x > tests/U/bin/TestResults/r.trx; echo y > TestResults/other.trx; "
-                           "echo p > TestResults/screenshots/s.png; exit 3"], 600, ["r.trx"])
+                           "echo p > TestResults/screenshots/s.png; exit 3"], 600, ["r.trx"], png=True)
         self.assertEqual((got["sha"], got["started"]), (self.shas[0], True))
         self.assertTrue(got["hostname"])
         self.assertEqual(self.wait("a", "done"), 3)
@@ -1282,6 +1286,19 @@ class TargetShellTests(unittest.TestCase):
             time.sleep(0.1)
         self.assertFalse(_alive(int(read(marker))))
         self.assertEqual(self.wait("b", "done"), 0)
+
+    def test_a_run_that_is_not_screenshots_copies_no_pngs_so_nothing_is_dropped(self):
+        # As a coverage run does: it draws the screenshots on the way and is
+        # not asked for them (QA acceptance: 330 names in files_dropped).
+        draw = "mkdir -p TestResults/screenshots; echo p > TestResults/screenshots/s.png; echo merged"
+        self.t.start("a", self.shas[0], ["bash", "-c", draw], 600)
+        self.wait("a", "done")
+        out, files, dropped = self.t.collect("a", 10_000)
+        self.assertEqual((out, files, dropped), ("merged\n", {}, []))
+        # Control: the same job asked for as a screenshots run brings the PNG back.
+        self.t.start("b", self.shas[0], ["bash", "-c", draw], 600, png=True)
+        self.wait("b", "done")
+        self.assertEqual(self.t.collect("b", 10_000, [], True)[1], {"screenshots/s.png": b"p\n"})
 
     def test_a_finished_job_takes_what_it_left_running_with_it(self):
         marker = os.path.join(self.home, "pid")

@@ -484,7 +484,7 @@ class Remote:
             self.targets[name].init()
             self.mirror.push(self.targets[name].push_url, req["sha"], req["id"])
             prep = self.targets[name].start(req["id"], req["sha"], argv, cap, RESULT_FILES.get(req["run"], []),
-                                            clean_all=req["run"] == "coverage")
+                                            clean_all=req["run"] == "coverage", png=req["run"] == "screenshots")
         except LocalTarget as e:
             self.log(f"NEEDS ATTENTION: not run id={req['id']} target={name}: {e}")
             self.write(req["id"], self.result(req, False, error=str(e), **base), "", {})
@@ -747,7 +747,7 @@ for N in {files}; do
   F="$(find . -name "$N" -path '*TestResults*' -print -quit 2>/dev/null)"
   [ -n "$F" ] && cp "$F" "$J/files/$N"
 done
-[ -d TestResults/screenshots ] && cp TestResults/screenshots/*.png "$J/files/screenshots/" 2>/dev/null
+{copy_png}
 dotnet build-server shutdown >/dev/null 2>&1
 echo $code > "$J/exit.tmp" && mv "$J/exit.tmp" "$J/exit"
 # The job is over and its answer is on disk. Whatever it left running in its
@@ -797,6 +797,10 @@ PROBE = ('export PATH="$HOME/.dotnet:$PATH"\nhostname; sysctl -n vm.loadavg\n'
          "command -v tmux >/dev/null 2>&1 && echo tmux=yes || echo tmux=no\n")
 INIT = PREAMBLE + 'mkdir -p "$ROOT/jobs" || exit 90\n[ -d "$ROOT/repo.git" ] || git init -q --bare "$ROOT/repo.git"\n'
 ROOT_DIR = "orbweaver-remote"
+# Only a `screenshots` run hands its PNGs back. Any run that happens to draw
+# them (coverage runs UiScreenshots) would otherwise copy some 330 files that
+# the collect then drops, one name each in files_dropped.
+COPY_PNG = '[ -d TestResults/screenshots ] && cp TestResults/screenshots/*.png "$J/files/screenshots/" 2>/dev/null'
 ARCHIVE_SLACK = 1024 * 1024
 
 
@@ -845,9 +849,9 @@ class Target:
         if r.returncode != 0:
             raise MachineError(f"could not prepare {ROOT_DIR} on {self.name}: exit {r.returncode}")
 
-    def start(self, rid, sha, argv, cap_s, files=(), clean_all=False):
+    def start(self, rid, sha, argv, cap_s, files=(), clean_all=False, png=False):
         script = START.format(root=ROOT_DIR, rid=rid, sha=sha, clean_x="-x" if clean_all else "",
-                              cap=int(cap_s), files=" ".join(shlex.quote(f) for f in files) or "''",
+                              copy_png=COPY_PNG if png else ":", cap=int(cap_s), files=" ".join(shlex.quote(f) for f in files) or "''",
                               forbidden=" ".join(shlex.quote(n) for n in self.forbidden) or "''",
                               command=" ".join(shlex.quote(a) for a in argv))
         try:
