@@ -671,15 +671,32 @@ itself. The mini needs key-based `ssh <host>` to it.
 
 **What the target needs beyond the SDK.** `git`, `bash`, `perl`, `tar` and `python3` (for
 `coverage.sh`), all of which macOS has, and for two runs `tmux`. `tests/IntegrationTests`
-drives a real tmux (`TmuxPlacementTests`, 7 tests), and `coverage.sh` runs that suite. So the
-runner asks each target whether `tmux` is on a job's PATH (`status.json`, `tmux`), and on a
-target without it `integration` and `coverage` are refused with "the target has no tmux, which
-IntegrationTests needs; not run". They are refused, not run and returned red, so nobody learns
-to wave a red through. **The Air has no tmux as of 2026-11-27**, so for now those two runs
-happen on the mini, one at a time through the `dotnet` wrapper; that is temporary and ends
-when the Air has tmux, with no change here.
+drives a real tmux (`TmuxPlacementTests`), and `coverage.sh` runs that suite. Those tests find
+tmux the way the app does: `TerminalLauncher.ResolveTmux`'s fixed paths in order
+(`/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/opt/local/bin`), and only then PATH. The
+runner's probe asks the same question in the same order, and `status.json` carries the path it
+found (`tmux`) or null. On a target with none, `integration` and `coverage` are refused with
+"the target has no tmux, which IntegrationTests needs; not run": refused, not run and returned
+red, so nobody learns to wave a red through. The Air has Homebrew's tmux, so both run there.
+
+Those tests also attach a tmux client through a pty, and tmux refuses that under an unset or
+`dumb` `TERM`. A job started by `ssh <host> bash -s` has no `TERM` at all, so the runner gives
+a job `TERM=xterm-256color` when it has none and leaves a real one alone. Measured on the Air
+at one commit with nothing else changed: without it 7 `TmuxPlacementTests` fail ("the tmux
+client never attached"), with it none do.
+
+**Check a tool on a target by its path, not by `which` over ssh.** A non-interactive
+`ssh <host> '<command>'` runs with `PATH=/usr/bin:/bin:/usr/sbin:/sbin`, so `which tmux` and
+`which brew` say "not found" on a machine that has both under `/opt/homebrew/bin`. CB-494 read
+that answer as "the Air has no tmux and no Homebrew", refused two runs for it and built a tmux
+there that was never needed (since removed). `ls /opt/homebrew/bin/<tool> /usr/local/bin/<tool>`
+is the check, together with reading how the code under test finds the tool.
 
 **Known limits.** A commit on any branch of the canonical repository runs as the host user on
 the target, bounded by the command table. If the runner's state file is lost while a job runs,
 that request is never answered (the log says so) and the job ends on the target by itself.
 The launchd job's own output is in `/tmp/orbweaver-bugfix-remote.out` and `.err`.
+A job killed at its cap, or lost, can leave a tmux server behind on the target: tmux
+daemonizes out of the job's process group, so the group kill does not reach it, and
+`TmuxPlacementTests` stop their own server only when they finish. Each such server sits on a
+private socket and touches nobody else's tmux; it is a leak, not a hazard, and is not chased.

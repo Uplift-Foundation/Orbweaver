@@ -84,7 +84,7 @@ class FakeTarget:
         self.start_error = self.collect_error = None
         self.busy = None  # the id of a job the target itself still has running
         self.is_this_machine = False  # the start script found itself on a forbidden host
-        self.tmux = True
+        self.tmux = "/opt/homebrew/bin/tmux"
         self.load = [1.5, 1.0, 0.5]
 
     def probe(self):
@@ -396,7 +396,8 @@ class RuleTests(unittest.TestCase):
             self.assertEqual(remote.tool_problem(run, {"tmux": False}), want, run)
             self.assertEqual(remote.tool_problem(run, {"tmux": None}), want, run)
             self.assertEqual(remote.tool_problem(run, {}), want, run)
-            self.assertIsNone(remote.tool_problem(run, {"tmux": True}), run)
+            self.assertEqual(remote.tool_problem(run, {"tmux": ""}), want, run)
+            self.assertIsNone(remote.tool_problem(run, {"tmux": "/opt/homebrew/bin/tmux"}), run)
 
     def test_busy_problem(self):
         self.assertIsNone(remote.busy_problem({"busy": None}))
@@ -418,7 +419,7 @@ class FlowTests(unittest.TestCase):
         st = h.remote.step()
         self.assertEqual(st["running"]["id"], "t1")
         self.assertEqual(st["targets"]["air"], {"reachable": True, "load": [1.5, 1.0, 0.5],
-                                                "hostname": "air.internal", "tmux": True})
+                                                "hostname": "air.internal", "tmux": "/opt/homebrew/bin/tmux"})
         self.assertEqual(h.mirror.pushes, [("air:orbweaver-remote/repo.git", SHA, "t1")])
         start = h.air.did("start")[0]
         self.assertEqual(start[1:3], ("t1", SHA))
@@ -735,10 +736,10 @@ class FlowTests(unittest.TestCase):
 
     def test_on_a_target_without_tmux_integration_and_coverage_are_refused_not_run_red(self):
         h = Harness()
-        h.air.tmux = False
+        h.air.tmux = None
         h.ask(req("i1", run="integration"), req("c1", run="coverage"), req("u1", run="unit"), req("b1", run="build"))
         st = h.remote.step()
-        self.assertEqual(st["targets"]["air"]["tmux"], False)
+        self.assertIsNone(st["targets"]["air"]["tmux"])
         h.remote.step()
         for rid in ("i1", "c1"):
             r = h.res(rid)
@@ -760,7 +761,7 @@ class FlowTests(unittest.TestCase):
             h = Harness()
             h.ask(req(run=run))
             st = h.remote.step()
-            self.assertEqual((st["running"]["run"], st["targets"]["air"]["tmux"]), (run, True))
+            self.assertEqual((st["running"]["run"], st["targets"]["air"]["tmux"]), (run, "/opt/homebrew/bin/tmux"))
             self.assertEqual(len(h.air.did("start")), 1)
 
     def test_coverage_cleans_everything_and_must_say_merged_4(self):
@@ -825,8 +826,13 @@ class FlowTests(unittest.TestCase):
         h.remote.step()
         state = json.loads(h.saves[-1])  # what the next run-once loads
         h2 = Harness(state=state)
+        # The new tick only polls the job, yet still says which tmux the target has.
+        st = h2.remote.step()
+        self.assertEqual(st["targets"]["air"]["tmux"], "/opt/homebrew/bin/tmux")
+        self.assertEqual(h2.air.did("probe"), [])
         h2.air.state = "done"
-        h2.remote.step()
+        st = h2.remote.step()
+        self.assertEqual(st["targets"]["air"]["tmux"], "/opt/homebrew/bin/tmux")
         self.assertTrue(h2.res("a")["ok"])
         self.assertEqual([c[1] for c in h2.air.did("start")], ["b"])
 
@@ -976,15 +982,31 @@ class TargetTests(unittest.TestCase):
         sh = Sh({"vm.loadavg": (0, "air.internal\n{ 1.0 2.0 3.0 }\ntmux=no\n")})
         t = remote.Target("air", "air", cfg(), sh)
         self.assertEqual(t.probe(), {"reachable": True, "load": [1.0, 2.0, 3.0], "hostname": "air.internal",
-                                     "tmux": False})
-        has = remote.Target("air", "air", cfg(), Sh({"vm.loadavg": (0, "air.internal\n{ 1 2 3 }\ntmux=yes\n")}))
-        self.assertEqual(has.probe()["tmux"], True)
-        self.assertIn("command -v tmux", remote.PROBE)
+                                     "tmux": None})
+        has = remote.Target("air", "air", cfg(), Sh({"vm.loadavg": (
+            0, "air.internal\n{ 1 2 3 }\ntmux=/opt/homebrew/bin/tmux\n")}))
+        self.assertEqual(has.probe()["tmux"], "/opt/homebrew/bin/tmux")
         argv, script = sh.calls[0]
         self.assertEqual(argv[0], "ssh")
         self.assertEqual(argv[-3:], ["air", "bash", "-s"])
         self.assertIn("BatchMode=yes", argv)
-        self.assertEqual(script, remote.PROBE)
+        # The fixed paths first, in the app's order, and PATH only after them.
+        for_line = "for C in /opt/homebrew/bin/tmux /usr/local/bin/tmux /usr/bin/tmux /opt/local/bin/tmux; do"
+        self.assertIn(for_line, script)
+        self.assertLess(script.index(for_line), script.index("command -v tmux"))
+
+    def test_the_probe_looks_where_the_app_looks(self):
+        # TerminalLauncher.ResolveTmux is what TmuxPlacementTests call. If its
+        # list changes and this one does not, the probe answers about a
+        # different question than the tests ask.
+        import re
+        with open(os.path.join(ROOT, "TerminalLauncher.cs"), encoding="utf-8") as f:
+            src = f.read()
+        body = src[src.index("public static string? ResolveTmux()"):]
+        body = body[:body.index("return candidates")]
+        self.assertEqual(tuple(re.findall(r'"(/[^"]+/tmux)"', body)), remote.TMUX_PATHS)
+        with open(os.path.join(ROOT, "tests", "IntegrationTests", "TmuxPlacementTests.cs"), encoding="utf-8") as f:
+            self.assertIn('TerminalLauncher.ResolveTmux() ?? "tmux"', f.read())
 
     def test_probe_of_a_silent_host_is_unreachable_not_an_error(self):
         t = remote.Target("air", "air", cfg(), Sh({"hostname": (255, "")}))
@@ -1300,6 +1322,38 @@ class TargetShellTests(unittest.TestCase):
         self.wait("b", "done")
         self.assertEqual(self.t.collect("b", 10_000, [], True)[1], {"screenshots/s.png": b"p\n"})
 
+    def test_a_job_gets_a_real_term_when_ssh_gave_it_none(self):
+        # `ssh host bash -s` hands a job no TERM; tmux will not attach a
+        # client under an unset or dumb one (measured on the Air).
+        for n, (given, want) in enumerate(((None, "xterm-256color"), ("dumb", "xterm-256color"),
+                                           ("", "xterm-256color"),
+                                           ("screen-256color", "screen-256color"))):  # control: a real one is kept
+            self.env.pop("TERM", None)
+            if given is not None:
+                self.env["TERM"] = given
+            self.t.start(f"t{n}", self.shas[0], ["bash", "-c", "echo $TERM"], 600)
+            self.wait(f"t{n}", "done")
+            self.assertEqual(self.t.collect(f"t{n}", 10_000)[0], want + "\n", repr(given))
+
+    def test_the_probe_finds_tmux_at_a_fixed_path_before_path_and_on_path_after(self):
+        fixed, on_path = os.path.join(self.home, "fixed", "tmux"), os.path.join(self.home, "onpath", "tmux")
+        self.env["PATH"] = os.path.join(self.home, "onpath") + ":/usr/bin:/bin"
+        if shutil.which("tmux", path="/usr/bin:/bin") is not None:
+            self.skipTest("this machine has a tmux in /usr/bin or /bin")
+        t = remote.Target("air", "air", cfg(), self.sh, self.sh_bytes,
+                          tmux_paths=(os.path.join(self.home, "absent", "tmux"), fixed))
+        self.assertIsNone(t.probe()["tmux"])              # nowhere: this is the target that is refused
+        for path in (on_path, fixed):
+            os.makedirs(os.path.dirname(path))
+            with open(path, "w") as f:
+                f.write("#!/bin/sh\n")
+            os.chmod(path, 0o755)
+            # On PATH alone it is found there; once a fixed path has one, that wins, as in the app.
+            self.assertEqual(t.probe()["tmux"], path)
+        # A bare PATH, which is what a non-interactive ssh has, still finds the fixed one.
+        self.env["PATH"] = "/usr/bin:/bin"
+        self.assertEqual(t.probe()["tmux"], fixed)
+
     def test_a_finished_job_takes_what_it_left_running_with_it(self):
         marker = os.path.join(self.home, "pid")
         # A helper the job starts and does not wait for, as a build server is.
@@ -1462,7 +1516,7 @@ class RunOnceTests(unittest.TestCase):
         self.tick()
         st = self.status()
         self.assertEqual(st["targets"]["air"], {"reachable": True, "load": [1.5, 1.0, 0.5],
-                                                "hostname": "air.internal", "tmux": True})
+                                                "hostname": "air.internal", "tmux": "/opt/homebrew/bin/tmux"})
         self.assertEqual((st["running"], st["queued"]), (None, []))
 
     def test_bad_requests_are_answered_or_dropped_like_the_machine_spool(self):
