@@ -389,6 +389,10 @@ Then, none of which a package can carry:
    ```
    That folder is already first on the service's `PATH`, so replacing the file
    needs no restart; a command already running keeps the copy it started with.
+   `host/check_host.py` prints a `PROBLEM:` line for any of the four stand-ins
+   that is missing from that folder or differs from the repo's copy. `dotnet
+   add package` and `dotnet new` stay light although both can restore; the
+   shim's header says why.
 6. **Build environment.** In each engineer's environment set
    `NUGET_PACKAGES` to a folder inside the org's own Paperclip directory (the
    restore cache was 2.2 GB), `BUGFIX_BUILD_LOCK` to a path in that folder

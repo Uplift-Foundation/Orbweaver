@@ -6,8 +6,10 @@
 Every test drives a fake dotnet through ORBWEAVER_REAL_DOTNET, never the real
 SDK. The fake appends "start"/"end" lines with timestamps to a log, so overlap
 is read off the log rather than guessed from wall clock. Each ordering claim
-has a control that shows the same setup can see the opposite. Skips where
-/usr/bin/lockf is absent (the Windows leg); the shim only ever runs on a Mac.
+has a control that shows the same setup can see the opposite. Where
+/usr/bin/lockf is absent (the Windows leg) it prints "SKIP: lockf absent" and
+exits 0; on macOS a missing lockf is a failure, so the macOS leg can never go
+green having tested nothing. The shim only ever runs on a Mac.
 """
 import os
 import shutil
@@ -36,7 +38,6 @@ exit ${FAKE_EXIT:-0}
 """
 
 
-@unittest.skipUnless(os.access(LOCKF, os.X_OK), "no lockf here")
 class DotnetShim(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -219,6 +220,21 @@ class DotnetShim(unittest.TestCase):
         self.assertIn("running unlocked", lines[0])
         self.assertEqual(lines[1], "to-stderr")
 
+    def test_missing_real_dotnet_fails_loudly(self):
+        for args in (["build"], ["--version"]):
+            for real in (os.path.join(self.tmp, "nope"), self.log, self.tmp):
+                with self.subTest(args=args, real=real):
+                    code, out, err = self.run_shim(args, ORBWEAVER_REAL_DOTNET=real)
+                    self.assertEqual(code, 127)
+                    self.assertEqual(out, "")
+                    self.assertIn("real dotnet not found", err)
+
+    def test_add_package_and_new_stay_light(self):
+        for args in (["add", "x.csproj", "package", "Foo"], ["new", "console"]):
+            with self.subTest(args=args):
+                _, out, _ = self.run_shim(args, FAKE_TAG="v")
+                self.assertEqual(self.seen(out, "held"), ["UNSET"])
+
     def test_control_light_call_with_missing_lockf_says_nothing(self):
         _, _, err = self.run_shim(["--version"], FAKE_TAG="v",
                                   ORBWEAVER_LOCKF=os.path.join(self.tmp, "no-lockf"))
@@ -226,4 +242,9 @@ class DotnetShim(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    if not os.access(LOCKF, os.X_OK):
+        if sys.platform == "darwin":
+            sys.exit(f"FAIL: {LOCKF} absent on macOS; nothing would be tested")
+        print("SKIP: lockf absent")
+        sys.exit(0)
     unittest.main(verbosity=2)

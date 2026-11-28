@@ -14,8 +14,12 @@ Facts it pins, each measured on the mini by QA in phase 0:
   * the service plist sets GIT_CONFIG_GLOBAL to the empty file, or the managed
     git clone fails under the sandbox profile.
   * warden.json carries what the warden needs.
+  * the stand-ins in ~/.paperclip/tools/bin match the repo's (CB-494): a
+    deployed copy that drifted, or was never installed, is a problem, since
+    the dotnet one is what keeps the mini responsive.
 """
 import argparse
+import filecmp
 import json
 import os
 import re
@@ -25,6 +29,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_CONFIG = os.path.expanduser("~/.config/orbweaver-bugfix/warden.json")
 DEFAULT_PLIST = os.path.expanduser("~/Library/LaunchAgents/ing.paperclip.paperclipai.plist")
 DEFAULT_GITCONFIG = os.path.expanduser("~/.paperclip/instances/default/gitconfig")
+DEFAULT_TOOLS_BIN = os.path.expanduser("~/.paperclip/tools/bin")
+SHIMS_DIR = os.path.join(HERE, "..", "paperclip", "bugfix-org", "host", "shims")
+SHIMS = ("gh", "git", "bugfix-token.bash", "dotnet")
 REQUIRED_CONFIG = ("company_id", "paperclip_login", "spool")
 
 
@@ -55,6 +62,17 @@ def gitconfig_problems(path):
     return []
 
 
+def shim_problems(shims_dir, tools_bin):
+    out = []
+    for name in SHIMS:
+        deployed = os.path.join(tools_bin, name)
+        if not os.path.isfile(deployed):
+            out.append(f"{deployed} is not installed (bug-fix org README, step 5)")
+        elif not filecmp.cmp(os.path.join(shims_dir, name), deployed, shallow=False):
+            out.append(f"{deployed} differs from the repo's {name}; reinstall it (bug-fix org README, step 5)")
+    return out
+
+
 def config_problems(cfg):
     out = [f"warden.json lacks {k}" for k in REQUIRED_CONFIG if not cfg.get(k)]
     for k in ("token_ceiling", "max_runs_per_day"):
@@ -68,6 +86,7 @@ def main(argv=None):
     p.add_argument("--config", default=DEFAULT_CONFIG)
     p.add_argument("--plist", default=DEFAULT_PLIST)
     p.add_argument("--gitconfig", default=DEFAULT_GITCONFIG)
+    p.add_argument("--tools-bin", default=DEFAULT_TOOLS_BIN)
     a = p.parse_args(argv)
     problems = []
     try:
@@ -77,6 +96,7 @@ def main(argv=None):
         problems.append(f"cannot read {a.config}: {type(e).__name__}")
     problems += config_problems(cfg) if cfg else []
     problems += gitconfig_problems(a.gitconfig)
+    problems += shim_problems(SHIMS_DIR, a.tools_bin)
     try:
         problems += plist_problems(open(a.plist).read(), a.gitconfig)
     except OSError:
