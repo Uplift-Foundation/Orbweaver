@@ -32,6 +32,13 @@ REAL="${BUGFIX_REAL_DOTNET:-/usr/local/share/dotnet/dotnet}"
 # Builtins only: the service PATH may not hold dirname.
 HERE=$(cd "${BASH_SOURCE[0]%/*}" && pwd -P)
 LOCK="${BUGFIX_HEAVY_LOCK:-${HERE%/tools/bin}/instances/default/heavy-dotnet.lock}"
+# The NuGet caches are shared the same way (CB-499): a per-run HOME made every
+# restoring run fetch a full package folder (~2.2 GB) and an HTTP cache
+# (~0.5 GB) of its own, and 654 run folders held 59 GB. NuGet's global packages
+# folder is safe for concurrent restores. A caller's own setting is kept.
+NUGET_BASE="${HERE%/tools/bin}/instances/default/nuget"
+export NUGET_PACKAGES="${NUGET_PACKAGES:-$NUGET_BASE/packages}"
+export NUGET_HTTP_CACHE_PATH="${NUGET_HTTP_CACHE_PATH:-$NUGET_BASE/http-cache}"
 LOCKF="${BUGFIX_LOCKF:-/usr/bin/lockf}"
 
 # The verb is the first argument that is not an option or an option's value:
