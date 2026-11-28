@@ -826,8 +826,13 @@ class FlowTests(unittest.TestCase):
         h.remote.step()
         state = json.loads(h.saves[-1])  # what the next run-once loads
         h2 = Harness(state=state)
+        # The new tick only polls the job, yet still says which tmux the target has.
+        st = h2.remote.step()
+        self.assertEqual(st["targets"]["air"]["tmux"], "/opt/homebrew/bin/tmux")
+        self.assertEqual(h2.air.did("probe"), [])
         h2.air.state = "done"
-        h2.remote.step()
+        st = h2.remote.step()
+        self.assertEqual(st["targets"]["air"]["tmux"], "/opt/homebrew/bin/tmux")
         self.assertTrue(h2.res("a")["ok"])
         self.assertEqual([c[1] for c in h2.air.did("start")], ["b"])
 

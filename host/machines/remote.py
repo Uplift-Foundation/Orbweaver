@@ -447,6 +447,10 @@ class Remote:
 
     def probe_all(self):
         self.probes = {name: t.probe() for name, t in self.targets.items()}
+        # Kept across ticks: while a job runs the target is only polled, not
+        # probed, and a tick that starts mid-job would otherwise report the
+        # target's tmux as unknown.
+        self.state["tmux_seen"] = {n: p.get("tmux") for n, p in self.probes.items() if p["reachable"]}
         now = self.clock()
         if any(p["reachable"] for p in self.probes.values()):
             self.state["unreachable_since"] = None
@@ -543,8 +547,9 @@ class Remote:
             return self.finish(job, None, False, error=f"target {job['target']} is no longer configured")
         state, code, load = t.poll(rid)
         if load is not None:
-            self.probes[job["target"]] = dict(self.probes.get(job["target"]) or {}, reachable=True, load=load,
-                                              hostname=job["target_hostname"])
+            before = self.probes.get(job["target"]) or {
+                "tmux": (self.state.get("tmux_seen") or {}).get(job["target"])}
+            self.probes[job["target"]] = dict(before, reachable=True, load=load, hostname=job["target_hostname"])
         if state == "done":
             return self.finish(job, code, False)
         if state == "lost":
