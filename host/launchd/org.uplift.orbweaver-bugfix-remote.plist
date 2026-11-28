@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The bug-fix org's remote test runner (CB-494). Install by copying to
+     ~/Library/LaunchAgents/ with __REPO__ replaced by a checkout of develop,
+     writing ~/.config/orbweaver-bugfix/remote.json (host/README.md), then
+     launchctl bootstrap gui/$(id -u) <plist>. It runs as the logged-in user on
+     the mini, outside the Paperclip sandbox, because it holds the ssh key to
+     the target the sandbox must not.
+
+     Each run lives about 55 seconds and looks at the spool and the running
+     job every 2, so launchd's one-minute interval restarts it almost at once
+     and a short test is answered in seconds. The run itself does no heavy
+     work: git against its mirror, and ssh. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>org.uplift.orbweaver-bugfix-remote</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>__REPO__/host/machines/remote.py</string>
+    <string>run-once</string>
+  </array>
+  <!-- launchd's own PATH has no gh (measured for the warden, 2026-11-24). -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>StartInterval</key><integer>60</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardErrorPath</key><string>/tmp/orbweaver-bugfix-remote.err</string>
+  <key>StandardOutPath</key><string>/tmp/orbweaver-bugfix-remote.out</string>
+</dict>
+</plist>

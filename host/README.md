@@ -558,3 +558,128 @@ when the install begins, so a slow build does not eat it. The `e2e/bugfix-pr-<n>
 Macs are restored, and `publish` never runs because it is tag-only. An agent should expect
 a `machine_install` that includes a Mac to take 5 to 20 minutes plus any wait for the
 install lock.
+
+## The remote test runner (CB-494)
+
+The mini is the always-on host for the OpenClaw gateway, the Discord bots, Paperclip and the
+mobile relay, and the org's builds, UI suites and coverage merges once held its load near 20
+for over an hour. So that work runs on the MacBook Air. Agents cannot ssh, so
+`host/machines/remote.py` does it from outside the sandbox, as a second launchd job beside the
+machines runner. It is separate because the machines runner answers a request inside one tick
+and a Mac install holds that tick for up to twenty minutes; here a job is started detached on
+the target and looked at every two seconds. The agent-facing rules are in the skill.
+
+**The one verb.** A request is `<id>.json` in `<company>/remote-spool/`:
+
+```
+{"verb": "remote_test", "id": "pc412-ui3", "sha": "<full 40-character commit>", "run": "ui", "filter": "Orbweaver.Tests.ChatPanelTests"}
+```
+
+The agent never sends a command. `run` is one word and the runner builds the argv:
+
+| `run` | what runs on the target | `filter` | cap |
+| --- | --- | --- | --- |
+| `build` | `dotnet build tests/Tests.sln -c Release`: the app plus UnitTests, IntegrationTests and UiTests. Not the root, whose solution is the app alone. UiScreenshots and the console suites are compiled by their own runs | none | 10 min |
+| `unit`, `integration` | `dotnet test tests/<Suite> -c Release`, trx logged | optional class, sent as `--filter "FullyQualifiedName~X"` | 10 min filtered, 30 full |
+| `ui`, `screenshots` | `dotnet test tests/<Suite> -c Release -- --report-xunit` | optional `Namespace.Class`, sent as `--filter-class X` | 10 min filtered, 30 full |
+| `arrangement`, `glyph`, `transcript` | `dotnet run --project tests/<Suite> -c Release` | none | 10 min |
+| `coverage` | `./tools/coverage.sh --base origin/develop` | none | 45 min |
+
+`filter` must match `[A-Za-z0-9_.]{1,200}`. A full `ui` run is not passed through CB-119's
+count guard (the target has no `pwsh`); the xunit report comes back for whoever wants to check
+it, and CI remains the suite gate.
+
+**The answer** is a folder `<company>/remote-results/<id>/`, renamed into place when the job
+has ended or the request was refused: `result.json`, `output.txt` (capped at 5 MB),
+`output-tail.txt` (the last 200 KB) and `files/`. The files have names the runner chose,
+never a path the target chose: `unit-tests.trx`, `integration-tests.trx`, `ui-tests.xunit.xml`,
+`ui-screenshots.xunit.xml`, and for coverage `coverage-summary.txt`, which opens with the
+`merged N report(s)` line. A screenshot run also returns its PNGs under `files/screenshots/`,
+kept only when the name is flat and plain. Anything else the target offers is dropped and
+listed in `files_dropped`; the whole answer is capped at 50 MB. `result.json` has `id`, `verb`, `sha`, `run`, `filter`, `ok`, `refused`, `queued_at`,
+`started_at`, `finished_at`, `target`, `target_hostname`, `checked_out_sha`, `exit_code`,
+`timed_out`, `files` and `error`; a coverage run adds `merged_reports` and `base_sha` (the
+develop commit `--base` compared against). `checked_out_sha` is `git rev-parse HEAD` in the
+target's worktree after the checkout, not the request echoed back. `refused` is set only when
+nothing ran on any target. A coverage run that exits 0 without `merged 4` is `ok: false`.
+`remote-results/status.json` says whether each target answers, its load average, what is
+running, what is queued, and `target_busy_with` (below). Answers older than seven days are removed.
+
+**How the code gets there.** The runner keeps a bare mirror of the canonical repository in its
+state folder and fetches its branches (`refs/heads` only, so a fork's pull-request commit is
+not one). A `sha` that is not reachable from a branch there is refused before the target is
+touched, so the agent commits and pushes to its own branch first. The mirror then pushes the
+commit to a bare repository on the target over ssh, with develop's tip as `origin/develop`.
+The target never talks to GitHub and holds no credential. On the target one worktree is
+reused, forced to the commit and swept of untracked files and every `TestResults` folder on
+each run, so builds are incremental; a coverage run also removes everything ignored.
+
+**What it refuses or will not do.** A `run` outside the table; a `filter` outside the pattern
+or on a run that takes none; any other field (there is no `command`); a sha not on a canonical
+branch, or GitHub unreadable (fails closed); an eleventh request while ten wait. One job runs
+at a time and the rest wait in arrival order. If no target answers, a request waits 15 minutes
+and is then refused with "no target reachable; not run on the mini". There is no local
+execution path in the file, and the mini is refused as a target twice over. When the config
+is loaded: by name, by ssh host, by what `ssh -G` resolves the host to, and by address (the
+mini's own interface addresses against the alias and whatever it resolves to). And on the
+target, first thing in the script that starts a job and before anything is made or checked
+out: a machine whose hostname is one of the mini's stops there. A job at its cap has its
+whole process group killed. The result archive is cut on the target at the 50 MB cap, and
+an over-long one is refused whole.
+
+**A job the runner lost track of.** If the connection drops while a job starts or runs, the job
+carries on. So every start first asks the target itself, in the same ssh call, whether a job
+is still running there. If one is, nothing is touched: the request goes back to the head of
+the queue, is tried again every 15 seconds, and `status.json` names the job in
+`target_busy_with`. Each job records its own deadline on the target, and a left-behind job
+past it is killed by the next start, so this wait is bounded by that job's cap. A start whose
+connection dropped is answered `ok: false` with "could not start on air: ...".
+
+**No build server outlives a job.** MSBuild node reuse, the MSBuild server and the shared
+compiler are off in every job's environment, and each job ends with
+`dotnet build-server shutdown`, then clears whatever is left in its own process group once its
+answer is on disk (Avalonia's build helper outlives a build by minutes and none of those
+switches stops it). Warm runs are slower for it; a 16 GB machine nobody watches
+does not collect idle servers.
+
+**Config:** `~/.config/orbweaver-bugfix/remote.json`. Only `company_dir` is required.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `company_dir` | none | the folder that holds `bugfix-spool` |
+| `targets` | `[{"name": "air", "ssh": "air"}]` | in order of preference; a later one is used only while every earlier one is silent. Only the Air is set up |
+| `queue_cap` | `10` | requests waiting before the next is refused |
+| `unreachable_wait_s` | `900` | how long a request waits with no target answering |
+| `repo_url` | the canonical repository over HTTPS | what the mirror fetches |
+| `log_path` | `~/.config/orbweaver-bugfix/remote.log` | every request, refusal, start (with its argv) and finish |
+| `state_dir` | `~/.config/orbweaver-bugfix/remote` | the queue, the running job and the mirror |
+
+**Setting up a target** (done on the Air on 2026-11-27, no sudo, no Homebrew): install the
+.NET SDK at user level with the official script,
+`curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 10.0 --install-dir ~/.dotnet`.
+The runner makes `~/orbweaver-remote` (a bare `repo.git`, the `work` worktree and `jobs/`) by
+itself. The mini needs key-based `ssh <host>` to it.
+
+**Install on the mini:**
+
+1. Write `remote.json` with at least `company_dir`.
+2. Copy `host/launchd/org.uplift.orbweaver-bugfix-remote.plist` to `~/Library/LaunchAgents/`
+   with `__REPO__` replaced by a checkout of develop.
+3. `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/org.uplift.orbweaver-bugfix-remote.plist`.
+4. Check by hand: `remote-results/status.json` appears within a minute and says the Air is
+   reachable, with its load.
+
+**What the target needs beyond the SDK.** `git`, `bash`, `perl`, `tar` and `python3` (for
+`coverage.sh`), all of which macOS has, and for two runs `tmux`. `tests/IntegrationTests`
+drives a real tmux (`TmuxPlacementTests`, 7 tests), and `coverage.sh` runs that suite. So the
+runner asks each target whether `tmux` is on a job's PATH (`status.json`, `tmux`), and on a
+target without it `integration` and `coverage` are refused with "the target has no tmux, which
+IntegrationTests needs; not run". They are refused, not run and returned red, so nobody learns
+to wave a red through. **The Air has no tmux as of 2026-11-27**, so for now those two runs
+happen on the mini, one at a time through the `dotnet` wrapper; that is temporary and ends
+when the Air has tmux, with no change here.
+
+**Known limits.** A commit on any branch of the canonical repository runs as the host user on
+the target, bounded by the command table. If the runner's state file is lost while a job runs,
+that request is never answered (the log says so) and the job ends on the target by itself.
+The launchd job's own output is in `/tmp/orbweaver-bugfix-remote.out` and `.err`.
