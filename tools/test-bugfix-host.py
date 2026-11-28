@@ -21,6 +21,7 @@ import io
 import json
 import os
 import plistlib
+import shutil
 import stat
 import subprocess
 import sys
@@ -2473,6 +2474,27 @@ class CheckHostTests(unittest.TestCase):
             with open(p, "w") as f:
                 f.write("[credential]\n")
             self.assertEqual(len(check_host.gitconfig_problems(p)), 1)
+
+    def test_shims_must_be_installed_and_match_the_repo(self):
+        with tempfile.TemporaryDirectory() as d:
+            src, dst = os.path.join(d, "src"), os.path.join(d, "dst")
+            os.mkdir(src)
+            os.mkdir(dst)
+            for n in check_host.SHIMS:
+                with open(os.path.join(src, n), "w") as f:
+                    f.write(n + "\n")
+            self.assertEqual(len(check_host.shim_problems(src, dst)), len(check_host.SHIMS))
+            for n in check_host.SHIMS:
+                shutil.copy(os.path.join(src, n), os.path.join(dst, n))
+            self.assertEqual(check_host.shim_problems(src, dst), [])
+            with open(os.path.join(dst, "dotnet"), "a") as f:
+                f.write("# edited by hand\n")
+            self.assertEqual(len(check_host.shim_problems(src, dst)), 1)
+            self.assertIn("dotnet", check_host.shim_problems(src, dst)[0])
+
+    def test_shims_dir_holds_every_shim(self):
+        for n in check_host.SHIMS:
+            self.assertTrue(os.path.isfile(os.path.join(check_host.SHIMS_DIR, n)), n)
 
     def test_config(self):
         good = {"company_id": "c", "paperclip_login": "l", "spool": "s", "max_runs_per_day": 8}

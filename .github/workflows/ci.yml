@@ -233,6 +233,13 @@ jobs:
         if: ${{ !cancelled() && matrix.checks }}
         run: python tools/test-paperclip-bugfix-org.py
 
+      # CB-494: the bug-fix org's one-heavy-dotnet-at-a-time stand-in, driven
+      # against a fake dotnet (never the SDK). Skips itself where lockf is
+      # absent, i.e. on the Windows leg; the shim only runs on the mini.
+      - name: Unit tests (bugfix-org dotnet shim)
+        if: ${{ !cancelled() && matrix.checks }}
+        run: python tools/test-bugfix-dotnet-wrapper.py
+
       # CB-291: the team resolver the orbweaver-team skill ships. Real script,
       # real files in a scratch pool; on the Windows leg it runs under Git Bash
       # with Windows-style paths, which is what Claude Code uses there and what

@@ -360,6 +360,46 @@ Then, none of which a package can carry:
    for f in gh git bugfix-token.bash; do cmp -s host/shims/$f ~/.paperclip/tools/bin/$f && echo "$f same" || echo "$f DIFFERS"; done
    stat -f '%Sp %N' ~/.paperclip/instances/default/companies/*/bugfix-tokens ~/.paperclip/instances/default/companies/*/bugfix-tokens/*
    ```
+
+   **One heavy `dotnet` at a time (CB-494).** The mini is the always-on
+   gateway host, and passes building and testing side by side starved it.
+   `host/shims/dotnet` lets one heavy command run at a time for everything the
+   service runs, under `nice -n 10`, with `lockf -k` on
+   `~/.paperclip/instances/default/heavy-dotnet.lock`, found from where the shim
+is installed, never from `$HOME`: every agent run has its own `HOME`, so a
+lock under it serialised nothing (found live, CB-494). A second one **waits**;
+   nothing is refused. Heavy means a verb of `test`, `build`, `run`,
+   `publish`, `pack`, `msbuild`, `restore`, `vstest`, `clean`, `format` or
+   `watch`, or a `.cs`, `.csproj`, `.sln` or `.slnx` argument, found as the
+   first argument that is not an option or an option's value
+   (`dotnet --roll-forward Major test` locks). Everything else (`--version`,
+   `--info`, `nuget locals`, `tool list`) passes straight through. A command
+   holding the lock exports `BUGFIX_HEAVY_LOCK_HELD`, so a nested `dotnet`
+   it starts passes through rather than waiting on itself. **Any process can
+   set that variable and skip the queue**; that is an accepted limit, since
+   this is a cap on load, not a security boundary. Without `/usr/bin/lockf` it
+   prints one line to stderr and runs unlocked. Exit status and output are the
+   real command's, streamed. The remote runner replaces it as the way builds
+   run; this stays as the backstop. Tested by
+   `tools/test-bugfix-dotnet-wrapper.py`, with a fake dotnet.
+
+   ```bash
+   # under the lock: waits for any heavy dotnet, old copy or new, then swaps
+   /usr/bin/lockf -k ~/.paperclip/instances/default/heavy-dotnet.lock install -m 0755 host/shims/dotnet ~/.paperclip/tools/bin/dotnet
+   # check: prints "same", and a light call answers at once
+   cmp -s host/shims/dotnet ~/.paperclip/tools/bin/dotnet && echo "dotnet same" || echo "dotnet DIFFERS"
+   ~/.paperclip/tools/bin/dotnet --version
+   ```
+   Install it under the lock, as above, every time. It waits for whatever heavy
+   command is running, from the old copy or the new, and swaps with none
+   running, so no build started under one copy makes a nested call into the
+   other (the interim copy exported a different held variable, so such a call
+   would wait on itself). That folder is already first on the service's `PATH`, so replacing the file
+   needs no restart; a command already running keeps the copy it started with.
+   `host/check_host.py` prints a `PROBLEM:` line for any of the four stand-ins
+   that is missing from that folder or differs from the repo's copy. `dotnet
+   add package` and `dotnet new` stay light although both can restore; the
+   shim's header says why.
 6. **Build environment.** In each engineer's environment set
    `NUGET_PACKAGES` to a folder inside the org's own Paperclip directory (the
    restore cache was 2.2 GB), `BUGFIX_BUILD_LOCK` to a path in that folder
