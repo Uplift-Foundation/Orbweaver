@@ -28,6 +28,8 @@ FAKE = r"""#!/bin/bash
 echo "start $FAKE_TAG $(python3 -c 'import time;print(time.time())')" >> "$FAKE_LOG"
 echo "held=${BUGFIX_HEAVY_LOCK_HELD-UNSET}"
 echo "nice=$(ps -o nice= -p $$ | tr -d ' ')"
+echo "nuget_packages=${NUGET_PACKAGES-UNSET}"
+echo "nuget_http=${NUGET_HTTP_CACHE_PATH-UNSET}"
 echo "argc=$#"
 for a in "$@"; do echo "arg=$a"; done
 echo "to-stderr" >&2
@@ -127,6 +129,36 @@ class DotnetShim(unittest.TestCase):
         p1.communicate(timeout=20)
         p2.communicate(timeout=20)
         self.assertTrue(self.overlapped("a", "b"))
+
+    # --- shared NuGet caches (CB-499) -----------------------------------
+
+    def test_unset_nuget_variables_point_at_the_shared_folder(self):
+        shim, _ = self.installed()
+        base = os.path.join(os.path.realpath(self.tmp), "paperclip", "instances", "default", "nuget")
+        for verb in ("restore", "--version"):
+            p = subprocess.run([shim, verb], env=self.env_with(
+                BUGFIX_HEAVY_LOCK=None, NUGET_PACKAGES=None, NUGET_HTTP_CACHE_PATH=None),
+                capture_output=True, text=True, timeout=20, stdin=subprocess.DEVNULL)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertEqual(self.seen(p.stdout, "nuget_packages"), [base + "/packages"])
+            self.assertEqual(self.seen(p.stdout, "nuget_http"), [base + "/http-cache"])
+
+    def test_caller_set_nuget_variables_are_kept(self):
+        shim, _ = self.installed()
+        p = subprocess.run([shim, "restore"], env=self.env_with(
+            BUGFIX_HEAVY_LOCK=None, NUGET_PACKAGES="/mine/pk", NUGET_HTTP_CACHE_PATH="/mine/http"),
+            capture_output=True, text=True, timeout=20, stdin=subprocess.DEVNULL)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(self.seen(p.stdout, "nuget_packages"), ["/mine/pk"])
+        self.assertEqual(self.seen(p.stdout, "nuget_http"), ["/mine/http"])
+
+    def test_one_nuget_variable_set_does_not_stop_the_other_defaulting(self):
+        shim, _ = self.installed()
+        p = subprocess.run([shim, "--version"], env=self.env_with(
+            BUGFIX_HEAVY_LOCK=None, NUGET_PACKAGES="/mine/pk", NUGET_HTTP_CACHE_PATH=None),
+            capture_output=True, text=True, timeout=20, stdin=subprocess.DEVNULL)
+        self.assertEqual(self.seen(p.stdout, "nuget_packages"), ["/mine/pk"])
+        self.assertTrue(self.seen(p.stdout, "nuget_http")[0].endswith("/nuget/http-cache"))
 
     def installed(self):
         """A copy at <root>/tools/bin/dotnet, as deployed, with the lock

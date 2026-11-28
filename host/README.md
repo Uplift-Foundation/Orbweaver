@@ -722,3 +722,17 @@ A job killed at its cap, or lost, can leave a tmux server behind on the target: 
 daemonizes out of the job's process group, so the group kill does not reach it, and
 `TmuxPlacementTests` stop their own server only when they finish. Each such server sits on a
 private socket and touches nobody else's tmux; it is a leak, not a hazard, and is not chased.
+
+## Finished worktrees and the shared NuGet cache (CB-499)
+
+Each tick the warden removes `bin/` and `obj/` from the worktree of a settled
+ticket, only where a `.csproj` sits beside them, and only when `worktrees_root`
+(the folder holding `bugfix/`) is set in `warden.json`. A worktree
+`bugfix/pc-<slug>` is finished when every engineer issue titled to that slug is
+`done` or `cancelled`, has no run and has been quiet for 30 minutes; a title the
+branch template cut short matches nothing and is left. Sources, the branch and
+`claude-home` are never touched. The `dotnet` shim points `NUGET_PACKAGES` and
+`NUGET_HTTP_CACHE_PATH` at `instances/default/nuget/` unless the caller set them,
+so runs share one package folder instead of restoring 2.7 GB each. Neither is
+deployed by merging: the mini needs the shim reinstalled and `worktrees_root`
+added by a person.

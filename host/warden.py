@@ -51,6 +51,7 @@ import glob
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -726,6 +727,57 @@ PIN_LOOKUPS = 5              # run rows read per stopped task to find its accoun
 POOL_STALE = 10 * 60         # pool-usage.json older than two publish intervals is logged as stale
 READING_FRESH = 30 * 60      # an account reading older than this is not acted on (pool_usage.py publishes every 5 min)
 STOP_SETTLE = 10 * 60        # issue activity this long after a usage stop is still the stop's own
+
+
+# CB-499: a finished ticket's worktree keeps its bin/ and obj/ (1-2.5 GB each,
+# 77 GB on the mini). Only those two folders, only beside a .csproj, only in a
+# worktree whose engineer issue is `done` or `cancelled`. The worktree itself
+# stays: its branch and its sources are what a continued ticket starts from.
+BUILD_DIRS = ("bin", "obj")
+CLEAN_QUIET = 30 * 60        # a settled issue untouched this long has no run still using its worktree
+
+
+def slug(title):
+    """The slug Paperclip puts in a branch name: the title lowercased, runs of
+    anything but letters and digits as one `-`."""
+    return re.sub(r"[^a-z0-9]+", "-", (title or "").lower()).strip("-")
+
+
+def finished_worktrees(issues, names, now, quiet=CLEAN_QUIET):
+    """The worktree folder names (of `names`) to clean. A folder is
+    `pc-<slug of an issue title>`; it is finished when it matches at least one
+    engineer issue and every engineer issue that matches is settled and quiet.
+    A title that matches no folder (a long one the branch template cut short)
+    cleans nothing: leaving a folder is the safe miss."""
+    by_name = {}
+    for i in issues:
+        if is_ticket(i) and i.get("title"):
+            by_name.setdefault("pc-" + slug(i["title"]), []).append(i)
+    out = []
+    for n in names:
+        rows = by_name.get(n)
+        if rows and all(
+                r.get("status") in SETTLED and not r.get("activeRun")
+                and (activity_at(r) is not None and now - activity_at(r) >= quiet)
+                for r in rows):
+            out.append(n)
+    return out
+
+
+def build_output_dirs(root):
+    """The bin/ and obj/ folders under `root` that sit beside a .csproj, never
+    following a symlink and never looking inside one already found, a .git or
+    node_modules."""
+    found = []
+    for here, dirs, files in os.walk(root, followlinks=False):
+        if any(f.endswith(".csproj") for f in files):
+            for d in BUILD_DIRS:
+                full = os.path.join(here, d)
+                if d in dirs and not os.path.islink(full):
+                    found.append(full)
+        dirs[:] = [d for d in dirs if d not in (".git", "node_modules") + BUILD_DIRS
+                   and not os.path.islink(os.path.join(here, d))]
+    return found
 
 
 def ts(s):
@@ -1723,7 +1775,33 @@ class Warden:
             self.stop_work()
         self.router_ready = self.watch_router_plugin()
         self.unstick(paused)
+        self.clean_worktrees()
         return paused
+
+    def clean_worktrees(self):
+        """CB-499: remove bin/ and obj/ from the worktrees of settled tickets.
+        Needs `worktrees_root` in warden.json (the folder holding `bugfix/`);
+        without it nothing is touched. Runs paused or not: it only frees disk.
+        Never raises into the tick."""
+        root = self.cfg.get("worktrees_root")
+        if not root:
+            return
+        base = os.path.join(root, "bugfix")
+        try:
+            names = sorted(n for n in os.listdir(base)
+                           if n.startswith("pc-") and os.path.isdir(os.path.join(base, n))
+                           and not os.path.islink(os.path.join(base, n)))
+            if not names:
+                return
+            issues = self.pc.all_issues(self.cfg.get("company_id"))
+            if len(issues) >= ISSUE_PAGE:
+                return self.log(f"worktree clean skipped: {len(issues)} issues, listing may be truncated")
+            for n in finished_worktrees(issues, names, self.now):
+                for d in build_output_dirs(os.path.join(base, n)):
+                    shutil.rmtree(d, ignore_errors=True)
+                    self.log(f"CLEANED: {os.path.relpath(d, root)}")
+        except Exception as e:
+            self.log(f"worktree clean failed: {type(e).__name__}")
 
     def rulesets_problem(self, r):
         """ruleset_gate for a repository, read with the host's gh. A failed

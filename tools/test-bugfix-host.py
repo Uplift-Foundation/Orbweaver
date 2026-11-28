@@ -4590,5 +4590,112 @@ class AnsweredOpenLeafTickTests(unittest.TestCase):
         self.assertEqual(pc.comments, [], "the same block wakes the parent once")
 
 
+class WorktreeCleanTests(unittest.TestCase):
+    """CB-499: bin/ and obj/ of a settled ticket's worktree, and nothing else."""
+
+    TITLE = "share the nuget cache"
+    TICKET = "Ticket: CB-499\nbody"
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="wt-")
+        self.addCleanup(shutil.rmtree, self.root, True)
+
+    def tree(self, name, extra=()):
+        base = os.path.join(self.root, "bugfix", name)
+        for rel in ("src/App/App.csproj", "src/App/bin/Release/App.dll", "src/App/obj/project.assets.json",
+                    "src/App/Program.cs", "tests/T/T.csproj", "tests/T/obj/x", "docs/bin/tool.txt",
+                    "src/App/Models/obj/keep.txt", "bin/top.txt", *extra):
+            path = os.path.join(base, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write("x")
+        return base
+
+    def issue(self, status, title=None, **over):
+        return I("a1", status, title=title or self.TITLE, description=self.TICKET, idle=3 * 3600, **over)
+
+    def clean(self, issues):
+        pc = FakePC()
+        pc.all = issues
+        w, _, logs = tick(pc=pc, cfg={"worktrees_root": self.root, "company_id": "co"}, now=NOW)
+        return logs
+
+    def exists(self, base, rel):
+        return os.path.exists(os.path.join(base, rel))
+
+    def test_settled_ticket_loses_bin_and_obj_beside_a_csproj_only(self):
+        for status in ("done", "cancelled"):
+            base = self.tree("pc-share-the-nuget-cache")
+            logs = self.clean([self.issue(status)])
+            self.assertFalse(self.exists(base, "src/App/bin"))
+            self.assertFalse(self.exists(base, "src/App/obj"))
+            self.assertFalse(self.exists(base, "tests/T/obj"))
+            self.assertTrue(any("CLEANED" in l for l in logs))
+            # Sources, a bin/ with no .csproj beside it, and a folder inside a
+            # project that is not its own build output stay.
+            for keep in ("src/App/Program.cs", "src/App/App.csproj", "docs/bin/tool.txt", "bin/top.txt",
+                         "src/App/Models/obj/keep.txt", "tests/T/T.csproj"):
+                self.assertTrue(self.exists(base, keep), keep)
+            shutil.rmtree(base)
+
+    def test_control_live_ticket_keeps_its_build_output(self):
+        for status in ("in_progress", "todo", "in_review", "blocked"):
+            base = self.tree("pc-share-the-nuget-cache")
+            self.clean([self.issue(status)])
+            self.assertTrue(self.exists(base, "src/App/bin/Release/App.dll"), status)
+            self.assertTrue(self.exists(base, "src/App/obj/project.assets.json"), status)
+            shutil.rmtree(base)
+
+    def test_a_run_in_flight_or_fresh_activity_keeps_it(self):
+        base = self.tree("pc-share-the-nuget-cache")
+        self.clean([self.issue("done", activeRun={"id": "r"})])
+        self.assertTrue(self.exists(base, "src/App/bin"))
+        row = self.issue("done")
+        row["lastActivityAt"] = row["updatedAt"] = warden.iso(NOW - 60)
+        self.clean([row])
+        self.assertTrue(self.exists(base, "src/App/bin"))
+
+    def test_one_live_issue_with_the_same_title_keeps_it(self):
+        base = self.tree("pc-share-the-nuget-cache")
+        other = I("a2", "in_progress", title=self.TITLE, description=self.TICKET, idle=3 * 3600)
+        self.clean([self.issue("done"), other])
+        self.assertTrue(self.exists(base, "src/App/bin"))
+
+    def test_other_worktrees_and_non_ticket_issues_are_left(self):
+        mine = self.tree("pc-share-the-nuget-cache")
+        theirs = self.tree("pc-something-else")
+        qa = I("q1", "done", title="something else", description="a QA review", idle=3 * 3600)
+        self.clean([self.issue("done"), qa])
+        self.assertFalse(self.exists(mine, "src/App/bin"))
+        self.assertTrue(self.exists(theirs, "src/App/bin"))
+
+    def test_symlinked_build_folder_is_not_followed(self):
+        base = self.tree("pc-share-the-nuget-cache")
+        outside = os.path.join(self.root, "outside")
+        os.makedirs(outside)
+        with open(os.path.join(outside, "precious"), "w") as f:
+            f.write("x")
+        shutil.rmtree(os.path.join(base, "tests/T/obj"))
+        os.symlink(outside, os.path.join(base, "tests/T/obj"))
+        self.clean([self.issue("done")])
+        self.assertTrue(os.path.exists(os.path.join(outside, "precious")))
+
+    def test_no_root_in_the_config_touches_nothing(self):
+        base = self.tree("pc-share-the-nuget-cache")
+        pc = FakePC()
+        pc.all = [self.issue("done")]
+        tick(pc=pc, cfg={}, now=NOW)
+        self.assertTrue(self.exists(base, "src/App/bin"))
+
+    def test_unreadable_listing_is_logged_and_touches_nothing(self):
+        base = self.tree("pc-share-the-nuget-cache")
+        pc = FakePC()
+        pc.fail_reads = True
+        w, paused, logs = tick(pc=pc, cfg={"worktrees_root": self.root, "company_id": "co"}, now=NOW)
+        self.assertTrue(self.exists(base, "src/App/bin"))
+        self.assertTrue(any("worktree clean failed" in l for l in logs))
+        self.assertFalse(paused)
+
+
 if __name__ == "__main__":
     sys.exit(0 if unittest.main(exit=False).result.wasSuccessful() else 1)
