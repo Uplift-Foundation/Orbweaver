@@ -420,5 +420,42 @@ touch "@TMP@/procs.new"; mv "@TMP@/procs.new" "@TMP@/procs"
         self.assertTrue(self.relaunched())
 
 
+class AgentDenylistParity(unittest.TestCase):
+    """CB-413: --install's relaunch keeps a hand copy of AgentEnvironment's
+    denylist as shell case patterns, because the script cannot call into the
+    app. A name added to one and not the other is a session identity that
+    leaks through exactly one of the two launch paths, so the two sets are
+    compared here: every ExactNames entry as a literal pattern, every Prefixes
+    entry as PREFIX*, plus TMUX/TMUX_PANE, which the script unsets outright."""
+
+    @staticmethod
+    def _csharp():
+        src = open(os.path.join(HERE, "..", "AgentEnvironment.cs")).read()
+
+        def array(name):
+            m = re.search(r"\b" + name + r"\s*=\s*\[(.*?)\];", src, re.S)
+            body = re.sub(r"//[^\n]*", "", m.group(1))
+            return re.findall(r'"([A-Z_]+)"', body)
+
+        exact = set(array("ExactNames"))
+        return exact, {p + "*" for p in array("Prefixes")}
+
+    @staticmethod
+    def _script():
+        text = open(SCRIPT).read()
+        m = re.search(r'case "\$name" in\s*(.*?)\)\s*\n\s*UNSET\+=', text, re.S)
+        patterns = {p.strip() for p in m.group(1).replace("\\\n", "").split("|") if p.strip()}
+        unset = set(re.findall(r"-u ([A-Z_]+)", re.search(r"UNSET=\((.*?)\)", text).group(1)))
+        return patterns, unset
+
+    def test_the_install_relaunch_strips_exactly_the_apps_denylist(self):
+        exact, prefixes = self._csharp()
+        patterns, unset = self._script()
+        self.assertTrue(exact and prefixes, "could not read AgentEnvironment's lists")
+        self.assertEqual(exact - {"TMUX", "TMUX_PANE"}, {p for p in patterns if not p.endswith("*")})
+        self.assertEqual(prefixes, {p for p in patterns if p.endswith("*")})
+        self.assertTrue({"TMUX", "TMUX_PANE", "CLAUDE_CONFIG_DIR"} <= unset)
+
+
 if __name__ == "__main__":
     unittest.main()

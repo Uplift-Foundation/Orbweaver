@@ -644,7 +644,9 @@ public sealed class UpdateInstallMacOSTests : IDisposable
     {
         var (h, mac, _, d, _) = Finish(newStartsOnItsOwn: false, openStartsIt: true);
         Assert.True(await UpdateInstallMacOS.FinishAsync(h, d));
-        Assert.Equal(["-u", "CLAUDE_CONFIG_DIR", "/usr/bin/open", "-a", h.Installed], mac.Calls.Single(c => c.File == "/usr/bin/env").Args);
+        // CB-413: the relaunch strips every per-session agent variable, not
+        // only CLAUDE_CONFIG_DIR; the set is AgentEnvironment's, read in-process.
+        Assert.Equal([.. AgentEnvironment.UnsetArgs(), "-u", "CLAUDE_CONFIG_DIR", "/usr/bin/open", "-a", h.Installed], mac.Calls.Single(c => c.File == "/usr/bin/env").Args);
     }
 
     [Fact]

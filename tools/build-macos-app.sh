@@ -450,7 +450,21 @@ if [[ $INSTALL -eq 1 ]]; then
       sleep 0.5
     done
     if [[ -z "$(running_installed)" && ( -n "$STOPPED" || -n "$WAS_RUNNING" ) ]]; then
-      env -u CLAUDE_CONFIG_DIR open -a "/Applications/$APP_NAME.app"
+      # CB-413: strip every per-session agent variable (same set as
+      # AgentEnvironment.cs — tools/test-build-macos-app.py fails if the two
+      # drift), not only CLAUDE_CONFIG_DIR. The app scrubs
+      # itself at startup too; this keeps the launch itself clean.
+      UNSET=(-u CLAUDE_CONFIG_DIR -u TMUX -u TMUX_PANE)
+      while IFS= read -r name; do
+        case "$name" in
+          CLAUDECODE|CLAUDE_PID|CLAUDE_JOB_DIR|CLAUDE_EFFORT|CLAUDE_CODE_ENTRYPOINT|CLAUDE_CODE_EXECPATH|\
+          CLAUDE_PROJECT_UUID|CLAUDE_CODE_SPEND_PROJECT|CLAUDE_CODE_ATTRIBUTION_PROJECT|\
+          CLAUDE_CODE_SESSION_*|CLAUDE_CODE_MESSAGING_*|CLAUDE_CODE_BRIDGE_*|CLAUDE_CODE_CHILD_*|\
+          CLAUDE_CODE_LAUNCHED_*|CLAUDE_CODE_PARENT_*|CLAUDE_CODE_USER_DELEGATED_SESSION*)
+            UNSET+=(-u "$name") ;;
+        esac
+      done < <(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p')
+      env "${UNSET[@]}" open -a "/Applications/$APP_NAME.app"
       sleep 2
     fi
   fi

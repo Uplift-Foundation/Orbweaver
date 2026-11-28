@@ -80,7 +80,11 @@ public class UpdateInstallPlanMacOSTests
         Assert.Equal(["unload", "/p.plist"], UpdateInstallPlan.MacLaunchctlUnload("/p.plist").Args);
         Assert.Equal(["load", "/p.plist"], UpdateInstallPlan.MacLaunchctlLoad("/p.plist").Args);
         Assert.Equal("/bin/launchctl", UpdateInstallPlan.MacLaunchctlLoad("/p.plist").File);
-        Assert.Equal(["-u", "CLAUDE_CONFIG_DIR", "/usr/bin/open", "-a", "/a.app"], UpdateInstallPlan.MacOpenInstalled("/a.app").Args);
+        var args = UpdateInstallPlan.MacOpenInstalled("/a.app").Args;
+        Assert.Equal(["/usr/bin/open", "-a", "/a.app"], args.TakeLast(3).ToArray());
+        Assert.Contains("CLAUDE_CONFIG_DIR", args);
+        Assert.Contains("CLAUDE_JOB_DIR", args);
+        Assert.Contains("TMUX", args);
         var repair = UpdateInstallPlan.MacKeepAliveRepair("/a.app");
         Assert.Equal("/a.app/Contents/Resources/install-hooks.sh", repair.File);
         Assert.Equal(["--keepalive-only"], repair.Args);

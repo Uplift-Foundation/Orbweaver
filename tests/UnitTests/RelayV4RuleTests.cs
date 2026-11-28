@@ -625,10 +625,11 @@ public class RelayV4RuleTests
     [Fact]
     public void Detached_tmux_creates_the_orbweaver_session_once_then_adds_windows()
     {
+        string[] Unwrapped(string[] a) => [.. a[..^1], AgentEnvironment.Unwrap(a[^1])];
         Assert.Equal(["new-session", "-d", "-s", "orbweaver", "-c", "/w", "-P", "-F", "#{pane_id}", "cd -- '/w' || exit 1; cmd"],
-            TerminalScripts.TmuxDetachedArgs(false, "/w", "cmd"));
+            Unwrapped(TerminalScripts.TmuxDetachedArgs(false, "/w", "cmd")));
         Assert.Equal(["new-window", "-t", "orbweaver:", "-c", "/w", "-P", "-F", "#{pane_id}", "cd -- '/w' || exit 1; cmd"],
-            TerminalScripts.TmuxDetachedArgs(true, "/w", "cmd"));
+            Unwrapped(TerminalScripts.TmuxDetachedArgs(true, "/w", "cmd")));
     }
 
     // conhost.exe named outright: a bare cmd.exe is handed to Windows Terminal

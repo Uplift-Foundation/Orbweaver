@@ -431,7 +431,7 @@ namespace Orbweaver
             args.Add("-P");
             args.Add("-F");
             args.Add("#{pane_id}");
-            args.Add(ShellCommandLine(cwd, command));
+            args.Add(AgentEnvironment.WrapPaneCommand(ShellCommandLine(cwd, command)));
 
             return TmuxArgs(socket, args.ToArray());
         }
@@ -459,7 +459,7 @@ namespace Orbweaver
         internal static string[] TmuxDetachedArgs(bool sessionExists, string cwd, string command) =>
             sessionExists
                 ? TmuxNewWindowArgs(null, DetachedSession, cwd, command)
-                : ["new-session", "-d", "-s", DetachedSession, "-c", cwd, "-P", "-F", "#{pane_id}", ShellCommandLine(cwd, command)];
+                : ["new-session", "-d", "-s", DetachedSession, "-c", cwd, "-P", "-F", "#{pane_id}", AgentEnvironment.WrapPaneCommand(ShellCommandLine(cwd, command))];
 
         internal static string[] TmuxNewWindowArgs(
             string? socket, string session, string? cwd, string command)
@@ -475,7 +475,7 @@ namespace Orbweaver
             args.Add("-P");
             args.Add("-F");
             args.Add("#{pane_id}");
-            args.Add(ShellCommandLine(cwd, command));
+            args.Add(AgentEnvironment.WrapPaneCommand(ShellCommandLine(cwd, command)));
 
             return TmuxArgs(socket, args.ToArray());
         }
