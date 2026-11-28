@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using Avalonia;
 using Avalonia.Controls;
@@ -1819,14 +1820,14 @@ public class SessionScanTests
     // fires for this shape by design, and TryAdopt's own first check is what
     // declines.
     private static void WriteBackgroundFile(
-        Scratch scratch, string sessionId, string state = "idle", DateTime? written = null)
+        Scratch scratch, string sessionId, string state = "idle", DateTime? written = null, int? pid = null)
     {
         var path = Path.Combine(scratch.Dir, sessionId + ".txt");
 
         File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(new SessionStatus
         {
             State = state,
-            SessionPid = LivePid,
+            SessionPid = pid ?? LivePid,
         }));
 
         if (written is not null) File.SetLastWriteTimeUtc(path, written.Value);
@@ -1939,6 +1940,90 @@ public class SessionScanTests
         Assert.Equal(LocalSessionShape.Background, status!.Shape);
         Assert.Equal(OrbPresence.Present, status.Presence);
         Assert.Equal(SessionKind.Background, status.Kind);
+    }
+
+    // CB-413, through the live scan rather than the snapshot: the no-terminal
+    // drop. A background worker's file names no terminal anywhere, so the only
+    // thing between it and JudgeReachability's NoTerminal verdict is the phase
+    // not ruling it out as a job. The daemon re-pointed this session's job
+    // (b1375106) to a newer conversation, so the listing's row for that job
+    // names d7b7db77 and not this session — while this session's process is
+    // plainly alive. Before the fix the phase read NotAJob and the orb was
+    // dropped as a dead click; Warren read it as the session having crashed.
+    //
+    // The controls are every other answer, each of which must still drop or
+    // finish the orb: a dead process; a "done" row, drawn Finished (greyed,
+    // swept later — AFinishedJobIsDrawnAsFinishedRatherThanVanishing) rather
+    // than live; and a live pid whose job is not on the listing at all, which
+    // is what a headless `claude -p` run looks like and is the case the first
+    // cut of this fix let through.
+    [AvaloniaTheory]
+    [InlineData("repointed-live", true, false)]
+    [InlineData("repointed-dead", false, false)]
+    [InlineData("listed-done", true, true)]
+    [InlineData("never-a-job-live", false, false)]
+    public void ALiveSessionWhoseJobWasRepointedKeepsItsOrbWithNoTerminal(
+        string shape, bool kept, bool finished)
+    {
+        const string cb404 = "b1375106-f6f2-4a11-9c3d-5e5e5e5e5e5e";
+        using var scratch = new Scratch();
+        WriteBackgroundFile(scratch, cb404, pid: shape == "repointed-dead" ? NeverAllocatedPid : LivePid);
+
+        var listing = shape switch
+        {
+            "listed-done" => Listing((cb404, "done")),
+            "never-a-job-live" => Listing(("d7b7db77-0000-4000-8000-000000000000", "working")),
+            _ => new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["d7b7db77-0000-4000-8000-000000000000"] = "working",
+                [BackgroundJobs.JobKey("b1375106")] = "working",
+            },
+        };
+        var manager = Manager(scratch, () => listing);
+        manager.ScanAndUpdate();
+
+        Assert.Equal(kept, OrbIds(manager).Contains(cb404));
+        if (kept) Assert.Equal(finished, manager.StatusFor(cb404)!.Presence == OrbPresence.Finished);
+    }
+
+    // CB-413 as it actually happened: two processes, not one. CB-404's lead
+    // (b1375106-…) ran on pid 39844; the mis-launched conversation (d7b7db77-…)
+    // registered itself into the same job on pid 85260, and the daemon's row for
+    // job b1375106 now names d7b7db77. Both wrote status files and both were
+    // alive. Here the two live pids are this test process and a child it owns.
+    // The named session is kept as a listed job; the unnamed one is kept by the
+    // fix. Its twin on a dead pid is the control, and is dropped.
+    [AvaloniaTheory]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public void TwoLiveProcessesSharingOneJobRowBothKeepTheirOrbs(bool unnamedAlive, bool unnamedKept)
+    {
+        const string lead = "b1375106-f6f2-4a11-9c3d-5e5e5e5e5e5e";
+        const string newer = "d7b7db77-0000-4000-8000-000000000000";
+        using var scratch = new Scratch();
+        using var other = Process.Start(OperatingSystem.IsWindows()
+            ? new ProcessStartInfo("ping", "-n 60 127.0.0.1") { UseShellExecute = false, RedirectStandardOutput = true }
+            : new ProcessStartInfo("sleep", "60") { UseShellExecute = false })!;
+        try
+        {
+            WriteBackgroundFile(scratch, lead, pid: unnamedAlive ? other.Id : NeverAllocatedPid);
+            WriteBackgroundFile(scratch, newer, state: "generating");
+
+            var listing = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [newer] = "working",
+                [BackgroundJobs.JobKey("b1375106")] = "working",
+            };
+            var manager = Manager(scratch, () => listing);
+            manager.ScanAndUpdate();
+
+            Assert.Contains(newer, OrbIds(manager));
+            Assert.Equal(unnamedKept, OrbIds(manager).Contains(lead));
+        }
+        finally
+        {
+            try { other.Kill(); } catch { }
+        }
     }
 
     [AvaloniaFact]

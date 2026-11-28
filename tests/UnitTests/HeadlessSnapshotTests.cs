@@ -331,6 +331,74 @@ public class HeadlessSnapshotTests
         }
     }
 
+    // CB-413, the same-pid variant, which is NOT the incident: there the two
+    // sessions ran on two pids (39844 and 85260), and that shape is pinned at
+    // scan level by SessionScanTests.TwoLiveProcessesSharingOneJobRowBothKeepTheirOrbs.
+    // This one asks what happens when both files name one pid, the listing
+    // naming only d7b7db77. Superseded keeps the newest file per pid, so the
+    // unnamed one survives it, and the pid-aware Phase keeps it from reading
+    // NotAJob. The negative control is the older unnamed file, which Superseded
+    // still drops: a /clear leftover on a live pid looks identical, and keeping
+    // the single-terminal rule is deliberate (named as a limit in the PR).
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public void ALiveSessionTheJobListingDoesNotNameIsKeptWhenItIsTheNewestOnItsPid(bool unnamedIsNewer, bool kept)
+    {
+        var dir = NewStatusDir();
+        try
+        {
+            const string listed = "d7b7db77-0000-4000-8000-000000000000";
+            const string unnamed = "b1375106-f6f2-4a11-9c3d-5e5e5e5e5e5e";
+            var now = DateTime.UtcNow;
+            foreach (var id in new[] { listed, unnamed })
+            {
+                WriteStatus(dir, id, new SessionStatus
+                    { State = "idle", Title = id[..8], Cwd = "/tmp/t", Source = SessionSource.ClaudeCode, SessionPid = 85260 });
+            }
+            File.SetLastWriteTimeUtc(Path.Combine(dir, listed + ".txt"), now.AddSeconds(unnamedIsNewer ? -30 : -5));
+            File.SetLastWriteTimeUtc(Path.Combine(dir, unnamed + ".txt"), now.AddSeconds(unnamedIsNewer ? -5 : -30));
+
+            var jobs = BackgroundJobs.Parse("""[{"pid":85260,"id":"b1375106","kind":"background","sessionId":"d7b7db77-0000-4000-8000-000000000000","state":"working"}]""");
+            var snapshot = SessionManager.HeadlessSnapshot(dir, () => jobs, isRunning: _ => true, nowUtc: now);
+
+            Assert.Equal(kept, snapshot.Any(k => k.SessionId == unnamed));
+            Assert.Contains(snapshot, k => k.SessionId == listed);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
+    // CB-413: a lead idle for hours, waiting on a human, fires no hook and its
+    // file goes quiet while the process stays alive. The listing does not name
+    // it. A live pid keeps it however old the file is; a dead one does not.
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public void AnUnlistedSessionIsKeptByItsLivePidWhateverTheAgeOfItsFile(bool alive, bool kept)
+    {
+        var dir = NewStatusDir();
+        try
+        {
+            var now = DateTime.UtcNow;
+            WriteStatus(dir, "idle-lead", new SessionStatus
+                { State = "idle", Title = "lead", Cwd = "/tmp/t", Source = SessionSource.ClaudeCode, SessionPid = 85260 });
+            File.SetLastWriteTimeUtc(Path.Combine(dir, "idle-lead.txt"), now.AddHours(-9));
+
+            var snapshot = SessionManager.HeadlessSnapshot(
+                dir, () => new Dictionary<string, string>(), isRunning: _ => alive, nowUtc: now,
+                honourOrbLifetime: false);
+
+            Assert.Equal(kept, snapshot.Any(k => k.SessionId == "idle-lead"));
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
     // Only Claude Code sessions are asked about: agent teams are Claude Code's,
     // and a Codex session kept beside a member is left out of the batch.
     [Fact]

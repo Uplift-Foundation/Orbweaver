@@ -16,8 +16,9 @@ namespace Orbweaver
     // fifteen orbs at once.
     internal enum JobPhase
     {
-        // Read a listing, and this session was not on it: an interactive
-        // session, a subagent, or a status file that outlived its session.
+        // Read a listing, and this session was not on it, and nothing says it is
+        // alive: a subagent, or a status file that outlived its session. A live
+        // process is Unknown instead — see Phase.
         NotAJob,
 
         // Mid-turn. Indistinguishable from Parked on disk, which is the whole
@@ -151,9 +152,13 @@ namespace Orbweaver
         // without a daemon to ask. `states` is what Parse returned — null for a
         // listing that could not be read at all.
         //
-        // Absent from a listing that was read successfully means not a job at
-        // all: a subagent, or a session that ended. "done" means it was one and
-        // has finished. Neither has anything left to show, and an orb for
+        // Absent from a listing that was read successfully means the daemon does
+        // not run it as a job under that id: a subagent, a session that ended, or
+        // a live session sharing a re-pointed job's worker (CB-413). This bare
+        // question cannot tell those apart, so it answers false for all three;
+        // the scan's orb decisions go through the pid-aware Phase below, which
+        // can. "done" means it was a job and has finished. Neither an ended
+        // session nor a finished job has anything left to show, and an orb for
         // either is a click that can only fail.
         //
         // A listing that couldn't be read answers true, not false. This decides
@@ -213,6 +218,53 @@ namespace Orbweaver
             if (Is(state, "done")) return JobPhase.Done;
 
             return JobPhase.Working;
+        }
+
+        // Phase, corrected for what the listing cannot see.
+        //
+        // Absent from a listing means "not a job the daemon is running under
+        // that session id" and no more. When a new conversation is started into
+        // an existing job, the daemon re-points the job's row at the newer
+        // session, and the session it moved away from drops off the listing
+        // while its own process is still entirely alive. Read as NotAJob, that
+        // session lost its orb on a machine where it was plainly running —
+        // CB-413, found because CB-404's lead vanished from the board.
+        //
+        // So a session the listing does not name reads Unknown ("change
+        // nothing") when both of these hold, and NotAJob otherwise:
+        //
+        // - its own job is still listed, naming another session. A background
+        //   session's id starts with its job's id (JobIdOf), and Parse files
+        //   every listed job under JobKey. This is what keeps the rule narrow:
+        //   a headless `claude -p` run, an OpenClaw or Paperclip spawn, or a
+        //   subagent has a live pid too, but no job of its own on the listing,
+        //   and the no-terminal and not-a-live-job drops exist for exactly
+        //   those. The first cut of this fix trusted the pid alone, and every
+        //   such run on a live pid escaped the no-terminal drop (CI caught it
+        //   in SessionScanTests' Desktop-twin cases).
+        // - its pid is alive. A resumed job's earlier conversations are the
+        //   reason Parse never matches a short id beside a named session; those
+        //   ended, so their pid is gone, and the ones that share the worker's pid
+        //   are left to SessionManager.Superseded, which keeps only the newest
+        //   file per pid.
+        //
+        // The status file's age is deliberately not consulted. A lead waiting
+        // on a human fires no hook and its file goes quiet while the process
+        // stays exactly as alive. A pid of 0 is no evidence either way and
+        // keeps the listing's word. "done" stays Done: the daemon said so.
+        //
+        // `isRunning` is a Func so the stat behind it is only paid for a session
+        // whose job was re-pointed, which is rare.
+        internal static JobPhase Phase(
+            Dictionary<string, string>? states, string sessionId,
+            int pid, Func<int, bool> isRunning)
+        {
+            var phase = Phase(states, sessionId);
+            if (phase != JobPhase.NotAJob || states is null || pid <= 0) return phase;
+
+            return states.ContainsKey(JobKey(JobIdOf(sessionId))) && isRunning(pid)
+                ? JobPhase.Unknown
+                : JobPhase.NotAJob;
         }
 
         private static bool Is(string? state, string word) =>
@@ -579,6 +631,14 @@ namespace Orbweaver
         // the session and Stop reads a fresh one of its own before acting.
         // NotAJob, an answer actually read, is the one case worth skipping: a
         // terminal session, which costs the click a pointless subprocess.
+        //
+        // CB-413: this deliberately reads the two-argument Phase, not the
+        // pid-aware one the scan uses. A session whose job the daemon re-pointed
+        // at a newer conversation is kept on screen as Unknown, but its job is
+        // no longer its own: `claude stop <job>` would stop the *newer*
+        // conversation, which is the wrong session. So End skips the daemon for
+        // it and signals the session's own process, which is the one the user
+        // clicked. Pinned by AbsentLiveSessionTests.
         internal static bool WorthAskingTheDaemon(
             SessionSource source, Dictionary<string, string>? states, string sessionId) =>
             source == SessionSource.ClaudeCode && Phase(states, sessionId) != JobPhase.NotAJob;
@@ -711,7 +771,16 @@ namespace Orbweaver
 
                 var state = Text(entry, "state") ?? "";
 
-                map[Text(entry, "sessionId") is { Length: > 0 } sessionId ? sessionId : jobId] = state;
+                var sessionId = Text(entry, "sessionId");
+                map[sessionId is { Length: > 0 } ? sessionId : jobId] = state;
+
+                // CB-413: the job itself, under a key no session id or short id
+                // can ever equal, so the lookups above never see it. It answers
+                // one question only — "does the daemon still run a job with this
+                // id, whatever session it names now" — which is what tells a
+                // session the daemon re-pointed away from apart from a headless
+                // run that was never a job at all. See the pid-aware Phase.
+                if (sessionId is { Length: > 0 }) map.TryAdd(JobKey(jobId), state);
 
                 // A row whose current session is this app's own remote-control
                 // relay counts for its short id as well. The rule above — never
@@ -742,6 +811,9 @@ namespace Orbweaver
 
             return map;
         }
+
+        // The key Parse files a listed job under, beside its session's.
+        internal static string JobKey(string jobId) => "job:" + jobId;
 
         private static string? Text(JsonElement entry, string name) =>
             entry.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
