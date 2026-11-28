@@ -2743,6 +2743,14 @@ class RouterPluginTests(unittest.TestCase):
         self.assertEqual(sorted(pc.statuses), [("a1", "todo"), ("t1", "todo")])
         self.assertEqual(pc.enables, ["pl1"], "one enable for the instance, not one per company")
 
+    def test_a_paused_triage_company_is_not_woken_but_the_fix_company_is(self):
+        pc = self.pc()
+        pc.all_by = {"co": [self.blocked("a1", 60)], "tri": [self.blocked("t1", 60)]}
+        pc.threads = {i: [{"body": BLOCKED_NOTE, "createdAt": warden.iso(NOW)}] for i in ("a1", "t1")}
+        pc.paused_cos = {"tri"}
+        self.run_tick(pc, {}, {"company_id": "co", "triage_company_id": "tri"})
+        self.assertEqual(pc.statuses, [("a1", "todo")])
+
     def test_a_paused_second_company_is_skipped_while_the_first_is_woken(self):
         pc = self.pc()
         pc.all_by = {"co": [self.blocked("a1", 60)], "co2": [self.blocked("b1", 60)]}
