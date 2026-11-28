@@ -1823,6 +1823,12 @@ class Warden:
             st.pop("failures", None)
             st.pop("escalated", None)
             return True
+        if plugin.get("status") != "error":
+            # Only `error` is Paperclip giving up on a plugin. disabled,
+            # installing or anything unknown may be a person's doing, so it is
+            # left exactly as it is (lead's ruling, CB-501).
+            self.log(f"router plugin is {plugin.get('status')}, not error: not re-enabling")
+            return False
         err = " ".join(str(plugin.get("lastError") or "").split())[:120]
         was = f"{plugin.get('status')} ({err})" if err else str(plugin.get("status"))
         now_status = None

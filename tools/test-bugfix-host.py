@@ -2640,6 +2640,117 @@ class RouterPluginTests(unittest.TestCase):
         self.assertTrue([l for l in logs if "router wake failed for company co" in l])
 
 
+    def test_only_error_is_re_enabled_other_statuses_are_left_alone(self):
+        for status in ("disabled", "installing", "mystery", None):
+            pc = self.pc([self.blocked("p", 60)])
+            router_down(pc, status=status)
+            pc.threads = {"p": [{"body": BLOCKED_NOTE, "createdAt": warden.iso(NOW)}]}
+            state = {}
+            _, _, logs = self.run_tick(pc, state)
+            self.assertEqual((pc.enables, pc.statuses, pc.escalations), ([], [], []), status)
+            self.assertTrue([l for l in logs if f"router plugin is {status}, not error" in l], status)
+            self.assertNotIn("failures", state.get("router_plugin", {}), "a person's disable is not a failure")
+
+    def test_another_plugin_in_error_gets_no_post(self):
+        pc = self.pc()
+        pc.plugin_rows = [{"id": "x", "pluginKey": "other", "status": "error"},
+                          {"id": "pl1", "pluginKey": warden.ROUTER_PLUGIN_KEY, "status": "ready"}]
+        self.run_tick(pc)
+        self.assertEqual(pc.enables, [])
+
+    def test_unusable_lists_never_crash_and_a_later_step_still_runs(self):
+        bad = [lambda pc: setattr(pc, "fail_plugins", True),
+               lambda pc: setattr(pc, "plugins", lambda: (_ for _ in ()).throw(
+                   urllib.error.HTTPError("u", 503, "Unavailable", {}, None))),
+               lambda pc: setattr(pc, "plugins", lambda: (_ for _ in ()).throw(ValueError("not json"))),
+               lambda pc: setattr(pc, "plugin_rows", "oops"),
+               lambda pc: setattr(pc, "plugin_rows", [None, 5, {"pluginKey": None}])]
+        for i, breakit in enumerate(bad):
+            pc = self.pc(released_pass())
+            pc.said = {"P": NOW - 11 * 60}
+            breakit(pc)
+            state = {}
+            _, paused, _ = self.run_tick(pc, state)
+            self.assertFalse(paused, i)
+            self.assertEqual(pc.statuses, [("P", "done")], f"sweep still ran ({i})")
+            self.assertEqual((pc.enables, pc.escalations), ([], []), i)
+            self.assertNotIn("failures", state.get("router_plugin", {}), "unreadable is not a failed enable")
+
+    def test_a_raising_post_counts_as_a_failure_and_the_cycle_goes_on(self):
+        pc = self.pc(released_pass())
+        pc.said = {"P": NOW - 11 * 60}
+        router_down(pc)
+        pc.fail_enable = True
+        state = {}
+        _, _, logs = self.run_tick(pc, state)
+        self.assertEqual(state["router_plugin"]["failures"], 1)
+        self.assertEqual(pc.statuses, [("P", "done")])
+        self.assertTrue([l for l in logs if "router plugin enable failed" in l])
+
+    def test_a_raising_read_back_counts_as_a_failure_and_the_cycle_goes_on(self):
+        pc = self.pc(released_pass())
+        pc.said = {"P": NOW - 11 * 60}
+        router_down(pc)
+        real, calls = pc.plugins, []
+
+        def plugins():
+            calls.append(1)
+            if len(calls) > 1:
+                raise OSError("read-back failed")
+            return real()
+        pc.plugins = plugins
+        state = {}
+        _, _, logs = self.run_tick(pc, state)
+        self.assertEqual(pc.enables, ["pl1"])
+        self.assertEqual(state["router_plugin"]["failures"], 1)
+        self.assertEqual(pc.statuses, [("P", "done")])
+
+    def test_an_ok_enable_that_reads_back_error_counts_across_ticks_then_a_success_resets(self):
+        pc, state = self.pc(), {}
+        router_down(pc)
+        pc.enable_result = "error"
+        self.run_tick(pc, state)
+        self.run_tick(pc, state)
+        self.assertEqual(state["router_plugin"]["failures"], 2, "the count survives across ticks")
+        pc.enable_result = "ready"
+        self.run_tick(pc, state)
+        self.assertNotIn("failures", state["router_plugin"])
+        self.assertEqual(pc.escalations, [])
+
+    def test_each_company_is_judged_on_its_own_and_a_second_cycle_patches_nothing(self):
+        mine = [self.blocked("a1", 60)]
+        theirs = [self.blocked("b1", 60), self.blocked("b2", 3600)]
+        pc = self.pc()
+        pc.all_by = {"co": mine, "co2": theirs}
+        pc.threads = {i: [{"body": BLOCKED_NOTE, "createdAt": warden.iso(NOW)}] for i in ("a1", "b1", "b2")}
+        cfg = {"company_id": "co", "unstick_company_ids": ["co", "co2"]}
+        state = {}
+        self.run_tick(pc, state, cfg)
+        self.assertEqual(sorted(pc.statuses), [("a1", "todo"), ("b1", "todo"), ("b2", "cancelled")])
+        pc.statuses.clear()
+        self.run_tick(pc, state, cfg)         # the rows now read todo / cancelled
+        self.assertEqual(pc.statuses, [])
+
+    def test_a_paused_second_company_is_skipped_while_the_first_is_woken(self):
+        pc = self.pc()
+        pc.all_by = {"co": [self.blocked("a1", 60)], "co2": [self.blocked("b1", 60)]}
+        pc.threads = {i: [{"body": BLOCKED_NOTE, "createdAt": warden.iso(NOW)}] for i in ("a1", "b1")}
+        pc.paused_cos = {"co2"}
+        self.run_tick(pc, {}, {"company_id": "co", "unstick_company_ids": ["co", "co2"]})
+        self.assertEqual(pc.statuses, [("a1", "todo")])
+
+    def test_wake_with_two_routines_keeps_one_each_and_older_unavailable_text_is_not_enough(self):
+        pc = self.pc([self.blocked("r1new", 60, routine="r1"), self.blocked("r1old", 600, routine="r1"),
+                      self.blocked("r2new", 60, routine="r2"), self.blocked("r2old", 600, routine="r2"),
+                      self.blocked("mixed", 60, routine="r3")])
+        note = lambda at: {"body": BLOCKED_NOTE, "createdAt": warden.iso(NOW - at)}
+        pc.threads = {i: [note(10)] for i in ("r1new", "r1old", "r2new", "r2old")}
+        pc.threads["mixed"] = [note(600), {"body": "waiting on QA", "createdAt": warden.iso(NOW - 5)}]
+        self.run_tick(pc)
+        self.assertEqual(sorted(pc.statuses), [("r1new", "todo"), ("r1old", "cancelled"),
+                                               ("r2new", "todo"), ("r2old", "cancelled")])
+
+
 class CheckHostTests(unittest.TestCase):
     GOOD = {"enableIsolatedWorkspaces": True, "enableWorktreeRunExecution": True,
             "enableIsolatedWorkspacesByDefault": False}
