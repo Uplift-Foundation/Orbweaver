@@ -106,7 +106,7 @@ public class PeerListDirTests
         var calls = new List<string>();
         var settings = new BrowseSettings(["/Users/dev/Source"], false);
         var server = new PeerBrowseServer(new PeerBrowseServer.Seams(
-            () => allowed, fs, () => { calls.Add("settings"); return settings; }, TimeSpan.FromSeconds(5)));
+            () => allowed, fs, () => { calls.Add("settings"); return settings; }, NoReadBound));
         return (server, fs, calls);
     }
 
@@ -206,7 +206,7 @@ public class PeerListDirTests
     {
         var (_, fs, _) = Server(true);
         var settings = new BrowseSettings(["/Users/dev/Source"], false);
-        var server = new PeerBrowseServer(new PeerBrowseServer.Seams(() => true, fs, () => settings, TimeSpan.FromSeconds(5)));
+        var server = new PeerBrowseServer(new PeerBrowseServer.Seams(() => true, fs, () => settings, NoReadBound));
 
         Assert.Equal(RelayReplies.ForbiddenPath,
             (await server.HandleAsync(PeerLaunchWire.EncodeListDirRequest("/Users/dev/Other"))).Code);
@@ -268,7 +268,7 @@ public class PeerListDirTests
             .Add("/Users/dev/linked", BrowseKind.Link, target: "/Users/dev/Documents");
         var fs = new ReadLog(inner);
         var server = new PeerBrowseServer(new PeerBrowseServer.Seams(
-            () => true, fs, () => new BrowseSettings(["/Users/dev"], true), TimeSpan.FromSeconds(5)));
+            () => true, fs, () => new BrowseSettings(["/Users/dev"], true), NoReadBound));
         return (fs, server);
     }
 
@@ -361,7 +361,7 @@ public class PeerListDirTests
 
         fs.OnRead = _ => new IOException("gone");
         var throws = new PeerBrowseServer(new PeerBrowseServer.Seams(
-            () => true, fs, () => settings, TimeSpan.FromSeconds(5), log.Add));
+            () => true, fs, () => settings, NoReadBound, log.Add));
         await throws.HandleAsync(PeerLaunchWire.EncodeListDirRequest("/Users/dev/Source"));
 
         // Held until released, not slept: a loaded runner can delay the timeout's own timer past any
@@ -402,7 +402,7 @@ public class PeerListDirTests
         fs.Add("/").Add("/h").Add("/h/r");
         for (var i = 0; i < 600; i++) fs.Add("/h/r/d" + i.ToString("000"));
         var server = new PeerBrowseServer(new PeerBrowseServer.Seams(
-            () => true, fs, () => new BrowseSettings(["/h/r"], false), TimeSpan.FromSeconds(5)));
+            () => true, fs, () => new BrowseSettings(["/h/r"], false), NoReadBound));
 
         var result = await server.HandleAsync(PeerLaunchWire.EncodeListDirRequest("/h/r"));
 
