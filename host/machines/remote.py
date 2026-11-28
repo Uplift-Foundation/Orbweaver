@@ -738,7 +738,7 @@ find . -name TestResults -type d -prune -exec rm -rf {{}} + 2>/dev/null
 GOT="$(git rev-parse HEAD)"
 echo "sha=$GOT"
 [ "$GOT" = "$SHA" ] || exit 0
-cat > "$J/run.sh" <<'ORBWEAVER_REMOTE_EOF'
+cat > "$J/run.sh" <<'REMOTE_JOB_EOF'
 echo $$ > "$J/pid"
 cd "$ROOT/work"
 {command} > "$J/output.txt" 2>&1
@@ -755,7 +755,7 @@ echo $code > "$J/exit.tmp" && mv "$J/exit.tmp" "$J/exit"
 # build by minutes (measured on the Air) and no build-server switch stops it.
 trap '' TERM
 kill -TERM -- "-$$" 2>/dev/null; sleep 1; kill -KILL -- "-$$" 2>/dev/null
-ORBWEAVER_REMOTE_EOF
+REMOTE_JOB_EOF
 export ROOT J
 # Its own process group, so a kill at the cap takes the build, the test host
 # and everything they started, and nothing else.

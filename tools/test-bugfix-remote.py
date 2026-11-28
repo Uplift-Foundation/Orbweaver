@@ -1101,9 +1101,11 @@ class TargetTests(unittest.TestCase):
         with self.assertRaises(base.MachineError):
             remote.unpack(b"not a tar", 10)
 
+    # Skipped on Windows like the shell tests below: a bare `bash` there is
+    # the WSL stub, which exits 1 and says nothing, and these scripts only
+    # ever run on a Mac target.
+    @unittest.skipIf(os.name == "nt" or shutil.which("bash") is None, "needs a real bash")
     def test_every_script_is_valid_bash(self):
-        if shutil.which("bash") is None:
-            self.skipTest("no bash")
         kw = dict(root="orbweaver-remote", rid="t1", sha=SHA, clean_x="-x", command="dotnet build", max_output=5,
                   cap=600, files="a.trx", forbidden="avatar avatar.internal", max_stream=99)
         for name in ("START", "POLL", "KILL", "COLLECT", "CLEANUP", "INIT"):
