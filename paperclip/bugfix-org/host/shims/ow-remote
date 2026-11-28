@@ -13,10 +13,17 @@ The others take none.
 
 Nothing runs on the mini. The runner checks the commit out by sha, so HEAD must
 be committed and pushed to Uplift-Foundation/Orbweaver; this refuses before
-asking if it is not. Exit status is the remote command's; 2 means the runner
-or this helper refused (one sentence says why), 75 means it is still running
-past 9 minutes and `ow-remote wait <id>` picks it up, inside an agent's
-ten-minute command limit.
+asking if it is not. Exit status is the remote command's, except:
+  64  refused, nothing ran (this helper or the runner; one sentence says why)
+  65  it ran, but the result is void: another commit was checked out, or none
+      was reported, the runner said ok false with exit 0, or a coverage run
+      did not merge 4 reports
+  75  still running past 9 minutes; `ow-remote wait <id>` picks it up, inside
+      an agent's ten-minute command limit
+  124 the run hit its cap
+None of these is a code the suites return for a test result: the Microsoft
+Testing Platform uses 2 for a failed test and 8 for zero tests run, which is
+why a refusal is not 2.
 
 The spool and results are `remote-spool` and `remote-results` beside
 $BUGFIX_SPOOL. OW_REMOTE_WAIT_S and OW_REMOTE_POLL_S shorten the waits for the
@@ -36,8 +43,10 @@ FILTERED = ("unit", "integration", "ui", "screenshots")
 FILTER_RE = re.compile(r"[A-Za-z0-9_.]{1,200}")
 ID_RE = re.compile(r"[a-z0-9-]{1,40}")
 REPO_RE = re.compile(r"[/:]Uplift-Foundation/Orbweaver(\.git)?/?$")
+REFUSED = 64
+VOID = 65
 STILL_RUNNING = 75
-REFUSED = 2
+TIMED_OUT = 124
 
 
 def say(msg):
@@ -110,10 +119,10 @@ def ask(run, flt):
     except OSError as e:
         return refuse(f"could not write the request to {spool}: {e.strerror}")
     say(f"asked {rid}: {run}{' ' + flt if flt else ''} at {sha[:12]}")
-    return wait(rid, results)
+    return wait(rid, results, asked_sha=sha)
 
 
-def wait(rid, results=None):
+def wait(rid, results=None, asked_sha=None):
     if not ID_RE.fullmatch(rid):
         return refuse(f"{rid!r} is not a request id")
     if results is None:
@@ -127,7 +136,7 @@ def wait(rid, results=None):
     while True:
         res = read_result(folder)
         if res is not None:
-            return report(res, folder)
+            return report(res, folder, asked_sha)
         if time.monotonic() >= deadline:
             print(f"still running: ow-remote wait {rid}")
             return STILL_RUNNING
@@ -142,7 +151,25 @@ def read_result(folder):
         return None
 
 
-def report(res, folder):
+def void_reason(res, asked_sha):
+    """Why a result that ran says nothing about the commit asked for, or None."""
+    want = asked_sha or res.get("sha")
+    got = res.get("checked_out_sha")
+    if not got:
+        return "the runner reported no checked-out commit"
+    if asked_sha and res.get("sha") != asked_sha:
+        return f"the answer is for {str(res.get('sha'))[:12]}, not {asked_sha[:12]}"
+    if got != want:
+        return f"asked for {str(want)[:12]} but the runner checked out {got[:12]}"
+    if res.get("run") == "coverage" and res.get("merged_reports") != 4:
+        return (f"coverage merged {res.get('merged_reports')} report(s), not 4, "
+                "so the figure is not a measurement")
+    if res.get("ok") is False and res.get("exit_code") == 0 and not res.get("timed_out"):
+        return "the runner says it did not succeed although the command exited 0"
+    return None
+
+
+def report(res, folder, asked_sha=None):
     try:
         with open(os.path.join(folder, "output-tail.txt"), errors="replace") as f:
             sys.stdout.write(f.read())
@@ -151,23 +178,26 @@ def report(res, folder):
         pass
     if res.get("refused"):
         return refuse(f"refused, nothing ran: {res['refused']}")
-    if res.get("sha") and res.get("checked_out_sha") and res["sha"] != res["checked_out_sha"]:
-        say(f"WARNING: asked for {res['sha'][:12]} but the runner checked out "
-            f"{res['checked_out_sha'][:12]}; this result is not about your commit")
     if res.get("error"):
         say(f"runner error: {res['error']}")
     if res.get("run") == "coverage":
-        say(f"merged {res.get('merged_reports')} report(s)"
-            + ("" if res.get("merged_reports") == 4 else
-               "; not 4, so the figure is not a measurement"))
+        say(f"merged {res.get('merged_reports')} report(s)")
+    if res.get("files_dropped"):
+        say(f"files dropped by the runner: {res['files_dropped']}")
     code = res.get("exit_code")
     timed = " (timed out)" if res.get("timed_out") else ""
     say(f"{res.get('id')}: {res.get('run')} at {str(res.get('sha'))[:12]} on "
         f"{res.get('target_hostname') or res.get('target')}, exit {code}{timed}; "
         f"full output and files in {folder}")
+    why = void_reason(res, asked_sha)
+    if why:
+        say(f"VOID, not a pass or a fail: {why}; push if needed and ask again")
+        return VOID
+    if res.get("timed_out"):
+        return TIMED_OUT
     if isinstance(code, int):
         return code if 0 <= code < 256 else 1
-    return 124 if res.get("timed_out") else 1
+    return 1
 
 
 def status():

@@ -1064,9 +1064,28 @@ class RemoteRunnerInstructionTests(unittest.TestCase):
     def test_skill_says_how_to_ask_and_read_the_answer(self):
         sec = self.section()
         for phrase in ("commit, push, ask", "ow-remote wait <id>", "Exit `75`",
-                       "Exit `2`", "refused, nothing ran", "remote-results/<id>/",
+                       "Exit `64`", "Exit `65`", "Exit `8`", "never a refusal",
+                       "refused, nothing ran", "remote-results/<id>/",
                        "result.json", "ow-remote status", "Quote the request id"):
             self.assertIn(phrase, sec, phrase)
+
+    def test_the_exit_codes_match_the_helper(self):
+        # A refusal must not share a code a suite returns for a failed test
+        # (MTP: 2 failed, 8 none ran), and the skill must name the helper's.
+        tool = read("host", "shims", "ow-remote")
+        codes = {k: int(v) for k, v in re.findall(r"^(REFUSED|VOID|STILL_RUNNING|TIMED_OUT) = (\d+)$", tool, re.M)}
+        self.assertEqual(set(codes), {"REFUSED", "VOID", "STILL_RUNNING", "TIMED_OUT"})
+        self.assertFalse({codes["REFUSED"], codes["VOID"]} & {0, 1, 2, 8})
+        for code in codes.values():
+            self.assertIn(f"Exit `{code}`", self.section(), code)
+        self.assertNotIn("Exit `2`, `refused", self.section())
+
+    def test_result_files_and_busy_target_are_named(self):
+        sec = self.section()
+        for name in ("unit-tests.trx", "integration-tests.trx", "ui-tests.xunit.xml",
+                     "ui-screenshots.xunit.xml", "coverage-summary.txt", "files/screenshots/",
+                     "target_busy_with", "no single-method filter", "count\nguard"):
+            self.assertIn(name, sec, name)
 
     def test_coverage_is_remote_merged_four_and_never_on_the_mini(self):
         sec = self.section()

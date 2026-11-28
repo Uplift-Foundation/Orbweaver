@@ -792,16 +792,26 @@ ow-remote <run> [filter]
 
 Iterate with a filter: a filtered run answers in under a minute. No filter on
 `unit`, `integration`, `ui` or `screenshots` runs the whole suite, which CI
-runs anyway, so do not. A filter is letters, digits, `_` and `.` only.
+runs anyway, so do not; a full `ui` run is not passed through CB-119's count
+guard there, so it proves less than CI does. A filter is a class, letters,
+digits, `_` and `.` only; there is no single-method filter, and a filter on
+any other run is refused.
 
 **Reading the answer.** `ow-remote` waits up to nine minutes, prints the last
 200 KB of the output, and exits with the remote command's exit status. Its last
 stderr line names the request id, the sha, the machine and the folder,
 `remote-results/<id>/` beside `$BUGFIX_SPOOL`, which holds `result.json`, the
-whole `output.txt`, and `files/` (the test reports, the coverage summary,
-screenshot PNGs). Quote the request id in the PR body.
+whole `output.txt`, and `files/`: `unit-tests.trx`, `integration-tests.trx`,
+`ui-tests.xunit.xml`, `ui-screenshots.xunit.xml`, `coverage-summary.txt`, and a
+screenshot run's PNGs under `files/screenshots/` (a line names any file the
+runner dropped). Quote the request id in the PR body.
 
-- Exit `2`, `refused, nothing ran: <sentence>`: read the sentence, fix what it
+- Exit `0`: it passed, on your commit.
+- Exit `1` or `2`: a test failed (`2` is how the UI and screenshot suites say
+  it). Read the output and fix it; it is never a refusal.
+- Exit `8` on `ui` or `screenshots`: no test ran, so the filter matched no
+  class. Check the `Namespace.Class` name. It is not a pass.
+- Exit `64`, `refused, nothing ran: <sentence>`: read the sentence, fix what it
   names, ask again. "no target reachable; not run on the mini" means the Air
   was away for fifteen minutes. **Say so and wait**: report it on your task,
   check `ow-remote status` later and ask again once the Air is reachable. That
@@ -812,14 +822,19 @@ screenshot PNGs). Quote the request id in the PR body.
   (**Long commands**).
 - Exit `124`: the run hit its cap (10 minutes filtered, 30 for a suite, 45 for
   coverage).
-- A `WARNING` that the runner checked out another commit means the result is
-  not about yours; push and ask again.
+- Exit `65`, `VOID, not a pass or a fail: <sentence>`: it ran, but the result
+  says nothing about your commit (another commit was checked out, or none was
+  reported), or the runner said it did not succeed, or coverage did not merge
+  4 reports. Push if needed and ask again; never count it either way.
 - `ow-remote status` shows whether the Air is reachable and what is queued.
-  One job runs at a time and the rest wait their turn.
+  One job runs at a time and the rest wait their turn; `target_busy_with` there
+  names a job the Air is still finishing, which yours waits behind, and is not
+  an error.
 
 **Coverage.** `ow-remote coverage`, once per PR. Its stderr says
-`merged <N> report(s)`, and the figure is a measurement only when N is 4; quote
-that line with the figure. **Never run `./tools/coverage.sh` on the mini.**
+`merged <N> report(s)` (also the first line of `files/coverage-summary.txt`);
+the figure is a measurement only when N is 4, and anything else exits `65`.
+Quote that line with the figure. **Never run `./tools/coverage.sh` on the mini.**
 
 **A local `dotnet test` on the mini is the exception**, for something the
 runner cannot do, and `## Verified` says which command ran locally and why.

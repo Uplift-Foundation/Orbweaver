@@ -141,7 +141,7 @@ class OwRemote(unittest.TestCase):
 
     def assert_refused_without_asking(self, args, phrase, **env):
         code, out, err = self.run_tool(*args, **env)
-        self.assertEqual(code, 2, err)
+        self.assertEqual(code, 64, err)
         self.assertIn(phrase, err)
         self.assertEqual(self.requests(), [])
 
@@ -177,7 +177,7 @@ class OwRemote(unittest.TestCase):
         env.pop("BUGFIX_SPOOL")
         p = subprocess.run([sys.executable, TOOL, "unit"], cwd=self.repo, env=env,
                            capture_output=True, text=True, timeout=30)
-        self.assertEqual(p.returncode, 2)
+        self.assertEqual(p.returncode, 64)
         self.assertIn("BUGFIX_SPOOL is not set", p.stderr)
         self.assertEqual(self.requests(), [])
 
@@ -190,13 +190,13 @@ class OwRemote(unittest.TestCase):
         out, err = p.communicate(timeout=30)
         self.assertEqual((p.returncode, out), (3, "Failed: 1\n"))
 
-    def test_a_refusal_exits_2_and_says_nothing_ran(self):
+    def test_a_refusal_exits_64_and_says_nothing_ran(self):
         p = self.start("build")
         _, req = self.take_request()
         self.answer(req, tail="", ok=False, exit_code=None,
                     refused="no target reachable; not run on the mini")
         _, err = p.communicate(timeout=30)
-        self.assertEqual(p.returncode, 2)
+        self.assertEqual(p.returncode, 64)
         self.assertIn("refused, nothing ran: no target reachable; not run on the mini", err)
 
     def test_a_runner_error_is_printed(self):
@@ -230,30 +230,78 @@ class OwRemote(unittest.TestCase):
 
     def test_wait_refuses_an_id_outside_the_pattern(self):
         code, _, err = self.run_tool("wait", "../x")
-        self.assertEqual(code, 2)
+        self.assertEqual(code, 64)
         self.assertIn("not a request id", err)
 
-    def test_coverage_says_whether_it_merged_four(self):
-        for merged, bad in ((4, False), (3, True)):
-            with self.subTest(merged=merged):
-                p = self.start("coverage")
-                name, req = self.take_request()
-                self.answer(req, merged_reports=merged, base_sha="b" * 40)
-                _, err = p.communicate(timeout=30)
-                self.assertIn(f"merged {merged} report(s)", err)
-                self.assertEqual("not a measurement" in err, bad)
+    def finish(self, run, **fields):
+        p = self.start(run)
+        _, req = self.take_request()
+        self.answer(req, **fields)
+        out, err = p.communicate(timeout=30)
+        return p.returncode, out, err
 
-    def test_warns_when_the_runner_built_another_commit(self):
-        p = self.start("build")
+    def test_coverage_short_of_four_is_void_even_at_exit_0(self):
+        for merged in (3, None):
+            with self.subTest(merged=merged):
+                code, _, err = self.finish("coverage", merged_reports=merged, exit_code=0, base_sha="b" * 40)
+                self.assertEqual(code, 65, err)
+                self.assertIn("VOID", err)
+                self.assertIn("not a measurement", err)
+        code, _, err = self.finish("coverage", merged_reports=4, exit_code=0, base_sha="b" * 40)
+        self.assertEqual(code, 0, err)  # control
+        self.assertIn("merged 4 report(s)", err)
+        self.assertNotIn("VOID", err)
+
+    def test_another_commit_checked_out_is_void_even_at_exit_0(self):
+        code, _, err = self.finish("build", checked_out_sha="c" * 40, exit_code=0)
+        self.assertEqual(code, 65)
+        self.assertIn("checked out cccccccccccc", err)
+        code, _, err = self.finish("glyph", exit_code=0)  # control: same sha
+        self.assertEqual(code, 0)
+        self.assertNotIn("VOID", err)
+
+    def test_an_answer_for_another_sha_than_asked_is_void(self):
+        # The runner checked out what the answer names, but that is not what
+        # this invocation asked for.
+        other = "d" * 40
+        code, _, err = self.finish("build", sha=other, checked_out_sha=other, exit_code=0)
+        self.assertEqual(code, 65)
+        self.assertIn("not " + self.head()[:12], err)
+
+    def test_no_checked_out_sha_is_void(self):
+        code, _, err = self.finish("build", checked_out_sha=None, exit_code=0)
+        self.assertEqual(code, 65)
+        self.assertIn("no checked-out commit", err)
+
+    def test_ok_false_with_exit_0_is_void(self):
+        code, _, err = self.finish("build", ok=False, exit_code=0)
+        self.assertEqual(code, 65)
+        code, _, _ = self.finish("build", ok=True, exit_code=0)  # control
+        self.assertEqual(code, 0)
+
+    def test_a_failed_ui_test_is_exit_2_and_never_reads_as_a_refusal(self):
+        # MTP exits 2 for a failed test; a refusal must not share that code.
+        code, _, err = self.finish("ui", ok=False, exit_code=2)
+        self.assertEqual(code, 2)
+        self.assertNotIn("refused", err)
+        self.assertNotIn("VOID", err)
+        p = self.start("ui")  # control: a refusal exits 64, never 2
         _, req = self.take_request()
-        self.answer(req, checked_out_sha="c" * 40)
-        _, err = p.communicate(timeout=30)
-        self.assertIn("is not about your commit", err)
-        p = self.start("glyph")  # control: same sha, no warning
+        self.answer(req, ok=False, exit_code=None, checked_out_sha=None, refused="queue is full")
+        p.communicate(timeout=30)
+        self.assertEqual(p.returncode, 64)
+
+    def test_zero_tests_run_passes_exit_8_through(self):
+        code, _, _ = self.finish("ui", ok=False, exit_code=8)
+        self.assertEqual(code, 8)
+
+    def test_wait_without_the_asked_sha_still_voids_a_mismatch(self):
+        code, out, err = self.run_tool("build", OW_REMOTE_WAIT_S="0.2")
+        self.assertEqual(code, 75)
         _, req = self.take_request()
-        self.answer(req)
-        _, err = p.communicate(timeout=30)
-        self.assertNotIn("is not about your commit", err)
+        self.answer(req, checked_out_sha="c" * 40, exit_code=0)
+        code, _, err = self.run_tool("wait", req["id"])
+        self.assertEqual(code, 65)
 
     def test_status_prints_the_runners_status(self):
         with open(os.path.join(self.results, "status.json"), "w") as f:
