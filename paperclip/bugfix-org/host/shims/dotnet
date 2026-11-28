@@ -8,7 +8,7 @@
 # timeout); it is never refused. Anything else (--version, --info, nuget
 # locals, tool list) passes straight through, and so does a nested call from a
 # command that already holds the lock, which would otherwise wait on itself.
-# The nested case is recognised by ORBWEAVER_HEAVY_LOCK_HELD, which the locked
+# The nested case is recognised by BUGFIX_HEAVY_LOCK_HELD, which the locked
 # command inherits; any process can set it and skip the queue, an accepted
 # limit for a cap that is about load, not trust. The remote runner replaces
 # this as the way builds run; this stays as the backstop.
@@ -24,15 +24,15 @@
 # package` and `dotnet new` stay light although both can run an implicit
 # restore: one package's restore is short, and holding them behind a
 # half-hour test run would stall an agent for nothing it needs locked.
-REAL="${ORBWEAVER_REAL_DOTNET:-/usr/local/share/dotnet/dotnet}"
+REAL="${BUGFIX_REAL_DOTNET:-/usr/local/share/dotnet/dotnet}"
 # The lock lives beside the install, never under $HOME: every Paperclip agent
 # run has its own HOME (.../acpx/<run>/home), so a HOME-based lock was private
 # to each run and serialised nothing across agents. Installed as
 # ~/.paperclip/tools/bin/dotnet, this is ~/.paperclip/instances/default/.
 # Builtins only: the service PATH may not hold dirname.
 HERE=$(cd "${BASH_SOURCE[0]%/*}" && pwd -P)
-LOCK="${ORBWEAVER_HEAVY_LOCK:-${HERE%/tools/bin}/instances/default/heavy-dotnet.lock}"
-LOCKF="${ORBWEAVER_LOCKF:-/usr/bin/lockf}"
+LOCK="${BUGFIX_HEAVY_LOCK:-${HERE%/tools/bin}/instances/default/heavy-dotnet.lock}"
+LOCKF="${BUGFIX_LOCKF:-/usr/bin/lockf}"
 
 # The verb is the first argument that is not an option or an option's value:
 # `dotnet -d build`, `dotnet --roll-forward Major test`.
@@ -56,7 +56,7 @@ if [ ! -x "$REAL" ] || [ -d "$REAL" ]; then
   echo "dotnet: real dotnet not found or not executable at $REAL" >&2
   exit 127
 fi
-if [ -z "$heavy" ] || [ -n "${ORBWEAVER_HEAVY_LOCK_HELD:-}" ]; then
+if [ -z "$heavy" ] || [ -n "${BUGFIX_HEAVY_LOCK_HELD:-}" ]; then
   exec "$REAL" "$@"
 fi
 if [ ! -x "$LOCKF" ]; then
@@ -68,5 +68,5 @@ if [ ! -d "${LOCK%/*}" ]; then
   echo "dotnet: lock folder ${LOCK%/*} missing, running unlocked" >&2
   exec "$REAL" "$@"
 fi
-export ORBWEAVER_HEAVY_LOCK_HELD=1
+export BUGFIX_HEAVY_LOCK_HELD=1
 exec "$LOCKF" -k "$LOCK" /usr/bin/nice -n 10 "$REAL" "$@"

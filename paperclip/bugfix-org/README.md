@@ -374,7 +374,7 @@ lock under it serialised nothing (found live, CB-494). A second one **waits**;
    first argument that is not an option or an option's value
    (`dotnet --roll-forward Major test` locks). Everything else (`--version`,
    `--info`, `nuget locals`, `tool list`) passes straight through. A command
-   holding the lock exports `ORBWEAVER_HEAVY_LOCK_HELD`, so a nested `dotnet`
+   holding the lock exports `BUGFIX_HEAVY_LOCK_HELD`, so a nested `dotnet`
    it starts passes through rather than waiting on itself. **Any process can
    set that variable and skip the queue**; that is an accepted limit, since
    this is a cap on load, not a security boundary. Without `/usr/bin/lockf` it

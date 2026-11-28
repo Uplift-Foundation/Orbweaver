@@ -3,7 +3,7 @@
 
     python3 tools/test-bugfix-dotnet-wrapper.py
 
-Every test drives a fake dotnet through ORBWEAVER_REAL_DOTNET, never the real
+Every test drives a fake dotnet through BUGFIX_REAL_DOTNET, never the real
 SDK. The fake appends "start"/"end" lines with timestamps to a log, so overlap
 is read off the log rather than guessed from wall clock. Each ordering claim
 has a control that shows the same setup can see the opposite. Where
@@ -26,7 +26,7 @@ LOCKF = "/usr/bin/lockf"
 
 FAKE = r"""#!/bin/bash
 echo "start $FAKE_TAG $(python3 -c 'import time;print(time.time())')" >> "$FAKE_LOG"
-echo "held=${ORBWEAVER_HEAVY_LOCK_HELD-UNSET}"
+echo "held=${BUGFIX_HEAVY_LOCK_HELD-UNSET}"
 echo "nice=$(ps -o nice= -p $$ | tr -d ' ')"
 echo "argc=$#"
 for a in "$@"; do echo "arg=$a"; done
@@ -49,8 +49,8 @@ class DotnetShim(unittest.TestCase):
         self.log = os.path.join(self.tmp, "log")
         open(self.log, "w").close()
         self.env = {"PATH": "/usr/bin:/bin", "HOME": self.tmp,
-                    "ORBWEAVER_REAL_DOTNET": self.fake,
-                    "ORBWEAVER_HEAVY_LOCK": os.path.join(self.tmp, "heavy.lock"),
+                    "BUGFIX_REAL_DOTNET": self.fake,
+                    "BUGFIX_HEAVY_LOCK": os.path.join(self.tmp, "heavy.lock"),
                     "FAKE_LOG": self.log}
 
     def env_with(self, **kw):
@@ -121,16 +121,16 @@ class DotnetShim(unittest.TestCase):
 
     def test_control_same_pair_overlaps_without_the_lock(self):
         # Proves the log can see an overlap: the held variable skips the lock.
-        p1 = self.start(["build"], FAKE_TAG="a", FAKE_SLEEP="1.5", ORBWEAVER_HEAVY_LOCK_HELD="1")
+        p1 = self.start(["build"], FAKE_TAG="a", FAKE_SLEEP="1.5", BUGFIX_HEAVY_LOCK_HELD="1")
         self.wait_started("a")
-        p2 = self.start(["test"], FAKE_TAG="b", FAKE_SLEEP="0.2", ORBWEAVER_HEAVY_LOCK_HELD="1")
+        p2 = self.start(["test"], FAKE_TAG="b", FAKE_SLEEP="0.2", BUGFIX_HEAVY_LOCK_HELD="1")
         p1.communicate(timeout=20)
         p2.communicate(timeout=20)
         self.assertTrue(self.overlapped("a", "b"))
 
     def installed(self):
         """A copy at <root>/tools/bin/dotnet, as deployed, with the lock
-        folder it defaults to; no ORBWEAVER_HEAVY_LOCK, so the default is
+        folder it defaults to; no BUGFIX_HEAVY_LOCK, so the default is
         what is tested."""
         root = os.path.join(self.tmp, "paperclip")
         bindir = os.path.join(root, "tools", "bin")
@@ -157,9 +157,9 @@ class DotnetShim(unittest.TestCase):
     def test_two_runs_with_different_homes_share_the_installed_lock(self):
         exe, lock = self.installed()
         ha, hb = self.homes()
-        p1 = self.start_at(exe, HOME=ha, ORBWEAVER_HEAVY_LOCK=None, FAKE_TAG="a", FAKE_SLEEP="1.5")
+        p1 = self.start_at(exe, HOME=ha, BUGFIX_HEAVY_LOCK=None, FAKE_TAG="a", FAKE_SLEEP="1.5")
         self.wait_started("a")
-        p2 = self.start_at(exe, HOME=hb, ORBWEAVER_HEAVY_LOCK=None, FAKE_TAG="b", FAKE_SLEEP="0.2")
+        p2 = self.start_at(exe, HOME=hb, BUGFIX_HEAVY_LOCK=None, FAKE_TAG="b", FAKE_SLEEP="0.2")
         p1.communicate(timeout=20)
         p2.communicate(timeout=20)
         self.assertFalse(self.overlapped("a", "b"))
@@ -173,16 +173,16 @@ class DotnetShim(unittest.TestCase):
         exe, _ = self.installed()
         ha, hb = self.homes()
         old = lambda h: os.path.join(h, ".paperclip", "instances", "default", "heavy-dotnet.lock")
-        p1 = self.start_at(exe, HOME=ha, ORBWEAVER_HEAVY_LOCK=old(ha), FAKE_TAG="a", FAKE_SLEEP="1.5")
+        p1 = self.start_at(exe, HOME=ha, BUGFIX_HEAVY_LOCK=old(ha), FAKE_TAG="a", FAKE_SLEEP="1.5")
         self.wait_started("a")
-        p2 = self.start_at(exe, HOME=hb, ORBWEAVER_HEAVY_LOCK=old(hb), FAKE_TAG="b", FAKE_SLEEP="0.2")
+        p2 = self.start_at(exe, HOME=hb, BUGFIX_HEAVY_LOCK=old(hb), FAKE_TAG="b", FAKE_SLEEP="0.2")
         p1.communicate(timeout=20)
         p2.communicate(timeout=20)
         self.assertTrue(self.overlapped("a", "b"))
 
     def test_missing_lock_folder_says_so_and_runs_unlocked(self):
         code, out, err = self.run_shim(["build"], FAKE_TAG="v", FAKE_EXIT="4",
-                                       ORBWEAVER_HEAVY_LOCK=os.path.join(self.tmp, "no", "such", "x.lock"))
+                                       BUGFIX_HEAVY_LOCK=os.path.join(self.tmp, "no", "such", "x.lock"))
         self.assertEqual(code, 4)
         self.assertEqual(self.seen(out, "held"), ["UNSET"])
         self.assertEqual(err.splitlines(), [err.splitlines()[0], "to-stderr"])
@@ -215,7 +215,7 @@ class DotnetShim(unittest.TestCase):
         # A nested call that lost the variable waits on its own parent forever.
         wrapper = os.path.join(self.tmp, "strip-held")
         with open(wrapper, "w") as f:
-            f.write(f'#!/bin/bash\nunset ORBWEAVER_HEAVY_LOCK_HELD\nexec "{SHIM}" "$@"\n')
+            f.write(f'#!/bin/bash\nunset BUGFIX_HEAVY_LOCK_HELD\nexec "{SHIM}" "$@"\n')
         os.chmod(wrapper, 0o755)
         p = self.start(["build"], FAKE_TAG="outer", FAKE_NEST=wrapper)
         with self.assertRaises(subprocess.TimeoutExpired):
@@ -272,7 +272,7 @@ class DotnetShim(unittest.TestCase):
 
     def test_missing_lockf_says_so_once_and_runs_unlocked(self):
         code, out, err = self.run_shim(["build"], FAKE_TAG="v", FAKE_EXIT="3",
-                                       ORBWEAVER_LOCKF=os.path.join(self.tmp, "no-lockf"))
+                                       BUGFIX_LOCKF=os.path.join(self.tmp, "no-lockf"))
         self.assertEqual(code, 3)
         self.assertEqual(self.seen(out, "held"), ["UNSET"])
         lines = err.splitlines()
@@ -284,7 +284,7 @@ class DotnetShim(unittest.TestCase):
         for args in (["build"], ["--version"]):
             for real in (os.path.join(self.tmp, "nope"), self.log, self.tmp):
                 with self.subTest(args=args, real=real):
-                    code, out, err = self.run_shim(args, ORBWEAVER_REAL_DOTNET=real)
+                    code, out, err = self.run_shim(args, BUGFIX_REAL_DOTNET=real)
                     self.assertEqual(code, 127)
                     self.assertEqual(out, "")
                     self.assertIn("real dotnet not found", err)
@@ -297,7 +297,7 @@ class DotnetShim(unittest.TestCase):
 
     def test_control_light_call_with_missing_lockf_says_nothing(self):
         _, _, err = self.run_shim(["--version"], FAKE_TAG="v",
-                                  ORBWEAVER_LOCKF=os.path.join(self.tmp, "no-lockf"))
+                                  BUGFIX_LOCKF=os.path.join(self.tmp, "no-lockf"))
         self.assertEqual(err, "to-stderr\n")
 
 
