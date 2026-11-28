@@ -1064,7 +1064,7 @@ class RemoteRunnerInstructionTests(unittest.TestCase):
     def test_skill_says_how_to_ask_and_read_the_answer(self):
         sec = self.section()
         for phrase in ("commit, push, ask", "ow-remote wait <id>", "Exit `75`",
-                       "Exit `64`", "Exit `65`", "Exit `8`", "never a refusal",
+                       "Exit `64`", "Exit `65`", "`Total: 0`", "Never a refusal",
                        "refused, nothing ran", "remote-results/<id>/",
                        "result.json", "ow-remote status", "Quote the request id"):
             self.assertIn(phrase, sec, phrase)

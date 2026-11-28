@@ -23,7 +23,8 @@ asking if it is not. Exit status is the remote command's, except:
   124 the run hit its cap
 None of these is a code the suites return for a test result: the Microsoft
 Testing Platform uses 2 for a failed test and 8 for zero tests run, which is
-why a refusal is not 2.
+why a refusal is not 2 (through `dotnet test` on the Air both arrived as 1,
+measured 2026-11-28, but a refusal stays clear of them either way).
 
 The spool and results are `remote-spool` and `remote-results` beside
 $BUGFIX_SPOOL. OW_REMOTE_WAIT_S and OW_REMOTE_POLL_S shorten the waits for the

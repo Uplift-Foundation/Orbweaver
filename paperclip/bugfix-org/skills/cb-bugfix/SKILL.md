@@ -807,10 +807,11 @@ screenshot run's PNGs under `files/screenshots/` (a line names any file the
 runner dropped). Quote the request id in the PR body.
 
 - Exit `0`: it passed, on your commit.
-- Exit `1` or `2`: a test failed (`2` is how the UI and screenshot suites say
-  it). Read the output and fix it; it is never a refusal.
-- Exit `8` on `ui` or `screenshots`: no test ran, so the filter matched no
-  class. Check the `Namespace.Class` name. It is not a pass.
+- Exit `1` (or any code not listed here): the build or a test failed, **or no
+  test ran**. Read the summary line: `Total: 0` means the filter matched no
+  class, so check the `Namespace.Class` name; it is not a pass. Measured on
+  the Air (CB-494): a filter naming no class exits 1, not the 8 the UI suite
+  returns on its own, because `dotnet test` wraps it. Never a refusal.
 - Exit `64`, `refused, nothing ran: <sentence>`: read the sentence, fix what it
   names, ask again. "no target reachable; not run on the mini" means the Air
   was away for fifteen minutes. **Say so and wait**: report it on your task,
