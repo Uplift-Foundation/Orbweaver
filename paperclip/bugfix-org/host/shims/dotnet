@@ -1,0 +1,49 @@
+#!/bin/bash
+# A stand-in `dotnet` for the bug-fix org's service PATH (CB-494).
+#
+# The mini is the always-on gateway host, and a bug-fix pass building or
+# testing beside two others starved it. This lets at most one heavy dotnet
+# command run at a time, for everything the Paperclip service runs, at lowered
+# priority. A heavy command WAITS for the one before it (lockf with no
+# timeout); it is never refused. Anything else (--version, --info, nuget
+# locals, tool list) passes straight through, and so does a nested call from a
+# command that already holds the lock, which would otherwise wait on itself.
+# The nested case is recognised by ORBWEAVER_HEAVY_LOCK_HELD, which the locked
+# command inherits; any process can set it and skip the queue, an accepted
+# limit for a cap that is about load, not trust. The remote runner replaces
+# this as the way builds run; this stays as the backstop.
+#
+# Exit status, stdout and stderr are the real command's: every path ends in
+# exec, so nothing is buffered. The three paths are injectable so the tests
+# drive a fake dotnet and never the real SDK.
+REAL="${ORBWEAVER_REAL_DOTNET:-/usr/local/share/dotnet/dotnet}"
+LOCK="${ORBWEAVER_HEAVY_LOCK:-$HOME/.paperclip/instances/default/heavy-dotnet.lock}"
+LOCKF="${ORBWEAVER_LOCKF:-/usr/bin/lockf}"
+
+# The verb is the first argument that is not an option or an option's value:
+# `dotnet -d build`, `dotnet --roll-forward Major test`.
+verb=
+skip=
+for a in "$@"; do
+  if [ -n "$skip" ]; then skip=; continue; fi
+  case "$a" in
+    --roll-forward|--fx-version|--additionalprobingpath|--additional-deps|--depsfile|--runtimeconfig|--roll-forward-on-no-candidate-fx)
+      skip=1 ;;
+    -*) ;;
+    *) verb="$a"; break ;;
+  esac
+done
+case "$verb" in
+  test|build|run|publish|pack|msbuild|restore|vstest|clean|format|watch|*.cs|*.csproj|*.sln|*.slnx) heavy=1 ;;
+  *) heavy= ;;
+esac
+
+if [ -z "$heavy" ] || [ -n "${ORBWEAVER_HEAVY_LOCK_HELD:-}" ]; then
+  exec "$REAL" "$@"
+fi
+if [ ! -x "$LOCKF" ]; then
+  echo "dotnet: $LOCKF not found, running unlocked" >&2
+  exec "$REAL" "$@"
+fi
+export ORBWEAVER_HEAVY_LOCK_HELD=1
+exec "$LOCKF" -k "$LOCK" /usr/bin/nice -n 10 "$REAL" "$@"
