@@ -1084,7 +1084,8 @@ class RemoteRunnerInstructionTests(unittest.TestCase):
         sec = self.section()
         for name in ("unit-tests.trx", "integration-tests.trx", "ui-tests.xunit.xml",
                      "ui-screenshots.xunit.xml", "coverage-summary.txt", "files/screenshots/",
-                     "target_busy_with", "no single-method filter", "count\nguard"):
+                     "target_busy_with", "no single-method filter", "count\nguard",
+                     "`tests/Tests.sln` in Release"):
             self.assertIn(name, sec, name)
 
     def test_coverage_is_remote_merged_four_and_never_on_the_mini(self):

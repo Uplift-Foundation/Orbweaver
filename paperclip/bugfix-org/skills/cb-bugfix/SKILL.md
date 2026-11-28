@@ -784,7 +784,7 @@ ow-remote <run> [filter]
 
 | `<run>` | runs | filter |
 | --- | --- | --- |
-| `build` | a build only, no tests | none |
+| `build` | `tests/Tests.sln` in Release: the app, `UnitTests`, `IntegrationTests` and `UiTests`, no tests run (`screenshots` and the console suites compile their own) | none |
 | `unit`, `integration` | `tests/UnitTests`, `tests/IntegrationTests` | a class: `FullyQualifiedName~<filter>` |
 | `ui`, `screenshots` | `tests/UiTests`, `tests/UiScreenshots`, in Release | a `Namespace.Class`: `--filter-class` |
 | `arrangement`, `glyph`, `transcript` | the console suites, for a change to geometry, transcript parsing or orb initials | none |
