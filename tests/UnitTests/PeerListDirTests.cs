@@ -93,6 +93,11 @@ public class PeerListDirTests
 
     // --- the answering gate ------------------------------------------------------
 
+    // The in-memory filesystem answers at once, so a test that is not about the read bound gives the
+    // server none: a finite one is a race against the thread pool (CB-496, a loaded runner gave
+    // `unreadable` for a forbidden path). The tests of the bound itself pass their own, with a gate.
+    private static readonly TimeSpan NoReadBound = Timeout.InfiniteTimeSpan;
+
     private static (PeerBrowseServer Server, FakeBrowseFileSystem Fs, List<string> Calls) Server(bool allowed)
     {
         var fs = new FakeBrowseFileSystem("/Users/dev", false, ["/", "/Users"], ["/System"]);
