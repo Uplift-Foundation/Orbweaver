@@ -102,7 +102,7 @@ public class LocalPersonaScanTests : IDisposable
     };
 
     // One dictionary per pass, the same way ScanAndUpdate makes one per tick.
-    private Dictionary<(string Cwd, SessionSource Source, string Agent), IReadOnlyList<LocalPersona.Candidate>> Pass() => new();
+    private Dictionary<(string Cwd, SessionSource Source, string Agent, string ConfigDir), IReadOnlyList<LocalPersona.Candidate>> Pass() => new();
 
     // Nothing above the project tree, unless a case says otherwise. See the
     // header: this is the pin that makes every settling claim below independent

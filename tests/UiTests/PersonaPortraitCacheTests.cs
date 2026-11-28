@@ -90,7 +90,7 @@ public class PersonaPortraitCacheTests : IDisposable
         Title = "cb-portrait-cache",
     };
 
-    private Dictionary<(string Cwd, SessionSource Source, string Agent), IReadOnlyList<LocalPersona.Candidate>> Pass() => new();
+    private Dictionary<(string Cwd, SessionSource Source, string Agent, string ConfigDir), IReadOnlyList<LocalPersona.Candidate>> Pass() => new();
 
     // Nothing above the project tree. See the header — and note this also stops
     // these cases reading the developer's own ~/.claude/CLAUDE.md, which they
