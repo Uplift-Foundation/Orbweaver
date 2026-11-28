@@ -1236,6 +1236,18 @@ class TargetShellTests(unittest.TestCase):
         self.assertFalse(_alive(int(read(marker))))
         self.assertEqual(self.wait("b", "done"), 0)
 
+    def test_a_finished_job_takes_what_it_left_running_with_it(self):
+        marker = os.path.join(self.home, "pid")
+        # A helper the job starts and does not wait for, as a build server is.
+        self.t.start("a", self.shas[0], ["bash", "-c", f"sleep 300 & echo $! > {marker}; echo built; exit 5"], 600)
+        self.assertEqual(self.wait("a", "done"), 5)       # the answer is written first, with the job's own code
+        pid = int(read(marker))
+        end = time.time() + 10
+        while time.time() < end and _alive(pid):
+            time.sleep(0.1)
+        self.assertFalse(_alive(pid))
+        self.assertEqual(self.t.collect("a", 10_000)[0], "built\n")
+
     def test_a_finished_job_does_not_hold_the_next_one_back(self):
         self.t.start("a", self.shas[0], ["true"], 600)
         self.wait("a", "done")

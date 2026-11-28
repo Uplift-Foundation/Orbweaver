@@ -637,7 +637,9 @@ connection dropped is answered `ok: false` with "could not start on air: ...".
 
 **No build server outlives a job.** MSBuild node reuse, the MSBuild server and the shared
 compiler are off in every job's environment, and each job ends with
-`dotnet build-server shutdown`. Warm runs are slower for it; a 16 GB machine nobody watches
+`dotnet build-server shutdown`, then clears whatever is left in its own process group once its
+answer is on disk (Avalonia's build helper outlives a build by minutes and none of those
+switches stops it). Warm runs are slower for it; a 16 GB machine nobody watches
 does not collect idle servers.
 
 **Config:** `~/.config/orbweaver-bugfix/remote.json`. Only `company_dir` is required.
@@ -666,6 +668,11 @@ itself. The mini needs key-based `ssh <host>` to it.
 3. `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/org.uplift.orbweaver-bugfix-remote.plist`.
 4. Check by hand: `remote-results/status.json` appears within a minute and says the Air is
    reachable, with its load.
+
+**What the target needs beyond the SDK.** `git`, `bash`, `perl`, `tar` and `python3` (for
+`coverage.sh`), all of which macOS has. `tests/IntegrationTests` also drives a real `tmux`
+(`TmuxPlacementTests`, 7 tests): on a target without one, `integration` and `coverage` are red
+on exactly those. The Air had none when this was written.
 
 **Known limits.** A commit on any branch of the canonical repository runs as the host user on
 the target, bounded by the command table. If the runner's state file is lost while a job runs,
