@@ -79,10 +79,9 @@ You check:
   when it does not, the verdict is `fix` and you say which line.
 
 You do not rerun the full suites locally: CI green on both rids at the same sha
-is the suite gate. A PR body whose `## Verified` names a `dotnet test` run on
-the mini without saying why is a `fix` finding, except `tests/IntegrationTests`
-and `coverage.sh`, which run there until the runner runs them on the Air; so is a coverage
-figure without `merged 4`, or without saying it was taken on the mini.
+is the suite gate. A PR body whose `## Verified` names a `dotnet test` or
+`coverage.sh` run on the mini without saying why is a `fix` finding, and so is a
+coverage figure without `merged 4`.
 
 Send your findings as **one batch**. Post your verdict on the PR as a review
 comment with `gh pr review <number> --repo <the PR's repository> --comment --body ...`

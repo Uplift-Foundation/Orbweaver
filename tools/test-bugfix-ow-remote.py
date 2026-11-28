@@ -207,30 +207,32 @@ class OwRemote(unittest.TestCase):
         self.assertEqual(p.returncode, 1)
         self.assertIn("runner error: ssh to air dropped mid-job", err)
 
-    def refused_with(self, run, sentence):
-        p = self.start(run)
-        _, req = self.take_request()
-        self.answer(req, tail="", ok=False, exit_code=None, checked_out_sha=None, refused=sentence)
-        _, err = p.communicate(timeout=30)
-        return p.returncode, err
-
-    def test_no_tmux_refusal_says_to_run_integration_and_coverage_on_the_mini(self):
-        for run, cmd in (("integration", "dotnet test tests/IntegrationTests"),
-                         ("coverage", "./tools/coverage.sh --base origin/develop")):
+    def test_every_refusal_means_wait_and_never_points_at_the_mini(self):
+        # CB-494 follow-up: integration and coverage run on the Air now, so
+        # even the runner's no-tmux refusal (kept for a target that truly has
+        # none) is an ordinary refusal: report it and wait.
+        for run, sentence in (("coverage", "the target has no tmux, which IntegrationTests needs; not run"),
+                              ("integration", "the target has no tmux, which IntegrationTests needs; not run"),
+                              ("ui", "no target reachable; not run on the mini")):
             with self.subTest(run=run):
-                code, err = self.refused_with(run, "the target has no tmux, which IntegrationTests needs; not run")
-                self.assertEqual(code, 64)
-                self.assertIn("until the runner runs it on the Air, run " + run + " on the mini", err)
-                self.assertIn(cmd, err)
-
-    def test_control_every_other_refusal_never_points_at_the_mini(self):
-        for run, sentence in (("ui", "the target has no tmux, which IntegrationTests needs; not run"),
-                              ("coverage", "no target reachable; not run on the mini"),
-                              ("integration", "queue is full")):
-            with self.subTest(run=run, sentence=sentence):
-                code, err = self.refused_with(run, sentence)
-                self.assertEqual(code, 64)
+                p = self.start(run)
+                _, req = self.take_request()
+                self.answer(req, tail="", ok=False, exit_code=None, checked_out_sha=None, refused=sentence)
+                _, err = p.communicate(timeout=30)
+                self.assertEqual(p.returncode, 64)
                 self.assertNotIn("run " + run + " on the mini", err)
+                self.assertNotIn("dotnet wrapper", err)
+                self.assertIn("refused, nothing ran: " + sentence, err)
+
+    def test_integration_and_coverage_are_asked_of_the_runner(self):
+        for run in ("integration", "coverage"):
+            with self.subTest(run=run):
+                p = self.start(run, *(["Orbweaver.Tests.TmuxPlacementTests"] if run == "integration" else []))
+                _, req = self.take_request()
+                self.assertEqual(req["run"], run)
+                self.answer(req, merged_reports=4 if run == "coverage" else None)
+                p.communicate(timeout=30)
+                self.assertEqual(p.returncode, 0)
 
     def test_a_timeout_without_an_exit_code_is_124(self):
         p = self.start("build")
