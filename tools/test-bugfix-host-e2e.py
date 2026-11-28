@@ -80,6 +80,9 @@ class FakePaperclip:
         self.resets = []          # (agent id, body) of reset-session posts
         self.requests = []        # (method, path, body, origin)
         self.fail = {}            # path prefix -> status
+        self.plugins = [{"id": "pl1", "pluginKey": "orbweaver.pool-router", "status": "error",
+                         "lastError": "RPC call initialize timed out after 15000ms"}]
+        self.approvals = []       # bodies posted to /approvals
         outer = self
 
         class H(http.server.BaseHTTPRequestHandler):
@@ -176,6 +179,17 @@ class FakePaperclip:
                     return self._reply(200, {})
                 if path.startswith(c + "/costs/by-agent"):
                     return self._reply(200, outer.costs)
+                if path == "/api/plugins" and method == "GET":
+                    return self._reply(200, outer.plugins)
+                m = re.fullmatch(r"/api/plugins/(\w+)/enable", path)
+                if m and method == "POST":
+                    for pl in outer.plugins:
+                        if pl["id"] == m.group(1):
+                            pl["status"] = "ready"
+                    return self._reply(200, {})
+                if path == c + "/approvals" and method == "POST":
+                    outer.approvals.append(body)
+                    return self._reply(201, {})
                 if path == "/api/instance/settings/experimental":
                     return self._reply(200, outer.experimental)
                 return self._reply(404, {"error": "no route " + path})
@@ -663,6 +677,20 @@ class World(unittest.TestCase):
         self.pc.fail["/api/heartbeat-runs/r1/log"] = 500
         with self.assertRaises(urllib.error.HTTPError):
             c.run_log("r1")
+
+    def test_router_plugin_calls_against_the_stub(self):
+        c = self.client()
+        self.assertEqual(c.plugins()[0]["status"], "error")
+        c.enable_plugin("pl1")
+        self.assertEqual(c.plugins()[0]["status"], "ready")
+        c.escalate("router down", "warden")
+        self.assertEqual(self.pc.approvals[0]["payload"]["source"], "warden")
+        writes = [(m, p, b, o) for m, p, b, o in self.pc.writes() if p.startswith("/api/plugins")]
+        self.assertEqual([(m, p, b) for m, p, b, o in writes], [("POST", "/api/plugins/pl1/enable", {})])
+        self.assertEqual(writes[0][3], self.pc.base, "the enable carries Origin")
+        self.pc.fail["/api/plugins"] = 500
+        with self.assertRaises(urllib.error.HTTPError):
+            c.plugins()
 
     def test_http_errors_are_raised_not_swallowed(self):
         c = self.client()

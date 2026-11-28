@@ -1192,6 +1192,47 @@ WAKE_AFTER_RESET = ("Warden: the last run on this task was cancelled because its
 
 # ---------------------------------------------------------------- the tick
 
+# The router plugin (CB-501). `orbweaver.pool-router` pools the org's AI
+# accounts. When Paperclip restarts under load its activation can time out
+# ("RPC call initialize timed out after 15000ms"); the plugin then sits in
+# status `error` for good, Paperclip never retries, and every new pass task is
+# blocked at creation with the comment below until someone POSTs
+# /api/plugins/<id>/enable. That stopped the org from 06:12Z to 07:20Z on
+# 2026-11-27, so the warden does the enable itself, every tick, paused or not.
+ROUTER_PLUGIN_KEY = "orbweaver.pool-router"
+ROUTER_BLOCK_COMMENT = "This task paused because its selected AI account is unavailable"
+ROUTER_ENABLE_FAILURES = 3
+ROUTER_ESCALATION_SOURCE = "warden"
+
+
+def plugin_row(plugins, key=ROUTER_PLUGIN_KEY):
+    """The plugin list's row for `key`, or None (also for a list that is not one)."""
+    if not isinstance(plugins, list):
+        return None
+    return next((p for p in plugins if isinstance(p, dict) and p.get("pluginKey") == key), None)
+
+
+def router_wake_plan(issues, newest_comment):
+    """([ids to wake], [ids to cancel]) for root tasks the router outage blocked.
+    `newest_comment(issue)` is the body of the task's newest comment. Per routine
+    (else per title) the newest task is woken and the older ones are duplicates
+    the same outage left behind, so they are cancelled."""
+    families = {}
+    for i in issues:
+        if i.get("parentId") or i.get("status") != "blocked":
+            continue
+        if not (newest_comment(i) or "").startswith(ROUTER_BLOCK_COMMENT):
+            continue
+        key = repin_key(i) or f"title:{i.get('title') or ''}"
+        families.setdefault(key, []).append(i)
+    wake, cancel = [], []
+    for rows in families.values():
+        rows.sort(key=lambda i: ts(i.get("createdAt")) or 0, reverse=True)
+        wake.append(rows[0])
+        cancel.extend(rows[1:])
+    return wake, cancel
+
+
 class Warden:
     def __init__(self, cfg, github, minter, paperclip, state, now, log):
         """`github` is one seam for desktop, or a dict {repo key: seam}."""
@@ -1201,6 +1242,7 @@ class Warden:
         self.state, self.now, self.log = state, now, log
         self.pause_reasons = []
         self.develop_why = ""
+        self.router_ready = False
 
     def pause(self, reason):
         self.pause_reasons.append(reason)
@@ -1679,6 +1721,7 @@ class Warden:
             self.log("PAUSED: " + r)
         if paused:
             self.stop_work()
+        self.router_ready = self.watch_router_plugin()
         self.unstick(paused)
         return paused
 
@@ -1762,6 +1805,78 @@ class Warden:
                 self.log(f"{TOKEN_DIR}/{TOKEN_FILES[name]} not written: {type(e).__name__}")
         self.pc.put_secret(name, token)
 
+    def watch_router_plugin(self):
+        """Re-enable the router plugin when it is not `ready`. True when it is
+        ready afterwards. Never raises: a missing plugin or an unreadable list
+        is one log line and the cycle goes on. Three failed enables in a row
+        escalate once, and not again until the plugin has been ready."""
+        st = self.state.setdefault("router_plugin", {})
+        try:
+            plugin = plugin_row(self.pc.plugins())
+        except Exception as e:
+            self.log(f"router plugin list unreadable: {type(e).__name__} {getattr(e, 'code', '')}".rstrip())
+            return False
+        if plugin is None:
+            self.log(f"router plugin {ROUTER_PLUGIN_KEY} is not in the plugin list")
+            return False
+        if plugin.get("status") == "ready":
+            st.pop("failures", None)
+            st.pop("escalated", None)
+            return True
+        err = " ".join(str(plugin.get("lastError") or "").split())[:120]
+        was = f"{plugin.get('status')} ({err})" if err else str(plugin.get("status"))
+        now_status = None
+        try:
+            self.pc.enable_plugin(plugin["id"])
+            now_status = (plugin_row(self.pc.plugins()) or {}).get("status")
+        except Exception as e:
+            self.log(f"router plugin enable failed: was {was}: {type(e).__name__} "
+                     f"{getattr(e, 'code', '')}".rstrip())
+        if now_status == "ready":
+            self.log(f"router plugin re-enabled: was {was}, now ready")
+            st.pop("failures", None)
+            st.pop("escalated", None)
+            return True
+        if now_status is not None:
+            self.log(f"router plugin enable: was {was}, still {now_status}")
+        st["failures"] = st.get("failures", 0) + 1
+        if st["failures"] >= ROUTER_ENABLE_FAILURES and not st.get("escalated"):
+            line = (f"router plugin {ROUTER_PLUGIN_KEY} would not re-enable on "
+                    f"{st['failures']} cycles in a row: was {was}")
+            try:
+                self.pc.escalate(line, ROUTER_ESCALATION_SOURCE)
+                st["escalated"] = self.now
+                self.log("ESCALATED: " + line)
+            except Exception as e:
+                self.log(f"router plugin escalation failed: {type(e).__name__} "
+                         f"{getattr(e, 'code', '')}".rstrip())
+        return False
+
+    def wake_router_blocked(self, co, issues):
+        """Wake the passes the router outage blocked in one company (CB-501),
+        from the listing the unstick sweep has just read, and only while the
+        plugin is ready. A bare PATCH, never a comment: a comment on a task
+        changes its state in Paperclip. A task with children was not blocked
+        at creation by the outage, so its comments are not even read. The rows
+        are updated in place so the sweep that follows sees the new states."""
+        try:
+            def newest(i):
+                rows = [c for c in (self.pc.issue_comments(i["id"]) or []) if not c.get("deletedAt")]
+                rows.sort(key=lambda c: ts(c.get("createdAt")) or 0)
+                return (rows[-1].get("body") or "") if rows else ""
+
+            parents = {i.get("parentId") for i in issues}
+            wake, cancel = router_wake_plan(
+                [i for i in issues if i.get("status") == "blocked" and i["id"] not in parents], newest)
+            for i, status in [(i, "todo") for i in wake] + [(i, "cancelled") for i in cancel]:
+                self.pc.set_issue_status(i["id"], status)
+                i["status"] = status
+                self.log(f"router wake: {i.get('identifier')} set to {status}"
+                         + (" (older duplicate)" if status == "cancelled" else ""))
+        except Exception as e:
+            self.log(f"router wake failed for company {str(co)[:8]}: {type(e).__name__} "
+                     f"{getattr(e, 'code', '')}".rstrip())
+
     def unstick(self, paused):
         """The unstick sweep (CB-479) for each company in `unstick_company_ids`
         (default: the fix company). Never acts on a paused company: a pause
@@ -1787,6 +1902,8 @@ class Warden:
                     self.log(f"unstick skipped for company {str(co)[:8]}: {len(issues)} issues, "
                              f"listing may be truncated")
                     continue
+                if self.router_ready:
+                    self.wake_router_blocked(co, issues)
                 runs = self.pc.company_runs(co)
                 comments_at = {}
                 for i in issues:
@@ -2215,6 +2332,19 @@ class PaperclipHttp:
     def issue_comments(self, issue_id):
         rows = self.call("GET", f"/api/issues/{issue_id}/comments") or []
         return rows if isinstance(rows, list) else rows.get("comments", [])
+
+    def plugins(self):
+        return self.call("GET", "/api/plugins")
+
+    def enable_plugin(self, plugin_id):
+        self.call("POST", f"/api/plugins/{plugin_id}/enable", {})
+
+    def escalate(self, line, source):
+        """A pending board approval, which the app shows as "needs you"
+        (the medic's mechanism)."""
+        self.call("POST", f"/api/companies/{self.company}/approvals", {
+            "type": "request_board_approval",
+            "payload": {"title": "Bug-fix org stopped: " + line[:160], "summary": line, "source": source}})
 
     def pool_usage(self, path):
         with open(path) as f:

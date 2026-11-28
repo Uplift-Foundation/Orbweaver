@@ -403,6 +403,26 @@ The host has no Jira credential of its own. Secrets (GitHub and Anthropic
 tokens, `x-access-token:` URLs, `Authorization:` values) are redacted from the
 snapshot, the prompt, `medic.log` (0600) and the bug before any is written.
 
+## The router plugin (CB-501)
+
+The AI accounts are pooled by the `orbweaver.pool-router` plugin. Under load Paperclip can
+time out its activation ("RPC call initialize timed out after 15000ms") and leave it in
+status `error`, which Paperclip never retries; every new pass is then blocked at creation
+with "This task paused because its selected AI account is unavailable". Every cycle, paused
+or not, the warden reads `GET /api/plugins`. A router that is not `ready` gets one
+`POST /api/plugins/<id>/enable {}`, a read-back and one log line ("router plugin re-enabled:
+was error (...), now ready" or "... still <status>"); a `ready` router gets no POST. A
+missing plugin or an unreadable list is logged and the cycle goes on.
+
+While the router is `ready`, the unstick sweep also wakes the passes the outage blocked: in
+each company it reads, a root task with no children whose newest comment starts with that
+sentence. Per routine (else per title) the newest is set to `todo` and the older ones to
+`cancelled`, by a bare PATCH, because a comment on a task changes its state. A paused company
+is left alone. Three failed enables in a row post one pending board approval (source
+`warden`, the same mechanism as the medic's), and not another until the router has been
+`ready`. The medic runbook says the same, so it does not escalate this outage as needing a
+person.
+
 ## Run logs
 
 `GET /api/heartbeat-runs/<id>/log` returns `{runId, store, logRef, content}`, `content` being
