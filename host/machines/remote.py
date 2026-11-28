@@ -101,7 +101,12 @@ SHORT, FULL, COVERAGE = 10 * 60, 30 * 60, 45 * 60
 # with a filter, the cap without). Release throughout, as CI builds: one
 # configuration on the target means one set of binaries to keep warm.
 RUNS = {
-    "build": (["dotnet", "build", "-c", "Release"], None, SHORT, SHORT),
+    # tests/Tests.sln, not the root: `dotnet build` in the root picks
+    # Orbweaver.sln, which is the app alone, and a green answer would say
+    # nothing about a test change. Tests.sln builds the app through its
+    # project references plus UnitTests, IntegrationTests and UiTests.
+    # UiScreenshots and the console suites are compiled by their own runs.
+    "build": (["dotnet", "build", "tests/Tests.sln", "-c", "Release"], None, SHORT, SHORT),
     "unit": (["dotnet", "test", "tests/UnitTests", "-c", "Release", "--logger", "trx;LogFileName=unit-tests.trx",
               "--results-directory", "TestResults"], "vstest", SHORT, FULL),
     "integration": (["dotnet", "test", "tests/IntegrationTests", "-c", "Release", "--logger",
@@ -200,24 +205,33 @@ def sha_problem(on_branch):
     return None
 
 
-def _local_names(hostname):
-    names = {"localhost", "127.0.0.1", "::1", "0.0.0.0", "mini", "macmini"}
-    h = (hostname or "").strip().lower()
+def local_names(hostname):
+    """Every name this machine answers to that a config or a target could
+    spell, lowercased."""
+    names = {"localhost", "mini", "macmini"}
+    h = (hostname or "").strip().lower().rstrip(".")
     if h:
         names.update({h, h.split(".")[0], h.split(".")[0] + ".local"})
     return names
 
 
-def is_local(host, local_hostname):
+def is_local(host, local_hostname, local_addrs=()):
+    """True when `host` (a name or an address) is this machine. `local_addrs`
+    are this machine's own interface addresses: an alias pointed at the mini's
+    LAN address is the mini as surely as one named for it."""
     h = (host or "").strip().lower().rstrip(".")
-    return h in _local_names(local_hostname) or h.startswith("127.")
+    return (h in local_names(local_hostname) or h in {a.lower() for a in local_addrs}
+            or h.startswith("127.") or h in ("::1", "0.0.0.0", "::"))
 
 
-def targets_problem(targets, local_hostname, resolve=lambda host: host):
+def targets_problem(targets, local_hostname, resolve=lambda host: host, local_addrs=(),
+                    addrs_of=lambda host: ()):
     """Why a configured target list may not be used (None = go). The whole
     reason for this runner is that the work does not happen on the mini, so
     the mini is refused however the config spells it: by name, by ssh host,
-    and by what ssh says that host resolves to (`resolve`, `ssh -G`)."""
+    by what ssh says that host resolves to (`resolve`, `ssh -G`), and by the
+    addresses that resolves to in turn (`addrs_of`) against this machine's
+    own (`local_addrs`)."""
     if not (isinstance(targets, list) and targets):
         return "targets must be a non-empty list"
     seen = set()
@@ -233,8 +247,9 @@ def targets_problem(targets, local_hostname, resolve=lambda host: host):
         # as an argument.
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", host):
             return f"target {name!r}: ssh must be one host alias"
-        for spelled in (name, host, resolve(host)):
-            if is_local(spelled, local_hostname):
+        resolved = resolve(host)
+        for spelled in (name, host, resolved, *addrs_of(resolved)):
+            if is_local(spelled, local_hostname, local_addrs):
                 return f"target {name!r} is this machine ({spelled}); the mini is never a target"
     return None
 
@@ -450,6 +465,11 @@ class Remote:
             self.mirror.push(self.targets[name].push_url, req["sha"], req["id"])
             prep = self.targets[name].start(req["id"], req["sha"], argv, cap, RESULT_FILES.get(req["run"], []),
                                             clean_all=req["run"] == "coverage")
+        except LocalTarget as e:
+            self.log(f"NEEDS ATTENTION: not run id={req['id']} target={name}: {e}")
+            self.write(req["id"], self.result(req, False, error=str(e), **base), "", {})
+            self.save(self.state)
+            return
         except MachineError as e:
             # A connection that dropped part way may have left the job
             # running on the target. Nothing can be said about it from here,
@@ -481,6 +501,11 @@ class Remote:
             why = "the target prepared the checkout but did not start the job"
         if why is not None:
             self.log(f"not run id={req['id']} target={name}: {why}")
+            # The script does not start a job on a wrong commit or a
+            # forbidden host, so there should be nothing to kill. Kill
+            # anyway: an answer that says "not run" must be true even if
+            # that script is one day wrong.
+            self.targets[name].kill(req["id"])
             self.targets[name].cleanup(req["id"])
             self.write(req["id"], self.result(req, False, error=why, **base), "", {})
             self.save(self.state)
@@ -561,6 +586,11 @@ class Remote:
 
 # ---------------------------------------------------------------- real seams
 
+class LocalTarget(MachineError):
+    """The target turned out to be this machine. Raised from a start that
+    stopped before it touched anything."""
+
+
 class Mirror:
     """This runner's own bare copy of the canonical repository, on the mini.
     It answers "is this commit on a branch there" and carries commits to a
@@ -640,6 +670,14 @@ export MSBUILDDISABLENODEREUSE=1 DOTNET_CLI_USE_MSBUILD_SERVER=0 UseSharedCompil
 # say `merged 6`. A coverage run also removes everything ignored (bin, obj),
 # because a stale binary is what makes a coverage figure fiction.
 START = PREAMBLE + """SHA={sha}
+# First, before anything is made, checked out or started: is this machine one
+# the work must never run on? The runner checks the name it is told too, but
+# only a check made here happens before the job exists.
+H="$(hostname | tr '[:upper:]' '[:lower:]')"
+echo "hostname=$H"
+for N in {forbidden}; do
+  if [ "$H" = "$N" ] || [ "${{H%%.*}}" = "$N" ]; then exit 94; fi
+done
 cd "$ROOT" || exit 90
 # Ask this machine, not the mini, whether a job is still running here: one
 # left behind by a dropped connection is in nobody's state file. A live one
@@ -677,7 +715,6 @@ git clean -q -f -d {clean_x} || exit 92
 find . -name TestResults -type d -prune -exec rm -rf {{}} + 2>/dev/null
 GOT="$(git rev-parse HEAD)"
 echo "sha=$GOT"
-echo "hostname=$(hostname)"
 [ "$GOT" = "$SHA" ] || exit 0
 cat > "$J/run.sh" <<'ORBWEAVER_REMOTE_EOF'
 echo $$ > "$J/pid"
@@ -719,7 +756,7 @@ if [ -f output.txt ]; then tail -c {max_output} output.txt > output.capped && mv
 rmdir files/screenshots 2>/dev/null
 # Without this macOS tar adds a ._name member for every file carrying an
 # extended attribute, which is all of them.
-COPYFILE_DISABLE=1 tar -cf - output.txt files 2>/dev/null
+COPYFILE_DISABLE=1 tar -cf - output.txt files 2>/dev/null | head -c {max_stream}
 """
 
 CLEANUP = PREAMBLE + """rm -rf "$J"
@@ -730,6 +767,7 @@ exit 0
 PROBE = "hostname; sysctl -n vm.loadavg\n"
 INIT = PREAMBLE + 'mkdir -p "$ROOT/jobs" || exit 90\n[ -d "$ROOT/repo.git" ] || git init -q --bare "$ROOT/repo.git"\n'
 ROOT_DIR = "orbweaver-remote"
+ARCHIVE_SLACK = 1024 * 1024
 
 
 def parse_load(text):
@@ -743,8 +781,10 @@ class Target:
     stdin, so nothing is quoted through the login shell, and every value put
     into one is a validated id, a 40-hex sha or shlex-quoted argv."""
 
-    def __init__(self, name, host, cfg, sh=default_sh, sh_bytes=None):
+    def __init__(self, name, host, cfg, sh=default_sh, sh_bytes=None, forbidden=()):
         self.name, self.host, self.cfg, self.sh = name, host, cfg, sh
+        # Hostnames the start script refuses to run on: this machine's.
+        self.forbidden = [n for n in sorted(forbidden) if re.fullmatch(r"[a-z0-9._-]+", n)]
         # The result archive is bytes; everything else is text.
         self.sh_bytes = sh_bytes or (lambda argv, timeout=None, input=None: subprocess.run(
             argv, input=input, capture_output=True, timeout=timeout))
@@ -777,11 +817,15 @@ class Target:
     def start(self, rid, sha, argv, cap_s, files=(), clean_all=False):
         script = START.format(root=ROOT_DIR, rid=rid, sha=sha, clean_x="-x" if clean_all else "",
                               cap=int(cap_s), files=" ".join(shlex.quote(f) for f in files) or "''",
+                              forbidden=" ".join(shlex.quote(n) for n in self.forbidden) or "''",
                               command=" ".join(shlex.quote(a) for a in argv))
         try:
             r = self.ssh(script, timeout=300)
         except (subprocess.TimeoutExpired, OSError) as e:
             raise MachineError(f"ssh to {self.name} failed: {e}")
+        if r.returncode == 94:
+            host = dict(line.split("=", 1) for line in r.stdout.splitlines() if "=" in line).get("hostname")
+            raise LocalTarget(f"the target reports hostname {host!r}, which is this machine; not run on the mini")
         if r.returncode != 0:
             raise MachineError({90: "could not make the job folder", 91: "could not make the worktree",
                                 92: "could not check out the commit"}.get(r.returncode, "ssh failed")
@@ -816,10 +860,17 @@ class Target:
     def collect(self, rid, limit, allowed=(), png=False):
         """(output text, {file name: bytes}, dropped names)."""
         try:
-            r = self.ssh(COLLECT.format(root=ROOT_DIR, rid=rid, max_output=self.cfg["max_output_bytes"]),
-                         timeout=300, text=False)
+            # The stream is cut on the target, one byte past what an honest
+            # result can be (the limit, plus tar's own headers and padding),
+            # so a runaway result folder never crosses the network or sits
+            # in this process's memory.
+            most = limit + ARCHIVE_SLACK
+            r = self.ssh(COLLECT.format(root=ROOT_DIR, rid=rid, max_output=self.cfg["max_output_bytes"],
+                                        max_stream=most + 1), timeout=300, text=False)
         except (subprocess.TimeoutExpired, OSError) as e:
             raise MachineError(f"ssh to {self.name} failed: {e}")
+        if len(r.stdout) > most:
+            raise MachineError(f"the result archive is larger than {most} bytes; nothing was taken from it")
         return unpack(r.stdout, limit, allowed, png)
 
     def cleanup(self, rid):
@@ -863,6 +914,27 @@ def ssh_hostname(host, sh=default_sh):
         if line.startswith("hostname "):
             return line.split(None, 1)[1].strip().lower()
     return host
+
+
+def addresses_of(host):
+    """The addresses a name resolves to, or () when it does not."""
+    try:
+        return tuple(sorted({info[4][0].split("%")[0].lower() for info in socket.getaddrinfo(host, None)}))
+    except (OSError, UnicodeError):
+        return ()
+
+
+def local_addresses(hostname, sh=default_sh):
+    """This machine's own addresses: what its hostname resolves to, and every
+    address on an interface (`ifconfig -a`)."""
+    found = set(addresses_of(hostname))
+    try:
+        out = sh(["/sbin/ifconfig", "-a"], timeout=20).stdout
+    except (subprocess.TimeoutExpired, OSError):
+        out = ""
+    for m in re.finditer(r"^\s*inet6?\s+([0-9A-Fa-f:.]+)", out or "", re.MULTILINE):
+        found.add(m.group(1).lower())
+    return tuple(sorted(found))
 
 
 # ---------------------------------------------------------------- files, main
@@ -942,7 +1014,7 @@ def load_config(path):
 
 
 def run_once(config_path, clock=time.time, sleep=time.sleep, mirror=None, targets=None,
-             local_hostname=None, resolve=None):
+             local_hostname=None, resolve=None, local_addrs=None, addrs_of=None):
     import fcntl
 
     cfg = load_config(config_path)
@@ -983,14 +1055,17 @@ def run_once(config_path, clock=time.time, sleep=time.sleep, mirror=None, target
 
     local_hostname = local_hostname or socket.gethostname()
     try:
-        why = targets_problem(cfg["targets"], local_hostname, resolve or ssh_hostname)
+        why = targets_problem(cfg["targets"], local_hostname, resolve or ssh_hostname,
+                              local_addresses(local_hostname) if local_addrs is None else local_addrs,
+                              addrs_of or addresses_of)
         if why is not None:
             # No target, so every request waits and is refused: never a
             # reason to run anything here.
             log(f"NEEDS ATTENTION: targets in remote.json refused: {why}")
             targets = {}
         elif targets is None:
-            targets = {t["name"]: Target(t["name"], t["ssh"], cfg) for t in cfg["targets"]}
+            targets = {t["name"]: Target(t["name"], t["ssh"], cfg, forbidden=local_names(local_hostname))
+                       for t in cfg["targets"]}
 
         def write(rid, result, output, files):
             if not write_result(results, rid, result, output, files, cfg["tail_bytes"]):

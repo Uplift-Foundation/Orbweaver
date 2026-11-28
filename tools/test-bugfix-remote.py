@@ -83,6 +83,7 @@ class FakeTarget:
         self.output, self.files, self.dropped = "ok\n", {}, []
         self.start_error = self.collect_error = None
         self.busy = None  # the id of a job the target itself still has running
+        self.is_this_machine = False  # the start script found itself on a forbidden host
         self.load = [1.5, 1.0, 0.5]
 
     def probe(self):
@@ -97,6 +98,9 @@ class FakeTarget:
         self.calls.append(("start", rid, sha, tuple(argv), clean_all, cap_s, tuple(files)))
         if self.start_error:
             raise base.MachineError(self.start_error)
+        if self.is_this_machine:
+            raise remote.LocalTarget("the target reports hostname 'avatar.internal', which is this machine; "
+                                     "not run on the mini")
         if self.busy:
             return {"sha": None, "hostname": None, "started": False, "busy": self.busy}
         got = self.head or sha
@@ -219,7 +223,9 @@ class ParseTests(unittest.TestCase):
 class CommandTests(unittest.TestCase):
     def test_each_run_is_the_command_ci_and_the_skill_name(self):
         c = remote.command_for
-        self.assertEqual(c("build"), (["dotnet", "build", "-c", "Release"], 600))
+        # Not the root, where `dotnet build` picks the app-only Orbweaver.sln
+        # and a broken test project would still answer green (QA round 1).
+        self.assertEqual(c("build"), (["dotnet", "build", "tests/Tests.sln", "-c", "Release"], 600))
         self.assertEqual(c("unit", "OrbGlyph")[0][-2:], ["--filter", "FullyQualifiedName~OrbGlyph"])
         self.assertEqual(c("integration", "X")[0][:3], ["dotnet", "test", "tests/IntegrationTests"])
         ui, cap = c("ui", "Orbweaver.Tests.ChatPanelTests")
@@ -268,6 +274,33 @@ class RuleTests(unittest.TestCase):
         for resolved in ("localhost", "127.0.0.1", "warrens-mac-mini.local", "::1"):
             self.assertIn("never a target", remote.targets_problem(t, MINI, lambda h: resolved), resolved)
         self.assertIsNone(remote.targets_problem(t, MINI, lambda h: "192.168.0.50"))
+
+    def test_an_alias_pointed_at_one_of_this_machines_addresses_is_refused(self):
+        t = [{"name": "air", "ssh": "air"}]
+        mine = ("192.168.0.127", "fe80::1c2d:3e4f:5a6b:7c8d", "10.0.0.5")
+        for resolved in mine + ("FE80::1C2D:3E4F:5A6B:7C8D",):
+            why = remote.targets_problem(t, MINI, lambda h: resolved, mine)
+            self.assertIn("never a target", why or "", resolved)
+        # A name that resolves, in turn, to one of them.
+        why = remote.targets_problem(t, MINI, lambda h: "sneaky.example", mine, lambda h: ("192.168.0.127",))
+        self.assertIn("(192.168.0.127)", why)
+        # Controls: another machine's address, by either route.
+        self.assertIsNone(remote.targets_problem(t, MINI, lambda h: "192.168.0.50", mine))
+        self.assertIsNone(remote.targets_problem(t, MINI, lambda h: "air.internal", mine, lambda h: ("192.168.0.50",)))
+
+    def test_local_addresses_reads_the_interfaces_and_the_hostname(self):
+        out = ("lo0: flags=8049\n\tinet 127.0.0.1 netmask 0xff000000\n\tinet6 ::1 prefixlen 128\n"
+               "en0: flags=8863\n\tinet6 fe80::10ab:cdef:1234:5678%en0 prefixlen 64 scopeid 0xb\n"
+               "\tinet 192.168.0.127 netmask 0xffffff00 broadcast 192.168.0.255\n")
+        sh = lambda argv, timeout=None, input=None: subprocess.CompletedProcess(argv, 0, out, "")  # noqa: E731
+        got = remote.local_addresses("no-such-host.invalid", sh)
+        self.assertEqual(got, ("127.0.0.1", "192.168.0.127", "::1", "fe80::10ab:cdef:1234:5678"))
+
+        def gone(argv, timeout=None, input=None):
+            raise OSError("no ifconfig")
+        self.assertEqual(remote.local_addresses("no-such-host.invalid", gone), ())
+        self.assertEqual(remote.addresses_of("no-such-host.invalid"), ())
+        self.assertTrue(remote.addresses_of("localhost"))
 
     def test_target_list_shape(self):
         p = remote.targets_problem
@@ -591,6 +624,29 @@ class FlowTests(unittest.TestCase):
         h.remote.step()
         self.assertIn("not run on the mini", h.res("t1")["error"])
         self.assertIsNone(h.state["running"])
+
+    def test_a_target_that_finds_itself_on_this_machine_starts_nothing(self):
+        h = Harness()
+        h.air.is_this_machine = True
+        h.ask(req())
+        h.remote.step()
+        r = h.res("t1")
+        self.assertEqual((r["ok"], r["refused"], r["exit_code"]), (False, None, None))
+        self.assertIn("which is this machine; not run on the mini", r["error"])
+        self.assertNotIn("if the job did start there", r["error"])  # it did not: the script stopped first
+        self.assertIsNone(h.state["running"])
+        self.assertIn("NEEDS ATTENTION", "\n".join(h.logs))
+
+    def test_a_refusal_after_the_start_script_ran_kills_before_it_cleans_up(self):
+        for setup in (lambda a: setattr(a, "head", SHA2), lambda a: setattr(a, "hostname", "avatar.internal")):
+            h = Harness()
+            h.remote.local_hostname = "avatar.internal"
+            setup(h.air)
+            h.ask(req())
+            h.remote.step()
+            self.assertFalse(h.res("t1")["ok"])
+            tail = [c[0] for c in h.air.calls][-2:]
+            self.assertEqual(tail, ["kill", "cleanup"])
 
     def test_a_start_or_push_that_fails_is_answered_and_the_queue_moves_on(self):
         h = Harness()
@@ -961,6 +1017,42 @@ class TargetTests(unittest.TestCase):
         self.assertEqual(sorted(dropped), ["/abs", "files/../../evil", "files/b.trx", "files/link"])
         # The same archive for a run that hands back no files: only the output.
         self.assertEqual(t.collect("t1", 10_000)[1], {})
+
+    def test_the_archive_is_cut_on_the_target_and_an_over_long_one_is_refused(self):
+        sent = []
+
+        def sh_bytes(argv, timeout=None, input=None):
+            sent.append(input.decode())
+            return subprocess.CompletedProcess(argv, 0, self.raw, b"")
+        t = remote.Target("air", "air", cfg(), Sh(), sh_bytes=sh_bytes)
+        most = 1000 + remote.ARCHIVE_SLACK
+        self.raw = b"x" * (most + 1)
+        with self.assertRaises(base.MachineError) as cm:
+            t.collect("t1", 1000)
+        self.assertIn("larger than", str(cm.exception))
+        self.assertIn(f"| head -c {most + 1}", sent[-1])   # the cut happens on the target, in the pipeline
+        # Control: a real archive inside the limit is read.
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tf:
+            info = tarfile.TarInfo("output.txt")
+            info.size = 3
+            tf.addfile(info, io.BytesIO(b"ok\n"))
+        self.raw = buf.getvalue()
+        self.assertLessEqual(len(self.raw), most)
+        self.assertEqual(t.collect("t1", 1000)[0], "ok\n")
+
+    def test_start_passes_this_machines_names_and_reads_exit_94_as_local(self):
+        sh = Sh({"SHA=": (94, "hostname=avatar.internal\n")})
+        t = remote.Target("air", "air", cfg(), sh, forbidden=remote.local_names("Avatar.internal") | {"bad name;id"})
+        with self.assertRaises(remote.LocalTarget) as cm:
+            t.start("t1", SHA, ["dotnet", "build"], 600)
+        self.assertIn("'avatar.internal', which is this machine; not run on the mini", str(cm.exception))
+        script = sh.calls[-1][1]
+        self.assertIn("for N in avatar avatar.internal avatar.local localhost macmini mini; do", script)
+        self.assertNotIn("bad name", script)
+        # The check is before anything is made or started.
+        self.assertLess(script.index("exit 94"), script.index("cd \"$ROOT\""))
+        self.assertLess(script.index("exit 94"), script.index("nohup"))
         with self.assertRaises(base.MachineError):
             remote.unpack(b"not a tar", 10)
 
@@ -968,7 +1060,7 @@ class TargetTests(unittest.TestCase):
         if shutil.which("bash") is None:
             self.skipTest("no bash")
         kw = dict(root="orbweaver-remote", rid="t1", sha=SHA, clean_x="-x", command="dotnet build", max_output=5,
-                  cap=600, files="a.trx")
+                  cap=600, files="a.trx", forbidden="avatar avatar.internal", max_stream=99)
         for name in ("START", "POLL", "KILL", "COLLECT", "CLEANUP", "INIT"):
             r = subprocess.run(["bash", "-n"], input=getattr(remote, name).format(**kw),
                                capture_output=True, text=True)
@@ -1014,6 +1106,7 @@ class TargetShellTests(unittest.TestCase):
         with open(stub, "w") as f:
             f.write(f'#!/bin/sh\necho "$@" >> "{self.dotnet_log}"\n')
         os.chmod(stub, 0o755)
+        self.sh, self.sh_bytes = sh, sh_bytes
         self.t = remote.Target("air", "air", cfg(), sh, sh_bytes)
         self.t.init()
         # A source repository with two commits, pushed into the target's bare one.
@@ -1100,6 +1193,26 @@ class TargetShellTests(unittest.TestCase):
     def test_an_unknown_commit_is_a_machine_error(self):
         with self.assertRaises(base.MachineError):
             self.t.start("a", "d" * 40, ["true"], 600)
+
+    def test_on_a_forbidden_host_nothing_is_made_checked_out_or_run(self):
+        # Here the "target" really is this machine (QA round 1): with its
+        # names forbidden, the command must not run; without, it does.
+        import socket
+        marker = os.path.join(self.home, "ran")
+        jobs = os.path.join(self.home, remote.ROOT_DIR, "jobs")
+        guarded = remote.Target("air", "air", cfg(), self.sh, self.sh_bytes,
+                                forbidden=remote.local_names(socket.gethostname()))
+        with self.assertRaises(remote.LocalTarget) as cm:
+            guarded.start("q1", self.shas[0], ["touch", marker], 600)
+        self.assertIn("not run on the mini", str(cm.exception))
+        time.sleep(1)
+        self.assertFalse(os.path.exists(marker))
+        self.assertEqual(os.listdir(jobs), [])            # no job folder, so no run.sh and no pid
+        self.assertFalse(os.path.exists(self.work))       # no checkout either
+        # Control: the same start with nothing forbidden runs the command.
+        self.t.start("q1", self.shas[0], ["touch", marker], 600)
+        self.wait("q1", "done")
+        self.assertTrue(os.path.exists(marker))
 
     def test_a_job_left_running_holds_the_worktree_until_it_ends_or_passes_its_cap(self):
         marker = os.path.join(self.home, "pid")
@@ -1242,8 +1355,9 @@ class RunOnceTests(unittest.TestCase):
 
     def tick(self, **kw):
         kw.setdefault("targets", {"air": self.air})
+        kw.setdefault("local_addrs", ("192.168.0.127",))
         return remote.run_once(self.config, mirror=self.mirror, local_hostname=MINI,
-                               resolve=lambda h: h, sleep=lambda s: None, **kw)
+                               resolve=lambda h: h, addrs_of=lambda h: (), sleep=lambda s: None, **kw)
 
     def result(self, rid):
         with open(os.path.join(self.results, rid, "result.json")) as f:
@@ -1314,15 +1428,16 @@ class RunOnceTests(unittest.TestCase):
         self.assertEqual(len(self.air.did("start")), 1)
 
     def test_a_config_that_names_this_machine_runs_nothing_and_says_so(self):
-        for targets in ([{"name": "mini", "ssh": "mini"}], [{"name": "air", "ssh": "localhost"}]):
+        for targets in ([{"name": "mini", "ssh": "mini"}], [{"name": "air", "ssh": "localhost"}],
+                        [{"name": "air", "ssh": "192.168.0.127"}]):
             self.write_config(targets=targets)
             self.drop(req("t1"))
             made = []
             orig = remote.Target
             remote.Target = lambda *a, **k: made.append(a) or orig(*a, **k)
             try:
-                remote.run_once(self.config, mirror=self.mirror, local_hostname=MINI,
-                                resolve=lambda h: h, sleep=lambda s: None)
+                remote.run_once(self.config, mirror=self.mirror, local_hostname=MINI, resolve=lambda h: h,
+                                local_addrs=("192.168.0.127",), addrs_of=lambda h: (), sleep=lambda s: None)
             finally:
                 remote.Target = orig
             self.assertEqual(made, [])  # no Target was even built

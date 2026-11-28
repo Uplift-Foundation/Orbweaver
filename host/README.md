@@ -579,7 +579,7 @@ The agent never sends a command. `run` is one word and the runner builds the arg
 
 | `run` | what runs on the target | `filter` | cap |
 | --- | --- | --- | --- |
-| `build` | `dotnet build -c Release` | none | 10 min |
+| `build` | `dotnet build tests/Tests.sln -c Release`: the app plus UnitTests, IntegrationTests and UiTests. Not the root, whose solution is the app alone. UiScreenshots and the console suites are compiled by their own runs | none | 10 min |
 | `unit`, `integration` | `dotnet test tests/<Suite> -c Release`, trx logged | optional class, sent as `--filter "FullyQualifiedName~X"` | 10 min filtered, 30 full |
 | `ui`, `screenshots` | `dotnet test tests/<Suite> -c Release -- --report-xunit` | optional `Namespace.Class`, sent as `--filter-class X` | 10 min filtered, 30 full |
 | `arrangement`, `glyph`, `transcript` | `dotnet run --project tests/<Suite> -c Release` | none | 10 min |
@@ -619,9 +619,13 @@ or on a run that takes none; any other field (there is no `command`); a sha not 
 branch, or GitHub unreadable (fails closed); an eleventh request while ten wait. One job runs
 at a time and the rest wait in arrival order. If no target answers, a request waits 15 minutes
 and is then refused with "no target reachable; not run on the mini". There is no local
-execution path in the file, and the mini is refused as a target by name, by ssh host, by what
-`ssh -G` resolves the host to, and by the hostname the target reports before a job starts. A
-job at its cap has its whole process group killed.
+execution path in the file, and the mini is refused as a target twice over. When the config
+is loaded: by name, by ssh host, by what `ssh -G` resolves the host to, and by address (the
+mini's own interface addresses against the alias and whatever it resolves to). And on the
+target, first thing in the script that starts a job and before anything is made or checked
+out: a machine whose hostname is one of the mini's stops there. A job at its cap has its
+whole process group killed. The result archive is cut on the target at the 50 MB cap, and
+an over-long one is refused whole.
 
 **A job the runner lost track of.** If the connection drops while a job starts or runs, the job
 carries on. So every start first asks the target itself, in the same ssh call, whether a job
