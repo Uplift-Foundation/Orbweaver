@@ -34,6 +34,8 @@ public class PeerLaunchServerTrustTests
         public bool Enabled = true;
         public Action? OnNow;
         public readonly List<string> Log = [];
+        // Raised from the log sink once the expiry line is out, the last thing the server does.
+        public readonly TaskCompletionSource Expired = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public readonly Dictionary<string, PeerIdentity.Peer> Paired = new(StringComparer.OrdinalIgnoreCase)
         {
             ["mbp"] = new(PeerIdentity.PinOf(Sender), "mbp"),
@@ -56,7 +58,11 @@ public class PeerLaunchServerTrustTests
                 Desk.Accounts(),
                 () => { var hook = OnNow; OnNow = null; hook?.Invoke(); return Desk.Now; },
                 Desk.Delay,
-                Log.Add)
+                line =>
+                {
+                    Log.Add(line);
+                    if (line.Contains("trust_expired")) Expired.TrySetResult();
+                })
             { TrustDelay = _ => Expiry.Task });
         }
 
@@ -243,8 +249,9 @@ public class PeerLaunchServerTrustTests
         var (asked, nonce) = await w.Ask();
 
         w.Expiry.SetResult();
-        await Task.Yield();
-        SpinWait.SpinUntil(() => w.Server.PendingCount == 0, TimeSpan.FromSeconds(5));
+        // The record leaves _pending before the pane is closed and the line logged,
+        // so wait for the line itself, not for the count.
+        await w.Expired.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal(0, w.Server.PendingCount);
         Assert.Equal(["%1"], w.Desk.Closed);
