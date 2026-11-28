@@ -84,12 +84,14 @@ class FakeTarget:
         self.start_error = self.collect_error = None
         self.busy = None  # the id of a job the target itself still has running
         self.is_this_machine = False  # the start script found itself on a forbidden host
+        self.tmux = True
         self.load = [1.5, 1.0, 0.5]
 
     def probe(self):
         self.calls.append(("probe",))
         return {"reachable": self.reachable, "load": self.load if self.reachable else None,
-                "hostname": self.hostname if self.reachable else None}
+                "hostname": self.hostname if self.reachable else None,
+                "tmux": self.tmux if self.reachable else None}
 
     def init(self):
         self.calls.append(("init",))
@@ -387,6 +389,15 @@ class RuleTests(unittest.TestCase):
         kept, dropped = remote.safe_members(names, 50, ["a.trx", "b.trx"])
         self.assertEqual((kept, dropped), (["output.txt", "files/b.trx"], ["files/a.trx"]))
 
+    def test_tool_problem_refuses_only_the_runs_that_need_tmux_and_only_without_it(self):
+        sentence = "the target has no tmux, which IntegrationTests needs; not run"
+        for run in remote.RUNS:
+            want = sentence if run in ("integration", "coverage") else None
+            self.assertEqual(remote.tool_problem(run, {"tmux": False}), want, run)
+            self.assertEqual(remote.tool_problem(run, {"tmux": None}), want, run)
+            self.assertEqual(remote.tool_problem(run, {}), want, run)
+            self.assertIsNone(remote.tool_problem(run, {"tmux": True}), run)
+
     def test_busy_problem(self):
         self.assertIsNone(remote.busy_problem({"busy": None}))
         self.assertIsNone(remote.busy_problem({}))
@@ -407,7 +418,7 @@ class FlowTests(unittest.TestCase):
         st = h.remote.step()
         self.assertEqual(st["running"]["id"], "t1")
         self.assertEqual(st["targets"]["air"], {"reachable": True, "load": [1.5, 1.0, 0.5],
-                                                "hostname": "air.internal"})
+                                                "hostname": "air.internal", "tmux": True})
         self.assertEqual(h.mirror.pushes, [("air:orbweaver-remote/repo.git", SHA, "t1")])
         start = h.air.did("start")[0]
         self.assertEqual(start[1:3], ("t1", SHA))
@@ -721,6 +732,36 @@ class FlowTests(unittest.TestCase):
             for name in want:
                 self.assertIn(name, " ".join(remote.command_for(run)[0]), run)
 
+    def test_on_a_target_without_tmux_integration_and_coverage_are_refused_not_run_red(self):
+        h = Harness()
+        h.air.tmux = False
+        h.ask(req("i1", run="integration"), req("c1", run="coverage"), req("u1", run="unit"), req("b1", run="build"))
+        st = h.remote.step()
+        self.assertEqual(st["targets"]["air"]["tmux"], False)
+        h.remote.step()
+        for rid in ("i1", "c1"):
+            r = h.res(rid)
+            self.assertEqual((r["ok"], r["refused"], r["exit_code"], r["started_at"], r["target"]),
+                             (False, "the target has no tmux, which IntegrationTests needs; not run", None, None, None))
+            self.assertEqual(set(r), FIELDS)
+        # Nothing of theirs reached the target, and the runs that need no tmux go on.
+        h.remote.step()
+        self.assertEqual([c[1] for c in h.air.did("start")], ["u1"])
+        self.assertEqual([p[2] for p in h.mirror.pushes], ["u1"])
+        h.air.state = "done"
+        h.remote.step()
+        h.remote.step()
+        self.assertEqual([c[1] for c in h.air.did("start")], ["u1", "b1"])
+        self.assertTrue(h.res("u1")["ok"])
+
+    def test_on_a_target_with_tmux_integration_and_coverage_run(self):
+        for run in ("integration", "coverage"):
+            h = Harness()
+            h.ask(req(run=run))
+            st = h.remote.step()
+            self.assertEqual((st["running"]["run"], st["targets"]["air"]["tmux"]), (run, True))
+            self.assertEqual(len(h.air.did("start")), 1)
+
     def test_coverage_cleans_everything_and_must_say_merged_4(self):
         h = Harness()
         h.ask(req(run="coverage"))
@@ -929,9 +970,13 @@ class MirrorRealGitTests(unittest.TestCase):
 
 class TargetTests(unittest.TestCase):
     def test_every_call_is_ssh_to_the_host_with_the_script_on_stdin(self):
-        sh = Sh({"vm.loadavg": (0, "air.internal\n{ 1.0 2.0 3.0 }\n")})
+        sh = Sh({"vm.loadavg": (0, "air.internal\n{ 1.0 2.0 3.0 }\ntmux=no\n")})
         t = remote.Target("air", "air", cfg(), sh)
-        self.assertEqual(t.probe(), {"reachable": True, "load": [1.0, 2.0, 3.0], "hostname": "air.internal"})
+        self.assertEqual(t.probe(), {"reachable": True, "load": [1.0, 2.0, 3.0], "hostname": "air.internal",
+                                     "tmux": False})
+        has = remote.Target("air", "air", cfg(), Sh({"vm.loadavg": (0, "air.internal\n{ 1 2 3 }\ntmux=yes\n")}))
+        self.assertEqual(has.probe()["tmux"], True)
+        self.assertIn("command -v tmux", remote.PROBE)
         argv, script = sh.calls[0]
         self.assertEqual(argv[0], "ssh")
         self.assertEqual(argv[-3:], ["air", "bash", "-s"])
@@ -1398,7 +1443,7 @@ class RunOnceTests(unittest.TestCase):
         self.tick()
         st = self.status()
         self.assertEqual(st["targets"]["air"], {"reachable": True, "load": [1.5, 1.0, 0.5],
-                                                "hostname": "air.internal"})
+                                                "hostname": "air.internal", "tmux": True})
         self.assertEqual((st["running"], st["queued"]), (None, []))
 
     def test_bad_requests_are_answered_or_dropped_like_the_machine_spool(self):

@@ -344,6 +344,21 @@ def safe_members(names_sizes, limit, allowed=(), png=False):
     return kept, dropped
 
 
+# Runs whose suites drive a real tmux (tests/IntegrationTests'
+# TmuxPlacementTests; coverage.sh runs that suite too).
+NEEDS_TMUX = ("integration", "coverage")
+
+
+def tool_problem(run, probe):
+    """Why a run may not start on the target just probed (None = go). On a
+    target with no tmux, the integration suite is red on seven tests whatever
+    the commit is. Run and returned red, that teaches whoever reads it to
+    wave a red through; so it is refused, and nothing runs."""
+    if run in NEEDS_TMUX and not probe.get("tmux"):
+        return "the target has no tmux, which IntegrationTests needs; not run"
+    return None
+
+
 def busy_problem(prep):
     """Why a prepared start did not start because the target itself is busy
     (None = it is not). `prep["busy"]` is the id of a job the target found
@@ -457,6 +472,11 @@ class Remote:
             return
         item = self.state["queue"].pop(0)
         req = item["req"]
+        why = tool_problem(req["run"], self.probes[name])
+        if why is not None:
+            self.refuse(req, why, queued_at=iso(item["queued_at"]))
+            self.save(self.state)
+            return
         argv, cap = command_for(req["run"], req.get("filter"))
         base = dict(queued_at=iso(item["queued_at"]), started_at=iso(now), target=name)
         try:
@@ -522,7 +542,8 @@ class Remote:
             return self.finish(job, None, False, error=f"target {job['target']} is no longer configured")
         state, code, load = t.poll(rid)
         if load is not None:
-            self.probes[job["target"]] = {"reachable": True, "load": load, "hostname": job["target_hostname"]}
+            self.probes[job["target"]] = dict(self.probes.get(job["target"]) or {}, reachable=True, load=load,
+                                              hostname=job["target_hostname"])
         if state == "done":
             return self.finish(job, code, False)
         if state == "lost":
@@ -571,7 +592,8 @@ class Remote:
         job, now = self.state["running"], self.clock()
         return {
             "at": iso(now),
-            "targets": {n: {"reachable": p["reachable"], "load": p.get("load"), "hostname": p.get("hostname")}
+            "targets": {n: {"reachable": p["reachable"], "load": p.get("load"), "hostname": p.get("hostname"),
+                            "tmux": p.get("tmux")}
                         for n, p in self.probes.items()},
             "unreachable_since": iso(self.state["unreachable_since"]) if self.state["unreachable_since"] else None,
             "target_busy_with": self.state.get("target_busy"),
@@ -769,7 +791,10 @@ git --git-dir="$ROOT/repo.git" update-ref -d refs/remote-runs/{rid} 2>/dev/null
 exit 0
 """
 
-PROBE = "hostname; sysctl -n vm.loadavg\n"
+# tmux is looked for on the PATH a job gets, because that is where the
+# integration tests will look for it.
+PROBE = ('export PATH="$HOME/.dotnet:$PATH"\nhostname; sysctl -n vm.loadavg\n'
+         "command -v tmux >/dev/null 2>&1 && echo tmux=yes || echo tmux=no\n")
 INIT = PREAMBLE + 'mkdir -p "$ROOT/jobs" || exit 90\n[ -d "$ROOT/repo.git" ] || git init -q --bare "$ROOT/repo.git"\n'
 ROOT_DIR = "orbweaver-remote"
 ARCHIVE_SLACK = 1024 * 1024
@@ -805,11 +830,12 @@ class Target:
         try:
             r = self.ssh(PROBE, timeout=20)
         except (subprocess.TimeoutExpired, OSError):
-            return {"reachable": False, "load": None, "hostname": None}
+            return {"reachable": False, "load": None, "hostname": None, "tmux": None}
         if r.returncode != 0:
-            return {"reachable": False, "load": None, "hostname": None}
+            return {"reachable": False, "load": None, "hostname": None, "tmux": None}
         lines = r.stdout.splitlines()
-        return {"reachable": True, "load": parse_load(r.stdout), "hostname": lines[0].strip() if lines else None}
+        return {"reachable": True, "load": parse_load(r.stdout), "hostname": lines[0].strip() if lines else None,
+                "tmux": "tmux=yes" in lines}
 
     def init(self):
         try:

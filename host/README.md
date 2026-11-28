@@ -670,9 +670,14 @@ itself. The mini needs key-based `ssh <host>` to it.
    reachable, with its load.
 
 **What the target needs beyond the SDK.** `git`, `bash`, `perl`, `tar` and `python3` (for
-`coverage.sh`), all of which macOS has. `tests/IntegrationTests` also drives a real `tmux`
-(`TmuxPlacementTests`, 7 tests): on a target without one, `integration` and `coverage` are red
-on exactly those. The Air had none when this was written.
+`coverage.sh`), all of which macOS has, and for two runs `tmux`. `tests/IntegrationTests`
+drives a real tmux (`TmuxPlacementTests`, 7 tests), and `coverage.sh` runs that suite. So the
+runner asks each target whether `tmux` is on a job's PATH (`status.json`, `tmux`), and on a
+target without it `integration` and `coverage` are refused with "the target has no tmux, which
+IntegrationTests needs; not run". They are refused, not run and returned red, so nobody learns
+to wave a red through. **The Air has no tmux as of 2026-11-27**, so for now those two runs
+happen on the mini, one at a time through the `dotnet` wrapper; that is temporary and ends
+when the Air has tmux, with no change here.
 
 **Known limits.** A commit on any branch of the canonical repository runs as the host user on
 the target, bounded by the command table. If the runner's state file is lost while a job runs,
