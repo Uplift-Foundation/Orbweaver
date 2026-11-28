@@ -1118,6 +1118,12 @@ echo '{{"is_error": false, "structured_output": {{"diagnosis": "d", "actions": [
         self.assertIn("BEGIN ORG DATA", text)
         self.assertIn("none of the\n   actions run", text)
 
+    def test_runbook_tells_the_medic_the_warden_re_enables_the_router_plugin(self):
+        text = " ".join(read(os.path.join(ROOT, "host/medic-runbook.md")).split())
+        for needle in ("configuration_incomplete", "selected AI account is unavailable",
+                       "orbweaver.pool-router", "three failed enables"):
+            self.assertIn(needle, text, needle)
+
 
 # ---------------------------------------------------------------- finished tasks (CB-487)
 

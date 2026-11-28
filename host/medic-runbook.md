@@ -94,6 +94,13 @@ medic resumed the company within the last six hours and it is paused again,
      holds a `workspace_validation_failed` recovery on it): `escalate`. Its
      worktree needs a person, and `wake` refuses it;
    - a blocked task with no children and nothing pending: `wake`;
+   - a run that failed `configuration_incomplete`, or a blocked pass whose newest
+     comment says "selected AI account is unavailable", while every connection
+     reads connected: the router plugin (`orbweaver.pool-router`) is down, not
+     the accounts (CB-501). The warden re-enables it every cycle and wakes the
+     blocked passes itself, so `noop` it. Do not `escalate` it as needing a
+     person unless the warden's log shows three failed enables ("ESCALATED:
+     router plugin ... would not re-enable");
    - an approval waiting on a person: `escalate`.
 4. **`no_heartbeat` with the company active and nothing blocked:** you cannot
    fix the scheduler; `escalate`.
