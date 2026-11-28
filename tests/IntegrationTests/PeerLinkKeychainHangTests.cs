@@ -345,7 +345,11 @@ public class PeerLinkKeychainHangTests
         void H(string w, string d)
         {
             lock (heard) heard.Add((w, d));
-            if (w == "peer-inbound-failed") said.TrySetResult();
+            // MirrorLog.Heard is process-wide and the inbound line carries no
+            // endpoint, so another test's failed inbound (PeerAcceptLoopTests
+            // logs "handshake not under test") can arrive first. Only this
+            // server's own detail completes the wait (CB-495).
+            if (w == "peer-inbound-failed" && d.Contains("no handshake within 0.2s")) said.TrySetResult();
         }
         MirrorLog.Heard += H;
 
@@ -357,8 +361,7 @@ public class PeerLinkKeychainHangTests
 
             lock (heard)
             {
-                var line = heard.Last(e => e.What == "peer-inbound-failed");
-                Assert.Contains("no handshake within", line.Detail);
+                var line = heard.Last(e => e.What == "peer-inbound-failed" && e.Detail.Contains("no handshake within 0.2s"));
                 Assert.DoesNotContain("keychain", line.Detail);
             }
 
