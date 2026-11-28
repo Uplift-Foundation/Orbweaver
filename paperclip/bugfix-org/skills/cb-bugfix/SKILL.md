@@ -767,9 +767,10 @@ result"). This happened on 2026-11-24. So:
 
 ## Building and testing: the remote runner
 
-**Every build and test runs on the MacBook Air, never on the mini.** The mini
-is the always-on gateway host, and passes building and testing side by side on
-it starved everything else it serves (CB-494). A runner on the mini takes your
+**Builds and tests run on the MacBook Air, never on the mini**, with one
+temporary exception below (**Integration and coverage**). The mini is the
+always-on gateway host, and passes building and testing side by side on it
+starved everything else it serves (CB-494). A runner on the mini takes your
 request and runs it on the Air at the sha you name; nothing runs on the mini,
 and when the Air cannot be reached the request is refused, not run locally.
 
@@ -785,10 +786,11 @@ ow-remote <run> [filter]
 | `<run>` | runs | filter |
 | --- | --- | --- |
 | `build` | `tests/Tests.sln` in Release: the app, `UnitTests`, `IntegrationTests` and `UiTests`, no tests run (`screenshots` and the console suites compile their own) | none |
-| `unit`, `integration` | `tests/UnitTests`, `tests/IntegrationTests` | a class: `FullyQualifiedName~<filter>` |
+| `unit` | `tests/UnitTests` | a class: `FullyQualifiedName~<filter>` |
+| `integration` | refused on the Air today; run it on the mini (**Integration and coverage**) | |
 | `ui`, `screenshots` | `tests/UiTests`, `tests/UiScreenshots`, in Release | a `Namespace.Class`: `--filter-class` |
 | `arrangement`, `glyph`, `transcript` | the console suites, for a change to geometry, transcript parsing or orb initials | none |
-| `coverage` | `tools/coverage.sh --base origin/develop`, all four suites | none |
+| `coverage` | refused on the Air today; run it on the mini (**Integration and coverage**) | |
 
 Iterate with a filter: a filtered run answers in under a minute. No filter on
 `unit`, `integration`, `ui` or `screenshots` runs the whole suite, which CI
@@ -817,7 +819,9 @@ runner dropped). Quote the request id in the PR body.
   was away for fifteen minutes. **Say so and wait**: report it on your task,
   check `ow-remote status` later and ask again once the Air is reachable. That
   wait is **not** a failed round. **Never run the build or test on the mini
-  instead**: a refusal or an unreachable Air is never the exception below.
+  instead**: a refusal or an unreachable Air is never the exception below. The
+  one refusal that does send you to the mini is "the target has no tmux, which
+  IntegrationTests needs; not run", for `integration` or `coverage` only.
 - Exit `75`, `still running: ow-remote wait <id>`: run exactly that; it waits
   another nine minutes. Each command stays inside the ten-minute limit
   (**Long commands**).
@@ -832,15 +836,26 @@ runner dropped). Quote the request id in the PR body.
   names a job the Air is still finishing, which yours waits behind, and is not
   an error.
 
-**Coverage.** `ow-remote coverage`, once per PR. Its stderr says
-`merged <N> report(s)` (also the first line of `files/coverage-summary.txt`);
-the figure is a measurement only when N is 4, and anything else exits `65`.
-Quote that line with the figure. **Never run `./tools/coverage.sh` on the mini.**
+**Integration and coverage run on the mini, until the Air has tmux.**
+`tests/IntegrationTests` needs tmux, the Air has none today, so the runner
+refuses `integration` and `coverage` there. Until it has, run those two on the
+mini, through `~/.paperclip/tools/bin/dotnet` (the first `dotnet` on your
+`PATH`), which queues every heavy command one at a time, and never two at once:
 
-**A local `dotnet test` on the mini is the exception**, for something the
-runner cannot do, and `## Verified` says which command ran locally and why.
-`dotnet` on the mini queues heavy commands one at a time anyway, so a local
-build waits behind everyone else's.
+```
+dotnet test tests/IntegrationTests --filter "FullyQualifiedName~<Class>"
+./tools/coverage.sh --base origin/develop
+```
+
+Coverage once per PR. Its first line is `merged <N> report(s)`; the figure is a
+measurement only when N is 4. Quote that line with the figure, and say in
+`## Verified` that coverage was taken on the mini. When the Air has tmux the
+same `ow-remote integration` and `ow-remote coverage` requests simply stop
+being refused, and this paragraph goes.
+
+**Nothing else runs on the mini.** Any other local `dotnet test` or build there
+is the exception, for something the runner cannot do, and `## Verified` says
+which command ran locally and why.
 
 ## Branch, commits, PR
 
@@ -855,8 +870,9 @@ build waits behind everyone else's.
   (`ow-remote arrangement`, `glyph` or `transcript`) for a change to geometry,
   transcript parsing or orb initials.
 - Tests land in the same branch as the fix and cover every line it adds.
-- One `ow-remote coverage` per PR; its `merged <N> report(s)` line must say
-  4, otherwise the number is not a measurement. Never `coverage.sh` on the mini.
+- One coverage run per PR, on the mini until the Air has tmux (**Integration
+  and coverage**); its `merged <N> report(s)` line must say 4, otherwise the
+  number is not a measurement.
 - Open the PR against `develop` at the first working push so CI runs while QA
   reviews: `gh pr create --repo Uplift-Foundation/Orbweaver --base develop --head <branch>`.
 - Nobody reruns the full suites locally; CI green on both rids at one sha is

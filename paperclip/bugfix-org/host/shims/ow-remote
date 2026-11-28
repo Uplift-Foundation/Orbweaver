@@ -44,6 +44,13 @@ FILTERED = ("unit", "integration", "ui", "screenshots")
 FILTER_RE = re.compile(r"[A-Za-z0-9_.]{1,200}")
 ID_RE = re.compile(r"[a-z0-9-]{1,40}")
 REPO_RE = re.compile(r"[/:]Uplift-Foundation/Orbweaver(\.git)?/?$")
+# Until the Air has tmux (CB-494), the runner refuses these two there and they
+# run on the mini through the dotnet wrapper. Said only for that refusal, so
+# every other refusal still reads as "report it and wait".
+ON_THE_MINI = {
+    "integration": 'dotnet test tests/IntegrationTests --filter "FullyQualifiedName~<Class>"',
+    "coverage": "./tools/coverage.sh --base origin/develop",
+}
 REFUSED = 64
 VOID = 65
 STILL_RUNNING = 75
@@ -178,7 +185,12 @@ def report(res, folder, asked_sha=None):
     except OSError:
         pass
     if res.get("refused"):
-        return refuse(f"refused, nothing ran: {res['refused']}")
+        say(f"refused, nothing ran: {res['refused']}")
+        if res.get("run") in ON_THE_MINI and "tmux" in str(res["refused"]):
+            say(f"until the Air has tmux, run {res['run']} on the mini, through the dotnet "
+                f"wrapper and never two at once: {ON_THE_MINI[res['run']]} (skill, "
+                "Integration and coverage)")
+        return REFUSED
     if res.get("error"):
         say(f"runner error: {res['error']}")
     if res.get("run") == "coverage":

@@ -1088,15 +1088,31 @@ class RemoteRunnerInstructionTests(unittest.TestCase):
                      "`tests/Tests.sln` in Release"):
             self.assertIn(name, sec, name)
 
-    def test_coverage_is_remote_merged_four_and_never_on_the_mini(self):
+    def test_integration_and_coverage_run_on_the_mini_until_the_air_has_tmux(self):
         sec = self.section()
-        self.assertIn("`ow-remote coverage`, once per PR", sec)
+        self.assertIn("**Integration and coverage run on the mini, until the Air has tmux.**", sec)
+        self.assertIn("through `~/.paperclip/tools/bin/dotnet`", sec)
+        self.assertIn("never two at once", sec)
+        self.assertIn("say in\n`## Verified` that coverage was taken on the mini", sec)
         self.assertIn("only when N is 4", sec)
-        self.assertIn("Never run `./tools/coverage.sh` on the mini.", sec)
-        self.assertNotIn("One `./tools/coverage.sh --base origin/develop` per PR", self.skill())
+        self.assertIn('"the target has no tmux, which\n  IntegrationTests needs; not run", for `integration` or `coverage` only', sec)
+        self.assertNotIn("Never run `./tools/coverage.sh` on the mini.", sec)
+        self.assertIn("**Nothing else runs on the mini.**", sec)
+
+    def test_control_any_other_refusal_still_means_wait(self):
+        # The exception is for the tmux refusal of two runs only; a refused ui
+        # run or an unreachable Air still means report it and wait.
+        sec = self.section()
+        self.assertIn("**Say so and wait**", sec)
+        self.assertIn("**Never run the build or test on the mini\n  instead**", sec)
+        self.assertIn("a refusal or an unreachable Air is never the exception below", sec)
+        for row in [l for l in sec.splitlines() if l.startswith("| `ui`") or l.startswith("| `build`")
+                    or l.startswith("| `unit`") or l.startswith("| `arrangement`")]:
+            self.assertNotIn("on the mini", row, row)
 
     def test_a_local_dotnet_test_is_the_exception_and_says_why(self):
-        self.assertIn("A local `dotnet test` on the mini is the exception", self.section())
+        self.assertIn("**Nothing else runs on the mini.** Any other local `dotnet test`", self.section())
+        self.assertIn("which command ran locally and why", self.section())
         self.assertIn("a command run locally on the mini, and why", self.skill())
 
     def test_unreachable_air_means_say_so_and_wait_never_the_mini(self):
@@ -1113,22 +1129,22 @@ class RemoteRunnerInstructionTests(unittest.TestCase):
         for slug in self.ENGINEERS:
             doc = read("agents", slug, "AGENTS.md")
             self.assertNotIn("BUGFIX_BUILD_LOCK", doc, slug)
-            self.assertNotIn("Run `./tools/coverage.sh", doc, slug)
+            self.assertNotIn("quote `merged 4` from its first line", doc, slug)
 
     def test_engineers_build_test_and_cover_through_ow_remote(self):
         for slug in self.ENGINEERS:
             doc = read("agents", slug, "AGENTS.md")
             for phrase in ("never on the mini", "`ow-remote <run> <class>`",
-                           "`ow-remote coverage`", "merged 4 report(s)",
-                           "the exception, and the PR\n   says why"):
+                           "on the mini through\n   the `dotnet` wrapper, until the Air has tmux",
+                           "merged 4 report(s)", "the exception, and the PR\n   says why"):
                 self.assertIn(phrase, doc, (slug, phrase))
 
     def test_qa_runs_a_class_remotely_and_flags_a_local_run_without_a_reason(self):
         doc = read("agents", "tamsin-oyelaran", "AGENTS.md")
         self.assertIn("`ow-remote <run> <class>` from your second worktree", doc)
         self.assertIn("never\n  `dotnet test` on the mini", doc)
-        self.assertIn("without saying why is a `fix` finding", doc)
-        self.assertIn("without `merged 4`", doc)
+        self.assertIn("without saying why is a `fix` finding, except `tests/IntegrationTests`", doc)
+        self.assertIn("without `merged 4`, or without saying it was taken on the mini", doc)
 
     def test_lead_never_builds_on_the_mini(self):
         doc = read("agents", "marisol-vandenberg", "AGENTS.md")

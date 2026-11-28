@@ -207,6 +207,31 @@ class OwRemote(unittest.TestCase):
         self.assertEqual(p.returncode, 1)
         self.assertIn("runner error: ssh to air dropped mid-job", err)
 
+    def refused_with(self, run, sentence):
+        p = self.start(run)
+        _, req = self.take_request()
+        self.answer(req, tail="", ok=False, exit_code=None, checked_out_sha=None, refused=sentence)
+        _, err = p.communicate(timeout=30)
+        return p.returncode, err
+
+    def test_no_tmux_refusal_says_to_run_integration_and_coverage_on_the_mini(self):
+        for run, cmd in (("integration", "dotnet test tests/IntegrationTests"),
+                         ("coverage", "./tools/coverage.sh --base origin/develop")):
+            with self.subTest(run=run):
+                code, err = self.refused_with(run, "the target has no tmux, which IntegrationTests needs; not run")
+                self.assertEqual(code, 64)
+                self.assertIn("until the Air has tmux, run " + run + " on the mini", err)
+                self.assertIn(cmd, err)
+
+    def test_control_every_other_refusal_never_points_at_the_mini(self):
+        for run, sentence in (("ui", "the target has no tmux, which IntegrationTests needs; not run"),
+                              ("coverage", "no target reachable; not run on the mini"),
+                              ("integration", "queue is full")):
+            with self.subTest(run=run, sentence=sentence):
+                code, err = self.refused_with(run, sentence)
+                self.assertEqual(code, 64)
+                self.assertNotIn("run " + run + " on the mini", err)
+
     def test_a_timeout_without_an_exit_code_is_124(self):
         p = self.start("build")
         _, req = self.take_request()
