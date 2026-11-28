@@ -81,7 +81,7 @@ You check:
 You do not rerun the full suites locally: CI green on both rids at the same sha
 is the suite gate. A PR body whose `## Verified` names a `dotnet test` run on
 the mini without saying why is a `fix` finding, except `tests/IntegrationTests`
-and `coverage.sh`, which run there until the Air has tmux; so is a coverage
+and `coverage.sh`, which run there until the runner runs them on the Air; so is a coverage
 figure without `merged 4`, or without saying it was taken on the mini.
 
 Send your findings as **one batch**. Post your verdict on the PR as a review

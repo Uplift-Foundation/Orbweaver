@@ -836,10 +836,11 @@ runner dropped). Quote the request id in the PR body.
   names a job the Air is still finishing, which yours waits behind, and is not
   an error.
 
-**Integration and coverage run on the mini, until the Air has tmux.**
-`tests/IntegrationTests` needs tmux, the Air has none today, so the runner
-refuses `integration` and `coverage` there. Until it has, run those two on the
-mini, through `~/.paperclip/tools/bin/dotnet` (the first `dotnet` on your
+**Integration and coverage run on the mini, until the runner runs them on the
+Air.** The runner does not run `integration` or `coverage` on the Air yet: it
+refuses them with "the target has no tmux, which IntegrationTests needs; not
+run", which is the runner's own check, not a fact about the Air. Until it
+runs them, run those two on the mini, through `~/.paperclip/tools/bin/dotnet` (the first `dotnet` on your
 `PATH`), which queues every heavy command one at a time, and never two at once:
 
 ```
@@ -849,9 +850,9 @@ dotnet test tests/IntegrationTests --filter "FullyQualifiedName~<Class>"
 
 Coverage once per PR. Its first line is `merged <N> report(s)`; the figure is a
 measurement only when N is 4. Quote that line with the figure, and say in
-`## Verified` that coverage was taken on the mini. When the Air has tmux the
-same `ow-remote integration` and `ow-remote coverage` requests simply stop
-being refused, and this paragraph goes.
+`## Verified` that coverage was taken on the mini. When the runner runs them
+on the Air, the same `ow-remote integration` and `ow-remote coverage` requests
+simply stop being refused, and this paragraph goes.
 
 **Nothing else runs on the mini.** Any other local `dotnet test` or build there
 is the exception, for something the runner cannot do, and `## Verified` says
@@ -870,8 +871,8 @@ which command ran locally and why.
   (`ow-remote arrangement`, `glyph` or `transcript`) for a change to geometry,
   transcript parsing or orb initials.
 - Tests land in the same branch as the fix and cover every line it adds.
-- One coverage run per PR, on the mini until the Air has tmux (**Integration
-  and coverage**); its `merged <N> report(s)` line must say 4, otherwise the
+- One coverage run per PR, on the mini until the runner runs it on the Air
+  (**Integration and coverage**); its `merged <N> report(s)` line must say 4, otherwise the
   number is not a measurement.
 - Open the PR against `develop` at the first working push so CI runs while QA
   reviews: `gh pr create --repo Uplift-Foundation/Orbweaver --base develop --head <branch>`.

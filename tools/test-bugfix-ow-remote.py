@@ -220,7 +220,7 @@ class OwRemote(unittest.TestCase):
             with self.subTest(run=run):
                 code, err = self.refused_with(run, "the target has no tmux, which IntegrationTests needs; not run")
                 self.assertEqual(code, 64)
-                self.assertIn("until the Air has tmux, run " + run + " on the mini", err)
+                self.assertIn("until the runner runs it on the Air, run " + run + " on the mini", err)
                 self.assertIn(cmd, err)
 
     def test_control_every_other_refusal_never_points_at_the_mini(self):

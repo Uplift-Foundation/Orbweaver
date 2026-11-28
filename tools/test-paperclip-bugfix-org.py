@@ -1090,7 +1090,11 @@ class RemoteRunnerInstructionTests(unittest.TestCase):
 
     def test_integration_and_coverage_run_on_the_mini_until_the_air_has_tmux(self):
         sec = self.section()
-        self.assertIn("**Integration and coverage run on the mini, until the Air has tmux.**", sec)
+        self.assertIn("**Integration and coverage run on the mini, until the runner runs them on the\nAir.**", sec)
+        # The reason is the runner's check, not a claim about the Air, which
+        # does have tmux (CB-494: a missing TERM, not tmux, failed the tests).
+        self.assertNotIn("Air has tmux", self.skill())
+        self.assertNotIn("has none today", sec)
         self.assertIn("through `~/.paperclip/tools/bin/dotnet`", sec)
         self.assertIn("never two at once", sec)
         self.assertIn("say in\n`## Verified` that coverage was taken on the mini", sec)
@@ -1135,7 +1139,7 @@ class RemoteRunnerInstructionTests(unittest.TestCase):
         for slug in self.ENGINEERS:
             doc = read("agents", slug, "AGENTS.md")
             for phrase in ("never on the mini", "`ow-remote <run> <class>`",
-                           "on the mini through\n   the `dotnet` wrapper, until the Air has tmux",
+                           "on the mini through\n   the `dotnet` wrapper, until the runner runs it on the Air",
                            "merged 4 report(s)", "the exception, and the PR\n   says why"):
                 self.assertIn(phrase, doc, (slug, phrase))
 

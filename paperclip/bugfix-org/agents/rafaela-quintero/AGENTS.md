@@ -39,7 +39,7 @@ Your working directory is a git worktree of `origin/develop` on a branch named
    used and what you saw, or says none and why (skill, **Real machines**). Say
    only what you ran.
 6. Run `./tools/coverage.sh --base origin/develop` once, on the mini through
-   the `dotnet` wrapper, until the Air has tmux (skill, **Integration and
+   the `dotnet` wrapper, until the runner runs it on the Air (skill, **Integration and
    coverage**), and quote its `merged 4 report(s)` line, or say it merged fewer.
    `integration` runs on the mini the same way; every other build and test goes
    through `ow-remote`.
