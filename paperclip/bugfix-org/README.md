@@ -355,9 +355,11 @@ Then, none of which a package can carry:
    # 2. the stand-ins, all three
    install -m 0755 host/shims/gh host/shims/git ~/.paperclip/tools/bin/
    install -m 0644 host/shims/bugfix-token.bash ~/.paperclip/tools/bin/
+   # CB-494: how agents ask the remote runner to build and test on the Air
+   install -m 0755 host/shims/ow-remote ~/.paperclip/tools/bin/
    # 3. restart the service so new runs inherit the PATH (bootout, then bootstrap)
    # check: each prints "same"; the folder is 0700 and both files 0600 after the next tick
-   for f in gh git bugfix-token.bash; do cmp -s host/shims/$f ~/.paperclip/tools/bin/$f && echo "$f same" || echo "$f DIFFERS"; done
+   for f in gh git bugfix-token.bash ow-remote; do cmp -s host/shims/$f ~/.paperclip/tools/bin/$f && echo "$f same" || echo "$f DIFFERS"; done
    stat -f '%Sp %N' ~/.paperclip/instances/default/companies/*/bugfix-tokens ~/.paperclip/instances/default/companies/*/bugfix-tokens/*
    ```
 
@@ -396,14 +398,15 @@ lock under it serialised nothing (found live, CB-494). A second one **waits**;
    other (the interim copy exported a different held variable, so such a call
    would wait on itself). That folder is already first on the service's `PATH`, so replacing the file
    needs no restart; a command already running keeps the copy it started with.
-   `host/check_host.py` prints a `PROBLEM:` line for any of the four stand-ins
+   `host/check_host.py` prints a `PROBLEM:` line for any of the stand-ins (`gh`, `git`, `bugfix-token.bash`, `dotnet`, `ow-remote`)
    that is missing from that folder or differs from the repo's copy. `dotnet
    add package` and `dotnet new` stay light although both can restore; the
    shim's header says why.
 6. **Build environment.** In each engineer's environment set
    `NUGET_PACKAGES` to a folder inside the org's own Paperclip directory (the
    restore cache was 2.2 GB), `BUGFIX_BUILD_LOCK` to a path in that folder
-   for the one-build-at-a-time lock, and `BUGFIX_SPOOL` to the warden's
+   (no instruction reads it since CB-494 moved builds to the remote runner and
+   `host/shims/dotnet` queues any local one; harmless to leave), and `BUGFIX_SPOOL` to the warden's
    `spool` folder from `warden.json`, which is where the skill tells an engineer
    to write a stress request. Give `BUGFIX_SPOOL` to the lead and QA as well: the
    pilot's lead read its absence in its own environment as "stress runs are

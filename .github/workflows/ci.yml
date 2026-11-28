@@ -249,6 +249,13 @@ jobs:
         if: ${{ !cancelled() && matrix.checks }}
         run: python tools/test-bugfix-dotnet-wrapper.py
 
+      # CB-494: ow-remote, how the bug-fix org's agents ask the remote runner
+      # for a build or test. Real git against a local bare origin; the test
+      # plays the runner by writing the result folder.
+      - name: Unit tests (bugfix-org ow-remote)
+        if: ${{ !cancelled() && matrix.checks }}
+        run: python tools/test-bugfix-ow-remote.py
+
       # CB-291: the team resolver the orbweaver-team skill ships. Real script,
       # real files in a scratch pool; on the Windows leg it runs under Git Bash
       # with Windows-style paths, which is what Claude Code uses there and what

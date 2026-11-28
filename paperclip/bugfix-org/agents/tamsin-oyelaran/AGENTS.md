@@ -53,7 +53,9 @@ each on 2026-11-27 (CB-492). Checking out a single file from another ref
 You check:
 
 - the fix addresses what the ticket says, and a test fails without it and passes
-  with it (read the test, and where cheap run only that test class);
+  with it (read the test, and where cheap run only that test class, with
+  `ow-remote <run> <class>` from your second worktree at the PR's head, never
+  `dotnet test` on the mini; skill, **Building and testing: the remote runner**);
 - the lines the PR adds are covered, from the PR body's coverage figure and the
   tests themselves; a line the tests cannot reach is named in the body, not
   silently left out;
@@ -77,7 +79,10 @@ You check:
   when it does not, the verdict is `fix` and you say which line.
 
 You do not rerun the full suites locally: CI green on both rids at the same sha
-is the suite gate.
+is the suite gate. A PR body whose `## Verified` names a `dotnet test` run on
+the mini without saying why is a `fix` finding, except `tests/IntegrationTests`
+and `coverage.sh`, which run there until the runner runs them on the Air; so is a coverage
+figure without `merged 4`, or without saying it was taken on the mini.
 
 Send your findings as **one batch**. Post your verdict on the PR as a review
 comment with `gh pr review <number> --repo <the PR's repository> --comment --body ...`
