@@ -398,7 +398,7 @@ lock under it serialised nothing (found live, CB-494). A second one **waits**;
    other (the interim copy exported a different held variable, so such a call
    would wait on itself). That folder is already first on the service's `PATH`, so replacing the file
    needs no restart; a command already running keeps the copy it started with.
-   `host/check_host.py` prints a `PROBLEM:` line for any of the four stand-ins
+   `host/check_host.py` prints a `PROBLEM:` line for any of the stand-ins (`gh`, `git`, `bugfix-token.bash`, `dotnet`, `ow-remote`)
    that is missing from that folder or differs from the repo's copy. `dotnet
    add package` and `dotnet new` stay light although both can restore; the
    shim's header says why.

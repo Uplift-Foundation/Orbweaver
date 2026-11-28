@@ -31,7 +31,7 @@ DEFAULT_PLIST = os.path.expanduser("~/Library/LaunchAgents/ing.paperclip.papercl
 DEFAULT_GITCONFIG = os.path.expanduser("~/.paperclip/instances/default/gitconfig")
 DEFAULT_TOOLS_BIN = os.path.expanduser("~/.paperclip/tools/bin")
 SHIMS_DIR = os.path.join(HERE, "..", "paperclip", "bugfix-org", "host", "shims")
-SHIMS = ("gh", "git", "bugfix-token.bash", "dotnet")
+SHIMS = ("gh", "git", "bugfix-token.bash", "dotnet", "ow-remote")
 REQUIRED_CONFIG = ("company_id", "paperclip_login", "spool")
 
 
