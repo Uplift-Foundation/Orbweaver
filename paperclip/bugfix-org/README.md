@@ -384,12 +384,17 @@ lock under it serialised nothing (found live, CB-494). A second one **waits**;
    `tools/test-bugfix-dotnet-wrapper.py`, with a fake dotnet.
 
    ```bash
-   install -m 0755 host/shims/dotnet ~/.paperclip/tools/bin/
+   # under the lock: waits for any heavy dotnet, old copy or new, then swaps
+   /usr/bin/lockf -k ~/.paperclip/instances/default/heavy-dotnet.lock install -m 0755 host/shims/dotnet ~/.paperclip/tools/bin/dotnet
    # check: prints "same", and a light call answers at once
    cmp -s host/shims/dotnet ~/.paperclip/tools/bin/dotnet && echo "dotnet same" || echo "dotnet DIFFERS"
    ~/.paperclip/tools/bin/dotnet --version
    ```
-   That folder is already first on the service's `PATH`, so replacing the file
+   Install it under the lock, as above, every time. It waits for whatever heavy
+   command is running, from the old copy or the new, and swaps with none
+   running, so no build started under one copy makes a nested call into the
+   other (the interim copy exported a different held variable, so such a call
+   would wait on itself). That folder is already first on the service's `PATH`, so replacing the file
    needs no restart; a command already running keeps the copy it started with.
    `host/check_host.py` prints a `PROBLEM:` line for any of the four stand-ins
    that is missing from that folder or differs from the repo's copy. `dotnet
