@@ -409,9 +409,11 @@ The AI accounts are pooled by the `orbweaver.pool-router` plugin. Under load Pap
 time out its activation ("RPC call initialize timed out after 15000ms") and leave it in
 status `error`, which Paperclip never retries; every new pass is then blocked at creation
 with "This task paused because its selected AI account is unavailable". Every cycle, paused
-or not, the warden reads `GET /api/plugins`. A router that is not `ready` gets one
+or not, the warden reads `GET /api/plugins`. A router in status `error` gets one
 `POST /api/plugins/<id>/enable {}`, a read-back and one log line ("router plugin re-enabled:
-was error (...), now ready" or "... still <status>"); a `ready` router gets no POST. A
+was error (...), now ready" or "... still <status>"); a `ready` router gets no POST, and any other
+status (`disabled`, `installing`, unknown) gets one log line and no POST, so a plugin a person
+turned off stays off. A
 missing plugin or an unreadable list is logged and the cycle goes on.
 
 While the router is `ready`, the unstick sweep also wakes the passes the outage blocked: in
