@@ -365,7 +365,9 @@ Then, none of which a package can carry:
    gateway host, and passes building and testing side by side starved it.
    `host/shims/dotnet` lets one heavy command run at a time for everything the
    service runs, under `nice -n 10`, with `lockf -k` on
-   `~/.paperclip/instances/default/heavy-dotnet.lock`. A second one **waits**;
+   `~/.paperclip/instances/default/heavy-dotnet.lock`, found from where the shim
+is installed, never from `$HOME`: every agent run has its own `HOME`, so a
+lock under it serialised nothing (found live, CB-494). A second one **waits**;
    nothing is refused. Heavy means a verb of `test`, `build`, `run`,
    `publish`, `pack`, `msbuild`, `restore`, `vstest`, `clean`, `format` or
    `watch`, or a `.cs`, `.csproj`, `.sln` or `.slnx` argument, found as the

@@ -128,6 +128,66 @@ class DotnetShim(unittest.TestCase):
         p2.communicate(timeout=20)
         self.assertTrue(self.overlapped("a", "b"))
 
+    def installed(self):
+        """A copy at <root>/tools/bin/dotnet, as deployed, with the lock
+        folder it defaults to; no ORBWEAVER_HEAVY_LOCK, so the default is
+        what is tested."""
+        root = os.path.join(self.tmp, "paperclip")
+        bindir = os.path.join(root, "tools", "bin")
+        os.makedirs(bindir)
+        os.makedirs(os.path.join(root, "instances", "default"))
+        shutil.copy(SHIM, os.path.join(bindir, "dotnet"))
+        return os.path.join(bindir, "dotnet"), os.path.join(root, "instances", "default", "heavy-dotnet.lock")
+
+    def start_at(self, exe, **kw):
+        p = subprocess.Popen([exe, "build"], env=self.env_with(**kw), text=True,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             stdin=subprocess.DEVNULL, start_new_session=True)
+        self.addCleanup(self.kill, p)
+        return p
+
+    def homes(self):
+        out = []
+        for n in ("run-a", "run-b"):
+            h = os.path.join(self.tmp, n, "home")
+            os.makedirs(os.path.join(h, ".paperclip", "instances", "default"))
+            out.append(h)
+        return out
+
+    def test_two_runs_with_different_homes_share_the_installed_lock(self):
+        exe, lock = self.installed()
+        ha, hb = self.homes()
+        p1 = self.start_at(exe, HOME=ha, ORBWEAVER_HEAVY_LOCK=None, FAKE_TAG="a", FAKE_SLEEP="1.5")
+        self.wait_started("a")
+        p2 = self.start_at(exe, HOME=hb, ORBWEAVER_HEAVY_LOCK=None, FAKE_TAG="b", FAKE_SLEEP="0.2")
+        p1.communicate(timeout=20)
+        p2.communicate(timeout=20)
+        self.assertFalse(self.overlapped("a", "b"))
+        self.assertTrue(os.path.exists(lock))
+        for h in (ha, hb):
+            self.assertEqual(os.listdir(os.path.join(h, ".paperclip", "instances", "default")), [])
+
+    def test_control_a_home_based_lock_lets_different_homes_overlap(self):
+        # The pre-fix default, $HOME/.paperclip/instances/default/..., given
+        # explicitly per run: each run gets a private lock and they overlap.
+        exe, _ = self.installed()
+        ha, hb = self.homes()
+        old = lambda h: os.path.join(h, ".paperclip", "instances", "default", "heavy-dotnet.lock")
+        p1 = self.start_at(exe, HOME=ha, ORBWEAVER_HEAVY_LOCK=old(ha), FAKE_TAG="a", FAKE_SLEEP="1.5")
+        self.wait_started("a")
+        p2 = self.start_at(exe, HOME=hb, ORBWEAVER_HEAVY_LOCK=old(hb), FAKE_TAG="b", FAKE_SLEEP="0.2")
+        p1.communicate(timeout=20)
+        p2.communicate(timeout=20)
+        self.assertTrue(self.overlapped("a", "b"))
+
+    def test_missing_lock_folder_says_so_and_runs_unlocked(self):
+        code, out, err = self.run_shim(["build"], FAKE_TAG="v", FAKE_EXIT="4",
+                                       ORBWEAVER_HEAVY_LOCK=os.path.join(self.tmp, "no", "such", "x.lock"))
+        self.assertEqual(code, 4)
+        self.assertEqual(self.seen(out, "held"), ["UNSET"])
+        self.assertEqual(err.splitlines(), [err.splitlines()[0], "to-stderr"])
+        self.assertIn("lock folder", err.splitlines()[0])
+
     def test_light_call_does_not_wait_behind_a_heavy_one(self):
         p1 = self.start(["build"], FAKE_TAG="heavy", FAKE_SLEEP="3")
         self.wait_started("heavy")
