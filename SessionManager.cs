@@ -529,6 +529,10 @@ namespace Orbweaver
         // ORBWEAVER_PROFILE_ROOT.
         private readonly Func<IReadOnlyList<string>> _userConfigDirs;
 
+        // CB-294: maps a WSL session's cwd and transcript path to what this
+        // host can open. A seam so macOS CI can run the Windows-only arm.
+        private readonly Func<string, string?, (string Cwd, string? ConfigDir)> _wslPaths;
+
         public SessionManager()
             : this(StatusDirectory.Path(), null, legacyStatusDir: StatusDirectory.LegacyPath())
         {
@@ -576,8 +580,10 @@ namespace Orbweaver
             string? legacyStatusDir = null,
             Func<string, string?, bool>? stopJob = null,
             Func<SessionStatus, string?>? desktopBridge = null,
-            Func<IEnumerable<(string SessionId, string TranscriptPath)>, IReadOnlyDictionary<string, AgentTeam.Membership>>? fileTeams = null)
+            Func<IEnumerable<(string SessionId, string TranscriptPath)>, IReadOnlyDictionary<string, AgentTeam.Membership>>? fileTeams = null,
+            Func<string, string?, (string Cwd, string? ConfigDir)>? wslPaths = null)
         {
+            _wslPaths = wslPaths ?? ((cwd, transcript) => LocalPersona.MapWslPaths(cwd, transcript));
             _statusDir = statusDir;
             _legacyStatusDir = legacyStatusDir;
 
@@ -2400,7 +2406,7 @@ namespace Orbweaver
             // The signature below stats the paths alone, exactly as before.
             // CB-294: a WSL session's Linux cwd and account config dir are mapped
             // to what this host can open before anything walks them.
-            var (cwd, wslConfigDir) = LocalPersona.MapWslPaths(status.Cwd, status.TranscriptPath);
+            var (cwd, wslConfigDir) = _wslPaths(status.Cwd, status.TranscriptPath);
             var key = (cwd, status.Source, status.Agent, wslConfigDir ?? "");
             if (!candidatesByCwd.TryGetValue(key, out var candidates))
             {
