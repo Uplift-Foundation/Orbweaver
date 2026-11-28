@@ -803,8 +803,10 @@ screenshot PNGs). Quote the request id in the PR body.
 
 - Exit `2`, `refused, nothing ran: <sentence>`: read the sentence, fix what it
   names, ask again. "no target reachable; not run on the mini" means the Air
-  was away for fifteen minutes: name that in `## Not verified` and let CI be
-  the gate, which is **not** a failed round.
+  was away for fifteen minutes. **Say so and wait**: report it on your task,
+  check `ow-remote status` later and ask again once the Air is reachable. That
+  wait is **not** a failed round. **Never run the build or test on the mini
+  instead**: a refusal or an unreachable Air is never the exception below.
 - Exit `75`, `still running: ow-remote wait <id>`: run exactly that; it waits
   another nine minutes. Each command stays inside the ten-minute limit
   (**Long commands**).

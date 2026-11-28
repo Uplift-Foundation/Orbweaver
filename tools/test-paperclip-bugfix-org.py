@@ -1079,9 +1079,13 @@ class RemoteRunnerInstructionTests(unittest.TestCase):
         self.assertIn("A local `dotnet test` on the mini is the exception", self.section())
         self.assertIn("a command run locally on the mini, and why", self.skill())
 
-    def test_unreachable_air_is_not_a_failed_round(self):
-        self.assertIn("not run on the mini", self.section())
-        self.assertIn("**not** a failed round", self.section())
+    def test_unreachable_air_means_say_so_and_wait_never_the_mini(self):
+        sec = self.section()
+        self.assertIn("not run on the mini", sec)
+        self.assertIn("**Say so and wait**", sec)
+        self.assertIn("**not** a failed round", sec)
+        self.assertIn("**Never run the build or test on the mini\n  instead**", sec)
+        self.assertNotIn("let CI be\n  the gate", sec)
 
     def test_the_old_build_lock_and_local_dotnet_test_are_gone(self):
         self.assertNotIn("The build lock is yours", self.skill())
