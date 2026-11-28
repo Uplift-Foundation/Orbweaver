@@ -2731,6 +2731,18 @@ class RouterPluginTests(unittest.TestCase):
         self.run_tick(pc, state, cfg)         # the rows now read todo / cancelled
         self.assertEqual(pc.statuses, [])
 
+    def test_the_live_config_shape_wakes_the_triage_company_too(self):
+        """warden.json on the mini has no unstick_company_ids; the triage
+        company comes from triage-company-id.txt, which is what triage_company_id
+        stands in for here. One blocked pass in each company, both woken."""
+        pc = self.pc()
+        pc.all_by = {"co": [self.blocked("a1", 60)], "tri": [self.blocked("t1", 60)]}
+        pc.threads = {i: [{"body": BLOCKED_NOTE, "createdAt": warden.iso(NOW)}] for i in ("a1", "t1")}
+        router_down(pc)
+        self.run_tick(pc, {}, {"company_id": "co", "triage_company_id": "tri"})
+        self.assertEqual(sorted(pc.statuses), [("a1", "todo"), ("t1", "todo")])
+        self.assertEqual(pc.enables, ["pl1"], "one enable for the instance, not one per company")
+
     def test_a_paused_second_company_is_skipped_while_the_first_is_woken(self):
         pc = self.pc()
         pc.all_by = {"co": [self.blocked("a1", 60)], "co2": [self.blocked("b1", 60)]}
