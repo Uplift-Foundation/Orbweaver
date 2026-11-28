@@ -1,0 +1,197 @@
+#!/usr/bin/env python3
+"""Ask the remote runner to build or test this commit on the MacBook Air (CB-494).
+
+    ow-remote <run> [filter]   ask for HEAD, wait up to 9 minutes, print the tail
+    ow-remote wait <id>        wait for an answer already asked for
+    ow-remote status           print what the runner is doing now
+
+<run> is one of build, unit, integration, ui, screenshots, arrangement, glyph,
+transcript, coverage. A filter is a class name: unit and integration match it as
+FullyQualifiedName~<filter>; ui and screenshots run Release with
+--filter-class <Namespace.Class>. No filter on those four means the whole suite.
+The others take none.
+
+Nothing runs on the mini. The runner checks the commit out by sha, so HEAD must
+be committed and pushed to Uplift-Foundation/Orbweaver; this refuses before
+asking if it is not. Exit status is the remote command's; 2 means the runner
+or this helper refused (one sentence says why), 75 means it is still running
+past 9 minutes and `ow-remote wait <id>` picks it up, inside an agent's
+ten-minute command limit.
+
+The spool and results are `remote-spool` and `remote-results` beside
+$BUGFIX_SPOOL. OW_REMOTE_WAIT_S and OW_REMOTE_POLL_S shorten the waits for the
+tests; nothing else is configurable.
+"""
+import json
+import os
+import re
+import secrets
+import subprocess
+import sys
+import time
+
+RUNS = ("build", "unit", "integration", "ui", "screenshots", "arrangement",
+        "glyph", "transcript", "coverage")
+FILTERED = ("unit", "integration", "ui", "screenshots")
+FILTER_RE = re.compile(r"[A-Za-z0-9_.]{1,200}")
+ID_RE = re.compile(r"[a-z0-9-]{1,40}")
+REPO_RE = re.compile(r"[/:]Uplift-Foundation/Orbweaver(\.git)?/?$")
+STILL_RUNNING = 75
+REFUSED = 2
+
+
+def say(msg):
+    print("ow-remote: " + msg, file=sys.stderr)
+
+
+def refuse(msg):
+    say(msg)
+    return REFUSED
+
+
+def folders():
+    spool = os.environ.get("BUGFIX_SPOOL", "")
+    if not spool:
+        return None, None
+    base = os.path.dirname(spool.rstrip("/"))
+    return os.path.join(base, "remote-spool"), os.path.join(base, "remote-results")
+
+
+def git(*args):
+    r = subprocess.run(["git", *args], capture_output=True, text=True)
+    return r.returncode, r.stdout.strip()
+
+
+def pushed_head():
+    """HEAD's sha, or a sentence saying why it cannot be asked for."""
+    code, sha = git("rev-parse", "HEAD")
+    if code:
+        return None, "this is not a git checkout; run it from your worktree"
+    code, url = git("config", "--get", "remote.origin.url")
+    if code or not REPO_RE.search(url):
+        return None, ("origin is not Uplift-Foundation/Orbweaver; the runner builds "
+                      "Orbweaver only (a mobile fix is tested by its own CI)")
+    code, dirty = git("status", "--porcelain")
+    if code or dirty:
+        return None, ("the worktree has uncommitted changes, and the runner builds "
+                      "the pushed commit, not your files; commit and push first")
+    code, heads = git("ls-remote", "--heads", "origin")
+    if code:
+        return None, "could not list origin's branches (git ls-remote failed); try again"
+    if sha not in {line.split()[0] for line in heads.splitlines() if line.strip()}:
+        return None, (f"HEAD {sha[:12]} is not the tip of any branch on origin, so "
+                      "the runner cannot fetch it; commit and push first")
+    return sha, None
+
+
+def ask(run, flt):
+    if run not in RUNS:
+        return refuse(f"unknown run {run!r}; one of: {', '.join(RUNS)}")
+    if flt is not None:
+        if run not in FILTERED:
+            return refuse(f"{run} takes no filter")
+        if not FILTER_RE.fullmatch(flt):
+            return refuse("a filter is a class name: letters, digits, _ and . only")
+    spool, results = folders()
+    if not spool:
+        return refuse("BUGFIX_SPOOL is not set, so there is no runner to ask")
+    sha, why = pushed_head()
+    if why:
+        return refuse(why)
+    rid = f"{run}-{int(time.time()) % 10**8:x}-{secrets.token_hex(3)}"
+    req = {"verb": "remote_test", "id": rid, "sha": sha, "run": run}
+    if flt is not None:
+        req["filter"] = flt
+    tmp = os.path.join(spool, rid + ".json.tmp")
+    try:
+        with open(tmp, "w") as f:
+            json.dump(req, f)
+        os.rename(tmp, os.path.join(spool, rid + ".json"))
+    except OSError as e:
+        return refuse(f"could not write the request to {spool}: {e.strerror}")
+    say(f"asked {rid}: {run}{' ' + flt if flt else ''} at {sha[:12]}")
+    return wait(rid, results)
+
+
+def wait(rid, results=None):
+    if not ID_RE.fullmatch(rid):
+        return refuse(f"{rid!r} is not a request id")
+    if results is None:
+        _, results = folders()
+        if not results:
+            return refuse("BUGFIX_SPOOL is not set, so there is no runner to ask")
+    folder = os.path.join(results, rid)
+    limit = float(os.environ.get("OW_REMOTE_WAIT_S", 540))
+    poll = float(os.environ.get("OW_REMOTE_POLL_S", 2))
+    deadline = time.monotonic() + limit
+    while True:
+        res = read_result(folder)
+        if res is not None:
+            return report(res, folder)
+        if time.monotonic() >= deadline:
+            print(f"still running: ow-remote wait {rid}")
+            return STILL_RUNNING
+        time.sleep(poll)
+
+
+def read_result(folder):
+    try:
+        with open(os.path.join(folder, "result.json")) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def report(res, folder):
+    try:
+        with open(os.path.join(folder, "output-tail.txt"), errors="replace") as f:
+            sys.stdout.write(f.read())
+        sys.stdout.flush()
+    except OSError:
+        pass
+    if res.get("refused"):
+        return refuse(f"refused, nothing ran: {res['refused']}")
+    if res.get("sha") and res.get("checked_out_sha") and res["sha"] != res["checked_out_sha"]:
+        say(f"WARNING: asked for {res['sha'][:12]} but the runner checked out "
+            f"{res['checked_out_sha'][:12]}; this result is not about your commit")
+    if res.get("run") == "coverage":
+        say(f"merged {res.get('merged_reports')} report(s)"
+            + ("" if res.get("merged_reports") == 4 else
+               "; not 4, so the figure is not a measurement"))
+    code = res.get("exit_code")
+    timed = " (timed out)" if res.get("timed_out") else ""
+    say(f"{res.get('id')}: {res.get('run')} at {str(res.get('sha'))[:12]} on "
+        f"{res.get('target_hostname') or res.get('target')}, exit {code}{timed}; "
+        f"full output and files in {folder}")
+    if isinstance(code, int):
+        return code if 0 <= code < 256 else 1
+    return 124 if res.get("timed_out") else 1
+
+
+def status():
+    _, results = folders()
+    if not results:
+        return refuse("BUGFIX_SPOOL is not set, so there is no runner to ask")
+    try:
+        with open(os.path.join(results, "status.json")) as f:
+            print(f.read().rstrip())
+        return 0
+    except OSError:
+        return refuse("no status.json yet; the runner is not running or has not ticked")
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0 if argv else REFUSED
+    if argv[0] == "wait" and len(argv) == 2:
+        return wait(argv[1])
+    if argv[0] == "status" and len(argv) == 1:
+        return status()
+    if len(argv) in (1, 2) and argv[0] not in ("wait", "status"):
+        return ask(argv[0], argv[1] if len(argv) == 2 else None)
+    return refuse("usage: ow-remote <run> [filter] | ow-remote wait <id> | ow-remote status")
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

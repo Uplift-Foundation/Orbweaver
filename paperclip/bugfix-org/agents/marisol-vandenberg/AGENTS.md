@@ -28,6 +28,10 @@ On each run, follow the `cb-bugfix` skill:
    - For a flaky-test ticket, a `stress.yml` run on that branch passed on both
      rids.
 
+   You never build or test on the mini yourself; a check you want run goes
+   through `ow-remote` (skill, **Building and testing: the remote runner**),
+   and an engineer's task says the same.
+
    Release it instead (step 7) when it is past its time limit, worked out as
    the skill's **Limits** says (paused time does not count). A stress run
    or CI result that lands after a pass ends wakes nobody, so this step is how a

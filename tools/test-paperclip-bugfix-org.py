@@ -666,7 +666,7 @@ class InstructionTests(unittest.TestCase):
 
     def test_mobile_local_tests_are_marked_untried(self):
         skill = read("skills", "cb-bugfix", "SKILL.md")
-        row = [l for l in skill.splitlines() if l.startswith("| Local tests, targeted only |")][0]
+        row = [l for l in skill.splitlines() if l.startswith("| Tests, targeted only |")][0]
         self.assertIn("**untried under the sandbox:**", row)
         self.assertIn("is **not** a failed round", row)
 
@@ -1031,6 +1031,86 @@ class InstructionTests(unittest.TestCase):
         self.assertIn("never take `/tmp/ow-install.lock`", skill)
         for slug in ("hana-moriyama", "rafaela-quintero"):
             self.assertIn("never install anything on a machine yourself", read("agents", slug, "AGENTS.md"))
+
+
+class RemoteRunnerInstructionTests(unittest.TestCase):
+    """CB-494: builds, tests and coverage go to the MacBook Air through
+    ow-remote; the mini runs none of them. Each phrase is checked present in
+    the files that must carry it, and the old local instructions absent."""
+    ENGINEERS = ("hana-moriyama", "rafaela-quintero")
+    RUNS = ("build", "unit", "integration", "ui", "screenshots", "arrangement",
+            "glyph", "transcript", "coverage")
+
+    def skill(self):
+        return read("skills", "cb-bugfix", "SKILL.md")
+
+    def section(self):
+        s = self.skill()
+        start = s.index("## Building and testing: the remote runner")
+        return s[start:s.index("\n## ", start + 1)]
+
+    def test_skill_has_the_section_and_every_run_word(self):
+        sec = self.section()
+        self.assertIn("never on the mini", sec)
+        self.assertIn("ow-remote <run> [filter]", sec)
+        for run in self.RUNS:
+            self.assertIn(f"`{run}`", sec, run)
+
+    def test_the_run_words_match_the_helper(self):
+        tool = read("host", "shims", "ow-remote")
+        m = re.search(r"^RUNS = \(([^)]*)\)", tool, re.M)
+        self.assertEqual(tuple(re.findall(r'"([a-z]+)"', m.group(1))), self.RUNS)
+
+    def test_skill_says_how_to_ask_and_read_the_answer(self):
+        sec = self.section()
+        for phrase in ("commit, push, ask", "ow-remote wait <id>", "Exit `75`",
+                       "Exit `2`", "refused, nothing ran", "remote-results/<id>/",
+                       "result.json", "ow-remote status", "Quote the request id"):
+            self.assertIn(phrase, sec, phrase)
+
+    def test_coverage_is_remote_merged_four_and_never_on_the_mini(self):
+        sec = self.section()
+        self.assertIn("`ow-remote coverage`, once per PR", sec)
+        self.assertIn("only when N is 4", sec)
+        self.assertIn("Never run `./tools/coverage.sh` on the mini.", sec)
+        self.assertNotIn("One `./tools/coverage.sh --base origin/develop` per PR", self.skill())
+
+    def test_a_local_dotnet_test_is_the_exception_and_says_why(self):
+        self.assertIn("A local `dotnet test` on the mini is the exception", self.section())
+        self.assertIn("a command run locally on the mini, and why", self.skill())
+
+    def test_unreachable_air_is_not_a_failed_round(self):
+        self.assertIn("not run on the mini", self.section())
+        self.assertIn("**not** a failed round", self.section())
+
+    def test_the_old_build_lock_and_local_dotnet_test_are_gone(self):
+        self.assertNotIn("The build lock is yours", self.skill())
+        self.assertNotIn("`dotnet test` per class", self.skill())
+        for slug in self.ENGINEERS:
+            doc = read("agents", slug, "AGENTS.md")
+            self.assertNotIn("BUGFIX_BUILD_LOCK", doc, slug)
+            self.assertNotIn("Run `./tools/coverage.sh", doc, slug)
+
+    def test_engineers_build_test_and_cover_through_ow_remote(self):
+        for slug in self.ENGINEERS:
+            doc = read("agents", slug, "AGENTS.md")
+            for phrase in ("never on the mini", "`ow-remote <run> <class>`",
+                           "`ow-remote coverage`", "merged 4 report(s)",
+                           "the exception, and the PR\n   says why"):
+                self.assertIn(phrase, doc, (slug, phrase))
+
+    def test_qa_runs_a_class_remotely_and_flags_a_local_run_without_a_reason(self):
+        doc = read("agents", "tamsin-oyelaran", "AGENTS.md")
+        self.assertIn("`ow-remote <run> <class>` from your second worktree", doc)
+        self.assertIn("never\n  `dotnet test` on the mini", doc)
+        self.assertIn("without saying why is a `fix` finding", doc)
+        self.assertIn("without `merged 4`", doc)
+
+    def test_lead_never_builds_on_the_mini(self):
+        doc = read("agents", "marisol-vandenberg", "AGENTS.md")
+        self.assertIn("You never build or test on the mini yourself", doc)
+        self.assertIn("through `ow-remote`", doc)
+
 
 
 def find_bash():

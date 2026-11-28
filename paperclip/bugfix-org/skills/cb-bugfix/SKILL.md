@@ -322,7 +322,7 @@ describes. Only the rows of this table differ:
 | PR command | `gh pr create --repo Uplift-Foundation/Orbweaver ...` | inside `mobile/`: `gh pr create --repo Uplift-Foundation/Orbweaver-Mobile ...` |
 | Merge gate at the head sha | `build (macos-latest, osx-arm64)` and `build (windows-latest, win-x64)` green | `relay`, `contracts` and `tools` green always; `android` green when the diff touches `android/` or `contracts/`; `snapshots` green when it touches `app/`, `contracts/frames-v7-vectors.json` or `contracts/frames-v11-vectors.json`; no check pending or red |
 | QA comment names | both rids, `osx-arm64` and `win-x64` | each check it read, by name |
-| Local tests, targeted only | `dotnet test` per class (**Branch, commits, PR**) | **untried under the sandbox:** the contract checkers (`python3 -I contracts/check_*.py contracts/`), `app/Tools/test-*.py`, `./gradlew :crypto:test :relay:test --tests <class>`, `swift test --filter <class>` in `app/`; one that fails to run is named in `## Not verified` and is **not** a failed round, and CI is the gate. The relay suites (Docker), Android Robolectric and every simulator test are CI's |
+| Tests, targeted only | `ow-remote <run> <class>` on the MacBook Air, never on the mini (**Building and testing: the remote runner**) | **untried under the sandbox:** the contract checkers (`python3 -I contracts/check_*.py contracts/`), `app/Tools/test-*.py`, `./gradlew :crypto:test :relay:test --tests <class>`, `swift test --filter <class>` in `app/`; one that fails to run is named in `## Not verified` and is **not** a failed round, and CI is the gate. The relay suites (Docker), Android Robolectric and every simulator test are CI's |
 | Flaky-test proof | `stress.yml`, 30 runs on both rids (class 1) | none exists: the fix removes the race by construction, CI is green, and the PR says the failure rate was not measured |
 | Machines runner | yes (**Real machines**) | no: it serves Orbweaver PRs only |
 | Workflow files | allowed, under **Workflow files** | never |
@@ -761,8 +761,68 @@ result"). This happened on 2026-11-24. So:
 - Never end your turn while waiting on a background job. Either wait in the
   foreground, or report progress and finish the task, saying what is still
   running. The next wake picks it up.
-- The build lock is yours only while your command runs. Take it and release it
-  in the same command (`mkdir`, `trap 'rmdir …' EXIT`).
+- Builds and tests go through `ow-remote` (**Building and testing: the remote
+  runner**); one that is still running past nine minutes exits 75, and
+  `ow-remote wait <id>` picks it up in the next command.
+
+## Building and testing: the remote runner
+
+**Every build and test runs on the MacBook Air, never on the mini.** The mini
+is the always-on gateway host, and passes building and testing side by side on
+it starved everything else it serves (CB-494). A runner on the mini takes your
+request and runs it on the Air at the sha you name; nothing runs on the mini,
+and when the Air cannot be reached the request is refused, not run locally.
+
+The runner builds the commit you pushed, not your files, so the loop is:
+commit, push, ask. `ow-remote` asks for `HEAD` and refuses, with a sentence,
+when the tree has uncommitted or untracked changes or `HEAD` is not the tip of a
+branch on `origin`:
+
+```
+ow-remote <run> [filter]
+```
+
+| `<run>` | runs | filter |
+| --- | --- | --- |
+| `build` | a build only, no tests | none |
+| `unit`, `integration` | `tests/UnitTests`, `tests/IntegrationTests` | a class: `FullyQualifiedName~<filter>` |
+| `ui`, `screenshots` | `tests/UiTests`, `tests/UiScreenshots`, in Release | a `Namespace.Class`: `--filter-class` |
+| `arrangement`, `glyph`, `transcript` | the console suites, for a change to geometry, transcript parsing or orb initials | none |
+| `coverage` | `tools/coverage.sh --base origin/develop`, all four suites | none |
+
+Iterate with a filter: a filtered run answers in under a minute. No filter on
+`unit`, `integration`, `ui` or `screenshots` runs the whole suite, which CI
+runs anyway, so do not. A filter is letters, digits, `_` and `.` only.
+
+**Reading the answer.** `ow-remote` waits up to nine minutes, prints the last
+200 KB of the output, and exits with the remote command's exit status. Its last
+stderr line names the request id, the sha, the machine and the folder,
+`remote-results/<id>/` beside `$BUGFIX_SPOOL`, which holds `result.json`, the
+whole `output.txt`, and `files/` (the test reports, the coverage summary,
+screenshot PNGs). Quote the request id in the PR body.
+
+- Exit `2`, `refused, nothing ran: <sentence>`: read the sentence, fix what it
+  names, ask again. "no target reachable; not run on the mini" means the Air
+  was away for fifteen minutes: name that in `## Not verified` and let CI be
+  the gate, which is **not** a failed round.
+- Exit `75`, `still running: ow-remote wait <id>`: run exactly that; it waits
+  another nine minutes. Each command stays inside the ten-minute limit
+  (**Long commands**).
+- Exit `124`: the run hit its cap (10 minutes filtered, 30 for a suite, 45 for
+  coverage).
+- A `WARNING` that the runner checked out another commit means the result is
+  not about yours; push and ask again.
+- `ow-remote status` shows whether the Air is reachable and what is queued.
+  One job runs at a time and the rest wait their turn.
+
+**Coverage.** `ow-remote coverage`, once per PR. Its stderr says
+`merged <N> report(s)`, and the figure is a measurement only when N is 4; quote
+that line with the figure. **Never run `./tools/coverage.sh` on the mini.**
+
+**A local `dotnet test` on the mini is the exception**, for something the
+runner cannot do, and `## Verified` says which command ran locally and why.
+`dotnet` on the mini queues heavy commands one at a time anyway, so a local
+build waits behind everyone else's.
 
 ## Branch, commits, PR
 
@@ -771,15 +831,14 @@ result"). This happened on 2026-11-24. So:
 - Commit messages are prose: a short imperative summary, paragraphs on why, the
   key in the message, ending with
   `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`.
-- Iterate with targeted tests only. VSTest suites (`tests/UnitTests`,
-  `tests/IntegrationTests`) take `--filter "FullyQualifiedName~<Class>"`; the
-  MTP suites (`tests/UiTests`, `tests/UiScreenshots`) take
-  `--filter-class <Namespace.Class>`, never `--filter`, and the total in the
-  summary line shows whether the filter took. Add the matching console suite for
-  a change to geometry, transcript parsing or orb initials.
+- Iterate with targeted tests only, through `ow-remote <run> <class>`
+  (**Building and testing: the remote runner**); the total in the output's
+  summary line shows whether the filter took. Add the matching console suite
+  (`ow-remote arrangement`, `glyph` or `transcript`) for a change to geometry,
+  transcript parsing or orb initials.
 - Tests land in the same branch as the fix and cover every line it adds.
-- One `./tools/coverage.sh --base origin/develop` per PR; its first line must be
-  `merged 4`, otherwise the number is not a measurement.
+- One `ow-remote coverage` per PR; its `merged <N> report(s)` line must say
+  4, otherwise the number is not a measurement. Never `coverage.sh` on the mini.
 - Open the PR against `develop` at the first working push so CI runs while QA
   reviews: `gh pr create --repo Uplift-Foundation/Orbweaver --base develop --head <branch>`.
 - Nobody reruns the full suites locally; CI green on both rids at one sha is
@@ -797,8 +856,8 @@ CB-<number>: <what was wrong, in one line>
 <what the fix is and why it is right>
 
 ## Verified
-<each command you ran, the test classes, their totals, and the coverage figure
-with its merged-count line>
+<each ow-remote request id with its run, filter and totals, and the coverage
+figure with its merged-count line; a command run locally on the mini, and why>
 
 ## Not verified
 <what an install on a real machine would have shown; Windows behaviour not
