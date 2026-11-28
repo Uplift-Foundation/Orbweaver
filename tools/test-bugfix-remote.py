@@ -1128,7 +1128,14 @@ class TargetShellTests(unittest.TestCase):
         self.wait("a", "done")
         got = self.t.start("b", self.shas[1], ["true"], 600)  # a was never collected or cleaned up
         self.assertEqual((got["busy"], got["started"]), (None, True))
-        self.assertEqual(self.t.poll("a")[0], "lost")         # its folder went with the new start
+        # Its result is still there to fetch: finished a moment ago.
+        self.assertEqual(self.t.poll("a")[:2], ("done", 0))
+        self.wait("b", "done")
+        old = time.time() - 11 * 60
+        os.utime(os.path.join(self.home, remote.ROOT_DIR, "jobs", "a", "exit"), (old, old))
+        self.t.start("c", self.shas[0], ["true"], 600)
+        self.assertEqual(self.t.poll("a")[0], "lost")         # swept once it is ten minutes old
+        self.assertEqual(self.t.poll("b")[0], "done")         # control: the recent one is kept
 
     def test_kill_takes_the_whole_process_tree_and_nothing_else(self):
         marker = os.path.join(self.home, "pids")
@@ -1281,6 +1288,21 @@ class RunOnceTests(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(os.path.join(self.spool, "bad"))),
                          ["junk.json", "other-name.json", "r1.json", "r2.json"])
         self.assertEqual(self.air.did("start"), [])
+
+    def test_a_request_still_being_written_is_left_alone_until_it_is_renamed(self):
+        # The agent side writes <id>.json.tmp and renames it; only *.json is read.
+        tmp = os.path.join(self.spool, "t1.json.tmp")
+        with open(tmp, "w") as f:
+            f.write('{"verb": "remote_test", "id": "t1", "sha": "')  # half a request
+        self.tick()
+        self.assertTrue(os.path.exists(tmp))
+        self.assertEqual(os.listdir(os.path.join(self.spool, "bad")), [])
+        self.assertFalse(os.path.exists(os.path.join(self.results, "t1")))
+        with open(tmp, "w") as f:
+            json.dump(req("t1"), f)
+        os.replace(tmp, os.path.join(self.spool, "t1.json"))
+        self.tick()
+        self.assertEqual(self.status()["running"]["id"], "t1")  # control: once renamed it is read
 
     def test_an_answered_id_is_never_run_again(self):
         self.drop(req("t1"))

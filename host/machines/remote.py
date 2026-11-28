@@ -657,7 +657,15 @@ for P in jobs/*/pid; do
     echo "busy=$(basename "$D")"; exit 0
   fi
 done
-rm -rf jobs && mkdir -p "$J/files/screenshots" || exit 90
+# Sweep what earlier jobs left. A finished job's folder is kept for ten
+# minutes: its result may not have been fetched yet (by this runner after a
+# restart, or by a second runner pointed at the same target).
+for D in jobs/*/; do
+  [ -d "$D" ] || continue
+  if [ -f "$D/exit" ] && [ -z "$(find "$D/exit" -mmin +10 2>/dev/null)" ]; then continue; fi
+  rm -rf "$D"
+done
+rm -rf "$J" && mkdir -p "$J/files/screenshots" || exit 90
 echo $((NOW + {cap})) > "$J/deadline"
 if ! git -C work rev-parse --git-dir >/dev/null 2>&1; then
   rm -rf work; git --git-dir=repo.git worktree prune
