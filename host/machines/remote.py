@@ -350,9 +350,10 @@ NEEDS_TMUX = ("integration", "coverage")
 
 
 def tool_problem(run, probe):
-    """Why a run may not start on the target just probed (None = go). On a
-    target with no tmux, the integration suite is red on seven tests whatever
-    the commit is. Run and returned red, that teaches whoever reads it to
+    """Why a run may not start on the target just probed (None = go).
+    `probe["tmux"]` is the path the probe found one at, or None. On a target
+    with no tmux, the integration suite is red on its tmux tests whatever the
+    commit is. Run and returned red, that teaches whoever reads it to
     wave a red through; so it is refused, and nothing runs."""
     if run in NEEDS_TMUX and not probe.get("tmux"):
         return "the target has no tmux, which IntegrationTests needs; not run"
@@ -677,12 +678,18 @@ class Mirror:
 # environment as a property, so coverage.sh's own builds get it too), and
 # run.sh ends with `dotnet build-server shutdown`. They would make a warm run
 # faster, and they would pile up on a 16 GB machine nobody is watching.
+# TERM is given a real value when ssh hands the job none: a job started by
+# `ssh host bash -s` has no terminal and no TERM, and TmuxPlacementTests
+# attach a client through a pty, which tmux refuses under an unset or dumb
+# TERM ("open terminal failed: terminal does not support clear"). Measured
+# on the Air: seven tests red without it, none with it, nothing else changed.
 PREAMBLE = """set -u
 ROOT="$HOME/{root}"
 J="$ROOT/jobs/{rid}"
 export PATH="$HOME/.dotnet:$PATH" DOTNET_ROOT="$HOME/.dotnet"
 export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 export MSBUILDDISABLENODEREUSE=1 DOTNET_CLI_USE_MSBUILD_SERVER=0 UseSharedCompilation=false
+case "${{TERM:-dumb}}" in dumb) export TERM=xterm-256color ;; esac
 """
 
 # One worktree, reused, so a build is incremental (17 s cold against 3 s warm
@@ -791,10 +798,21 @@ git --git-dir="$ROOT/repo.git" update-ref -d refs/remote-runs/{rid} 2>/dev/null
 exit 0
 """
 
-# tmux is looked for on the PATH a job gets, because that is where the
-# integration tests will look for it.
-PROBE = ('export PATH="$HOME/.dotnet:$PATH"\nhostname; sysctl -n vm.loadavg\n'
-         "command -v tmux >/dev/null 2>&1 && echo tmux=yes || echo tmux=no\n")
+# Where the app, and so the integration tests, look for tmux: the fixed paths
+# of TerminalLauncher.ResolveTmux in order, and only then PATH (the tests'
+# own `?? "tmux"`). The probe asks the same question in the same order. It
+# first asked only PATH, and a non-interactive ssh has a bare one: it called
+# a machine with Homebrew's tmux a machine with none (CB-494).
+TMUX_PATHS = ("/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux", "/opt/local/bin/tmux")
+PROBE = """export PATH="$HOME/.dotnet:$PATH"
+hostname; sysctl -n vm.loadavg
+T=""
+for C in {tmux_paths}; do
+  if [ -e "$C" ]; then T="$C"; break; fi
+done
+[ -n "$T" ] || T="$(command -v tmux 2>/dev/null)"
+if [ -n "$T" ]; then echo "tmux=$T"; else echo "tmux=no"; fi
+"""
 INIT = PREAMBLE + 'mkdir -p "$ROOT/jobs" || exit 90\n[ -d "$ROOT/repo.git" ] || git init -q --bare "$ROOT/repo.git"\n'
 ROOT_DIR = "orbweaver-remote"
 # Only a `screenshots` run hands its PNGs back. Any run that happens to draw
@@ -815,10 +833,11 @@ class Target:
     stdin, so nothing is quoted through the login shell, and every value put
     into one is a validated id, a 40-hex sha or shlex-quoted argv."""
 
-    def __init__(self, name, host, cfg, sh=default_sh, sh_bytes=None, forbidden=()):
+    def __init__(self, name, host, cfg, sh=default_sh, sh_bytes=None, forbidden=(), tmux_paths=TMUX_PATHS):
         self.name, self.host, self.cfg, self.sh = name, host, cfg, sh
         # Hostnames the start script refuses to run on: this machine's.
         self.forbidden = [n for n in sorted(forbidden) if re.fullmatch(r"[a-z0-9._-]+", n)]
+        self.tmux_paths = tuple(tmux_paths)
         # The result archive is bytes; everything else is text.
         self.sh_bytes = sh_bytes or (lambda argv, timeout=None, input=None: subprocess.run(
             argv, input=input, capture_output=True, timeout=timeout))
@@ -832,14 +851,18 @@ class Target:
 
     def probe(self):
         try:
-            r = self.ssh(PROBE, timeout=20)
+            r = self.ssh(PROBE.format(tmux_paths=" ".join(shlex.quote(p) for p in self.tmux_paths) or "''"),
+                         timeout=20)
         except (subprocess.TimeoutExpired, OSError):
             return {"reachable": False, "load": None, "hostname": None, "tmux": None}
         if r.returncode != 0:
             return {"reachable": False, "load": None, "hostname": None, "tmux": None}
         lines = r.stdout.splitlines()
+        found = [line[5:] for line in lines if line.startswith("tmux=")]
+        # The path it was found at, or None: status.json then says which
+        # tmux a run on this target will use, not merely that there is one.
         return {"reachable": True, "load": parse_load(r.stdout), "hostname": lines[0].strip() if lines else None,
-                "tmux": "tmux=yes" in lines}
+                "tmux": found[-1] if found and found[-1] not in ("no", "") else None}
 
     def init(self):
         try:
