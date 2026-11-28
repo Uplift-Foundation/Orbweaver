@@ -1141,12 +1141,22 @@ class World(unittest.TestCase):
             with open(plist, "w") as f:
                 f.write("<dict/>")
         self.pc.experimental.update(drop.get("flags", {}))
+        # The stand-ins as deployed (CB-494): copies of the repo's, so the
+        # drift check sees a matching install unless a case edits one.
+        tools_bin = os.path.join(self.tmp, "tools-bin")
+        os.makedirs(tools_bin, exist_ok=True)
+        for name in check_host.SHIMS:
+            shutil.copy(os.path.join(check_host.SHIMS_DIR, name), os.path.join(tools_bin, name))
+        if drop.get("shim"):
+            with open(os.path.join(tools_bin, drop["shim"]), "a") as f:
+                f.write("# edited by hand\n")
         path = os.path.join(self.tmp, "warden.json")
         with open(path, "w") as f:
             json.dump(cfg, f)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            rc = check_host.main(["--config", path, "--plist", plist, "--gitconfig", gitconfig])
+            rc = check_host.main(["--config", path, "--plist", plist, "--gitconfig", gitconfig,
+                                  "--tools-bin", tools_bin])
         return rc, out.getvalue()
 
     def test_check_host_all_present_exits_zero(self):
@@ -1161,6 +1171,7 @@ class World(unittest.TestCase):
             ("isolated off", {"flags": {"enableIsolatedWorkspaces": False}}, "enableIsolatedWorkspaces"),
             ("worktree off", {"flags": {"enableWorktreeRunExecution": False}}, "enableWorktreeRunExecution"),
             ("by-default on", {"flags": {"enableIsolatedWorkspacesByDefault": True}}, "enableIsolatedWorkspacesByDefault"),
+            ("dotnet shim drifted", {"shim": "dotnet"}, "tools-bin/dotnet differs"),
         ]
         for label, drop, needle in cases:
             rc, out = self.host_world(**drop)
