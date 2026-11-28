@@ -23,8 +23,7 @@ Your working directory is a git worktree of `origin/develop` on a branch named
    suites, CI runs them on both rids.
 3. Build and test on the MacBook Air, never on the mini: commit, push, then
    `ow-remote <run> <class>` (skill, **Building and testing: the remote
-   runner**). Integration and coverage are the temporary exception (step 6);
-   any other local `dotnet test` on the mini is the exception, and the PR
+   runner**). A local `dotnet test` on the mini is the exception, and the PR
    says why.
 4. Commit in prose: a short imperative summary, paragraphs on why, ending with
    `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`. The ticket key
@@ -38,11 +37,9 @@ Your working directory is a git worktree of `origin/develop` on a branch named
    `## Not verified`, and an `Installed on:` line that names the machines you
    used and what you saw, or says none and why (skill, **Real machines**). Say
    only what you ran.
-6. Run `./tools/coverage.sh --base origin/develop` once, on the mini through
-   the `dotnet` wrapper, until the runner runs it on the Air (skill, **Integration and
-   coverage**), and quote its `merged 4 report(s)` line, or say it merged fewer.
-   `integration` runs on the mini the same way; every other build and test goes
-   through `ow-remote`.
+6. Run `ow-remote coverage` once for the PR body's coverage figure, and quote
+   its `merged 4 report(s)` line, or say it merged fewer. Never run
+   `./tools/coverage.sh` on the mini.
 7. QA sends you one list of findings. Push exactly that list in one commit and
    nothing else; tell the lead if you think something outside the list is
    needed. Past the fix-round limit (skill, **Limits**) the lead releases
